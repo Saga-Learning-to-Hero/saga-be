@@ -1,6 +1,6 @@
 # SAGA Backend — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-08-19
+**Cập nhật lần cuối:** 2026-08-23
 
 File này mô tả những gì **thực sự đang có / đã implement** tại thời điểm hiện tại.
 
@@ -104,11 +104,28 @@ docs/
 
 ---
 
-## 5. Feature đã triển khai
+## 5. Infrastructure connectivity
+
+Profile `local` đã cấu hình kết nối tới các service DEV qua environment variables (file `.env` local; Railway sẽ inject env trực tiếp).
+
+Trạng thái hiện tại là **CONFIGURED / CONNECTED**, không phải business feature đã implement:
+
+| Service | Vai trò | Trạng thái |
+| --- | --- | --- |
+| MySQL | Source of Truth | CONFIGURED / CONNECTED |
+| Neo4j | Graph Read Model / Projection | CONFIGURED / CONNECTED |
+| Redis / Valkey | Cache / Rate Limit / Ephemeral Realtime Support | CONFIGURED / CONNECTED |
+| RabbitMQ | Async Message Broker | CONFIGURED / CONNECTED |
+
+Các phần sau **chưa tồn tại**: MySQL schema, Flyway migration, Neo4j node/relationship/projection, Redis cache/rate-limit key, RabbitMQ queue/exchange/binding/DLQ.
+
+---
+
+## 6. Feature đã triển khai
 
 Chưa có.
 
-Cụ thể, các phần sau **CHƯA TRIỂN KHAI**, dù dependency/package đã tồn tại:
+Cụ thể, các phần sau **CHƯA TRIỂN KHAI**, dù dependency/package và connectivity đã tồn tại:
 
 - registration;
 - login;
@@ -137,7 +154,7 @@ Cụ thể, các phần sau **CHƯA TRIỂN KHAI**, dù dependency/package đã 
 
 ---
 
-## 6. Decision kiến trúc đã chốt
+## 7. Decision kiến trúc đã chốt
 
 Xem `SAGA_DECISION_LOG.md`.
 
@@ -157,7 +174,7 @@ Các Decision quan trọng hiện tại:
 
 ---
 
-## 7. Decision còn mở / chưa chốt
+## 8. Decision còn mở / chưa chốt
 
 ### Chiến lược authentication session/token
 
@@ -208,7 +225,7 @@ SSE đã được chốt về mặt kiến trúc, nhưng endpoint name, event ty
 
 ---
 
-## 8. Milestone tiếp theo
+## 9. Milestone tiếp theo
 
 Thứ tự khuyến nghị:
 
@@ -234,7 +251,7 @@ Thứ tự chỉ được đổi khi có nhu cầu dự án tường minh.
 
 ---
 
-## 9. Definition of Done cho giai đoạn Bootstrap
+## 10. Definition of Done cho giai đoạn Bootstrap
 
 Bootstrap được coi là xong khi:
 
@@ -248,7 +265,7 @@ Bootstrap được coi là xong khi:
 
 ---
 
-## 10. Quy tắc cập nhật
+## 11. Quy tắc cập nhật
 
 Mỗi khi một feature có ý nghĩa được shipped, cập nhật file này trong cùng PR.
 
