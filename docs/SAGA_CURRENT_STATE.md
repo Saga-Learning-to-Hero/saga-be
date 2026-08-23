@@ -106,9 +106,11 @@ docs/
 
 ## 5. Infrastructure connectivity
 
-Profile `local` đã cấu hình kết nối tới các service DEV qua environment variables (file `.env` local; Railway sẽ inject env trực tiếp).
+### Local
 
-Trạng thái hiện tại là **CONFIGURED / CONNECTED**, không phải business feature đã implement:
+Profile `local` đã cấu hình kết nối tới các service DEV qua environment variables (file `.env`).
+
+**Local infrastructure connectivity = PASS**
 
 | Service | Vai trò | Trạng thái |
 | --- | --- | --- |
@@ -116,6 +118,17 @@ Trạng thái hiện tại là **CONFIGURED / CONNECTED**, không phải busines
 | Neo4j | Graph Read Model / Projection | CONFIGURED / CONNECTED |
 | Redis / Valkey | Cache / Rate Limit / Ephemeral Realtime Support | CONFIGURED / CONNECTED |
 | RabbitMQ | Async Message Broker | CONFIGURED / CONNECTED |
+
+Đây là **CONFIGURED / CONNECTED**, không phải business feature đã implement.
+
+### Railway DEV
+
+Profile `dev` (`application-dev.properties`) đã được chuẩn bị cho Railway.
+
+- **Railway DEV profile = CONFIGURED**
+- **Railway deployment = NOT YET DEPLOYED**
+
+Railway không dùng file `.env`. Credential được inject bằng Environment Variables. Railway tự inject `PORT`; ứng dụng bind `server.port=${PORT:8080}`. Healthcheck dự kiến: `GET /actuator/health`.
 
 Các phần sau **chưa tồn tại**: MySQL schema, Flyway migration, Neo4j node/relationship/projection, Redis cache/rate-limit key, RabbitMQ queue/exchange/binding/DLQ.
 
