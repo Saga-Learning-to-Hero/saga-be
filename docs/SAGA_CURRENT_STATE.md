@@ -1,6 +1,6 @@
 # SAGA Backend — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-08-23
+**Cập nhật lần cuối:** 2026-08-24
 
 File này mô tả những gì **thực sự đang có / đã implement** tại thời điểm hiện tại.
 
@@ -10,11 +10,11 @@ Không lấy kế hoạch kiến trúc tương lai làm bằng chứng rằng fe
 
 ## 1. Giai đoạn hiện tại
 
-**Phase: Repository Bootstrap / Architecture Skeleton**
+**Phase: Database V2 foundation**
 
-Project Spring Boot đã được generate và architecture skeleton ban đầu đã có.
+Architecture skeleton đã có. Flyway V1 + V2 + 52 JPA entities đã được tạo cho MySQL Source of Truth.
 
-Chưa có business feature nào được coi là đã shipped.
+Chưa có business feature nào (auth, sync, webhook, assessment engine, SSE, projection) được coi là đã shipped.
 
 ---
 
@@ -97,7 +97,10 @@ docs/
 ├── SAGA_BACKEND_ARCHITECTURE.md
 ├── SAGA_BACKEND_REQUIREMENTS_DEPENDENCIES_CONSTRAINTS.md
 ├── SAGA_CURRENT_STATE.md
-└── SAGA_DECISION_LOG.md
+├── SAGA_DECISION_LOG.md
+├── SAGA_HANDOFF.md
+├── SAGA_V2_ERD.md
+└── SAGA_V2_SCHEMA_DECISIONS.md
 ```
 
 `README.md` là điểm vào cho người dùng repository.
@@ -126,27 +129,30 @@ Profile `local` đã cấu hình kết nối tới các service DEV qua environm
 Profile `dev` (`application-dev.properties`) đã được chuẩn bị cho Railway.
 
 - **Railway DEV profile = CONFIGURED**
-- **Railway deployment = NOT YET DEPLOYED**
+- **Railway deployment = ONLINE** (health UP). Chi tiết trong `SAGA_HANDOFF.md`.
 
-Railway không dùng file `.env`. Credential được inject bằng Environment Variables. Railway tự inject `PORT`; ứng dụng bind `server.port=${PORT:8080}`. Healthcheck dự kiến: `GET /actuator/health`.
+Railway không dùng file `.env`. Credential được inject bằng Environment Variables. Railway tự inject `PORT`; ứng dụng bind `server.port=${PORT:8080}`. Healthcheck: `GET /actuator/health`.
 
-Các phần sau **chưa tồn tại**: MySQL schema, Flyway migration, Neo4j node/relationship/projection, Redis cache/rate-limit key, RabbitMQ queue/exchange/binding/DLQ.
+MySQL schema V2 + Flyway V1 = **IMPLEMENTED** (empty-database baseline). Các phần sau **chưa tồn tại**: Neo4j node/relationship/projection, Redis cache/rate-limit key, RabbitMQ queue/exchange/binding/DLQ.
 
 ---
 
 ## 6. Feature đã triển khai
 
-Chưa có.
+**Schema foundation (không phải business feature):**
 
-Cụ thể, các phần sau **CHƯA TRIỂN KHAI**, dù dependency/package và connectivity đã tồn tại:
+- Flyway `V1__initial_schema.sql` — 52 tables
+- JPA entities + `BaseEntity` + enums
+- Foundation repositories (`UserAccount`, `Course`, `CourseEnrollment`, `Team`, `ActiveSemesterSetting`, `OutboxEvent`)
+- `local`/`dev`: Flyway enabled, `ddl-auto=validate`
+
+Cụ thể, các phần sau **CHƯA TRIỂN KHAI**, dù dependency/package, connectivity và schema foundation đã tồn tại:
 
 - registration;
 - login;
 - Google OAuth flow;
 - role resolution;
 - xử lý session/token;
-- MySQL schema;
-- Flyway migration;
 - kết nối Jira;
 - kết nối GitHub;
 - Webhook Jira/GitHub;
@@ -216,9 +222,16 @@ Identity unknown/ambiguous phải fail closed hoặc đi vào verification workf
 
 ### Database schema
 
-Chưa thiết kế.
+SAGA V2 MySQL schema = **IMPLEMENTED** (foundation).
 
-Chưa có Flyway `V1` migration.
+- Flyway `V1__initial_schema.sql`: 52 tables (immutable)
+- Flyway `V2__user_account_password_hash_and_comment_task.sql`: `password_hash`, `comment.task_id` (already applied; do not rename)
+- Argon2id `PasswordEncoder` bean (DEC-017) — not login/registration
+- JPA entities + `BaseEntity`
+- `local`/`dev`: `spring.flyway.enabled=true`, `ddl-auto=validate`
+- Chi tiết: `docs/SAGA_V2_ERD.md`, `docs/SAGA_V2_SCHEMA_DECISIONS.md`
+
+Business services trên schema này = **NOT IMPLEMENTED**.
 
 ### Graph schema
 
@@ -243,21 +256,17 @@ SSE đã được chốt về mặt kiến trúc, nhưng endpoint name, event ty
 Thứ tự khuyến nghị:
 
 ```text
-1. Freeze repository documentation/rules
-2. Verify generated Maven dependency baseline
-3. Design Authentication + Authorization
-4. Design MySQL identity/academic core schema
-5. Create Flyway V1 migration
-6. Implement first auth/account vertical slice
-7. Define public API/error contract
-8. Design Jira/GitHub integration model
-9. Implement webhook ingress + idempotency
-10. Introduce RabbitMQ topology
-11. Add transactional outbox
-12. Design Neo4j graph model/projection
-13. Add versioned SSE delivery
-14. Implement Continuous Assessment pipeline
-15. Load/failure testing
+1. Review SAGA V2 ERD / schema decisions
+2. Design Authentication + Authorization (session/token still TBD)
+3. Implement first auth/account vertical slice
+4. Define public API/error contract
+5. Implement Jira/GitHub webhook ingress + identity mapping
+6. Introduce RabbitMQ topology
+7. Implement transactional outbox publisher/consumers
+8. Design Neo4j graph model/projection
+9. Add versioned SSE delivery
+10. Implement Continuous Assessment pipeline (persist assessment_run/result)
+11. Load/failure testing
 ```
 
 Thứ tự chỉ được đổi khi có nhu cầu dự án tường minh.

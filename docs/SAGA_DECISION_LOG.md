@@ -31,6 +31,8 @@ Giá trị trạng thái:
 | DEC-013 | MongoDB không thuộc initial backend baseline | ĐÃ CHỐT KIẾN TRÚC | 2026-08-19 |
 | DEC-014 | Thay đổi schema database dùng Flyway | ĐÃ CHỐT KIẾN TRÚC | 2026-08-19 |
 | DEC-015 | Public contract với FE được ghi cùng thay đổi controller | ĐÃ CHỐT KIẾN TRÚC | 2026-08-19 |
+| DEC-016 | SAGA-owned internal IDs = UUID CHAR(36) | ĐÃ CHỐT KIẾN TRÚC | 2026-08-24 |
+| DEC-017 | Local password storage = Argon2id hash only | ĐÃ CHỐT KIẾN TRÚC | 2026-08-24 |
 
 ---
 
@@ -351,6 +353,63 @@ trong cùng thay đổi đó.
 ## Hệ quả
 
 Chỉ có controller code thì chưa đủ làm tài liệu contract cho Frontend.
+
+---
+
+# DEC-016 — SAGA-owned internal IDs = UUID CHAR(36)
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-24
+
+## Bối cảnh
+
+SAGA cần identity ổn định, không đoán được, không phụ thuộc AUTO_INCREMENT, và tách biệt khỏi identifier của GitHub/Jira.
+
+## Quyết định
+
+Mọi identifier do SAGA sinh và sở hữu (PK, FK nội bộ, join/link id, outbox, notification, assessment, AI, graph processing) là UUID:
+
+- Java: `java.util.UUID`
+- MySQL: `CHAR(36)`
+- Generation: `GenerationType.UUID` (random UUID / UUID v4)
+
+Provider identifiers giữ semantics gốc (`repository_id`, `sha_hash`, `external_id`, `external_key`, …) và **không** là PK.
+
+## Ngoại lệ
+
+`active_semester_setting.singleton_id` (`TINYINT` = 1) là singleton technical key. Đây là **ngoại lệ có chủ đích duy nhất**.
+
+## Hệ quả
+
+Không dùng BIGINT/INT AUTO_INCREMENT, sequential numeric PK, hay provider ID làm PK cho entity SAGA thông thường.
+
+---
+
+# DEC-017 — Local password storage = Argon2id hash only
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-24
+
+## Bối cảnh
+
+SAGA tự sở hữu account security (DEC-012). Cần lưu credential local mà không lưu plaintext hay hash tự viết.
+
+## Quyết định
+
+- Cột `user_account.password_hash VARCHAR(255) NULL`
+- Chỉ lưu output của Spring Security `PasswordEncoder`
+- Thuật toán **Argon2id** (OWASP: memory 19456 KiB, iterations 2, parallelism 1, salt 16, hash 32)
+- Runtime: `Argon2PasswordEncoder` + Bouncy Castle `bcprov-jdk18on` (required by Spring Security’s Argon2 implementation)
+- Nullable: tài khoản OIDC-only có thể không có mật khẩu local
+- Cấm plaintext, reversible encryption, `raw_password`, `password_salt` thủ công, MD5/SHA-family password hashing, field Cognito
+
+## Không thuộc Decision này
+
+Registration, login, JWT, refresh token, session, logout, password reset, OAuth/OIDC **chưa implement**. Session/token architecture vẫn TBD.
+
+## Hệ quả
+
+Auth V2 sau này inject `PasswordEncoder` đã cấu hình. BCrypt không phải lựa chọn chính; chỉ cân nhắc sau nếu có compatibility constraint được ghi rõ.
 
 ---
 

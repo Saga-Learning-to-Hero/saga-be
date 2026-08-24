@@ -4,8 +4,8 @@ Backend service cho **Student Activity Graph Based Continuous Assessment Project
 
 SAGA kết hợp dữ liệu học thuật/đồ án với hoạt động trên Jira và GitHub, xây dựng Graph Read Model (mô hình phục vụ truy vấn đọc theo đồ thị), và hỗ trợ cập nhật Continuous Assessment (đánh giá liên tục) theo hướng near-realtime cho Frontend.
 
-> **Giai đoạn hiện tại:** repository bootstrap và architecture baseline.  
-> Skeleton của project đã có, nhưng các phần sau **chưa được triển khai**: business feature, database schema, authentication flow, tích hợp provider, messaging, graph projection, và realtime endpoint.
+> **Giai đoạn hiện tại:** Database V2 foundation.  
+> Flyway V1 (52 tables) và JPA entities đã có. Các phần sau **chưa được triển khai**: business feature, authentication flow, tích hợp provider, messaging, graph projection, và realtime endpoint.
 
 ---
 
@@ -215,22 +215,23 @@ Repository này không chứa Frontend code.
 
 ## 9. Trạng thái hiện tại
 
-Project đang ở giai đoạn **Repository Bootstrap / Architecture Skeleton**.
+Project đang ở giai đoạn **Database V2 foundation**.
 
 Các phần sau **CHƯA TRIỂN KHAI**:
 
 - Authentication / Authorization
 - Google OAuth flow
 - chiến lược session/token
-- MySQL schema / Flyway V1
 - tích hợp Jira / GitHub
 - Webhook
 - RabbitMQ topology
-- Webhook Inbox / Transactional Outbox
+- Webhook Inbox processor / Transactional Outbox publisher
 - Redis Rate Limiting / Redis realtime fan-out
 - Neo4j projection / Graph API
 - Assessment algorithm
 - SSE endpoint / versioned realtime event
+
+MySQL schema / Flyway V1 (52 tables) = **đã có**. Xem `docs/SAGA_V2_ERD.md`.
 
 Trước khi giả định ứng dụng chạy được local, kiểm tra:
 
