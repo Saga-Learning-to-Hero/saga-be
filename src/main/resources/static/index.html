@@ -7,149 +7,150 @@
     <style>
       :root {
         color-scheme: light;
-        --bg: #f4f1ea;
-        --card: #fffcf7;
-        --ink: #1c1915;
-        --muted: #5c564c;
-        --line: #d9d1c3;
-        --accent: #1f4f46;
-        --accent-2: #c45c26;
+        --bg: #0f1c1a;
+        --panel: rgba(255, 252, 247, 0.94);
+        --ink: #14221f;
+        --muted: #5d6b67;
+        --line: rgba(20, 34, 31, 0.08);
+        --accent: #1a6b5c;
+        --accent-hover: #15574b;
+        --ok: #1f8a5b;
+        --bad: #b42318;
       }
       * {
         box-sizing: border-box;
       }
+      html,
+      body {
+        height: 100%;
+      }
       body {
         margin: 0;
         font-family: "Segoe UI", system-ui, sans-serif;
-        background: radial-gradient(circle at top left, #efe6d6, var(--bg) 42%);
         color: var(--ink);
         min-height: 100vh;
+        background:
+          radial-gradient(900px 480px at 12% -10%, rgba(56, 158, 132, 0.28), transparent 55%),
+          radial-gradient(700px 420px at 110% 10%, rgba(196, 122, 58, 0.18), transparent 50%),
+          linear-gradient(165deg, #10231f 0%, #0c1614 100%);
+        display: grid;
+        place-items: center;
+        padding: 24px;
       }
-      main {
-        max-width: 760px;
-        margin: 0 auto;
-        padding: 48px 20px 72px;
+      .card {
+        width: min(440px, 100%);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        padding: 40px 32px 32px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+        text-align: center;
+      }
+      .mark {
+        width: 52px;
+        height: 52px;
+        margin: 0 auto 18px;
+        border-radius: 16px;
+        background: var(--accent);
+        color: #fff;
+        display: grid;
+        place-items: center;
+        font-weight: 800;
+        letter-spacing: -0.06em;
+        font-size: 1.05rem;
       }
       h1 {
-        font-size: clamp(2rem, 4vw, 2.6rem);
-        letter-spacing: -0.04em;
-        margin: 0 0 8px;
+        margin: 0 0 6px;
+        font-size: 1.85rem;
+        letter-spacing: -0.045em;
       }
       .lede {
-        color: var(--muted);
-        font-size: 1.05rem;
         margin: 0 0 28px;
-      }
-      .status {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        background: #e7f3ee;
-        color: var(--accent);
-        border: 1px solid #c5ddd4;
-        border-radius: 999px;
-        padding: 6px 12px;
-        font-size: 0.92rem;
-        font-weight: 600;
-        margin-bottom: 28px;
-      }
-      .status span {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: #2f9d6a;
+        color: var(--muted);
+        font-size: 0.98rem;
+        line-height: 1.45;
       }
       .actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin-bottom: 32px;
+        display: grid;
+        gap: 10px;
       }
-      a.button {
+      a.button,
+      button.button {
+        appearance: none;
+        cursor: pointer;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        text-decoration: none;
-        border-radius: 12px;
+        gap: 8px;
+        width: 100%;
+        min-height: 48px;
+        border-radius: 14px;
         padding: 12px 16px;
+        font: inherit;
         font-weight: 650;
+        text-decoration: none;
         border: 1px solid transparent;
+        transition: transform 0.12s ease, background 0.12s ease;
+      }
+      a.button:hover,
+      button.button:hover {
+        transform: translateY(-1px);
       }
       a.primary {
         background: var(--accent);
         color: #fff;
       }
-      a.secondary {
-        background: var(--card);
+      a.primary:hover {
+        background: var(--accent-hover);
+      }
+      button.secondary {
+        background: #fff;
         color: var(--ink);
         border-color: var(--line);
       }
-      section {
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        padding: 20px 22px;
-        margin-bottom: 16px;
-      }
-      h2 {
-        margin: 0 0 12px;
-        font-size: 1.05rem;
-      }
-      ul {
-        margin: 0;
-        padding-left: 18px;
+      .health {
+        margin-top: 18px;
+        min-height: 22px;
+        font-size: 0.92rem;
+        font-weight: 650;
         color: var(--muted);
-        line-height: 1.7;
       }
-      code {
-        font-family: ui-monospace, Consolas, monospace;
-        font-size: 0.92em;
-        background: #efe8dc;
-        padding: 1px 6px;
-        border-radius: 6px;
+      .health.ok {
+        color: var(--ok);
       }
-      .note {
-        color: var(--muted);
-        line-height: 1.6;
-      }
-      .accent {
-        color: var(--accent-2);
-        font-weight: 700;
+      .health.bad {
+        color: var(--bad);
       }
     </style>
   </head>
   <body>
-    <main>
-      <p class="status"><span></span> Backend status: Running</p>
-      <h1>SAGA Backend</h1>
-      <p class="lede">Student Activity Graph Based Continuous Assessment</p>
+    <main class="card">
+      <div class="mark" aria-hidden="true">S</div>
+      <h1>SAGA</h1>
+      <p class="lede">Student Activity Graph Based Continuous Assessment Project-Based Learning.</p>
       <div class="actions">
         <a class="button primary" href="/swagger-ui.html">Open Swagger UI</a>
-        <a class="button secondary" href="/v3/api-docs">OpenAPI JSON</a>
-        <a class="button secondary" href="/v3/api-docs.yaml">OpenAPI YAML</a>
-        <a class="button secondary" href="/actuator/health">Health</a>
+        <button class="button secondary" type="button" id="health-btn">Check health</button>
       </div>
-      <section>
-        <h2>Auth endpoints</h2>
-        <ul>
-          <li><code>GET /api/auth/csrf</code></li>
-          <li><code>POST /api/auth/login</code></li>
-          <li><code>POST /api/auth/register</code> (personal-email STUDENT only)</li>
-          <li><code>GET /api/auth/me</code></li>
-          <li><code>POST /api/auth/logout</code></li>
-          <li><code>POST /api/auth/password/setup</code></li>
-          <li><code>GET /oauth2/authorization/google</code> (browser redirect when Google OAuth is configured)</li>
-        </ul>
-      </section>
-      <section>
-        <h2>Developer note</h2>
-        <p class="note">
-          Use Swagger UI to test the API. SAGA uses HttpOnly server-side sessions backed by Valkey/Redis and CSRF
-          protection. Call <code>GET /api/auth/csrf</code> first; Swagger sends cookie <code>XSRF-TOKEN</code> as header
-          <code>X-XSRF-TOKEN</code>. Successful login sets HttpOnly cookie <span class="accent">SAGA_SESSION</span>.
-          There is no Bearer JWT for Auth V1. Google client secrets and environment credentials are never shown here.
-        </p>
-      </section>
+      <p class="health" id="health-status" aria-live="polite"></p>
     </main>
+    <script>
+      const statusEl = document.getElementById("health-status");
+      const btn = document.getElementById("health-btn");
+      btn.addEventListener("click", async () => {
+        statusEl.className = "health";
+        statusEl.textContent = "Checking…";
+        try {
+          const res = await fetch("/actuator/health");
+          const body = await res.json();
+          const up = body.status === "UP";
+          statusEl.className = "health " + (up ? "ok" : "bad");
+          statusEl.textContent = up ? "Health: UP" : "Health: " + (body.status || "DOWN");
+        } catch (err) {
+          statusEl.className = "health bad";
+          statusEl.textContent = "Health: unreachable";
+        }
+      });
+    </script>
   </body>
 </html>

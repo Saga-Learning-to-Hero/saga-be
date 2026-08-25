@@ -30,7 +30,10 @@ class DeveloperApiDocsTest {
 				.andExpect(status().isOk())
 				.andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
 				.andExpect(content().string(org.hamcrest.Matchers.containsString("SAGA Backend")))
-				.andExpect(content().string(org.hamcrest.Matchers.containsString("/swagger-ui.html")));
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("/swagger-ui.html")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("Check health")))
+				.andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("OpenAPI JSON"))))
+				.andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Auth endpoints"))));
 	}
 
 	@Test
