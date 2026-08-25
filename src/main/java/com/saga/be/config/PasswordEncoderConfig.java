@@ -6,10 +6,8 @@ import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 /**
- * Foundational encoder for future Auth V2. Does not implement login/registration.
- *
- * <p>Argon2id parameters follow current OWASP guidance: ~19 MiB memory, 2 iterations,
- * parallelism 1. Salt/hash lengths are Spring Security defaults for this constructor.
+ * Auth V1 password encoder. Argon2id parameters follow current OWASP guidance:
+ * ~19 MiB memory, 2 iterations, parallelism 1, salt 16 bytes, hash 32 bytes.
  */
 @Configuration
 public class PasswordEncoderConfig {

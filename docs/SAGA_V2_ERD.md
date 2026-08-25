@@ -1,6 +1,6 @@
 # SAGA V2 ERD
 
-Greenfield MySQL 8.4 schema. Flyway: `V1__initial_schema.sql` (immutable baseline) + `V2__user_account_password_hash_and_comment_task.sql`.
+Greenfield MySQL 8.4 schema. Flyway: `V1__initial_schema.sql` (immutable baseline) + `V2__user_account_password_hash_and_comment_task.sql` (immutable) + `V3__auth_v1_account_identity.sql` (`username`, `google_subject`; no new tables).
 
 This document describes the **52** tables created by V1. It is not a migration of the old database.
 
@@ -143,12 +143,12 @@ Provider-neutral login identity. Common account fields live here, not on student
 | | |
 | --- | --- |
 | PK | `id` |
-| Unique | `email` |
+| Unique | `email`, `username` (nullable unique), `google_subject` (nullable unique) |
 | Indexes | `(account_role, account_status)` |
-| Main columns | `email`, `full_name`, `avatar_url`, `password_hash`, `account_role`, `account_status` |
+| Main columns | `email`, `username`, `google_subject`, `full_name`, `avatar_url`, `password_hash`, `account_role`, `account_status` |
 | FK | none |
 
-`password_hash` is nullable (OIDC-only accounts may have no local password). Schema stores Argon2id `PasswordEncoder` output only (DEC-017) — never plaintext. `PasswordEncoder` is configured; login/registration are **not** implemented. No `cognito_sub`. Session/access/refresh token tables are **not** created until that architecture is finalized.
+`password_hash` is nullable (OIDC-only until Student password setup). Schema stores Argon2id `PasswordEncoder` output only (DEC-017). `username` is for local login (bootstrap Admin uses `admin`); it is **not** a Google identity. `google_subject` is Google OIDC `sub` (DEC-019). Sessions are **not** stored in MySQL (DEC-018: Spring Session Redis/Valkey). No `cognito_sub`. V3 does not add tables; domain table count remains 52.
 
 ### 2. `student_profile`
 

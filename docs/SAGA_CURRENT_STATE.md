@@ -10,11 +10,9 @@ Không lấy kế hoạch kiến trúc tương lai làm bằng chứng rằng fe
 
 ## 1. Giai đoạn hiện tại
 
-**Phase: Database V2 foundation**
+**Phase: Auth V1.1 implemented on Auth V1 + Database V2/V3 foundation**
 
-Architecture skeleton đã có. Flyway V1 + V2 + 52 JPA entities đã được tạo cho MySQL Source of Truth.
-
-Chưa có business feature nào (auth, sync, webhook, assessment engine, SSE, projection) được coi là đã shipped.
+Architecture skeleton đã có. Flyway V1 + V2 + V3 (identity columns only) + 52 JPA entities. Auth V1 (local login, Google OIDC institutional, Spring Session Redis, CSRF) đã được implement. Business Course/Task/Assessment services **chưa** shipped.
 
 ---
 
@@ -35,7 +33,7 @@ Chưa có business feature nào (auth, sync, webhook, assessment engine, SSE, pr
 | Validation | Bean Validation |
 | Graph persistence | Spring Data Neo4j |
 | Messaging | Spring for RabbitMQ |
-| Redis | Spring Data Redis (imperative baseline) |
+| Redis | Spring Data Redis + Spring Session Data Redis |
 | Observability | Spring Boot Actuator |
 | Migration | Flyway |
 | Boilerplate reduction | Lombok |
@@ -133,43 +131,47 @@ Profile `dev` (`application-dev.properties`) đã được chuẩn bị cho Rail
 
 Railway không dùng file `.env`. Credential được inject bằng Environment Variables. Railway tự inject `PORT`; ứng dụng bind `server.port=${PORT:8080}`. Healthcheck: `GET /actuator/health`.
 
-MySQL schema V2 + Flyway V1 = **IMPLEMENTED** (empty-database baseline). Các phần sau **chưa tồn tại**: Neo4j node/relationship/projection, Redis cache/rate-limit key, RabbitMQ queue/exchange/binding/DLQ.
+MySQL schema V1+V2+V3: V1/V2 immutable; V3 adds `user_account.username` + `google_subject` (no new tables; 52-table count unchanged). Redis/Valkey is used for Spring Session (ephemeral). Neo4j/RabbitMQ topology vẫn chưa implement.
 
 ---
 
 ## 6. Feature đã triển khai
 
-**Schema foundation (không phải business feature):**
+**Schema foundation:**
 
-- Flyway `V1__initial_schema.sql` — 52 tables
+- Flyway `V1__initial_schema.sql` — 52 tables (immutable)
+- Flyway `V2__user_account_password_hash_and_comment_task.sql` (immutable)
+- Flyway `V3__auth_v1_account_identity.sql` — `username`, `google_subject` unique nullable columns; no new tables
 - JPA entities + `BaseEntity` + enums
-- Foundation repositories (`UserAccount`, `Course`, `CourseEnrollment`, `Team`, `ActiveSemesterSetting`, `OutboxEvent`)
+- Foundation repositories
 - `local`/`dev`: Flyway enabled, `ddl-auto=validate`
 
-Cụ thể, các phần sau **CHƯA TRIỂN KHAI**, dù dependency/package, connectivity và schema foundation đã tồn tại:
+**Auth V1 + V1.1 (IMPLEMENTED / unit+slice TESTED):**
 
-- registration;
-- login;
-- Google OAuth flow;
-- role resolution;
-- xử lý session/token;
-- kết nối Jira;
-- kết nối GitHub;
+- Local login `POST /api/auth/login` (email or username)
+- Google OIDC authorization-code (`/oauth2/authorization/google`) when `GOOGLE_CLIENT_ID` is configured
+- Role resolution for **new** Google accounts only (DEC-020); existing DB role wins (DEC-019)
+- Student and Lecturer first-Google-login password setup (DEC-021, DEC-025), backend-enforced
+- Public Student registration `POST /api/auth/register` (DEC-024): personal email only, always STUDENT, no course/team membership
+- Bootstrap Admin from environment (DEC-023)
+- Server-side Spring Security session + HttpOnly `SAGA_SESSION` cookie + Spring Session Redis/Valkey (DEC-018)
+- CSRF cookie `XSRF-TOKEN` / header `X-XSRF-TOKEN`; CORS credentials with configured origins
+- `GET /api/auth/me`, `POST /api/auth/logout`, `GET /api/auth/csrf`, `POST /api/auth/password/setup`
+- Developer landing `GET /` + Swagger UI `/swagger-ui.html` + OpenAPI `/v3/api-docs` (springdoc 3.1.0). Docs paths are permitAll; business APIs are not. CSRF remains enabled (Swagger copies `XSRF-TOKEN` → `X-XSRF-TOKEN`).
+
+Cụ thể, các phần sau **CHƯA TRIỂN KHAI**:
+
+- forgot password / password reset email;
+- email ownership verification for personal registration (future enhancement);
+- MFA, JWT, refresh tokens;
+- kết nối Jira / GitHub business;
 - Webhook Jira/GitHub;
 - RabbitMQ topology;
-- webhook inbox;
-- transactional outbox;
-- idempotency store;
-- Redis Rate Limiting;
-- Redis realtime fan-out;
-- Neo4j schema;
-- graph projection;
-- graph query API;
+- transactional outbox runtime;
+- Redis Rate Limiting / realtime fan-out;
+- Neo4j schema / graph projection;
 - assessment algorithm;
-- SSE endpoint;
-- versioned realtime event;
-- notification feature;
-- cấu hình deployment.
+- SSE endpoint.
 
 ---
 
@@ -187,7 +189,11 @@ Các Decision quan trọng hiện tại:
 - Webhook GitHub/Jira cho inbound event.
 - SSE cho Backend → Browser realtime.
 - Baseline Spring MVC + Java 21.
-- Redis là ephemeral, không phải durable truth.
+- Redis là ephemeral, không phải durable truth (session store OK).
+- Auth V1 = Spring Security session + Valkey/Redis; không JWT (DEC-018).
+- Google OIDC `sub` + DB role wins; ADMIN never from Google (DEC-019–023).
+- K19+ personal-email Students may self-register; public registration always STUDENT; no Course/Team membership (DEC-024).
+- Google STUDENT and LECTURER must set a local SAGA password (DEC-025).
 - MongoDB không thuộc initial baseline.
 - Backend mới không dùng Cognito làm primary authentication platform.
 
@@ -197,41 +203,29 @@ Các Decision quan trọng hiện tại:
 
 ### Chiến lược authentication session/token
 
-Chưa chốt.
+**ĐÃ CHỐT cho Auth V1:** server-side Spring Security session + HttpOnly cookie + Spring Session Redis (DEC-018). Không JWT access/refresh trong Auth V1.
 
-Chi tiết vẫn cần thiết kế tường minh:
+Còn lại (không thuộc Auth V1.1):
 
-- server-side session so với mô hình access/refresh token;
-- chiến lược cookie;
-- hành vi refresh/revocation;
-- mô hình CSRF;
-- quy tắc session theo account/device;
-- hành vi logout.
-
-Không implement chiến lược token/session chỉ vì thư viện làm việc đó tiện.
+- forgot/reset password;
+- email ownership verification for personal registration;
+- MFA;
+- session/device inventory UI.
 
 ### Định danh FPT và role resolution
 
-Business rule đã được thảo luận nhưng phải được formalize trước khi implement.
-
-Quy tắc bảo mật quan trọng:
-
-> Nếu email không phân loại được một cách chắc chắn, không tự promote thành Lecturer.
-
-Identity unknown/ambiguous phải fail closed hoặc đi vào verification workflow.
+**ĐÃ CHỐT** DEC-020 / DEC-022. Identity unknown → fail closed; không default Lecturer. Personal Gmail không self-provision qua Google SAGA Login.
 
 ### Database schema
 
-SAGA V2 MySQL schema = **IMPLEMENTED** (foundation).
+SAGA V2 MySQL schema + Auth V1 identity columns = **IMPLEMENTED**.
 
-- Flyway `V1__initial_schema.sql`: 52 tables (immutable)
-- Flyway `V2__user_account_password_hash_and_comment_task.sql`: `password_hash`, `comment.task_id` (already applied; do not rename)
-- Argon2id `PasswordEncoder` bean (DEC-017) — not login/registration
-- JPA entities + `BaseEntity`
-- `local`/`dev`: `spring.flyway.enabled=true`, `ddl-auto=validate`
+- Flyway `V1` + `V2` immutable
+- Flyway `V3__auth_v1_account_identity.sql`: `username`, `google_subject`
+- Argon2id `PasswordEncoder` (DEC-017) used by local login / password setup / admin bootstrap
 - Chi tiết: `docs/SAGA_V2_ERD.md`, `docs/SAGA_V2_SCHEMA_DECISIONS.md`
 
-Business services trên schema này = **NOT IMPLEMENTED**.
+Business Course/Task/Assessment services = **NOT IMPLEMENTED**.
 
 ### Graph schema
 
@@ -243,7 +237,7 @@ Template assessment theo subject/course, trọng số, và công thức đóng g
 
 ### Public API contract
 
-Hiện không có endpoint nào được cam kết cho Frontend.
+Auth V1 endpoints are documented in `docs/FRONTEND_API_INTEGRATION.md` and in Swagger UI at `/swagger-ui.html` (OpenAPI `/v3/api-docs`). Graph/SSE contracts remain TBD.
 
 ### Realtime contract
 
@@ -256,17 +250,13 @@ SSE đã được chốt về mặt kiến trúc, nhưng endpoint name, event ty
 Thứ tự khuyến nghị:
 
 ```text
-1. Review SAGA V2 ERD / schema decisions
-2. Design Authentication + Authorization (session/token still TBD)
-3. Implement first auth/account vertical slice
-4. Define public API/error contract
-5. Implement Jira/GitHub webhook ingress + identity mapping
-6. Introduce RabbitMQ topology
-7. Implement transactional outbox publisher/consumers
-8. Design Neo4j graph model/projection
-9. Add versioned SSE delivery
-10. Implement Continuous Assessment pipeline (persist assessment_run/result)
-11. Load/failure testing
+1. Configure GOOGLE_CLIENT_ID / SECRET and smoke-test Google browser login (PENDING_CONFIGURATION if unset)
+2. Implement Jira/GitHub webhook ingress + identity mapping
+4. Introduce RabbitMQ topology
+5. Implement transactional outbox publisher/consumers
+6. Design Neo4j graph model/projection
+7. Add versioned SSE delivery
+8. Implement Continuous Assessment pipeline
 ```
 
 Thứ tự chỉ được đổi khi có nhu cầu dự án tường minh.

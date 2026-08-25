@@ -33,6 +33,14 @@ Giá trị trạng thái:
 | DEC-015 | Public contract với FE được ghi cùng thay đổi controller | ĐÃ CHỐT KIẾN TRÚC | 2026-08-19 |
 | DEC-016 | SAGA-owned internal IDs = UUID CHAR(36) | ĐÃ CHỐT KIẾN TRÚC | 2026-08-24 |
 | DEC-017 | Local password storage = Argon2id hash only | ĐÃ CHỐT KIẾN TRÚC | 2026-08-24 |
+| DEC-018 | Auth V1 = Spring Security session + Valkey/Redis | ĐÃ CHỐT KIẾN TRÚC | 2026-08-24 |
+| DEC-019 | Google OIDC `sub` is provider identity; DB role wins | ĐÃ CHỐT KIẾN TRÚC | 2026-08-24 |
+| DEC-020 | FPT Google role classification for new accounts | ĐÃ CHỐT KIẾN TRÚC | 2026-08-24 |
+| DEC-021 | FPT Student first Google login requires local password | ĐÃ CHỐT KIẾN TRÚC | 2026-08-24 |
+| DEC-022 | K19+ personal-email Students use local login only | ĐÃ CHỐT KIẾN TRÚC | 2026-08-24 |
+| DEC-023 | Bootstrap Admin via env username + Argon2id password | ĐÃ CHỐT KIẾN TRÚC | 2026-08-24 |
+| DEC-024 | K19+ personal-email Students may self-register as STUDENT | ĐÃ CHỐT KIẾN TRÚC | 2026-08-25 |
+| DEC-025 | Google STUDENT and LECTURER must set a local SAGA password | ĐÃ CHỐT KIẾN TRÚC | 2026-08-25 |
 
 ---
 
@@ -410,6 +418,159 @@ Registration, login, JWT, refresh token, session, logout, password reset, OAuth/
 ## Hệ quả
 
 Auth V2 sau này inject `PasswordEncoder` đã cấu hình. BCrypt không phải lựa chọn chính; chỉ cân nhắc sau nếu có compatibility constraint được ghi rõ.
+
+---
+
+# DEC-018 — Auth V1 uses server-side Spring Security sessions backed by Valkey/Redis
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-24
+
+## Bối cảnh
+
+SAGA sở hữu authentication (DEC-012). Browser auth cần session an toàn cho SPA mà không đưa access/refresh token vào `localStorage`.
+
+## Quyết định
+
+Auth V1 dùng:
+
+- server-side Spring Security session (`SessionCreationPolicy.IF_REQUIRED`)
+- HttpOnly session cookie `SAGA_SESSION`
+- Spring Session backed by existing Redis/Valkey (ephemeral)
+- MySQL `user_account` là durable account/role Source of Truth
+
+Không dùng JWT access/refresh, Cognito, hay STATELESS auth cho browser Auth V1.
+
+## Hệ quả
+
+Session không lưu trong MySQL. Test profile không kết nối Aiven Redis. CSRF được bật cho cookie session (CookieCsrfTokenRepository + `X-XSRF-TOKEN`).
+
+---
+
+# DEC-019 — Google OIDC uses `sub` as provider identity; existing role always wins
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-24
+
+## Quyết định
+
+- Google identity ổn định = OIDC `sub`, persist `user_account.google_subject`
+- Email không phải long-term Google identity key sau khi đã link
+- Account đã tồn tại: `account_role` trong MySQL là authority; không re-classify bằng regex Google
+- ADMIN không bao giờ được auto-provision từ Google
+
+## Hệ quả
+
+Linking: tìm theo `google_subject`, rồi email; conflict nếu `google_subject` khác. Không có bảng `auth_identity` trong Auth V1.
+
+---
+
+# DEC-020 — FPT Google role classification for new accounts only
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-24
+
+## Quyết định
+
+Chỉ khi OIDC hợp lệ, `email_verified=true`, account chưa tồn tại, và hosted-domain policy pass:
+
+- email kết thúc `@fe.edu.vn` → `LECTURER`
+- `^[A-Za-z]+\d{6}@fpt\.edu\.vn$` → `STUDENT`
+- verified institutional `@fpt.edu.vn` không khớp student regex → `LECTURER`
+- còn lại → không self-provision Google
+
+Allowed hosted domains cấu hình qua `SAGA_AUTH_GOOGLE_ALLOWED_HOSTED_DOMAINS` (mặc định `fpt.edu.vn,fe.edu.vn`). Thiếu/conflict `hd` → fail closed.
+
+---
+
+# DEC-021 — FPT Student first Google login must set a SAGA local password
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-24
+
+## Quyết định
+
+Student Google-authenticated với `password_hash IS NULL` nhận session hạn chế. Backend chặn business API cho đến khi `POST /api/auth/password/setup` thành công. Không tin frontend redirect.
+
+Lecturer/Admin **không** bị forced password-setup trong Decision này. **DEC-025** mở rộng yêu cầu này cho LECTURER Google.
+
+---
+
+# DEC-022 — K19+ personal-email Students use local email/password only
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-24
+
+## Quyết định
+
+Personal Gmail/Yahoo/Outlook không authenticate qua Google SAGA Login. Không self-provision Google từ gmail.com.
+
+Auth V1 **không** implement public registration. **DEC-024 (Auth V1.1)** khóa self-registration STUDENT cho email cá nhân.
+
+---
+
+# DEC-023 — Bootstrap Admin authenticates by username; credential from environment
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-24
+
+## Quyết định
+
+Một bootstrap Admin: username cấu hình (mặc định `admin`), password từ env, hash Argon2id. Idempotent: không reset password mỗi startup. Không hardcode `saga123` trong source/migration/committed config. Non-local từ chối password `saga123`. Google không tạo ADMIN.
+
+---
+
+# DEC-024 — K19+ personal-email Students may self-register as STUDENT
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-25
+
+## Bối cảnh
+
+K19+ Students dùng email cá nhân không đi Google OIDC (DEC-022). Auth V1.1 cần một đường onboarding public, không role selector, không cấp membership học thuật.
+
+## Quyết định
+
+`POST /api/auth/register` (public, CSRF-protected) luôn tạo `account_role = STUDENT`. Client không được gửi/chọn role. Email institutional (`@fpt.edu.vn`, `@fe.edu.vn`, và Google hosted domains đã cấu hình) bị từ chối (`INSTITUTIONAL_EMAIL_USE_GOOGLE`). Registration tạo `user_account` + `student_profile` only — **không** `course_enrollment` / `team_member`. Không auto-login; gọi `POST /api/auth/login` sau. Google login cho Gmail cá nhân vẫn bị reject.
+
+## Các lựa chọn khác
+
+Provisioning bởi Lecturer/Admin; Lecturer/Admin public registration; role selector — loại.
+
+## Hệ quả
+
+K19+ self-serve được. Isolation học thuật phải do Course/Team authorization, không phải vì có role STUDENT. Email ownership verification là enhancement tương lai, không thuộc Auth V1.1.
+
+## Migration
+
+Bổ sung DEC-022. Không thay schema (V1–V3 đủ). Không overwrite DEC-022 phần “không Google cho personal email”.
+
+---
+
+# DEC-025 — Google STUDENT and LECTURER must set a local SAGA password
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-25
+
+## Bối cảnh
+
+Auth V1 chỉ bắt Student Google set password (DEC-021). Lecturer cần cùng local email+password sau first Google login.
+
+## Quyết định
+
+Nếu account Google-linked (`google_subject != NULL`) là STUDENT hoặc LECTURER và `password_hash IS NULL` thì `passwordSetupRequired=true` cho đến `POST /api/auth/password/setup`. ADMIN không áp dụng. Personal-email Student từ DEC-024 đã có password lúc register. Setup không overwrite hash hiện có.
+
+## Các lựa chọn khác
+
+Chỉ Google cho Lecturer; plaintext temp password — loại.
+
+## Hệ quả
+
+Cùng account hỗ trợ Google và local email+password. `PasswordSetupEnforcementFilter` chặn business API cho cả STUDENT và LECTURER restricted sessions.
+
+## Migration
+
+Mở rộng DEC-021 sang LECTURER. Không đổi Flyway.
 
 ---
 

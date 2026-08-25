@@ -2,7 +2,7 @@
 
 Greenfield MySQL schema. Old `be-clean` database is **reference only**. This file records old → new mapping, exclusions, redesigns, new concepts, and items that still need review before business-layer work.
 
-Architecture decisions DEC-001–DEC-015 remain. Additional locks: **DEC-016** (internal UUID) and **DEC-017** (Argon2id password hash).
+Architecture decisions DEC-001–DEC-023 remain. Additional locks: **DEC-016** (internal UUID), **DEC-017** (Argon2id), **DEC-018–023** (Auth V1).
 
 ---
 
@@ -74,9 +74,11 @@ Also not recreated as first-class tables: `ai_conversation`, `ai_message`. Add l
 - One `user_account` per person.
 - Student/lecturer are profiles, not competing user tables.
 - Admins are `user_account.account_role = ADMIN` without a separate admin table.
-- `user_account.password_hash` (`VARCHAR(255) NULL`) stores Spring Security `PasswordEncoder` output only. Algorithm is **Argon2id** (DEC-017): memory 19456 KiB, iterations 2, parallelism 1. `PasswordEncoder` bean is configured; registration/login/session are **not** implemented. OIDC-only accounts may leave the column NULL. No plaintext, salt column, reversible encryption, or Cognito fields.
-- Session / access-token / refresh-token tables are **not** created. That architecture is still not finalized.
-- No Cognito fields.
+- `user_account.password_hash` (`VARCHAR(255) NULL`) stores Spring Security `PasswordEncoder` output only. Algorithm is **Argon2id** (DEC-017): memory 19456 KiB, iterations 2, parallelism 1. Used by Auth V1 local login, password setup, and admin bootstrap.
+- `user_account.username` (`VARCHAR(64) NULL`, unique) is a local identifier (bootstrap Admin). It is not a provider identity.
+- `user_account.google_subject` (`VARCHAR(255) NULL`, unique) stores Google OIDC `sub` (DEC-019). Added in Flyway V3. No `auth_identity` table.
+- Sessions are stored in Redis/Valkey via Spring Session (DEC-018). No MySQL session/access-token/refresh-token tables.
+- No Cognito fields. ADMIN is never auto-provisioned from Google.
 
 ### Academic model
 
@@ -235,12 +237,12 @@ Audit of 52 tables: **no UUID PK violations**. No ALTER was required for IDs. Fl
 
 ## 9. Unresolved items (review before business logic)
 
-1. **Auth session/token architecture** is still TBD. `password_hash` exists; Argon2id `PasswordEncoder` is configured; no refresh_token/session tables; login/registration **NOT IMPLEMENTED**.
+1. **Auth V1 + V1.1 is implemented** (DEC-018–025): Spring Session Redis, local login, Google OIDC, public STUDENT registration, Google STUDENT/LECTURER password setup. Remaining: forgot-password, MFA, email ownership verification. No MySQL session tables. No V4.
 2. **`business_warning` has no lifecycle status** (open/ack/resolved). Old runtime used event-key uniqueness. Add status later if UI needs it.
 3. **`contribution_override.override_type`** is VARCHAR, not an enum, until calculation code freezes the type set.
 4. **`git_repo.provider`** is `GitProvider.GITHUB` in JPA. Column remains VARCHAR for possible future providers.
 5. **Nullable unique GitHub ids**: rows synced before ids are known can duplicate NULLs. Sync code must persist provider ids before relying on uniqueness.
-6. **Flyway V1** is the empty-database baseline and is immutable. V2 is the applied foundation delta (`password_hash`, `comment.task_id`). Do not run V1 against the old `be-clean` schema.
+6. **Flyway V1** is the empty-database baseline and is immutable. **V2** is the applied foundation delta (`password_hash`, `comment.task_id`) and is immutable. **V3** adds `username` / `google_subject` only. Do not run V1 against the old `be-clean` schema.
 7. **`OLD_DATABASE_AUDIT.md`** is referenced by HANDOFF but was not present in this repository at implementation time.
 8. **Assessment score fields** are intentionally small (`contribution_score`, `peer_review_score`, `final_score`, `breakdown_json`). Exact formulas stay with the future assessment engine.
 9. **Encrypted token storage** for Jira is opaque TEXT. Key-management is an integration task.

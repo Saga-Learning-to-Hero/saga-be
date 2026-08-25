@@ -21,6 +21,8 @@ class DatabaseFoundationLockTest {
 		assertFalse(sql.contains("raw_password"));
 		assertFalse(sql.contains("password_salt"));
 		assertTrue(sql.contains("password_hash VARCHAR(255) NULL"));
+		assertTrue(sql.contains("username VARCHAR(64) NULL"));
+		assertTrue(sql.contains("google_subject VARCHAR(255) NULL"));
 		assertTrue(sql.contains("uk_team_project"));
 		assertTrue(sql.contains("fk_comment_task"));
 		assertTrue(sql.contains("ix_comment_task"));

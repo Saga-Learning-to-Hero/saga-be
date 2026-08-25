@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SAGA Backend</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f1ea;
+        --card: #fffcf7;
+        --ink: #1c1915;
+        --muted: #5c564c;
+        --line: #d9d1c3;
+        --accent: #1f4f46;
+        --accent-2: #c45c26;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background: radial-gradient(circle at top left, #efe6d6, var(--bg) 42%);
+        color: var(--ink);
+        min-height: 100vh;
+      }
+      main {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 48px 20px 72px;
+      }
+      h1 {
+        font-size: clamp(2rem, 4vw, 2.6rem);
+        letter-spacing: -0.04em;
+        margin: 0 0 8px;
+      }
+      .lede {
+        color: var(--muted);
+        font-size: 1.05rem;
+        margin: 0 0 28px;
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: #e7f3ee;
+        color: var(--accent);
+        border: 1px solid #c5ddd4;
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 0.92rem;
+        font-weight: 600;
+        margin-bottom: 28px;
+      }
+      .status span {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #2f9d6a;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 32px;
+      }
+      a.button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-decoration: none;
+        border-radius: 12px;
+        padding: 12px 16px;
+        font-weight: 650;
+        border: 1px solid transparent;
+      }
+      a.primary {
+        background: var(--accent);
+        color: #fff;
+      }
+      a.secondary {
+        background: var(--card);
+        color: var(--ink);
+        border-color: var(--line);
+      }
+      section {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 20px 22px;
+        margin-bottom: 16px;
+      }
+      h2 {
+        margin: 0 0 12px;
+        font-size: 1.05rem;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+      code {
+        font-family: ui-monospace, Consolas, monospace;
+        font-size: 0.92em;
+        background: #efe8dc;
+        padding: 1px 6px;
+        border-radius: 6px;
+      }
+      .note {
+        color: var(--muted);
+        line-height: 1.6;
+      }
+      .accent {
+        color: var(--accent-2);
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="status"><span></span> Backend status: Running</p>
+      <h1>SAGA Backend</h1>
+      <p class="lede">Student Activity Graph Based Continuous Assessment</p>
+      <div class="actions">
+        <a class="button primary" href="/swagger-ui.html">Open Swagger UI</a>
+        <a class="button secondary" href="/v3/api-docs">OpenAPI JSON</a>
+        <a class="button secondary" href="/v3/api-docs.yaml">OpenAPI YAML</a>
+        <a class="button secondary" href="/actuator/health">Health</a>
+      </div>
+      <section>
+        <h2>Auth endpoints</h2>
+        <ul>
+          <li><code>GET /api/auth/csrf</code></li>
+          <li><code>POST /api/auth/login</code></li>
+          <li><code>POST /api/auth/register</code> (personal-email STUDENT only)</li>
+          <li><code>GET /api/auth/me</code></li>
+          <li><code>POST /api/auth/logout</code></li>
+          <li><code>POST /api/auth/password/setup</code></li>
+          <li><code>GET /oauth2/authorization/google</code> (browser redirect when Google OAuth is configured)</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Developer note</h2>
+        <p class="note">
+          Use Swagger UI to test the API. SAGA uses HttpOnly server-side sessions backed by Valkey/Redis and CSRF
+          protection. Call <code>GET /api/auth/csrf</code> first; Swagger sends cookie <code>XSRF-TOKEN</code> as header
+          <code>X-XSRF-TOKEN</code>. Successful login sets HttpOnly cookie <span class="accent">SAGA_SESSION</span>.
+          There is no Bearer JWT for Auth V1. Google client secrets and environment credentials are never shown here.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

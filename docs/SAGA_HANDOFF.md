@@ -2,9 +2,9 @@
 
 ## 0. Handoff metadata
 
-- Last updated: 2026-08-24
-- Current phase: Database V2 foundation complete (Flyway v2 applied; UUID + Argon2id locked)
-- Current focus: Auth V2 / first business vertical slice (session/token still TBD)
+- Last updated: 2026-08-25
+- Current phase: Auth V1.1 on Flyway V1+V2+V3 (52 tables; UUID + Argon2id + Spring Session)
+- Current focus: Google browser smoke (if credentials) then first business vertical (webhooks)
 - Backend repo: `saga-be` (`com.saga.be`)
 - Frontend repo: TBD — không được xác nhận trong docs của repo này
 
@@ -29,7 +29,8 @@ Xác nhận trong docs `saga-be`:
 - Next.js là FE consumer (README / architecture diagram)
 - Backend → Browser realtime = SSE (DEC-007)
 - TanStack Query: cache thuộc FE; BE không phụ thuộc thư viện này
-- Public API contract: TBD / chưa chốt endpoint
+- Public API contract Auth V1: `docs/FRONTEND_API_INTEGRATION.md`
+- Developer API: `http://localhost:8080/` · Swagger UI `http://localhost:8080/swagger-ui.html` · OpenAPI `http://localhost:8080/v3/api-docs`
 
 Chưa có tài liệu trong `saga-be` xác nhận: Next.js App Router, TypeScript, Cytoscape.js, Zustand, Web Worker, hay quy tắc “không lưu toàn bộ Cytoscape graph vào React/Zustand”. Coi các mục đó là **TBD / ngoài repo này**.
 
@@ -39,6 +40,7 @@ Chưa có tài liệu trong `saga-be` xác nhận: Next.js App Router, TypeScrip
 - Modular Monolith
 - Virtual Threads khi phù hợp (DEC-008)
 - Không dùng WebFlux làm baseline
+- springdoc-openapi 3.1.0: landing `/`, Swagger UI `/swagger-ui.html`, OpenAPI `/v3/api-docs`
 
 ### Infrastructure
 
@@ -47,7 +49,7 @@ Chưa có tài liệu trong `saga-be` xác nhận: Next.js App Router, TypeScrip
 | MySQL | Aiven | Source of Truth | CONFIGURED / CONNECTED (local) |
 | Neo4j | AuraDB | Graph Read Model / Projection | CONFIGURED / CONNECTED (local). Projection **NOT IMPLEMENTED** |
 | RabbitMQ | CloudAMQP | Async messaging | CONFIGURED / CONNECTED (local). Topology **NOT IMPLEMENTED** |
-| Redis/Valkey | Aiven | Ephemeral / cache / realtime support | CONFIGURED / CONNECTED (local). Cache strategy **NOT IMPLEMENTED** |
+| Redis/Valkey | Aiven | Ephemeral / Spring Session | CONFIGURED / CONNECTED (local). Session store **IMPLEMENTED**. Cache strategy **NOT IMPLEMENTED** |
 | Backend hosting | Railway | DEV runtime | CONFIGURED / ONLINE. Health `GET /actuator/health` = UP. Auto deploy from GitHub = enabled |
 
 ## 3. Locked architecture decisions
@@ -73,6 +75,14 @@ Tất cả **ĐÃ CHỐT KIẾN TRÚC** trong `SAGA_DECISION_LOG.md`:
 | DEC-015 | Public FE contract ghi cùng thay đổi controller |
 | DEC-016 | SAGA-owned internal IDs = UUID CHAR(36) |
 | DEC-017 | Local password storage = Argon2id hash only |
+| DEC-018 | Auth V1 = Spring Security session + Valkey/Redis; no JWT |
+| DEC-019 | Google OIDC `sub`; existing DB role wins; no Google ADMIN |
+| DEC-020 | FPT Google role classification for new accounts |
+| DEC-021 | FPT Student first Google login requires local password |
+| DEC-022 | K19+ personal-email Students: local login only |
+| DEC-023 | Bootstrap Admin via env; Argon2id; no hardcoded production password |
+| DEC-024 | Personal-email Student self-registration; always STUDENT; no academic membership |
+| DEC-025 | Google STUDENT and LECTURER must set a local SAGA password |
 
 Transactional Outbox là hướng consistency (DEC-004). Implementation = **NOT IMPLEMENTED**.
 
@@ -114,6 +124,7 @@ Profiles: `application.properties` (chung), `application-local.properties`, `app
 - Redis/Valkey: CONFIGURED / CONNECTED — PASS
 - RabbitMQ: CONFIGURED / CONNECTED — PASS
 - Actuator: `GET /actuator/health` expose `health,info`; local `show-details=always`
+- Developer docs: `GET /` landing, Swagger UI `/swagger-ui.html`, OpenAPI `/v3/api-docs`
 - mvn test: BUILD SUCCESS (profile `test`, không nối cloud)
 
 Đây là connectivity, không phải business feature.
@@ -149,7 +160,7 @@ Tóm tắt old system:
 **OLD SCHEMA = REFERENCE ONLY.**
 **DO NOT COPY ALL 61 TABLES INTO V2.**
 
-MySQL schema V2: **IMPLEMENTED** (empty-database baseline, 52 tables). Flyway `V1__initial_schema.sql` (immutable) + `V2__user_account_password_hash_and_comment_task.sql`. `local`/`dev`: `ddl-auto=validate`, `flyway.enabled=true`.
+MySQL schema V2 + Auth V1 identity: **IMPLEMENTED**. Flyway `V1__initial_schema.sql` (immutable) + `V2__user_account_password_hash_and_comment_task.sql` (immutable) + `V3__auth_v1_account_identity.sql`. Domain table count remains **52**. `local`/`dev`: `ddl-auto=validate`, `flyway.enabled=true`.
 
 Classification KEEP / REDESIGN / MERGE / DROP-FROM-V1 / ADD: documented in `docs/SAGA_V2_SCHEMA_DECISIONS.md`. ERD: `docs/SAGA_V2_ERD.md`.
 
@@ -161,9 +172,9 @@ Business layer on this schema: **NOT IMPLEMENTED**.
 
 Schema V2 đã được tạo theo target 52 tables (không thêm DEC-xxx mới; DEC-001–015 giữ nguyên). Chi tiết trong `SAGA_V2_SCHEMA_DECISIONS.md`.
 
-### Account model — SCHEMA PRESENT / AUTH TBD
+### Account model — SCHEMA + AUTH V1 IMPLEMENTED
 
-`user_account` + `student_profile` + `lecturer_profile`. `password_hash` nullable (Flyway V2). Argon2id `PasswordEncoder` **configured** (DEC-017). Session/token **NOT FINALIZED** — no session tables. Không có `cognito_sub`. Login/registration **NOT IMPLEMENTED**.
+`user_account` + `student_profile` + `lecturer_profile`. `password_hash` nullable (Flyway V2). `username` + `google_subject` nullable unique (Flyway V3). Argon2id `PasswordEncoder` (DEC-017). Session in Redis/Valkey, not MySQL (DEC-018). Không có `cognito_sub`. Public self-registration creates STUDENT only (DEC-024); no course/team membership.
 
 ### Course membership — IN SCHEMA
 
@@ -183,11 +194,10 @@ Firebase/FCM runtime vẫn **OPTIONAL**; table `firebase_installation` nằm tro
 
 ## 8. Authentication status
 
-- **DECIDED:** Backend sở hữu authentication/account state. Không dùng AWS Cognito làm primary platform (DEC-012). Google OAuth/OIDC có thể là một đường login.
-- **NOT FINALIZED:** session vs access/refresh token, cookie, CSRF, logout, revocation.
-- **NOT IMPLEMENTED:** registration, login, Google OAuth flow, role resolution, session/token handling.
-- Role rule đã ghi: identity mơ hồ phải fail closed; không tự promote Lecturer.
-- Không copy Cognito implementation cũ thành design hiện tại.
+- **DECIDED / IMPLEMENTED (Auth V1 + V1.1):** server-side Spring Security session + HttpOnly `SAGA_SESSION` + Spring Session Redis (DEC-018). Local login + Google OIDC (institutional only) + public Student registration (DEC-024) + Google STUDENT/LECTURER password setup (DEC-025). CSRF cookie strategy. See `FRONTEND_API_INTEGRATION.md`.
+- **Google browser smoke:** PENDING_CONFIGURATION until `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are set.
+- **NOT IMPLEMENTED:** forgot-password, email verification for personal registration, MFA, JWT.
+- ADMIN never auto-created from Google (DEC-019, DEC-023). Public registration never creates LECTURER/ADMIN.
 
 ## 9. Implemented vs not implemented
 
@@ -203,12 +213,11 @@ Firebase/FCM runtime vẫn **OPTIONAL**; table `firebase_installation` nằm tro
 - Test context độc lập cloud
 - Railway DEV deployment ONLINE + healthcheck UP
 - Old database audit COMPLETE (reference; `docs/OLD_DATABASE_AUDIT.md` may live outside this repo)
-- MySQL V2 Flyway V1 (52 tables) + JPA entities + foundation repositories
-- `docs/SAGA_V2_ERD.md`, `docs/SAGA_V2_SCHEMA_DECISIONS.md`
+- MySQL V1+V2+V3 Flyway + JPA entities + foundation repositories
+- Auth V1 + V1.1: local login, Google OIDC (config-gated), password setup for Google STUDENT/LECTURER, public Student registration, bootstrap admin, Spring Session Redis, CSRF/CORS
 
 ### NOT IMPLEMENTED YET
 
-- Auth V2
 - GitHub / Jira webhook pipeline
 - Transactional Outbox / webhook inbox / idempotency store
 - Graph projection / Neo4j schema / Graph API
@@ -220,29 +229,27 @@ Firebase/FCM runtime vẫn **OPTIONAL**; table `firebase_installation` nằm tro
 
 ## 10. Current open questions
 
-1. Auth session/token strategy (no session/refresh_token tables; `password_hash` + Argon2id encoder exist; login **NOT IMPLEMENTED**)
-2. Unresolved list trong `docs/SAGA_V2_SCHEMA_DECISIONS.md` section 9
-3. Flyway V1 is immutable; V2 is the applied foundation delta. Không chạy V1 lên old `be-clean` schema
+1. Google Workspace `hd` vs email suffix: verifier is configurable and fail-closed if `hd` missing/conflicts. Real FPT `hd` behavior should be confirmed in a browser smoke test.
+2. Email ownership verification for personal registration is a possible future enhancement (not Auth V1.1).
+3. Unresolved list trong `docs/SAGA_V2_SCHEMA_DECISIONS.md` section 9
+4. Flyway V1 and V2 are immutable. V3 is the Auth V1 identity delta. No V4 for Auth V1.1.
 
 ## 11. Immediate next step
 
-**Review schema foundation, then Auth V2 / first vertical slice.** Chưa port business services.
+Configure Google OIDC credentials if missing, then first business vertical (webhooks). Chưa port Course/Task/Assessment services.
 
 ```text
-SAGA V2 Flyway V1 + V2 + JPA entities = COMPLETE
+Auth V1 + V1.1 (session + local + Google OIDC + Student register) = IMPLEMENTED / TESTED
         ↓
-Review ERD / schema decisions
+Google browser smoke = PENDING_CONFIGURATION if client secrets unset
         ↓
-Auth V2 (session/token still TBD)
-        ↓
-First account/academic vertical slice
-        ↓
-Webhook + identity map + outbox consumers
+Jira/GitHub webhook ingress
 ```
 
-**DO NOT START full Jira/GitHub/assessment engines until ERD review is accepted.**
+**DO NOT START full Jira/GitHub/assessment engines as part of Auth V1.**
 **DO NOT COPY ALL 61 TABLES INTO V2.**
 **DO NOT run V1 against the old database.**
+**DO NOT edit V1 or V2 migrations.**
 
 ## 12. Do not accidentally do
 
