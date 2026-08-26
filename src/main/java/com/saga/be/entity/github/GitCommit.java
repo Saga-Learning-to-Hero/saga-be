@@ -63,6 +63,15 @@ public class GitCommit extends BaseEntity {
 	@Column(name = "files_changed")
 	private Integer filesChanged;
 
+	@Column(name = "signature_verified")
+	private Boolean signatureVerified;
+
+	@Column(name = "verification_reason", length = 64)
+	private String verificationReason;
+
+	@Column(name = "head_ref", length = 255)
+	private String headRef;
+
 	@Column(name = "external_updated_at")
 	private LocalDateTime externalUpdatedAt;
 }

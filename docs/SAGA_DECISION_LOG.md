@@ -41,6 +41,13 @@ Giá trị trạng thái:
 | DEC-023 | Bootstrap Admin via env username + Argon2id password | ĐÃ CHỐT KIẾN TRÚC | 2026-08-24 |
 | DEC-024 | K19+ personal-email Students may self-register as STUDENT | ĐÃ CHỐT KIẾN TRÚC | 2026-08-25 |
 | DEC-025 | Google STUDENT and LECTURER must set a local SAGA password | ĐÃ CHỐT KIẾN TRÚC | 2026-08-25 |
+| DEC-026 | Global provider identities belong to the SAGA user | ĐÃ CHỐT KIẾN TRÚC | 2026-08-25 |
+| DEC-027 | Team resource integrations are Leader-only | ĐÃ CHỐT KIẾN TRÚC | 2026-08-25 |
+| DEC-028 | Evidence-based attribution, not commit counting | ĐÃ CHỐT KIẾN TRÚC | 2026-08-25 |
+| DEC-029 | Append-only audit log with actor snapshots | ĐÃ CHỐT KIẾN TRÚC | 2026-08-25 |
+| DEC-030 | GitHub App installation for team repositories | ĐÃ CHỐT KIẾN TRÚC | 2026-08-25 |
+| DEC-031 | Jira Cloud OAuth 2.0 3LO for team connection | ĐÃ CHỐT KIẾN TRÚC | 2026-08-25 |
+| DEC-032 | Account-sharing threat model is explicit | ĐÃ CHỐT KIẾN TRÚC | 2026-08-25 |
 
 ---
 
@@ -571,6 +578,91 @@ Cùng account hỗ trợ Google và local email+password. `PasswordSetupEnforcem
 ## Migration
 
 Mở rộng DEC-021 sang LECTURER. Không đổi Flyway.
+
+---
+
+# DEC-026 — GLOBAL_PROVIDER_IDENTITIES
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-25
+
+## Bối cảnh
+
+SAGA phải gán GitHub/Jira activity cho user, không cho team. Một user có thể có nhiều account GitHub/Jira.
+
+## Quyết định
+
+`identity_map` thuộc SAGA user. Unique active owner là `(provider, stable_provider_subject)`. Không unique `(user, provider)`. GitHub identity = numeric user id. Jira identity = Atlassian accountId. Username/login là display data.
+
+## Hệ quả
+
+V4 drop `uk_identity_user_provider`. Conflict `EXTERNAL_IDENTITY_ALREADY_LINKED` không tiết lộ user đang giữ identity.
+
+---
+
+# DEC-027 — TEAM_RESOURCE_INTEGRATIONS
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-25
+
+## Quyết định
+
+Personal identity link ≠ team resource connection. Chỉ `RoleInTeam.LEADER` (hoặc ADMIN recovery) được connect GitHub App installation / Jira site-project-board. Team Leader = `team_member.role_in_team = LEADER`.
+
+---
+
+# DEC-028 — EVIDENCE_BASED_ATTRIBUTION
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-25
+
+## Quyết định
+
+GitHub/Jira activity là evidence, không phải proof of physical authorship. Không đếm commit = contribution. Không gắn nhãn CHEATER/FRAUD. Confidence và risk signal tách khỏi academic score. Jira vẫn là source of truth cho workflow status.
+
+---
+
+# DEC-029 — APPEND_ONLY_AUDIT
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-25
+
+## Quyết định
+
+`audit_log` append-only, actor snapshot (name/role/email/student code), academic context khi unambiguous. Không API update/delete. Secrets đi qua `AuditRedactor`.
+
+---
+
+# DEC-030 — GITHUB_APP_INTEGRATION
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-25
+
+## Quyết định
+
+Team repos dùng GitHub App installation, không PAT. Installation access token mint từ App JWT, cache Valkey TTL < expiry, không persist domain. Webhook HMAC-SHA256 `X-Hub-Signature-256`. Không tin `installation_id` trên query nếu chưa verify App API.
+
+---
+
+# DEC-031 — JIRA_CLOUD_3LO
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-25
+
+## Quyết định
+
+Jira Cloud OAuth 2.0 3LO. Personal link không cần offline refresh. Team connect cần `offline_access`. Refresh token AES-256-GCM versioned envelope. Dynamic webhooks + scheduler refresh trước hạn. Connecting Jira account phải đã link trên profile SAGA.
+
+---
+
+# DEC-032 — ACCOUNT_SHARING_THREAT_MODEL
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-25
+
+## Quyết định
+
+Student A có thể đưa credential GitHub/Jira cho Student B. Provider events vẫn mang identity A. SAGA không claim physical authorship. Mitigation: provider identity + SAGA work session + step-up + optional passkey + task confirmation + audit + anomaly + lecturer review.
 
 ---
 

@@ -44,6 +44,9 @@ public class WebhookReceipt extends BaseEntity {
 	@Column(name = "event_type", length = 128, nullable = false)
 	private String eventType;
 
+	@Column(name = "event_action", length = 64)
+	private String eventAction;
+
 	@JdbcTypeCode(Types.CHAR)
 	@Column(name = "target_id", columnDefinition = "char(36)")
 	private UUID targetId;

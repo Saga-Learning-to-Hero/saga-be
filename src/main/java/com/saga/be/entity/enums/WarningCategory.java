@@ -5,5 +5,7 @@ public enum WarningCategory {
 	DEADLINE,
 	INTEGRATION,
 	TEAM,
-	ASSESSMENT
+	ASSESSMENT,
+	ATTRIBUTION,
+	SECURITY
 }

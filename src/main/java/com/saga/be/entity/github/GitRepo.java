@@ -3,6 +3,7 @@ package com.saga.be.entity.github;
 import com.saga.be.entity.BaseEntity;
 import com.saga.be.entity.enums.GitProvider;
 import com.saga.be.entity.enums.IntegrationStatus;
+import com.saga.be.entity.enums.RepositoryRole;
 import com.saga.be.entity.github.GithubInstallation;
 import com.saga.be.entity.project.Project;
 import jakarta.persistence.Column;
@@ -62,6 +63,13 @@ public class GitRepo extends BaseEntity {
 
 	@Column(name = "default_branch", length = 128)
 	private String defaultBranch;
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "repository_role", length = 32)
+	private RepositoryRole repositoryRole;
+
+	@Column(name = "is_private")
+	private Boolean privateRepository;
 
 	@Enumerated(EnumType.STRING)
 	@Column(name = "connection_status", length = 32, nullable = false)

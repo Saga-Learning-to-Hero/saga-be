@@ -45,6 +45,9 @@ public class PullRequest extends BaseEntity {
 	@Column(name = "title", length = 500)
 	private String title;
 
+	@Column(name = "body", columnDefinition = "MEDIUMTEXT")
+	private String body;
+
 	@Column(name = "github_pull_request_id")
 	private Long githubPullRequestId;
 
@@ -66,6 +69,12 @@ public class PullRequest extends BaseEntity {
 
 	@Column(name = "comment_count")
 	private Integer commentCount;
+
+	@Column(name = "head_ref", length = 255)
+	private String headRef;
+
+	@Column(name = "base_ref", length = 255)
+	private String baseRef;
 
 	@Column(name = "external_updated_at")
 	private LocalDateTime externalUpdatedAt;

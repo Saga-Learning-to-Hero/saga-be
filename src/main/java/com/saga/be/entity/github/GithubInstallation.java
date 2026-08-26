@@ -3,6 +3,7 @@ package com.saga.be.entity.github;
 import com.saga.be.entity.BaseEntity;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.enums.GitHubInstallationStatus;
+import com.saga.be.entity.project.Project;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -33,15 +34,25 @@ public class GithubInstallation extends BaseEntity {
 	@Column(name = "installation_id", nullable = false)
 	private Long installationId;
 
+	@Column(name = "app_id")
+	private Long appId;
+
 	@ManyToOne(fetch = FetchType.LAZY, optional = true)
 	@JoinColumn(name = "installed_by_user_id", nullable = true)
 	private UserAccount installedBy;
+
+	@ManyToOne(fetch = FetchType.LAZY, optional = true)
+	@JoinColumn(name = "project_id", nullable = true)
+	private Project project;
 
 	@Column(name = "account_login", length = 255)
 	private String accountLogin;
 
 	@Column(name = "account_type", length = 64)
 	private String accountType;
+
+	@Column(name = "html_url", length = 500)
+	private String htmlUrl;
 
 	@Enumerated(EnumType.STRING)
 	@Column(name = "installation_status", length = 32, nullable = false)

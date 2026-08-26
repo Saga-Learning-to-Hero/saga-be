@@ -30,6 +30,7 @@ public class PasswordSetupEnforcementFilter extends OncePerRequestFilter {
 			PathPatternRequestMatcher.pathPattern(HttpMethod.POST, "/api/auth/register"),
 			PathPatternRequestMatcher.pathPattern(HttpMethod.POST, "/api/auth/password/setup"),
 			PathPatternRequestMatcher.pathPattern(HttpMethod.POST, "/api/auth/logout"),
+			PathPatternRequestMatcher.pathPattern("/api/webhooks/**"),
 			PathPatternRequestMatcher.pathPattern("/oauth2/**"),
 			PathPatternRequestMatcher.pathPattern("/login/oauth2/**"));
 

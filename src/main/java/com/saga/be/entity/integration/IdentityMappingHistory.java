@@ -50,6 +50,27 @@ public class IdentityMappingHistory extends BaseEntity {
 	@Column(name = "action", length = 32, nullable = false)
 	private IdentityMappingAction action;
 
+	@Column(name = "previous_status", length = 32)
+	private String previousStatus;
+
+	@Column(name = "new_status", length = 32)
+	private String newStatus;
+
+	@Column(name = "reason", length = 255)
+	private String reason;
+
+	@Column(name = "source", length = 32)
+	private String source;
+
+	@Column(name = "is_primary_snapshot")
+	private Boolean primarySnapshot;
+
+	@Column(name = "previous_state_json", columnDefinition = "json")
+	private String previousStateJson;
+
+	@Column(name = "new_state_json", columnDefinition = "json")
+	private String newStateJson;
+
 	@ManyToOne(fetch = FetchType.LAZY, optional = true)
 	@JoinColumn(name = "actor_user_id", nullable = true)
 	private UserAccount actorUser;

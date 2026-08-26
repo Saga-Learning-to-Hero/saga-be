@@ -3,6 +3,7 @@ package com.saga.be.entity.jira;
 import com.saga.be.entity.BaseEntity;
 import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.enums.Priority;
+import com.saga.be.entity.enums.SagaCompletionState;
 import com.saga.be.entity.enums.TaskStatus;
 import com.saga.be.entity.enums.TaskType;
 import com.saga.be.entity.jira.Sprint;
@@ -84,6 +85,22 @@ public class Task extends BaseEntity {
 	@Column(name = "status", length = 32)
 	private TaskStatus status;
 
+	@Column(name = "jira_status_id", length = 64)
+	private String jiraStatusId;
+
+	@Column(name = "jira_status_name", length = 128)
+	private String jiraStatusName;
+
+	@Column(name = "jira_status_category", length = 64)
+	private String jiraStatusCategory;
+
+	@Column(name = "issue_type_name", length = 64)
+	private String issueTypeName;
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "saga_completion_state", length = 32)
+	private SagaCompletionState sagaCompletionState;
+
 	@Enumerated(EnumType.STRING)
 	@Column(name = "priority", length = 32)
 	private Priority priority;
@@ -99,6 +116,9 @@ public class Task extends BaseEntity {
 
 	@Column(name = "resolved_at")
 	private LocalDateTime resolvedAt;
+
+	@Column(name = "completed_at")
+	private LocalDateTime completedAt;
 
 	@Column(name = "resolution", length = 128)
 	private String resolution;

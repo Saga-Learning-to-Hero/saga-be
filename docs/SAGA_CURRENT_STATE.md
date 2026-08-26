@@ -1,6 +1,6 @@
 # SAGA Backend — Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-08-24
+**Cập nhật lần cuối:** 2026-08-25
 
 File này mô tả những gì **thực sự đang có / đã implement** tại thời điểm hiện tại.
 
@@ -10,9 +10,9 @@ Không lấy kế hoạch kiến trúc tương lai làm bằng chứng rằng fe
 
 ## 1. Giai đoạn hiện tại
 
-**Phase: Auth V1.1 implemented on Auth V1 + Database V2/V3 foundation**
+**Phase: Auth V1.1 + Integration/Identity/Audit/Attribution Foundation V1**
 
-Architecture skeleton đã có. Flyway V1 + V2 + V3 (identity columns only) + 52 JPA entities. Auth V1 (local login, Google OIDC institutional, Spring Session Redis, CSRF) đã được implement. Business Course/Task/Assessment services **chưa** shipped.
+Architecture skeleton đã có. Flyway V1 + V2 + V3 (immutable) + V4 integration/identity/audit/attribution foundation (58 tables). Auth V1 complete. Integration V1 foundation (identity link, team GitHub App / Jira 3LO, webhooks, audit, attribution evidence) is implemented. Course/Task/Assessment scoring **chưa** shipped.
 
 ---
 
@@ -141,7 +141,8 @@ MySQL schema V1+V2+V3: V1/V2 immutable; V3 adds `user_account.username` + `googl
 
 - Flyway `V1__initial_schema.sql` — 52 tables (immutable)
 - Flyway `V2__user_account_password_hash_and_comment_task.sql` (immutable)
-- Flyway `V3__auth_v1_account_identity.sql` — `username`, `google_subject` unique nullable columns; no new tables
+- Flyway `V4__integration_identity_audit_attribution_foundation.sql` — identity multi-account, audit_log, direct task↔commit/PR links, work sessions, confirmation, WebAuthn table
+- Flyway `V4__integration_identity_audit_attribution_foundation.sql` — identity multi-account, audit_log, direct task↔commit/PR links, work sessions, confirmation, WebAuthn table
 - JPA entities + `BaseEntity` + enums
 - Foundation repositories
 - `local`/`dev`: Flyway enabled, `ddl-auto=validate`
@@ -163,15 +164,13 @@ Cụ thể, các phần sau **CHƯA TRIỂN KHAI**:
 
 - forgot password / password reset email;
 - email ownership verification for personal registration (future enhancement);
-- MFA, JWT, refresh tokens;
-- kết nối Jira / GitHub business;
-- Webhook Jira/GitHub;
-- RabbitMQ topology;
-- transactional outbox runtime;
-- Redis Rate Limiting / realtime fan-out;
+- MFA as a full login replacement (WebAuthn is feature-flagged step-up only);
+- JWT / refresh tokens;
+- RabbitMQ topology / outbox relay to graph;
 - Neo4j schema / graph projection;
-- assessment algorithm;
-- SSE endpoint.
+- assessment algorithm / contributionScore weights;
+- SSE endpoint;
+- live paginated GitHub/Jira history sync against production credentials.
 
 ---
 

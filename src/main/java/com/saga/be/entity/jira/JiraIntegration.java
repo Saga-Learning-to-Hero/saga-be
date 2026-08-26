@@ -53,6 +53,9 @@ public class JiraIntegration extends BaseEntity {
 	@Column(name = "site_url", length = 500)
 	private String siteUrl;
 
+	@Column(name = "site_name", length = 255)
+	private String siteName;
+
 	@Column(name = "jira_project_id", length = 64)
 	private String jiraProjectId;
 
@@ -88,14 +91,23 @@ public class JiraIntegration extends BaseEntity {
 	@Column(name = "webhook_secret_hash", length = 64)
 	private String webhookSecretHash;
 
+	@Column(name = "encrypted_webhook_secret", columnDefinition = "TEXT")
+	private String encryptedWebhookSecret;
+
 	@Column(name = "sync_cursor")
 	private LocalDateTime syncCursor;
 
 	@Column(name = "consecutive_failures", nullable = false)
 	private Integer consecutiveFailures;
 
+	@Column(name = "last_error_code", length = 64)
+	private String lastErrorCode;
+
 	@Column(name = "last_synced_at")
 	private LocalDateTime lastSyncedAt;
+
+	@Column(name = "last_successful_sync_at")
+	private LocalDateTime lastSuccessfulSyncAt;
 
 	@Version
 	@Column(name = "version", nullable = false)

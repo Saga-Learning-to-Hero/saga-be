@@ -4,5 +4,9 @@ public enum IntegrationStatus {
 	CONNECTED,
 	DISCONNECTED,
 	ERROR,
-	PENDING
+	PENDING,
+	CONNECTING,
+	ACTIVE,
+	DEGRADED,
+	REVOKED
 }
