@@ -9,14 +9,16 @@ import com.saga.be.exception.AuthException;
 import com.saga.be.repository.LecturerProfileRepository;
 import com.saga.be.repository.StudentProfileRepository;
 import com.saga.be.repository.UserAccountRepository;
+import com.saga.be.service.roster.InvitationClaimService;
 import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Profile;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -32,6 +34,7 @@ public class GoogleAccountService {
 	private final LecturerProfileRepository lecturers;
 	private final GoogleRoleResolver roleResolver;
 	private final AccountStatusGuard statusGuard;
+	private final InvitationClaimService invitationClaims;
 
 	public GoogleAccountService(
 			UserAccountRepository users,
@@ -39,11 +42,23 @@ public class GoogleAccountService {
 			LecturerProfileRepository lecturers,
 			GoogleRoleResolver roleResolver,
 			AccountStatusGuard statusGuard) {
+		this(users, students, lecturers, roleResolver, statusGuard, null);
+	}
+
+	@Autowired
+	public GoogleAccountService(
+			UserAccountRepository users,
+			StudentProfileRepository students,
+			LecturerProfileRepository lecturers,
+			GoogleRoleResolver roleResolver,
+			AccountStatusGuard statusGuard,
+			InvitationClaimService invitationClaims) {
 		this.users = users;
 		this.students = students;
 		this.lecturers = lecturers;
 		this.roleResolver = roleResolver;
 		this.statusGuard = statusGuard;
+		this.invitationClaims = invitationClaims;
 	}
 
 	@Transactional
@@ -52,11 +67,15 @@ public class GoogleAccountService {
 		String sub = identity.subject();
 		String email = identity.email().trim().toLowerCase(Locale.ROOT);
 
-		return users.findByGoogleSubject(sub)
+		UserAccount account = users.findByGoogleSubject(sub)
 				.map(this::useExisting)
 				.orElseGet(() -> users.findByEmail(email)
 						.map(existing -> linkSubject(existing, sub, allowedHostedDomains, identity))
 						.orElseGet(() -> createNew(identity, email, sub, allowedHostedDomains)));
+		if (account.getAccountRole() == AccountRole.STUDENT && invitationClaims != null) {
+			invitationClaims.claimQuietly(account);
+		}
+		return account;
 	}
 
 	private UserAccount useExisting(UserAccount account) {

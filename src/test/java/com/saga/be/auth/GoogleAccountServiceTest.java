@@ -14,6 +14,7 @@ import com.saga.be.exception.AuthException;
 import com.saga.be.repository.LecturerProfileRepository;
 import com.saga.be.repository.StudentProfileRepository;
 import com.saga.be.repository.UserAccountRepository;
+import com.saga.be.service.roster.InvitationClaimService;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -125,6 +126,33 @@ class GoogleAccountServiceTest {
 				allowed);
 		assertEquals(AccountRole.STUDENT, created.getAccountRole());
 		assertEquals("sub-new", created.getGoogleSubject());
+	}
+
+	@Test
+	void successfulStudentGoogleLoginClaimsInvitations() {
+		InvitationClaimService claims = org.mockito.Mockito.mock(InvitationClaimService.class);
+		GoogleAccountService withClaims =
+				new GoogleAccountService(users, students, lecturers, new GoogleRoleResolver(), new AccountStatusGuard(), claims);
+		UserAccount existing = account(AccountRole.STUDENT, "anvse170102@fpt.edu.vn", "sub-claim");
+		when(users.findByGoogleSubject("sub-claim")).thenReturn(Optional.of(existing));
+		withClaims.authenticateOrProvision(
+				new GoogleAccountService.GoogleOidcIdentity(
+						"sub-claim", "anvse170102@fpt.edu.vn", true, "fpt.edu.vn", "A", null),
+				allowed);
+		verify(claims).claimQuietly(existing);
+	}
+
+	@Test
+	void lecturerGoogleLoginDoesNotClaimStudentInvitations() {
+		InvitationClaimService claims = org.mockito.Mockito.mock(InvitationClaimService.class);
+		GoogleAccountService withClaims =
+				new GoogleAccountService(users, students, lecturers, new GoogleRoleResolver(), new AccountStatusGuard(), claims);
+		UserAccount existing = account(AccountRole.LECTURER, "antv12@fe.edu.vn", "sub-lec");
+		when(users.findByGoogleSubject("sub-lec")).thenReturn(Optional.of(existing));
+		withClaims.authenticateOrProvision(
+				new GoogleAccountService.GoogleOidcIdentity("sub-lec", "antv12@fe.edu.vn", true, "fe.edu.vn", "A", null),
+				allowed);
+		verify(claims, never()).claimQuietly(any());
 	}
 
 	private static UserAccount account(AccountRole role, String email, String subject) {

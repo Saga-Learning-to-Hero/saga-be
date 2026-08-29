@@ -2,7 +2,6 @@ package com.saga.be.entity.account;
 
 import com.saga.be.entity.BaseEntity;
 import com.saga.be.entity.academic.Course;
-import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.enums.StudentInvitationStatus;
 import com.saga.be.entity.enums.StudentInvitationType;
 import jakarta.persistence.Column;
@@ -28,17 +27,30 @@ import lombok.Setter;
 @Table(
 	name = "student_course_invitation",
 	uniqueConstraints = {
-		@UniqueConstraint(name = "uk_invitation_student_course_type", columnNames = {"student_profile_id", "course_id", "invitation_type"})
+		@UniqueConstraint(name = "uk_invitation_student_course_type", columnNames = {"student_profile_id", "course_id", "invitation_type"}),
+		@UniqueConstraint(name = "uk_invitation_course_email", columnNames = {"course_id", "email"}),
+		@UniqueConstraint(name = "uk_invitation_course_student_code", columnNames = {"course_id", "student_code"})
 	},
 	indexes = {
-		@Index(name = "ix_invitation_status", columnList = "invitation_status")
+		@Index(name = "ix_invitation_status", columnList = "invitation_status"),
+		@Index(name = "ix_invitation_email", columnList = "email"),
+		@Index(name = "ix_invitation_student_code", columnList = "student_code")
 	}
 )
 public class StudentCourseInvitation extends BaseEntity {
 
-	@ManyToOne(fetch = FetchType.LAZY, optional = false)
-	@JoinColumn(name = "student_profile_id", nullable = false)
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "student_profile_id")
 	private StudentProfile studentProfile;
+
+	@Column(name = "email", length = 255)
+	private String email;
+
+	@Column(name = "student_code", length = 64)
+	private String studentCode;
+
+	@Column(name = "full_name", length = 255)
+	private String fullName;
 
 	@ManyToOne(fetch = FetchType.LAZY, optional = false)
 	@JoinColumn(name = "course_id", nullable = false)

@@ -2,7 +2,7 @@
 
 File này là **contract tích hợp Backend ↔ Frontend có hiệu lực** khi public API đã được implement.
 
-> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Graph/SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
+> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim) đã chốt. Graph/SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
 
 ---
 
@@ -200,7 +200,7 @@ Response: same as `GET /api/auth/me` (200). Failures: `INVALID_CREDENTIALS` / `A
 ### POST /api/auth/register
 
 **Auth:** Public (CSRF required)  
-**Creates:** `STUDENT` only. Never LECTURER/ADMIN. Never auto-enrolls in a course or team.
+**Creates:** `STUDENT` only. Never LECTURER/ADMIN. Never creates Team membership. Matching PENDING `student_course_invitation` rows for this email + StudentCode are claimed automatically into ACTIVE `course_enrollment`. No phantom user is created for invitees who have not registered yet.
 
 ```json
 {
@@ -467,3 +467,241 @@ Breaking change phải được nêu rõ.
 | POST | `/api/auth/logout` | CSRF | — | Auth V1 | `AuthController` |
 | GET | `/oauth2/authorization/google` | Public | — | Auth V1 (if Google configured) | Spring Security OAuth2 |
 | GET | `/login/oauth2/code/google` | Public (callback) | — | Auth V1 (if Google configured) | Spring Security OAuth2 |
+| POST | `/api/admin/subjects` | Session + CSRF | ADMIN | Academic foundation V1 | `AdminSubjectController` |
+| GET | `/api/admin/subjects` | Session | ADMIN | Academic foundation V1 | `AdminSubjectController` |
+| GET | `/api/admin/subjects/{subjectId}` | Session | ADMIN | Academic foundation V1 | `AdminSubjectController` |
+| PATCH | `/api/admin/subjects/{subjectId}` | Session + CSRF | ADMIN | Academic foundation V1 | `AdminSubjectController` |
+| POST | `/api/admin/subjects/{subjectId}/syllabi` | Session + CSRF | ADMIN | Academic foundation V1 | `AdminSubjectController` |
+| GET | `/api/admin/subjects/{subjectId}/syllabi` | Session | ADMIN | Academic foundation V1 | `AdminSubjectController` |
+| GET | `/api/admin/subjects/{subjectId}/syllabi/{syllabusVersionId}` | Session | ADMIN | Academic foundation V1 | `AdminSubjectController` |
+| PATCH | `/api/admin/subjects/{subjectId}/syllabi/{syllabusVersionId}` | Session + CSRF | ADMIN | Academic foundation V1 | `AdminSubjectController` |
+| PUT | `/api/admin/subjects/{subjectId}/syllabi/{syllabusVersionId}/structure` | Session + CSRF | ADMIN | Academic foundation V1 | `AdminSubjectController` |
+| POST | `/api/admin/subjects/{subjectId}/syllabi/{syllabusVersionId}/publish` | Session + CSRF | ADMIN | Academic foundation V1 | `AdminSubjectController` |
+| POST | `/api/admin/subjects/{subjectId}/syllabi/{syllabusVersionId}/archive` | Session + CSRF | ADMIN | Academic foundation V1 | `AdminSubjectController` |
+| POST | `/api/admin/semesters` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminSemesterController` |
+| GET | `/api/admin/semesters` | Session | ADMIN | Academic runtime V1 | `AdminSemesterController` |
+| GET | `/api/admin/semesters/active` | Session | ADMIN | Academic runtime V1 | `AdminSemesterController` |
+| PUT | `/api/admin/semesters/active` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminSemesterController` |
+| GET | `/api/admin/semesters/{semesterId}` | Session | ADMIN | Academic runtime V1 | `AdminSemesterController` |
+| PATCH | `/api/admin/semesters/{semesterId}` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminSemesterController` |
+| POST | `/api/admin/classes` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminAcademicClassController` |
+| GET | `/api/admin/classes` | Session | ADMIN | Academic runtime V1 | `AdminAcademicClassController` |
+| GET | `/api/admin/classes/{classId}` | Session | ADMIN | Academic runtime V1 | `AdminAcademicClassController` |
+| PATCH | `/api/admin/classes/{classId}` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminAcademicClassController` |
+| POST | `/api/admin/courses` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminCourseController` |
+| GET | `/api/admin/courses` | Session | ADMIN | Academic runtime V1 | `AdminCourseController` |
+| GET | `/api/admin/courses/{courseId}` | Session | ADMIN | Academic runtime V1 | `AdminCourseController` |
+| PATCH | `/api/admin/courses/{courseId}` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminCourseController` |
+| GET | `/api/admin/courses/{courseId}/roster/template` | Session | ADMIN | Course roster V1 | `AdminCourseRosterController` |
+| GET | `/api/admin/courses/{courseId}/roster` | Session | ADMIN | Course roster V1 | `AdminCourseRosterController` |
+| POST | `/api/admin/courses/{courseId}/roster/import/preview` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
+| POST | `/api/admin/courses/{courseId}/roster/import/confirm` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
+| POST | `/api/admin/dev/email-test` | Session + CSRF | ADMIN | Email delivery V1, **local/dev only** | `AdminDevEmailController` |
+
+---
+
+## 11. Admin Subject + versioned syllabus (Academic Foundation V1)
+
+ADMIN-only. Session cookie + CSRF on writes. Subject is catalog master data, **not** a course offering and **not** bound to a semester.
+
+Create subject:
+
+```json
+POST /api/admin/subjects
+{
+  "code": "SWP391",
+  "nameEnglish": "Software Development Project",
+  "nameVietnamese": "Dự án phát triển phần mềm"
+}
+```
+
+`code` is trimmed and uppercased. Duplicate code → `SUBJECT_CODE_DUPLICATE` (409). Status is `ACTIVE` / `INACTIVE` catalog lifecycle (not deletion). Legacy `deleted_at` is separate; a deleted subject cannot be `ACTIVE`. List query params: `code`, `status`, `q`.
+
+Create syllabus version (always `DRAFT`):
+
+```json
+POST /api/admin/subjects/{subjectId}/syllabi
+{
+  "externalSyllabusId": "14177",
+  "versionLabel": "2026-v1",
+  "credits": 3,
+  "level": "Bachelor",
+  "description": "...",
+  "textbooks": "Sommerville, Software Engineering",
+  "referenceMaterials": "IEEE 829"
+}
+```
+
+`versionLabel` is unique per subject. `PATCH` metadata and `PUT .../structure` are allowed only while `DRAFT`. `PUT .../structure` replaces learning outcomes, learning units, phases, activities, deliverables, and outcome mappings in one transaction. Invalid rows roll back the whole update. `textbooks` and `referenceMaterials` are optional snapshot text on the syllabus version, not a materials catalog.
+
+Replace structure (atomic):
+
+```json
+PUT /api/admin/subjects/{subjectId}/syllabi/{syllabusVersionId}/structure
+{
+  "learningOutcomes": [
+    { "code": "LO2", "name": "Design appropriate test cases", "orderIndex": 2 }
+  ],
+  "learningUnits": [
+    {
+      "code": "BLACK_BOX_TESTING",
+      "name": "Black-box Testing",
+      "description": "Design test cases without internals",
+      "orderIndex": 1,
+      "learningOutcomeCodes": ["LO2"]
+    }
+  ],
+  "phases": [
+    {
+      "code": "TEST_DESIGN",
+      "name": "Test Design",
+      "orderIndex": 1,
+      "learningOutcomeCodes": ["LO2"],
+      "activities": [],
+      "deliverables": []
+    }
+  ]
+}
+```
+
+Learning outcomes are **what the learner is expected to achieve**. Learning units are **what is taught**. Phases are **how/when project or learning work progresses**. They are independent. Unknown `learningOutcomeCodes` on a unit, phase, or deliverable reject the entire transaction (`LEARNING_OUTCOME_REFERENCE_INVALID`).
+
+Publish (`POST .../publish`) requires at least one learning outcome and one phase, unique codes, `orderIndex > 0`, and valid outcome references. Learning units are optional at publish. After publish the version is immutable (`SYLLABUS_PUBLISHED_IMMUTABLE`). Archive (`POST .../archive`) is for `PUBLISHED` only; archived versions stay readable.
+
+GET syllabus detail returns ordered outcomes, learning units, phases, per-phase activities/deliverables, and learning-outcome code mappings. Course pins a published syllabus version; Graph/Neo4j is not part of this contract.
+
+Typed errors use `{ "code", "message" }`. Common codes: `SUBJECT_NOT_FOUND`, `SUBJECT_CODE_DUPLICATE`, `SUBJECT_STATUS_INVALID`, `SYLLABUS_NOT_FOUND`, `SYLLABUS_NOT_DRAFT`, `SYLLABUS_PUBLISHED_IMMUTABLE`, `SYLLABUS_PUBLISH_INVALID`, `ACADEMIC_CODE_DUPLICATE`, `LEARNING_OUTCOME_REFERENCE_INVALID`, `ORDER_INDEX_INVALID`.
+
+---
+
+## 12. Admin academic runtime (Semester / Class / Course)
+
+ADMIN-only. Session cookie + CSRF on writes. Subject and syllabus remain semester-independent catalog. Academic class belongs to a semester. Course is the teaching offering.
+
+Active semester is a platform singleton setting (`GET`/`PUT /api/admin/semesters/active`), not a status on the semester row. `PUT` body: `{ "semesterId": "<uuid>" }`. Missing setting returns JSON `null`.
+
+Create semester (`code` trim+uppercase, unique; `startDate` must be before `endDate`):
+
+```json
+POST /api/admin/semesters
+{
+  "code": "FA26",
+  "name": "Fall 2026",
+  "startDate": "2026-09-01",
+  "endDate": "2026-12-31"
+}
+```
+
+Create class (uniqueness is per semester: `(semesterId, classCode)`):
+
+```json
+POST /api/admin/classes
+{
+  "semesterId": "...",
+  "classCode": "SE1705",
+  "name": "SE1705"
+}
+```
+
+`GET /api/admin/classes?semesterId=` filters by semester.
+
+Create course. Pins a **PUBLISHED** syllabus of the same subject. Lecturer must be an active `lecturer_profile` with role `LECTURER`. Duplicate `(academicClassId, subjectId)` → `COURSE_DUPLICATE` (409).
+
+```json
+POST /api/admin/courses
+{
+  "academicClassId": "...",
+  "subjectId": "...",
+  "syllabusVersionId": "...",
+  "lecturerId": "..."
+}
+```
+
+Optional `courseCode`, `name` (default `{subjectCode} · {classCode}`). List filters: `semesterId`, `academicClassId`, `subjectId`, `lecturerId`. GET returns class, semester, subject, syllabus pin, and lecturer.
+
+`PATCH /api/admin/courses/{courseId}` may change name, courseCode, lecturer (`COURSE_LECTURER_CHANGED`), or syllabus pin. Syllabus change is rejected with `COURSE_SYLLABUS_IMMUTABLE` if enrollments or projects exist. DRAFT → `COURSE_SYLLABUS_NOT_PUBLISHED`. ARCHIVED → `COURSE_SYLLABUS_ARCHIVED`. Wrong subject → `COURSE_SYLLABUS_SUBJECT_MISMATCH`. Inactive subject → `SUBJECT_STATUS_INVALID`.
+
+No DELETE in this contract. Team and Graph are out of scope. Course roster import is section 14.
+
+---
+
+## 13. Email delivery smoke (local/dev only)
+
+Transactional mail is enqueue-only. Business services must not call SMTP. A scheduled worker claims `email_outbox` rows and sends through `EmailSender`.
+
+`POST /api/admin/dev/email-test` exists **only** when the `local` or `dev` profile is active. ADMIN + session + CSRF. It is not registered in test/production profiles.
+
+```json
+POST /api/admin/dev/email-test
+{
+  "to": "test@example.com"
+}
+```
+
+The handler enqueues `DEV_SMOKE`, runs the worker once, and returns `{ outboxId, deliveryStatus, attemptCount, lastFailureCode, sentAt, mailEnabled }`.
+
+`SENT` requires `SAGA_MAIL_ENABLED=true`, `SAGA_MAIL_FROM`, and `MAIL_HOST`. If mail is disabled the row stays `PENDING` and `mailEnabled` is `false`.
+
+Do not use this endpoint as a public mail API. Forgot-password and team mails are not implemented.
+
+---
+
+## 14. Admin course roster V1
+
+ADMIN-only. Session cookie + CSRF on writes. Target Course is always the `{courseId}` path — Excel cannot redirect import into another course.
+
+Flow: download template → fill workbook → preview (no durable mutation) → confirm atomically.
+
+### XLSX contract
+
+`GET /api/admin/courses/{courseId}/roster/template` returns `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`.
+
+Import sheet name: `Danh_Sach_SV`.
+
+Visible columns (exact):
+
+| A | B | C | D | E | F |
+| --- | --- | --- | --- | --- | --- |
+| No | Class | FullName | StudentCode | Email | MemberCode |
+
+`No` is display-only. `Class` must equal the Course `academic_class.classCode`. `MemberCode` is preview-only; there is no persistence column.
+
+CSV and non-XLSX are rejected. Default size limit 2MB (`saga.roster.max-file-bytes`).
+
+### Preview
+
+`POST /api/admin/courses/{courseId}/roster/import/preview` multipart field `file`. Does not write enrollment/invitation rows.
+
+Response includes `previewToken` (Redis/Valkey, ~15 minutes, bound to this Admin + courseId, consumed after successful confirm).
+
+Row `action`: `READY_ENROLL` | `READY_INVITE` | `ALREADY_ENROLLED` | `ALREADY_INVITED` | `INVALID` | `CONFLICT`.
+
+Confirm is rejected while any row is `INVALID` or `CONFLICT`.
+
+### Confirm
+
+```json
+POST /api/admin/courses/{courseId}/roster/import/confirm
+{ "previewToken": "..." }
+```
+
+Atomic MySQL transaction:
+
+- existing STUDENT account → `course_enrollment` ACTIVE (reactivate WITHDRAWN/COMPLETED if the unique row already exists)
+- no account → `student_course_invitation` PENDING (email + studentCode + fullName; **no** `user_account`)
+- same course+email or course+studentCode never inserts a second invitation: PENDING/SENT stay outstanding; FAILED/CANCELLED reactivate the same row; CLAIMED + existing Student uses enrollment
+- emails enqueued to `email_outbox` only when state actually changes: `COURSE_ENROLLED`, `COURSE_INVITATION`
+
+Institutional FPT/FE invitation text tells the student to use Google onboarding, not local password registration. Personal emails use the public Student registration flow.
+
+### Read
+
+`GET /api/admin/courses/{courseId}/roster` returns enrollments and PENDING invitations. A pending invitee has `accountState=NOT_REGISTERED` without a fake account.
+
+### Claim
+
+After successful Student register, local login, or Google STUDENT onboarding, matching PENDING invitations (email + StudentCode, case-insensitive) become CLAIMED and create/activate ACTIVE enrollment. Idempotent. Claim failure must not fail login.
+
+Manual Admin add-student HTTP API is deferred; the same `CourseRosterService` apply path is ready for it.
+
+Errors: `ROSTER_FILE_INVALID`, `ROSTER_FILE_TOO_LARGE`, `ROSTER_PREVIEW_INVALID`, `ROSTER_PREVIEW_EXPIRED`, `ROSTER_PREVIEW_MISMATCH`, `ROSTER_CONFIRM_BLOCKED`.

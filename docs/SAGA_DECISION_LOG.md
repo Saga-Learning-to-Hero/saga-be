@@ -48,6 +48,10 @@ Giá trị trạng thái:
 | DEC-030 | GitHub App installation for team repositories | ĐÃ CHỐT KIẾN TRÚC | 2026-08-25 |
 | DEC-031 | Jira Cloud OAuth 2.0 3LO for team connection | ĐÃ CHỐT KIẾN TRÚC | 2026-08-25 |
 | DEC-032 | Account-sharing threat model is explicit | ĐÃ CHỐT KIẾN TRÚC | 2026-08-25 |
+| DEC-033 | Subject + versioned syllabus are academic specification, independent of Semester | ĐÃ CHỐT KIẾN TRÚC | 2026-08-29 |
+| DEC-034 | Academic runtime is Semester / Class / Course | ĐÃ CHỐT KIẾN TRÚC | 2026-08-29 |
+| DEC-035 | Email delivery is outbox then worker | ĐÃ CHỐT KIẾN TRÚC | 2026-08-29 |
+| DEC-036 | Course roster uses invitation identity without phantom accounts | ĐÃ CHỐT KIẾN TRÚC | 2026-08-29 |
 
 ---
 
@@ -663,6 +667,120 @@ Jira Cloud OAuth 2.0 3LO. Personal link không cần offline refresh. Team conne
 ## Quyết định
 
 Student A có thể đưa credential GitHub/Jira cho Student B. Provider events vẫn mang identity A. SAGA không claim physical authorship. Mitigation: provider identity + SAGA work session + step-up + optional passkey + task confirmation + audit + anomaly + lecturer review.
+
+---
+
+# DEC-033 — SUBJECT_AND_VERSIONED_SYLLABUS_ARE_ACADEMIC_SPECIFICATION
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-29
+
+## Bối cảnh
+
+Subject Graph Blueprint và Runtime Learning Graph cần một academic definition ổn định. GitHub/Jira không phải nền của graph. Rubric/weight đã tồn tại nhưng là assessment configuration.
+
+## Quyết định
+
+- Subject là academic catalog độc lập với Semester/Class/Course. Không có `semester_id` trên Subject hay Syllabus.
+- Một Subject có 1..N syllabus versions. Version không được tạo tự động theo semester.
+- `DRAFT` được sửa. `PUBLISHED` là immutable academic snapshot. Muốn sửa → version mới. `ARCHIVED` vẫn readable.
+- Academic structure (Learning Outcome, Learning Unit/topic, Phase, Expected Activity, Expected Deliverable, mappings) sống trên syllabus version, không nhét vào `rubric_template`.
+- Learning Outcome là **what the learner is expected to achieve** (không phải assessment). Learning Unit là **what is taught**. Phase là **how/when** work progresses. Không overload `syllabus_phase` thành course content.
+- Composite unique `(id, syllabus_version_id)` + composite FKs ngăn cross-syllabus phase/outcome/unit/deliverable references (MySQL SoT cho future graph).
+- Phase/activity/deliverable/unit codes là dữ liệu syllabus, không hard-code Java enum, không gắn GitHub/Jira.
+- Future Course sẽ bind Subject + pinned SyllabusVersion. Future graph sẽ project academic structure từ MySQL; Graph/Neo4j không implement trong decision này.
+- Assessment weights/formulas vẫn thuộc rubric / `project_group_weight_config` / assessment pipeline.
+
+## Hệ quả
+
+Admin catalog APIs quản lý Subject/Syllabus. Course offering, roster, graph projection, và scoring là milestone riêng.
+
+---
+
+# DEC-034 — ACADEMIC_RUNTIME_IS_SEMESTER_CLASS_COURSE
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-29
+
+## Bối cảnh
+
+Subject/Syllabus (DEC-033) là catalog. Runtime teaching cần Semester → AcademicClass → Course, với Course pin một PUBLISHED syllabus version và một lecturer, trước roster import.
+
+## Quyết định
+
+- Subject và SyllabusVersion **không** thuộc Semester. Không có `semester_id` trên `subject` hay `subject_syllabus_version`.
+- AcademicClass thuộc đúng một Semester. Class code uniqueness is `(semester_id, class_code)` — cùng mã lớp có thể lặp ở kỳ sau.
+- Course là teaching/runtime offering, không phải Subject. Course bind: AcademicClass + Subject + PUBLISHED SyllabusVersion + Lecturer (`lecturer_profile`).
+- Course pin syllabus historically. Không follow "latest". Composite FK `(syllabus_version_id, subject_id)` chứng minh syllabus thuộc đúng subject.
+- `course.semester_id` được giữ (index/query V1) và được chứng minh khớp class qua composite FK `(academic_class_id, semester_id)`.
+- Uniqueness Course: `(academic_class_id, subject_id)` — một lớp chỉ có một offering cho một subject.
+- Active Semester là singleton `active_semester_setting`, không phải status column trên semester, không phải ownership của Subject.
+- Syllabus pin chỉ đổi khi Course chưa có enrollment/project. DRAFT/ARCHIVED không dùng cho course mới.
+- Roster, Team, Graph/Neo4j, GitHub/Jira không thuộc decision này.
+
+## Hệ quả
+
+Admin runtime APIs quản lý Semester/Class/Course. Student roster import và graph projection là milestone riêng.
+
+---
+
+# DEC-035 — EMAIL_DELIVERY_IS_OUTBOX_THEN_WORKER
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-29
+
+## Bối cảnh
+
+`email_outbox` đã có từ V1 nhưng chưa có provider hay worker. Roster/invitation sẽ cần gửi mail mà không gắn SMTP vào transaction nghiệp vụ.
+
+## Quyết định
+
+- Không tạo V7. Schema V1 đủ: `delivery_status`, `attempt_count`, `scheduled_at`, `sent_at`, `last_failure_code`, `last_attempt_at`. `delivery_status` là VARCHAR(32) không CHECK.
+- Business service chỉ `EmailOutboxService.enqueue`. Worker riêng claim/send.
+- Status: `PENDING` → `PROCESSING` (claim) → `SENT` hoặc retry `PENDING` với backoff, hoặc `FAILED` khi hết attempt. `CANCELLED` không được worker xử lý.
+- `PROCESSING` là application status; không cần migration.
+- Concurrency: atomic claim `PENDING`/`stale PROCESSING` → `PROCESSING` bằng `last_attempt_at` lease. Không cần `version` column cho V1.
+- Provider: `EmailSender`. SMTP implementation qua Spring Mail. Config từ env. Tắt được (`SAGA_MAIL_ENABLED=false`).
+- `last_failure_code` chỉ lưu mã ngắn; không lưu password/API key/exception message.
+- Subject/body nằm trong `payload_json` (`subject`, `textBody`, `htmlBody`).
+- Smoke: `POST /api/admin/dev/email-test` chỉ `local`/`dev`, ADMIN.
+- Roster, invitation lifecycle, enrollment, team, forgot-password **không** thuộc decision này.
+
+## Hệ quả
+
+Invitation/roster có thể enqueue mà không đụng SMTP. Worker độc lập với transaction gốc.
+
+---
+
+# DEC-036 — COURSE_ROSTER_USES_INVITATION_IDENTITY_WITHOUT_PHANTOM_ACCOUNTS
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Ngày:** 2026-08-29
+
+## Bối cảnh
+
+V1 `student_course_invitation.student_profile_id` is NOT NULL and has no email/student_code columns, so a no-account roster invite cannot be stored without creating a fake Student. MemberCode has no canonical persistence field.
+
+## Quyết định
+
+- Three concepts stay separate: user account, course enrollment, team membership. Roster implements account + enrollment only. No Team.
+- Existing STUDENT → ACTIVE `course_enrollment` immediately. No phantom `user_account` / `student_profile` for unknown emails.
+- No-account rows persist PENDING `student_course_invitation` with email + student_code + full_name after V7 makes `student_profile_id` nullable.
+- `MemberCode` is Excel/preview-only. Do not add a DB column.
+- Preview is Redis (`previewToken`, ~15m, bound to Admin + courseId). Confirm is one MySQL transaction; token is deleted only after success so a failed confirm can retry.
+- Excel `Class` must match the path Course's AcademicClass. `No` is not identity. Course comes from the URL.
+- Institutional FPT/FE invitation copy uses Google onboarding (`InstitutionalEmailPolicy`). Personal emails use public Student registration.
+- Emails `COURSE_ENROLLED` / `COURSE_INVITATION` go through `EmailOutboxService` only.
+- First successful verified Student register/login/Google onboarding claims matching PENDING invitations (email + StudentCode). Idempotent. Claim must not fail login.
+- Manual Admin add-student HTTP API is deferred; shared service apply path is ready.
+- V7 is required for invitation identity. V1–V6 stay immutable. Do not apply V7 to shared DEV until reviewed.
+- V7 CHECK `chk_invitation_identity`: `student_profile_id IS NOT NULL` OR (nonblank `email` AND nonblank `student_code`). `full_name` is not an identity key.
+- Unique `(course_id, email)` and `(course_id, student_code)`: reuse the existing invitation row. PENDING/SENT = outstanding (idempotent). FAILED/CANCELLED may be reactivated to PENDING on the same row. CLAIMED + existing Student follows enrollment, not a second invite. No `EXPIRED` status exists.
+- Before apply, run SELECT-only preflight in `scripts/migration/V7_preflight_invitation_duplicates.sql` (joins `student_profile` / `user_account`; those identity columns do not exist on invitation until V7).
+
+## Hệ quả
+
+Admin roster APIs: template, preview, confirm, read. No fake users. No Team. No Graph. No direct SMTP from the business transaction.
 
 ---
 

@@ -45,7 +45,11 @@ public class AuditRedactor {
 			"redis_password",
 			"rabbitmq_password",
 			"db_password",
-			"mysql_password");
+			"mysql_password",
+			"mail_password",
+			"mailpassword",
+			"smtp_password",
+			"smtppassword");
 
 	private final ObjectMapper mapper;
 

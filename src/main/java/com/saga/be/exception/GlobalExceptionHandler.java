@@ -29,6 +29,12 @@ public class GlobalExceptionHandler {
 		return ResponseEntity.status(ex.getStatus()).body(new ApiErrorResponse(ex.getCode().name(), ex.getMessage()));
 	}
 
+	@ExceptionHandler(AcademicException.class)
+	public ResponseEntity<ApiErrorResponse> handleAcademic(AcademicException ex) {
+		log.info("academic result=failure category={}", ex.getCode());
+		return ResponseEntity.status(ex.getStatus()).body(new ApiErrorResponse(ex.getCode().name(), ex.getMessage()));
+	}
+
 	@ExceptionHandler(MethodArgumentNotValidException.class)
 	public ResponseEntity<ApiErrorResponse> handleValidation(MethodArgumentNotValidException ex) {
 		return ResponseEntity.status(HttpStatus.BAD_REQUEST)

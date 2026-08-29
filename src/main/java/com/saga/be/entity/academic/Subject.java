@@ -1,8 +1,11 @@
 package com.saga.be.entity.academic;
 
 import com.saga.be.entity.BaseEntity;
+import com.saga.be.entity.enums.SubjectStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
@@ -27,6 +30,13 @@ public class Subject extends BaseEntity {
 
 	@Column(name = "name", length = 255, nullable = false)
 	private String name;
+
+	@Column(name = "name_vietnamese", length = 255)
+	private String nameVietnamese;
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "status", length = 32, nullable = false)
+	private SubjectStatus status = SubjectStatus.ACTIVE;
 
 	@Column(name = "deleted_at")
 	private LocalDateTime deletedAt;

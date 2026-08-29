@@ -4,5 +4,11 @@ public enum StudentInvitationStatus {
 	PENDING,
 	SENT,
 	FAILED,
-	CANCELLED
+	CANCELLED,
+	CLAIMED;
+
+	/** Outstanding invitation: created or historically marked delivered. Claimable. */
+	public boolean isOutstanding() {
+		return this == PENDING || this == SENT;
+	}
 }

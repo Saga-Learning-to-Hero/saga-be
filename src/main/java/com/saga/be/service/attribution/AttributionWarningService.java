@@ -1,22 +1,22 @@
 package com.saga.be.service.attribution;
 
 import com.saga.be.entity.account.UserAccount;
-import com.saga.be.entity.enums.EmailDeliveryStatus;
+import com.saga.be.dto.mail.EmailEnqueueRequest;
 import com.saga.be.entity.enums.IntegrationProvider;
 import com.saga.be.entity.enums.NotificationType;
 import com.saga.be.entity.enums.WarningCategory;
 import com.saga.be.entity.enums.WarningSeverity;
 import com.saga.be.entity.integration.IdentityMap;
 import com.saga.be.entity.jira.Task;
-import com.saga.be.entity.notification.EmailOutbox;
 import com.saga.be.entity.notification.UserNotification;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
 import com.saga.be.entity.warning.BusinessWarning;
 import com.saga.be.repository.BusinessWarningRepository;
-import com.saga.be.repository.EmailOutboxRepository;
 import com.saga.be.repository.UserNotificationRepository;
+import com.saga.be.service.mail.EmailOutboxService;
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
@@ -28,12 +28,12 @@ public class AttributionWarningService {
 
 	private final BusinessWarningRepository warnings;
 	private final UserNotificationRepository notifications;
-	private final EmailOutboxRepository emails;
+	private final EmailOutboxService emails;
 
 	public AttributionWarningService(
 			BusinessWarningRepository warnings,
 			UserNotificationRepository notifications,
-			EmailOutboxRepository emails) {
+			EmailOutboxService emails) {
 		this.warnings = warnings;
 		this.notifications = notifications;
 		this.emails = emails;
@@ -101,17 +101,21 @@ public class AttributionWarningService {
 			notification.setEventKey(eventKey);
 			notifications.save(notification);
 			if (delivery.emailLecturer()) {
-				EmailOutbox email = new EmailOutbox();
-				email.setRecipientUser(lecturer);
-				email.setRecipientEmail(lecturer.getEmail());
-				email.setEmailType("ATTRIBUTION_ANOMALY");
-				email.setTemplateKey("attribution-anomaly");
-				email.setPayloadJson("{\"summary\":\"" + summary.replace("\"", "'") + "\",\"studentName\":\""
-						+ (student == null ? "" : student.getFullName())
-						+ "\"}");
-				email.setDeliveryStatus(EmailDeliveryStatus.PENDING);
-				email.setAttemptCount(0);
-				emails.save(email);
+				emails.enqueue(new EmailEnqueueRequest(
+						lecturer.getEmail(),
+						lecturer.getId(),
+						"ATTRIBUTION_ANOMALY",
+						"attribution-anomaly",
+						Map.of(
+								"subject",
+								"Potential contribution attribution issue",
+								"textBody",
+								summary,
+								"summary",
+								summary,
+								"studentName",
+								student == null || student.getFullName() == null ? "" : student.getFullName()),
+						null));
 			}
 		}
 	}

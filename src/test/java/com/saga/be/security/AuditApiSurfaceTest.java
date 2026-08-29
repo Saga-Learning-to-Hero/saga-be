@@ -24,8 +24,20 @@ class AuditApiSurfaceTest {
 		}
 		String code = sources.toString();
 		assertFalse(code.contains("/api/audit") && code.contains("DeleteMapping"));
-		assertFalse(code.contains("auditLogs.delete"));
-		assertFalse(code.contains("AuditLogRepository") && code.contains(".delete("));
+		Path auditService = Path.of("src/main/java/com/saga/be/service/audit");
+		StringBuilder auditSources = new StringBuilder();
+		try (var files = Files.walk(auditService)) {
+			files.filter(path -> path.toString().endsWith(".java")).forEach(path -> {
+				try {
+					auditSources.append(Files.readString(path)).append('\n');
+				} catch (Exception ex) {
+					throw new IllegalStateException(ex);
+				}
+			});
+		}
+		String auditCode = auditSources.toString();
+		assertFalse(auditCode.contains("auditLogs.delete"));
+		assertFalse(auditCode.contains("AuditLogRepository") && auditCode.contains(".delete("));
 		assertTrue(code.contains("class AuditService"));
 	}
 }

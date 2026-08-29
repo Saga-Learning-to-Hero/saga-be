@@ -10,9 +10,11 @@ import com.saga.be.entity.enums.AccountStatus;
 import com.saga.be.exception.AuthException;
 import com.saga.be.repository.StudentProfileRepository;
 import com.saga.be.repository.UserAccountRepository;
+import com.saga.be.service.roster.InvitationClaimService;
 import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -32,6 +34,7 @@ public class StudentRegistrationService {
 	private final PasswordEncoder passwordEncoder;
 	private final PasswordPolicy passwordPolicy;
 	private final InstitutionalEmailPolicy institutionalEmails;
+	private final InvitationClaimService invitationClaims;
 
 	public StudentRegistrationService(
 			UserAccountRepository users,
@@ -39,11 +42,23 @@ public class StudentRegistrationService {
 			PasswordEncoder passwordEncoder,
 			PasswordPolicy passwordPolicy,
 			InstitutionalEmailPolicy institutionalEmails) {
+		this(users, students, passwordEncoder, passwordPolicy, institutionalEmails, null);
+	}
+
+	@Autowired
+	public StudentRegistrationService(
+			UserAccountRepository users,
+			StudentProfileRepository students,
+			PasswordEncoder passwordEncoder,
+			PasswordPolicy passwordPolicy,
+			InstitutionalEmailPolicy institutionalEmails,
+			InvitationClaimService invitationClaims) {
 		this.users = users;
 		this.students = students;
 		this.passwordEncoder = passwordEncoder;
 		this.passwordPolicy = passwordPolicy;
 		this.institutionalEmails = institutionalEmails;
+		this.invitationClaims = invitationClaims;
 	}
 
 	@Transactional
@@ -87,6 +102,9 @@ public class StudentRegistrationService {
 			profile.setVersion(0L);
 			students.save(profile);
 			log.info("auth method=REGISTER result=created userId={} role=STUDENT", saved.getId());
+			if (invitationClaims != null) {
+				invitationClaims.claimQuietly(saved);
+			}
 			return new RegisterResponse(
 					true, new RegisteredUserDto(saved.getId(), saved.getEmail(), saved.getFullName(), AccountRole.STUDENT.name()));
 		} catch (DataIntegrityViolationException ex) {

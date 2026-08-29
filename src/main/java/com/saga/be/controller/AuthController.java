@@ -13,8 +13,10 @@ import com.saga.be.dto.auth.LoginRequest;
 import com.saga.be.dto.auth.PasswordSetupRequest;
 import com.saga.be.dto.auth.RegisterRequest;
 import com.saga.be.dto.auth.RegisterResponse;
+import com.saga.be.entity.account.UserAccount;
 import com.saga.be.exception.AuthException;
 import com.saga.be.security.SagaUserPrincipal;
+import com.saga.be.service.roster.InvitationClaimService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -28,6 +30,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -55,16 +58,19 @@ public class AuthController {
 	private final PasswordSetupService passwordSetupService;
 	private final StudentRegistrationService studentRegistrationService;
 	private final SecurityContextRepository securityContextRepository;
+	private final ObjectProvider<InvitationClaimService> invitationClaims;
 
 	public AuthController(
 			LocalAuthService localAuthService,
 			PasswordSetupService passwordSetupService,
 			StudentRegistrationService studentRegistrationService,
-			SecurityContextRepository securityContextRepository) {
+			SecurityContextRepository securityContextRepository,
+			ObjectProvider<InvitationClaimService> invitationClaims) {
 		this.localAuthService = localAuthService;
 		this.passwordSetupService = passwordSetupService;
 		this.studentRegistrationService = studentRegistrationService;
 		this.securityContextRepository = securityContextRepository;
+		this.invitationClaims = invitationClaims;
 	}
 
 	@GetMapping("/csrf")
@@ -165,6 +171,17 @@ public class AuthController {
 			@Parameter(hidden = true) HttpServletResponse httpResponse) {
 		Authentication authentication = localAuthService.authenticate(request.identifier(), request.password());
 		establishSession(authentication, httpRequest, httpResponse);
+		if (authentication.getPrincipal() instanceof SagaUserPrincipal principal) {
+			InvitationClaimService claims = invitationClaims.getIfAvailable();
+			if (claims != null) {
+				UserAccount account = new UserAccount();
+				account.setId(principal.getUserId());
+				account.setEmail(principal.getEmail());
+				account.setAccountRole(principal.getRole());
+				claims.claimQuietly(account);
+			}
+			return AuthResponses.fromPrincipal(principal);
+		}
 		return AuthResponses.fromPrincipal((SagaUserPrincipal) authentication.getPrincipal());
 	}
 
@@ -177,8 +194,8 @@ public class AuthController {
 					Institutional `@fpt.edu.vn` / `@fe.edu.vn` (and other configured Google hosted domains) \
 					must use Google login instead.
 
-					Does not create a session. Does not enroll the student in any course or team. \
-					Call `POST /api/auth/login` afterwards.
+					Does not create a session. Does not create Team membership. Matching PENDING course \
+					invitations for this verified email + StudentCode are claimed automatically.
 					""")
 	@io.swagger.v3.oas.annotations.parameters.RequestBody(
 			required = true,

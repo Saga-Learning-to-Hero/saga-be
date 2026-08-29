@@ -26,6 +26,7 @@ public abstract class BaseEntity {
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.UUID)
+	@AssignedUuid
 	@JdbcTypeCode(Types.CHAR)
 	@Column(name = "id", columnDefinition = "char(36)", updatable = false, nullable = false)
 	private UUID id;

@@ -40,10 +40,14 @@ user_account 1──* identity_map          (unique per provider)
 user_account 1──* user_notification
 user_account 1──* firebase_installation
 
-subject *──* academic_class *──* semester
-        \         |            /
-         └──── course ────────┘
-course.instructor → lecturer_profile (N:1, nullable)
+subject 1──* subject_syllabus_version
+semester 1──* academic_class
+academic_class 1──* course
+subject 1──* course
+subject_syllabus_version 1──* course   (pinned PUBLISHED version)
+semester 1──* course                   (denormalized; proven via class)
+course.instructor → lecturer_profile (N:1, required for new courses)
+semester ||--o| active_semester_setting : selected_by
 
 student_profile 1──* course_enrollment *──1 course
 course_enrollment 1──* team_member *──1 team
@@ -78,9 +82,12 @@ erDiagram
     user_account ||--o{ user_notification : receives
     user_account ||--o{ firebase_installation : devices
 
+    subject ||--o{ subject_syllabus_version : versions
     subject ||--o{ course : offered_as
+    subject_syllabus_version ||--o{ course : pinned_by
+    semester ||--o{ academic_class : contains
     academic_class ||--o{ course : offered_as
-    semester ||--o{ course : offered_as
+    semester ||--o{ course : denormalized_on
     semester ||--o| active_semester_setting : selected_by
     lecturer_profile ||--o{ course : instructs
     student_profile ||--o{ course_enrollment : enrolls
@@ -180,15 +187,29 @@ Invitation/outbox-style join email for a student into a course. Not course membe
 
 ### 5. `subject`
 
-Academic catalog. Soft-delete via `deleted_at`. Unique `subject_code`.
+Academic catalog. Unique `subject_code`. English title in `name`. V5 adds `name_vietnamese` and `status` (`ACTIVE` / `INACTIVE`). `status` is the catalog lifecycle. Legacy `deleted_at` remains a separate soft-delete marker: INACTIVE is not deletion; a deleted row must never be ACTIVE (`chk_subject_lifecycle`: `deleted_at IS NULL OR status = 'INACTIVE'`). **No `semester_id`.** Course offerings bind subject later; they are not the catalog.
+
+V5 syllabus tables (academic specification, not assessment weights). Composite unique `(id, syllabus_version_id)` plus composite FKs keep children inside one syllabus version:
+
+- `subject_syllabus_version` (`DRAFT` default / `PUBLISHED` / `ARCHIVED`; unique `(subject_id, version_label)`; snapshot `textbooks`, `reference_materials`)
+- `syllabus_learning_outcome` — **what the learner is expected to achieve**; unique `(id, syllabus_version_id)`
+- `syllabus_learning_unit` — **what is taught** (topic/unit); not a phase; unique `(id, syllabus_version_id)`
+- `syllabus_phase` — **how/when work progresses**; unique `(id, syllabus_version_id)`
+- `syllabus_expected_activity` — FK `(phase_id, syllabus_version_id)` → `syllabus_phase`
+- `syllabus_expected_deliverable` — unique `(id, syllabus_version_id)`; FK `(phase_id, syllabus_version_id)` → `syllabus_phase`
+- `syllabus_phase_learning_outcome` — composite FKs to phase and outcome of the same version
+- `syllabus_deliverable_learning_outcome` — composite FKs to deliverable and outcome of the same version
+- `syllabus_learning_unit_outcome` — N:N unit↔outcome; composite FKs to unit and outcome of the same version
+
+Subject `status` is independent of `deleted_at`. Allowed: ACTIVE + `deleted_at` NULL; INACTIVE + `deleted_at` NULL or NOT NULL. Rejected: ACTIVE + `deleted_at` NOT NULL.
 
 ### 6. `academic_class`
 
-Java entity: `AcademicClass`. Unique `class_code`. Soft-delete `deleted_at`.
+Java entity: `AcademicClass`. Belongs to one `semester` (V6 `semester_id`). Unique `(semester_id, class_code)` so the same class code may recur in a later term. Unique `(id, semester_id)` supports the course composite FK. Soft-delete `deleted_at`. No subject on the class; a class may host multiple courses.
 
 ### 7. `semester`
 
-Unique `code`. Optional `start_date` / `end_date`. Soft-delete `deleted_at`.
+Unique `code`. Optional `start_date` / `end_date` at the column level; admin create requires `startDate < endDate`. Soft-delete `deleted_at`. Contains classes, not subjects. No syllabus FK.
 
 ### 8. `active_semester_setting`
 
@@ -200,20 +221,22 @@ Singleton. PK `singleton_id` CHECK `= 1`. Seeded row `(1, NULL)`.
 | FK | `semester_id` → `semester`; `updated_by_user_id` → `user_account` |
 | Audit | `updated_at` |
 
-Does not extend `BaseEntity`.
+Does not extend `BaseEntity`. This is the platform current/default semester setting, not a semester status column.
 
 ### 9. `course`
 
-Offering instance: subject + academic class + semester + optional instructor.
+Runtime teaching offering: academic class + subject + pinned syllabus version + lecturer. Not the subject catalog.
 
 | | |
 | --- | --- |
 | PK | `id` |
-| Unique | `id` (redundant, supports composite-FK style lookups) |
+| Unique | `(academic_class_id, subject_id)` — one offering per subject per class |
 | Indexes | `(semester_id, instructor_id)`, `subject_id`, `academic_class_id` |
-| Weights | `code/test/document/research_contribution_weight`, `contribution_config_mode` |
-| FK | subject, academic_class, semester, instructor → `lecturer_profile` |
+| Weights | `code/test/document/research_contribution_weight`, `contribution_config_mode` (unchanged; not part of this API) |
+| FK | subject; academic_class; semester; instructor → `lecturer_profile`; composite `(syllabus_version_id, subject_id)` → `subject_syllabus_version (id, subject_id)`; composite `(academic_class_id, semester_id)` → `academic_class (id, semester_id)` |
 | Soft-delete | `deleted_at` |
+
+`course.semester_id` is preserved from V1 (query/index compatibility) and proven consistent with the class via the composite FK. New courses require a PUBLISHED syllabus of the same subject. The pin is historical: later syllabus versions of the subject do not replace it.
 
 ### 10. `course_enrollment`
 
@@ -413,7 +436,7 @@ Unique `firebase_installation_id`. Index `(owner_user_id, active)`. Schema is pr
 
 ### 47. `email_outbox`
 
-Generic transactional mail. Nullable `recipient_user_id`. Index `(delivery_status, scheduled_at)`.
+Generic transactional mail. Nullable `recipient_user_id`. Index `(delivery_status, scheduled_at)`. Application statuses: `PENDING`, `PROCESSING`, `SENT`, `FAILED`, `CANCELLED` (`VARCHAR(32)`, no CHECK). Retry metadata: `attempt_count`, `scheduled_at`, `sent_at`, `last_failure_code`, `last_attempt_at`. Subject/body live in `payload_json`.
 
 ### 48. `business_warning`
 

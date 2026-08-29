@@ -23,6 +23,7 @@ import com.saga.be.repository.StudentProfileRepository;
 import com.saga.be.repository.TeamRepository;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
+import com.saga.be.service.roster.InvitationClaimService;
 import java.lang.reflect.RecordComponent;
 import java.util.Arrays;
 import java.util.Optional;
@@ -98,12 +99,35 @@ class StudentRegistrationServiceTest {
 	}
 
 	@Test
+	void successfulRegistrationClaimsMatchingInvitations() {
+		InvitationClaimService claims = org.mockito.Mockito.mock(InvitationClaimService.class);
+		StudentRegistrationService withClaims = new StudentRegistrationService(
+				users,
+				students,
+				passwordEncoder,
+				new PasswordPolicy(new AuthProperties()),
+				new InstitutionalEmailPolicy(new AuthProperties()),
+				claims);
+		when(users.existsByEmail("student@gmail.com")).thenReturn(false);
+		when(students.existsByStudentCode("SE123456")).thenReturn(false);
+		when(users.save(any())).thenAnswer(invocation -> {
+			UserAccount account = invocation.getArgument(0);
+			account.setId(UUID.randomUUID());
+			return account;
+		});
+		when(students.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+		withClaims.register(request("student@gmail.com", "SE123456"));
+		verify(claims).claimQuietly(any(UserAccount.class));
+	}
+
+	@Test
 	void registrationCannotCreateLecturerOrAdminAndHasNoAcademicMembershipDependencies() {
-		java.lang.reflect.Constructor<?> ctor = StudentRegistrationService.class.getDeclaredConstructors()[0];
-		Set<Class<?>> types = Arrays.stream(ctor.getParameterTypes()).collect(Collectors.toSet());
-		assertFalse(types.contains(CourseEnrollmentRepository.class));
-		assertFalse(types.contains(TeamRepository.class));
-		assertFalse(types.contains(LecturerProfileRepository.class));
+		for (java.lang.reflect.Constructor<?> ctor : StudentRegistrationService.class.getDeclaredConstructors()) {
+			Set<Class<?>> types = Arrays.stream(ctor.getParameterTypes()).collect(Collectors.toSet());
+			assertFalse(types.contains(CourseEnrollmentRepository.class));
+			assertFalse(types.contains(TeamRepository.class));
+			assertFalse(types.contains(LecturerProfileRepository.class));
+		}
 		assertEquals(AccountRole.STUDENT, AccountRole.valueOf("STUDENT"));
 	}
 
