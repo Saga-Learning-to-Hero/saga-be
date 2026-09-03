@@ -1,8 +1,7 @@
 package com.saga.be.integration.jira;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.saga.be.config.IntegrationProperties;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
@@ -11,8 +10,10 @@ import java.util.stream.Collectors;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.converter.HttpMessageConversionException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
 @Component
 @Profile("!test")
@@ -20,12 +21,10 @@ public class JiraOAuthClient {
 
 	private final RestClient restClient;
 	private final IntegrationProperties properties;
-	private final ObjectMapper mapper;
 
-	public JiraOAuthClient(RestClient integrationRestClient, IntegrationProperties properties, ObjectMapper mapper) {
+	public JiraOAuthClient(RestClient integrationRestClient, IntegrationProperties properties) {
 		this.restClient = integrationRestClient;
 		this.properties = properties;
-		this.mapper = mapper;
 	}
 
 	public String authorizationUrl(String state, String challenge, String redirectUri, boolean offline) {
@@ -87,80 +86,97 @@ public class JiraOAuthClient {
 				.body(Myself.class);
 	}
 
-	public JsonNode getProject(String accessToken, String cloudId, String projectIdOrKey) {
-		return restClient
-				.get()
-				.uri("https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/project/{projectId}", cloudId, projectIdOrKey)
-				.header("Authorization", "Bearer " + accessToken)
-				.retrieve()
-				.body(JsonNode.class);
+	public JiraProjectResponse getProject(String accessToken, String cloudId, String projectIdOrKey) {
+		try {
+			return restClient
+					.get()
+					.uri("https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/project/{projectId}", cloudId, projectIdOrKey)
+					.header("Authorization", "Bearer " + accessToken)
+					.retrieve()
+					.body(JiraProjectResponse.class);
+		} catch (RestClientResponseException | HttpMessageConversionException ex) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira project is not accessible.");
+		}
 	}
 
-	public JsonNode getBoard(String accessToken, String cloudId, String boardId) {
-		return restClient
-				.get()
-				.uri("https://api.atlassian.com/ex/jira/{cloudId}/rest/agile/1.0/board/{boardId}", cloudId, boardId)
-				.header("Authorization", "Bearer " + accessToken)
-				.retrieve()
-				.body(JsonNode.class);
+	public JiraBoardResponse getBoard(String accessToken, String cloudId, String boardId) {
+		try {
+			return restClient
+					.get()
+					.uri("https://api.atlassian.com/ex/jira/{cloudId}/rest/agile/1.0/board/{boardId}", cloudId, boardId)
+					.header("Authorization", "Bearer " + accessToken)
+					.retrieve()
+					.body(JiraBoardResponse.class);
+		} catch (RestClientResponseException | HttpMessageConversionException ex) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_BOARD_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira board is not accessible.");
+		}
 	}
 
 	public List<JiraProjectOption> listProjects(String accessToken, String cloudId) {
-		JsonNode node = restClient
-				.get()
-				.uri("https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/project/search?maxResults=100", cloudId)
-				.header("Authorization", "Bearer " + accessToken)
-				.retrieve()
-				.body(JsonNode.class);
-		java.util.ArrayList<JiraProjectOption> projects = new java.util.ArrayList<>();
-		JsonNode values = node != null && node.has("values") ? node.get("values") : node;
-		if (values != null && values.isArray()) {
-			values.forEach(item -> projects.add(new JiraProjectOption(
-					item.path("id").asText(), item.path("key").asText(), item.path("name").asText())));
+		try {
+			JiraProjectSearchResponse node = restClient
+					.get()
+					.uri("https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/project/search?maxResults=100", cloudId)
+					.header("Authorization", "Bearer " + accessToken)
+					.retrieve()
+					.body(JiraProjectSearchResponse.class);
+			if (node == null || node.values() == null) {
+				return List.of();
+			}
+			return node.values().stream()
+					.map(item -> new JiraProjectOption(item.id(), item.key(), item.name()))
+					.toList();
+		} catch (RestClientResponseException | HttpMessageConversionException ex) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira project is not accessible.");
 		}
-		return projects;
 	}
 
 	public List<JiraBoardOption> listBoards(String accessToken, String cloudId, String projectIdOrKey) {
-		JsonNode node = restClient
-				.get()
-				.uri(
-						"https://api.atlassian.com/ex/jira/{cloudId}/rest/agile/1.0/board?projectKeyOrId={project}&maxResults=50",
-						cloudId,
-						projectIdOrKey)
-				.header("Authorization", "Bearer " + accessToken)
-				.retrieve()
-				.body(JsonNode.class);
-		java.util.ArrayList<JiraBoardOption> boards = new java.util.ArrayList<>();
-		if (node != null && node.has("values") && node.get("values").isArray()) {
-			node.get("values")
-					.forEach(item -> boards.add(new JiraBoardOption(
-							item.path("id").asText(), item.path("name").asText(), item.path("type").asText())));
+		try {
+			JiraBoardSearchResponse node = restClient
+					.get()
+					.uri(
+							"https://api.atlassian.com/ex/jira/{cloudId}/rest/agile/1.0/board?projectKeyOrId={project}&maxResults=50",
+							cloudId,
+							projectIdOrKey)
+					.header("Authorization", "Bearer " + accessToken)
+					.retrieve()
+					.body(JiraBoardSearchResponse.class);
+			if (node == null || node.values() == null) {
+				return List.of();
+			}
+			return node.values().stream()
+					.map(item -> new JiraBoardOption(item.id(), item.name(), item.type()))
+					.toList();
+		} catch (RestClientResponseException | HttpMessageConversionException ex) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_BOARD_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira board is not accessible.");
 		}
-		return boards;
 	}
 
 	private TokenResponse postToken(String json) {
 		try {
-			String raw = restClient
+			JiraTokenApiResponse node = restClient
 					.post()
 					.uri("https://auth.atlassian.com/oauth/token")
 					.contentType(MediaType.APPLICATION_JSON)
 					.body(json)
 					.retrieve()
-					.body(String.class);
-			JsonNode node = mapper.readTree(raw);
-			if (!node.hasNonNull("access_token")) {
+					.body(JiraTokenApiResponse.class);
+			if (node == null || node.accessToken() == null || node.accessToken().isBlank()) {
 				throw failed();
 			}
 			return new TokenResponse(
-					node.path("access_token").asText(),
-					node.path("refresh_token").asText(null),
-					node.path("expires_in").asLong(3600),
-					node.path("scope").asText(""));
+					node.accessToken(),
+					node.refreshToken(),
+					node.expiresIn() == null ? 3600 : node.expiresIn(),
+					node.scope() == null ? "" : node.scope());
 		} catch (IntegrationException ex) {
 			throw ex;
-		} catch (Exception ex) {
+		} catch (RestClientResponseException | HttpMessageConversionException ex) {
 			throw failed();
 		}
 	}
@@ -183,6 +199,25 @@ public class JiraOAuthClient {
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record Myself(String accountId, String displayName, String emailAddress, String avatarUrl) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record JiraTokenApiResponse(
+			@JsonProperty("access_token") String accessToken,
+			@JsonProperty("refresh_token") String refreshToken,
+			@JsonProperty("expires_in") Long expiresIn,
+			String scope) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record JiraProjectResponse(String id, String key, String name) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record JiraBoardResponse(String id, String name, String type) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record JiraProjectSearchResponse(List<JiraProjectResponse> values) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record JiraBoardSearchResponse(List<JiraBoardResponse> values) {}
 
 	public record TokenResponse(String accessToken, String refreshToken, long expiresInSeconds, String scope) {}
 

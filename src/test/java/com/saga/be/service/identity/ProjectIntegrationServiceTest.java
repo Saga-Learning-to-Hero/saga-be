@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.saga.be.config.IntegrationProperties;
@@ -21,6 +22,8 @@ import com.saga.be.entity.enums.AccountStatus;
 import com.saga.be.entity.enums.EnrollmentStatus;
 import com.saga.be.entity.enums.OAuthFlowType;
 import com.saga.be.entity.enums.RoleInTeam;
+import com.saga.be.entity.github.GithubInstallation;
+import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
 import com.saga.be.entity.project.TeamMember;
 import com.saga.be.exception.IntegrationException;
@@ -246,6 +249,44 @@ class ProjectIntegrationServiceTest {
 		when(jira.authorizationUrl(any(), any(), any(), eq(true))).thenReturn("https://auth.atlassian.com/authorize");
 		OAuthStartResponse jiraStart = service.startJira(student.getId(), projectId, "https://evil.example/phish");
 		assertEquals("https://auth.atlassian.com/authorize", jiraStart.authorizationUrl());
+	}
+
+	@Test
+	void completeGithubInstallationProgressesBeyondGetInstallation() {
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		when(oauthStates.consumeForUser(eq("state"), eq(student.getId()), eq(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY)))
+				.thenReturn(state(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY));
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 158866076L))
+				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
+						158866076L,
+						123456L,
+						new GitHubOAuthClient.GitHubAccountResponse("Saga-Learning-to-Hero", "Organization"),
+						"https://github.com/settings/installations/158866076",
+						"selected"));
+		IntegrationProperties.GitHub githubProps = new IntegrationProperties.GitHub();
+		githubProps.setAppId("123456");
+		when(properties.getGithub()).thenReturn(githubProps);
+		when(properties.getSuccessUrl()).thenReturn("http://localhost:3000/integrations/success");
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findById(projectId)).thenReturn(Optional.of(project));
+		when(installations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		when(installations.findByInstallationId(158866076L)).thenReturn(Optional.empty());
+		when(installations.save(any(GithubInstallation.class))).thenAnswer(invocation -> {
+			GithubInstallation saved = invocation.getArgument(0);
+			if (saved.getId() == null) {
+				saved.setId(UUID.randomUUID());
+			}
+			return saved;
+		});
+
+		String target = service.completeGithubInstallation(student.getId(), "state", 158866076L, null);
+
+		assertEquals("http://localhost:3000/integrations/success", target);
+		verify(installations).save(any(GithubInstallation.class));
 	}
 
 	@Test

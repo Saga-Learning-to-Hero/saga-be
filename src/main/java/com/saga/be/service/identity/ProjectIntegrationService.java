@@ -1,6 +1,5 @@
 package com.saga.be.service.identity;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.saga.be.config.IntegrationProperties;
 import com.saga.be.dto.integration.OAuthStartResponse;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse;
@@ -172,15 +171,15 @@ public class ProjectIntegrationService {
 					IntegrationErrorCode.GITHUB_INSTALLATION_INVALID, HttpStatus.BAD_REQUEST, "installation_id is required.");
 		}
 		String jwt = githubJwt.createJwt();
-		JsonNode installation = github.getInstallation(jwt, installationId);
-		if (installation == null || installation.isMissingNode() || installation.path("id").isMissingNode()) {
+		GitHubOAuthClient.GitHubInstallationResponse installation = github.getInstallation(jwt, installationId);
+		if (installation == null || installation.id() == null) {
 			throw new IntegrationException(
 					IntegrationErrorCode.GITHUB_INSTALLATION_INVALID, HttpStatus.BAD_REQUEST, "GitHub installation could not be verified.");
 		}
 		if (properties.getGithub().getAppId() != null
 				&& !properties.getGithub().getAppId().isBlank()
-				&& installation.has("app_id")
-				&& !String.valueOf(installation.get("app_id").asLong()).equals(properties.getGithub().getAppId())) {
+				&& installation.appId() != null
+				&& !String.valueOf(installation.appId()).equals(properties.getGithub().getAppId())) {
 			throw new IntegrationException(
 					IntegrationErrorCode.GITHUB_INSTALLATION_INVALID, HttpStatus.FORBIDDEN, "Installation does not belong to this GitHub App.");
 		}
@@ -189,11 +188,11 @@ public class ProjectIntegrationService {
 					userCode,
 					state.pkceVerifier(),
 					callback(properties.getGithub().getOauthCallbackUrl(), "/api/integrations/github/oauth/callback"));
-			JsonNode userInstalls = github.listUserInstallations(userToken);
+			GitHubOAuthClient.GitHubUserInstallationsResponse userInstalls = github.listUserInstallations(userToken);
 			boolean authorized = false;
-			if (userInstalls != null && userInstalls.has("installations")) {
-				for (JsonNode node : userInstalls.get("installations")) {
-					if (node.path("id").asLong() == installationId) {
+			if (userInstalls != null && userInstalls.installations() != null) {
+				for (GitHubOAuthClient.GitHubInstallationIdResponse node : userInstalls.installations()) {
+					if (node.id() != null && node.id() == installationId) {
 						authorized = true;
 						break;
 					}
@@ -211,7 +210,8 @@ public class ProjectIntegrationService {
 	}
 
 	@Transactional
-	protected void persistVerifiedInstallation(UUID userId, UUID projectId, Long installationId, JsonNode installation) {
+	protected void persistVerifiedInstallation(
+			UUID userId, UUID projectId, Long installationId, GitHubOAuthClient.GitHubInstallationResponse installation) {
 		Project project = projects.findById(projectId).orElseThrow();
 		installations.findByProject_Id(projectId).ifPresent(existing -> {
 			if (!installationId.equals(existing.getInstallationId())) {
@@ -222,10 +222,10 @@ public class ProjectIntegrationService {
 		});
 		GithubInstallation entity = installations.findByInstallationId(installationId).orElseGet(GithubInstallation::new);
 		entity.setInstallationId(installationId);
-		entity.setAppId(installation.path("app_id").asLong(0));
-		entity.setAccountLogin(installation.path("account").path("login").asText(null));
-		entity.setAccountType(installation.path("account").path("type").asText(null));
-		entity.setHtmlUrl(installation.path("html_url").asText(null));
+		entity.setAppId(installation.appId() == null ? 0L : installation.appId());
+		entity.setAccountLogin(installation.account() == null ? null : installation.account().login());
+		entity.setAccountType(installation.account() == null ? null : installation.account().type());
+		entity.setHtmlUrl(installation.htmlUrl());
 		entity.setInstallationStatus(GitHubInstallationStatus.ACTIVE);
 		entity.setInstalledBy(users.findById(userId).orElseThrow());
 		entity.setProject(project);
@@ -414,12 +414,12 @@ public class ProjectIntegrationService {
 		requireLeader(userId, projectId);
 		PendingJiraConnect pending = pending(userId, projectId);
 		requireAccessibleSite(pending.accessToken(), cloudId);
-		JsonNode projectNode = jira.getProject(pending.accessToken(), cloudId, jiraProjectId);
-		if (projectNode == null || projectNode.isMissingNode()) {
+		JiraOAuthClient.JiraProjectResponse projectNode = jira.getProject(pending.accessToken(), cloudId, jiraProjectId);
+		if (projectNode == null || projectNode.id() == null) {
 			throw new IntegrationException(
 					IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira project is not accessible.");
 		}
-		String key = projectNode.path("key").asText(jiraProjectId);
+		String key = projectNode.key() == null || projectNode.key().isBlank() ? jiraProjectId : projectNode.key();
 		return jira.listBoards(pending.accessToken(), cloudId, key).stream()
 				.map(item -> new JiraBoardOption(item.id(), item.name(), item.type()))
 				.toList();
@@ -435,14 +435,14 @@ public class ProjectIntegrationService {
 						"Jira team authorization has expired. Start the connection again."));
 		String cloudId = selection.get("cloudId");
 		JiraOAuthClient.AccessibleResource site = requireAccessibleSite(pending.accessToken(), cloudId);
-		JsonNode projectNode = jira.getProject(pending.accessToken(), site.id(), selection.get("jiraProjectId"));
-		if (projectNode == null || projectNode.isMissingNode()) {
+		JiraOAuthClient.JiraProjectResponse projectNode = jira.getProject(pending.accessToken(), site.id(), selection.get("jiraProjectId"));
+		if (projectNode == null || projectNode.id() == null) {
 			throw new IntegrationException(
 					IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira project is not accessible.");
 		}
 		if (selection.get("boardId") != null && !selection.get("boardId").isBlank()) {
-			JsonNode board = jira.getBoard(pending.accessToken(), site.id(), selection.get("boardId"));
-			if (board == null || board.isMissingNode()) {
+			JiraOAuthClient.JiraBoardResponse board = jira.getBoard(pending.accessToken(), site.id(), selection.get("boardId"));
+			if (board == null || board.id() == null) {
 				throw new IntegrationException(
 						IntegrationErrorCode.JIRA_BOARD_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira board is not accessible.");
 			}
@@ -456,7 +456,7 @@ public class ProjectIntegrationService {
 			UUID projectId,
 			PendingJiraConnect pending,
 			JiraOAuthClient.AccessibleResource site,
-			JsonNode projectNode,
+			JiraOAuthClient.JiraProjectResponse projectNode,
 			String boardId) {
 		if (pending.refreshToken() != null && !encryptor.isReady()) {
 			throw new IntegrationException(
@@ -471,9 +471,9 @@ public class ProjectIntegrationService {
 		integration.setCloudId(site.id());
 		integration.setSiteUrl(site.url());
 		integration.setSiteName(site.name());
-		integration.setJiraProjectId(projectNode.path("id").asText());
-		integration.setProjectKey(projectNode.path("key").asText());
-		integration.setName(projectNode.path("name").asText(null));
+		integration.setJiraProjectId(projectNode.id());
+		integration.setProjectKey(projectNode.key());
+		integration.setName(projectNode.name());
 		integration.setJiraBoardId(boardId);
 		integration.setGrantedScopes(pending.scope());
 		integration.setConnectedBy(actor);
