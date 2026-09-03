@@ -111,6 +111,16 @@ class V1SchemaFoundationTest {
 		assertTrue(created.contains("assessment_result"));
 	}
 
+	@Test
+	void v1SeedsFourProjectTypes() throws IOException {
+		String sql = readV1();
+		assertTrue(sql.contains("INSERT INTO project_type"));
+		assertTrue(sql.contains("'DESIGN_ARCHITECTURE'"));
+		assertTrue(sql.contains("'RESEARCH'"));
+		assertTrue(sql.contains("'TESTER'"));
+		assertTrue(sql.contains("'DOCUMENT'"));
+	}
+
 	private static String readV1() throws IOException {
 		try (InputStream in = V1SchemaFoundationTest.class.getResourceAsStream("/db/migration/V1__initial_schema.sql")) {
 			assertTrue(in != null, "missing Flyway V1");

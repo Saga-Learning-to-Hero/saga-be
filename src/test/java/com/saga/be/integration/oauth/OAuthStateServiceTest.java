@@ -24,6 +24,16 @@ class OAuthStateServiceTest {
 	}
 
 	@Test
+	void nullFrontendReturnPathIsStored() {
+		InMemoryOAuthStateStore store = new InMemoryOAuthStateStore();
+		OAuthStateService service = new OAuthStateService(store, Duration.ofMinutes(10));
+		UUID user = UUID.randomUUID();
+		OAuthState started =
+				service.start(user, OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY, null, UUID.randomUUID(), UUID.randomUUID(), "v");
+		assertEquals(null, service.consumeForUser(started.state(), user).frontendReturnPath());
+	}
+
+	@Test
 	void invalidStateRejected() {
 		OAuthStateService service = new OAuthStateService(new InMemoryOAuthStateStore(), Duration.ofMinutes(10));
 		assertThrows(IntegrationException.class, () -> service.consumeForUser("nope", UUID.randomUUID()));

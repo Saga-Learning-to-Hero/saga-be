@@ -14,6 +14,7 @@ import com.saga.be.entity.enums.AccountRole;
 import com.saga.be.entity.enums.AccountStatus;
 import com.saga.be.entity.enums.EnrollmentStatus;
 import com.saga.be.entity.enums.RoleInTeam;
+import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
 import com.saga.be.entity.project.TeamMember;
 import com.saga.be.exception.AcademicErrorCode;
@@ -85,6 +86,7 @@ class StudentTeamServiceTest {
 		assertEquals(team.getId(), response.teamId());
 		assertEquals(1, response.teamNo());
 		assertEquals("LEADER", response.myRole());
+		assertEquals(null, response.projectId());
 		assertEquals("SE111111", response.members().getFirst().studentCode());
 		assertFalse(response.toString().contains("student@gmail.com") && response.members().toString().contains("email"));
 		assertEquals("Alpha Student", response.members().getFirst().fullName());
@@ -97,6 +99,22 @@ class StudentTeamServiceTest {
 				assertThrows(AcademicException.class, () -> service.myTeam(student.getId(), course.getId()));
 		assertEquals(AcademicErrorCode.STUDENT_COURSE_FORBIDDEN, ex.getCode());
 		assertEquals(HttpStatus.FORBIDDEN, ex.getStatus());
+	}
+
+	@Test
+	void ownTeamIncludesProjectIdAfterLeaderCreatesProject() {
+		Team team = new Team();
+		team.setId(UUID.randomUUID());
+		team.setTeamNo(1);
+		team.setName("Alpha");
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		team.setProject(project);
+		TeamMember mine = member(team, enrollment, RoleInTeam.LEADER);
+		when(members.findByCourseEnrollment_Id(enrollment.getId())).thenReturn(Optional.of(mine));
+		when(members.findByTeam_Id(team.getId())).thenReturn(List.of(mine));
+		StudentTeamResponse response = service.myTeam(student.getId(), course.getId());
+		assertEquals(project.getId(), response.projectId());
 	}
 
 	@Test

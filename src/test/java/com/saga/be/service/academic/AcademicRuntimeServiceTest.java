@@ -416,6 +416,24 @@ class AcademicRuntimeServiceTest {
 		assertEquals(HttpStatus.CONFLICT, ex.getStatus());
 	}
 
+	@Test
+	void syllabusChangeBlockedWhenCourseHasProjects() {
+		Fixture fx = fixture();
+		UUID courseId = service.createCourse(
+						new CreateCourseRequest(fx.classId, fx.subjectId, fx.syllabusId, fx.lecturerId, null, null),
+						admin,
+						auditReq())
+				.id();
+		store.projectCourseIds.add(courseId);
+		SubjectSyllabusVersion next = syllabus(store.subjects.get(fx.subjectId), "2026-v2", SyllabusStatus.PUBLISHED);
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.updateCourse(
+						courseId, new PatchCourseRequest(null, next.getId(), null, null), admin, auditReq()));
+		assertEquals(AcademicErrorCode.COURSE_SYLLABUS_IMMUTABLE, ex.getCode());
+		assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+	}
+
 	private Fixture fixture() {
 		UUID semesterId = service.createSemester(fa26(), admin, auditReq()).id();
 		UUID classId = service.createClass(new CreateAcademicClassRequest(semesterId, "SE1705", "SE1705"), admin, auditReq())

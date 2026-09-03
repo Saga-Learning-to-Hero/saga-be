@@ -1,11 +1,16 @@
 package com.saga.be.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.saga.be.exception.IntegrationException;
+import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.oauth.OAuthState;
 import com.saga.be.integration.oauth.OAuthStateStore;
 import java.time.Duration;
 import java.util.Optional;
+import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.data.redis.RedisSystemException;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.HttpStatus;
 
 public class RedisOAuthStateStore implements OAuthStateStore {
 
@@ -26,15 +31,25 @@ public class RedisOAuthStateStore implements OAuthStateStore {
 		try {
 			redis.opsForValue()
 					.set(KEY_PREFIX + state.state(), mapper.writeValueAsString(state), requestedTtl != null ? requestedTtl : ttl);
+		} catch (RedisConnectionFailureException | RedisSystemException ex) {
+			throw ex;
 		} catch (Exception ex) {
-			throw new IllegalStateException("Unable to persist OAuth state.");
+			throw new IntegrationException(
+					IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
+					HttpStatus.SERVICE_UNAVAILABLE,
+					"Unable to persist OAuth state.");
 		}
 	}
 
 	@Override
 	public Optional<OAuthState> consume(String state) {
 		String key = KEY_PREFIX + state;
-		String json = redis.opsForValue().getAndDelete(key);
+		String json;
+		try {
+			json = redis.opsForValue().getAndDelete(key);
+		} catch (RedisConnectionFailureException | RedisSystemException ex) {
+			throw ex;
+		}
 		if (json == null) {
 			return Optional.empty();
 		}

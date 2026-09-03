@@ -10,7 +10,9 @@ import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraBoardOption;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraIntegrationSummary;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraProjectOption;
 import com.saga.be.entity.account.UserAccount;
+import com.saga.be.entity.academic.CourseEnrollment;
 import com.saga.be.entity.enums.AuditSource;
+import com.saga.be.entity.enums.EnrollmentStatus;
 import com.saga.be.entity.enums.GitHubInstallationStatus;
 import com.saga.be.entity.enums.GitProvider;
 import com.saga.be.entity.enums.IntegrationProvider;
@@ -152,12 +154,13 @@ public class ProjectIntegrationService {
 		return new ProjectIntegrationsResponse(githubSummary, jiraSummary);
 	}
 
+	@Transactional(readOnly = true)
 	public OAuthStartResponse startGithub(UUID userId, UUID projectId, String returnPath) {
 		requireLeader(userId, projectId);
 		String verifier = Pkce.newVerifier();
 		Team team = requireTeamForProject(projectId);
 		OAuthState state = oauthStates.start(
-				userId, OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY, returnPath, projectId, team.getId(), verifier);
+				userId, OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY, safeReturnPath(returnPath), projectId, team.getId(), verifier);
 		return new OAuthStartResponse(github.installationUrl(state.state()), state.state());
 	}
 
@@ -349,12 +352,13 @@ public class ProjectIntegrationService {
 				null);
 	}
 
+	@Transactional(readOnly = true)
 	public OAuthStartResponse startJira(UUID userId, UUID projectId, String returnPath) {
 		requireLeader(userId, projectId);
 		Team team = requireTeamForProject(projectId);
 		String verifier = Pkce.newVerifier();
 		OAuthState state = oauthStates.start(
-				userId, OAuthFlowType.JIRA_TEAM_CONNECT, returnPath, projectId, team.getId(), verifier);
+				userId, OAuthFlowType.JIRA_TEAM_CONNECT, safeReturnPath(returnPath), projectId, team.getId(), verifier);
 		return new OAuthStartResponse(
 				jira.authorizationUrl(
 						state.state(),
@@ -577,14 +581,28 @@ public class ProjectIntegrationService {
 
 	private TeamAuthorization.Membership membership(UUID userId, UUID projectId) {
 		Team team = requireTeamForProject(projectId);
-		TeamMember member = members.findByTeam_Id(team.getId()).stream()
-				.filter(item -> item.getCourseEnrollment().getStudentProfile().getUserAccount().getId().equals(userId))
+		TeamMember member = members.findFetchedByTeam_Id(team.getId()).stream()
+				.filter(item -> isActiveCourseMember(item, userId))
 				.findFirst()
 				.orElse(null);
 		return member == null
 				? null
 				: new TeamAuthorization.Membership(
 						team.getId(), projectId, team.getCourse().getId(), member.getRoleInTeam(), userId);
+	}
+
+	private static boolean isActiveCourseMember(TeamMember item, UUID userId) {
+		if (item == null || item.getCourseEnrollment() == null) {
+			return false;
+		}
+		CourseEnrollment enrollment = item.getCourseEnrollment();
+		if (enrollment.getEnrollmentStatus() != EnrollmentStatus.ACTIVE) {
+			return false;
+		}
+		if (enrollment.getStudentProfile() == null || enrollment.getStudentProfile().getUserAccount() == null) {
+			return false;
+		}
+		return userId.equals(enrollment.getStudentProfile().getUserAccount().getId());
 	}
 
 	private String callback(String configured, String path) {
@@ -595,9 +613,21 @@ public class ProjectIntegrationService {
 	}
 
 	private String redirect(String returnPath) {
-		if (returnPath != null && returnPath.startsWith("/")) {
-			return UriComponentsBuilder.fromUriString(properties.getPublicBaseUrl()).path(returnPath).build().toUriString();
+		String safe = safeReturnPath(returnPath);
+		if (safe != null) {
+			return UriComponentsBuilder.fromUriString(properties.getPublicBaseUrl()).path(safe).build().toUriString();
 		}
 		return properties.getSuccessUrl();
+	}
+
+	static String safeReturnPath(String returnPath) {
+		if (returnPath == null || returnPath.isBlank()) {
+			return null;
+		}
+		String trimmed = returnPath.trim();
+		if (!trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed.contains("://") || trimmed.contains("\\")) {
+			return null;
+		}
+		return trimmed;
 	}
 }

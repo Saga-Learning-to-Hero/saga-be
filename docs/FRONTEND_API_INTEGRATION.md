@@ -2,7 +2,7 @@
 
 File này là **contract tích hợp Backend ↔ Frontend có hiệu lực** khi public API đã được implement.
 
-> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim) đã chốt. Lecturer Team Management V1 (assigned courses, ACTIVE roster, team XLSX preview/confirm, student my-team) đã chốt. Graph/SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
+> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim) đã chốt. Lecturer Team Management V1 (assigned courses, ACTIVE roster, team XLSX preview/confirm, student my-team) đã chốt. Team Leader Project Setup V1 (project-type catalog, student team project create/read, then existing GitHub/Jira project integrations) đã chốt. Graph/SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
 
 ---
 
@@ -783,7 +783,7 @@ Confirm summary: `createdTeams`, `updatedTeams`, `assignedMembers`, `reassignedM
 
 ### Student my-team
 
-`GET /api/student/courses/{courseId}/team` is STUDENT-only. Requires ACTIVE enrollment in that course, otherwise `STUDENT_COURSE_FORBIDDEN` (403). No membership → `TEAM_NOT_FOUND` (404). Identity always comes from the session. Member emails are not returned.
+`GET /api/student/courses/{courseId}/team` is STUDENT-only. Requires ACTIVE enrollment in that course, otherwise `STUDENT_COURSE_FORBIDDEN` (403). No membership → `TEAM_NOT_FOUND` (404). Identity always comes from the session. Member emails are not returned. `projectId` is nullable: `null` means the Team Leader has not created the Project yet.
 
 ```json
 {
@@ -791,6 +791,7 @@ Confirm summary: `createdTeams`, `updatedTeams`, `assignedMembers`, `reassignedM
   "teamNo": 1,
   "teamName": "Alpha",
   "myRole": "LEADER",
+  "projectId": null,
   "members": [
     { "studentCode": "SE111111", "fullName": "Alpha Student", "role": "LEADER" }
   ]
@@ -802,4 +803,120 @@ Confirm summary: `createdTeams`, `updatedTeams`, `assignedMembers`, `reassignedM
 Changed memberships (new assign, reassignment, role change) enqueue `email_type=TEAM_ASSIGNED` / `template_key=team-assigned` inside the confirm transaction. The outbox worker sends later through the runtime `EmailSender` (`SAGA_MAIL_PROVIDER`). Unchanged rows do not enqueue.
 
 Errors: `LECTURER_COURSE_FORBIDDEN`, `STUDENT_COURSE_FORBIDDEN`, `TEAM_FILE_INVALID`, `TEAM_FILE_TOO_LARGE`, `TEAM_PREVIEW_INVALID`, `TEAM_PREVIEW_EXPIRED`, `TEAM_PREVIEW_MISMATCH`, `TEAM_CONFIRM_BLOCKED`, `TEAM_NOT_FOUND`, `TEAM_LEADER_INVALID`.
+
+---
+
+## 16. Team Leader Project Setup V1
+
+Lecturer assigns teams. The **Team Leader** creates the Project. Lecturer does **not** create Projects. There is no `/api/lecturer/**` project-create route.
+
+`Team.project_id` may be null until the Leader completes setup. After create, FE uses the returned `projectId` with the existing GitHub/Jira project integration APIs. Project POST does **not** connect GitHub or Jira.
+
+### Roles
+
+| Actor | Create Project | Read Team Project | Configure GitHub/Jira | Read integration summary |
+| --- | --- | --- | --- | --- |
+| ACTIVE Team Leader | Yes | Yes | Yes | Yes |
+| ACTIVE Team Member | 403 `NOT_TEAM_LEADER` | Yes | 403 `NOT_TEAM_LEADER` | Yes (needs `projectId`) |
+| WITHDRAWN / COMPLETED enrollment | 403 `STUDENT_COURSE_FORBIDDEN` | 403 | 403 `INTEGRATION_FORBIDDEN` | 403 `INTEGRATION_FORBIDDEN` |
+| Student not in team / other course | 403 / 404 as below | 403 / 404 | 403 | 403 |
+| Lecturer | No | Lecturer team list may show `projectId` | No | No |
+| ADMIN | Not via `/api/student/**` | Support via existing integration ADMIN bypass | Existing bypass | Existing bypass |
+
+### FE sequence
+
+1. `GET /api/student/courses/{courseId}/team`
+2. If `myRole != LEADER`: read-only Project behavior (step 11). Do not POST project.
+3. `GET /api/student/project-types` (optional catalog)
+4. `POST /api/student/courses/{courseId}/project`
+5. Receive `projectId`
+6. Optionally link personal identities: `POST /api/integrations/github/link`, `POST /api/integrations/jira/link`
+7. `POST /api/projects/{projectId}/integrations/github/connect`
+8. GitHub App setup callback + `GET/PUT /api/projects/{projectId}/integrations/github/repositories`
+9. `POST /api/projects/{projectId}/integrations/jira/connect`
+10. Jira team callback + sites / projects / boards + `PUT /api/projects/{projectId}/integrations/jira`
+11. Members: `GET /api/student/courses/{courseId}/project` then `GET /api/projects/{projectId}/integrations`
+
+`projectId` on the team response is enough to skip create when it is already non-null.
+
+### Project types
+
+`GET /api/student/project-types` — STUDENT only.
+
+Seeded catalog (V1): `DESIGN_ARCHITECTURE`, `RESEARCH`, `TESTER`, `DOCUMENT`.
+
+```json
+[
+  {
+    "id": "...",
+    "code": "DESIGN_ARCHITECTURE",
+    "name": "Design / Architecture",
+    "description": "Canonical SAGA project-type catalog"
+  }
+]
+```
+
+`criteria_config` is not returned. `projectTypeId` on create is optional (`null` allowed). Invalid id → `PROJECT_TYPE_NOT_FOUND` (404).
+
+### Create / read Team Project
+
+`GET /api/student/courses/{courseId}/project` — ACTIVE Leader or Member.
+
+`POST /api/student/courses/{courseId}/project` — ACTIVE **LEADER** only.
+
+Identity and ownership are server-derived from the session + `{courseId}`. Do not send `teamId`, `projectId`, `courseId`, `createdByUserId`, or `repositoryUrl`.
+
+```json
+POST /api/student/courses/{courseId}/project
+{
+  "name": "SAGA Learning Platform",
+  "projectTypeId": null,
+  "description": "..."
+}
+```
+
+`name` is required (trim, reject blank, max 255). `description` is optional.
+
+```json
+{
+  "projectId": "...",
+  "courseId": "...",
+  "teamId": "...",
+  "teamNo": 1,
+  "teamName": "SAGA Team",
+  "name": "SAGA Learning Platform",
+  "description": "...",
+  "projectType": {
+    "id": "...",
+    "code": "DESIGN_ARCHITECTURE",
+    "name": "Design / Architecture"
+  },
+  "createdBy": {
+    "userId": "...",
+    "fullName": "Alpha Leader"
+  },
+  "createdAt": "2026-09-04T01:30:00"
+}
+```
+
+`projectType` may be `null`. Tokens / credentials are never returned. No Project PATCH/DELETE in V1.
+
+Create is `201`. Second create for the same team is `409` `PROJECT_ALREADY_EXISTS`. GET before create is `404` `PROJECT_NOT_FOUND`.
+
+### Common errors
+
+| Code | HTTP | When |
+| --- | --- | --- |
+| `STUDENT_COURSE_FORBIDDEN` | 403 | Not enrolled, or enrollment is not ACTIVE |
+| `TEAM_NOT_FOUND` | 404 | ACTIVE in course but not assigned to a team |
+| `NOT_TEAM_LEADER` | 403 | MEMBER (or non-leader) tries to create |
+| `PROJECT_NOT_FOUND` | 404 | Own team exists but Project is not created yet |
+| `PROJECT_ALREADY_EXISTS` | 409 | Team already has a Project |
+| `PROJECT_TYPE_NOT_FOUND` | 404 | `projectTypeId` is not in the catalog |
+| `PROJECT_NAME_INVALID` | 400 | Blank / invalid name |
+| `REQUEST_INVALID` | 400 | Bean-validation failure (missing name) |
+| `INTEGRATION_FORBIDDEN` | 403 | Not an ACTIVE team member of the project's team |
+| `NOT_TEAM_LEADER` | 403 | Member tries to configure GitHub/Jira |
+
+GitHub/Jira connect endpoints are unchanged. They require an existing `projectId` (team attached). WITHDRAWN/COMPLETED students are denied even if `team_member` still exists.
 
