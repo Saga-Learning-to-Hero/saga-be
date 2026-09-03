@@ -855,7 +855,29 @@ PUT /api/projects/{projectId}/integrations/github/repositories
 
 `role` is optional. Allowed values: `FRONTEND`, `BACKEND`, `OTHER`. Omit or `null` leaves `repository_role` unset. Invalid values such as `frontend` or `FE` return `400 REQUEST_INVALID`.
 9. `POST /api/projects/{projectId}/integrations/jira/connect`
-10. Jira team callback + sites / projects / boards + `PUT /api/projects/{projectId}/integrations/jira`
+10. Jira team callback, then select the site/project/board:
+
+```text
+POST /api/projects/{projectId}/integrations/jira/connect
+→ authorize at Atlassian
+→ GET /api/projects/{projectId}/integrations/jira/sites
+→ GET /api/projects/{projectId}/integrations/jira/projects?cloudId=...
+→ GET /api/projects/{projectId}/integrations/jira/boards?cloudId=...&jiraProjectId=...
+→ PUT /api/projects/{projectId}/integrations/jira
+```
+
+```json
+PUT /api/projects/{projectId}/integrations/jira
+{
+  "cloudId": "aeb21465-f2da-4923-b356-f6f1cfa4fd13",
+  "jiraProjectId": "10067",
+  "boardId": "68"
+}
+```
+
+`cloudId` and `jiraProjectId` are required strings from GET `/jira/sites` and GET `/jira/projects`. `boardId` is optional (omit or `null` if no board). The JSON field is `boardId`, not `jiraBoardId`.
+
+`projectKey` (for example `SAGA`) is returned by GET `/jira/projects` for display. Do not send it as PUT authority; the server loads key/name from Jira using `jiraProjectId`. Missing `cloudId` / `jiraProjectId` → `400 REQUEST_INVALID`.
 11. Members: `GET /api/student/courses/{courseId}/project` then `GET /api/projects/{projectId}/integrations`
 
 `projectId` on the team response is enough to skip create when it is already non-null.

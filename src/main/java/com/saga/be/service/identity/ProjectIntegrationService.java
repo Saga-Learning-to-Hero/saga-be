@@ -4,6 +4,7 @@ import com.saga.be.config.IntegrationProperties;
 import com.saga.be.dto.integration.OAuthStartResponse;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse;
 import com.saga.be.dto.integration.SelectGitHubRepositoryRequest;
+import com.saga.be.dto.integration.SelectJiraIntegrationRequest;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.ConnectedRepo;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.GithubIntegrationSummary;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraBoardOption;
@@ -428,7 +429,7 @@ public class ProjectIntegrationService {
 	}
 
 	@Transactional
-	public void saveJiraSelection(UUID userId, UUID projectId, Map<String, String> selection) {
+	public void saveJiraSelection(UUID userId, UUID projectId, SelectJiraIntegrationRequest selection) {
 		requireLeader(userId, projectId);
 		PendingJiraConnect pending = pendingJira
 				.consume(userId, projectId)
@@ -436,21 +437,21 @@ public class ProjectIntegrationService {
 						IntegrationErrorCode.OAUTH_STATE_EXPIRED,
 						HttpStatus.BAD_REQUEST,
 						"Jira team authorization has expired. Start the connection again."));
-		String cloudId = selection.get("cloudId");
-		JiraOAuthClient.AccessibleResource site = requireAccessibleSite(pending.accessToken(), cloudId);
-		JiraOAuthClient.JiraProjectResponse projectNode = jira.getProject(pending.accessToken(), site.id(), selection.get("jiraProjectId"));
+		JiraOAuthClient.AccessibleResource site = requireAccessibleSite(pending.accessToken(), selection.cloudId());
+		JiraOAuthClient.JiraProjectResponse projectNode =
+				jira.getProject(pending.accessToken(), site.id(), selection.jiraProjectId());
 		if (projectNode == null || projectNode.id() == null) {
 			throw new IntegrationException(
 					IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira project is not accessible.");
 		}
-		if (selection.get("boardId") != null && !selection.get("boardId").isBlank()) {
-			JiraOAuthClient.JiraBoardResponse board = jira.getBoard(pending.accessToken(), site.id(), selection.get("boardId"));
+		if (selection.boardId() != null && !selection.boardId().isBlank()) {
+			JiraOAuthClient.JiraBoardResponse board = jira.getBoard(pending.accessToken(), site.id(), selection.boardId());
 			if (board == null || board.id() == null) {
 				throw new IntegrationException(
 						IntegrationErrorCode.JIRA_BOARD_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira board is not accessible.");
 			}
 		}
-		persistJiraIntegration(userId, projectId, pending, site, projectNode, selection.get("boardId"));
+		persistJiraIntegration(userId, projectId, pending, site, projectNode, selection.boardId());
 	}
 
 	@Transactional

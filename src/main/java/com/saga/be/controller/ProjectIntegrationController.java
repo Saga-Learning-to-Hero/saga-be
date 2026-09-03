@@ -6,6 +6,7 @@ import com.saga.be.dto.integration.ProjectIntegrationsResponse;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraBoardOption;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraProjectOption;
 import com.saga.be.dto.integration.SelectGitHubRepositoryRequest;
+import com.saga.be.dto.integration.SelectJiraIntegrationRequest;
 import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient;
 import com.saga.be.security.SagaUserPrincipal;
@@ -20,7 +21,6 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.ResponseEntity;
@@ -147,10 +147,32 @@ public class ProjectIntegrationController {
 	}
 
 	@PutMapping("/jira")
+	@Operation(summary = "Save the selected Jira site, project, and optional board. Team Leader only.")
+	@io.swagger.v3.oas.annotations.parameters.RequestBody(
+			required = true,
+			content =
+					@Content(
+							schema = @Schema(implementation = SelectJiraIntegrationRequest.class),
+							examples =
+									@ExampleObject(
+											name = "sagaCloudProject",
+											value =
+													"""
+													{
+													  "cloudId":"aeb21465-f2da-4923-b356-f6f1cfa4fd13",
+													  "jiraProjectId":"10067",
+													  "boardId":"68"
+													}
+													""")))
+	@ApiResponse(responseCode = "204", description = "Jira integration saved")
+	@ApiResponse(
+			responseCode = "400",
+			description = "Missing cloudId or jiraProjectId",
+			content = @Content(schema = @Schema(implementation = ApiErrorResponse.class)))
 	public ResponseEntity<Void> saveJira(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
-			@RequestBody Map<String, String> selection) {
+			@Valid @RequestBody SelectJiraIntegrationRequest selection) {
 		integrations.saveJiraSelection(principal.getUserId(), projectId, selection);
 		return ResponseEntity.noContent().build();
 	}

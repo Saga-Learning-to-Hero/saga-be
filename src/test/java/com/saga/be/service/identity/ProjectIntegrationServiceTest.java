@@ -17,6 +17,7 @@ import com.saga.be.config.IntegrationProperties;
 import com.saga.be.dto.integration.OAuthStartResponse;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse;
 import com.saga.be.dto.integration.SelectGitHubRepositoryRequest;
+import com.saga.be.dto.integration.SelectJiraIntegrationRequest;
 import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.academic.Course;
@@ -31,6 +32,7 @@ import com.saga.be.entity.enums.RepositoryRole;
 import com.saga.be.entity.enums.RoleInTeam;
 import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.github.GithubInstallation;
+import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
 import com.saga.be.entity.project.TeamMember;
@@ -42,6 +44,7 @@ import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient;
 import com.saga.be.integration.oauth.OAuthState;
 import com.saga.be.integration.oauth.OAuthStateService;
+import com.saga.be.integration.oauth.PendingJiraConnect;
 import com.saga.be.integration.oauth.PendingJiraConnectStore;
 import com.saga.be.messaging.OutboxPublisher;
 import com.saga.be.repository.GitRepoRepository;
@@ -434,6 +437,69 @@ class ProjectIntegrationServiceTest {
 	}
 
 	@Test
+	void saveJiraSelectionPersistsTypedRequestWithBoard() {
+		stubJiraSelection();
+		when(jira.getBoard("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "68"))
+				.thenReturn(new JiraOAuthClient.JiraBoardResponse("68", "SAGA board", "simple"));
+		service.saveJiraSelection(
+				student.getId(),
+				projectId,
+				new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "68"));
+		ArgumentCaptor<JiraIntegration> captor = ArgumentCaptor.forClass(JiraIntegration.class);
+		verify(jiraIntegrations, times(1)).save(captor.capture());
+		assertEquals("10067", captor.getValue().getJiraProjectId());
+		assertEquals("SAGA", captor.getValue().getProjectKey());
+		assertEquals("68", captor.getValue().getJiraBoardId());
+	}
+
+	@Test
+	void saveJiraSelectionAllowsOmittedBoard() {
+		stubJiraSelection();
+		service.saveJiraSelection(
+				student.getId(),
+				projectId,
+				new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", null));
+		ArgumentCaptor<JiraIntegration> captor = ArgumentCaptor.forClass(JiraIntegration.class);
+		verify(jiraIntegrations).save(captor.capture());
+		assertNull(captor.getValue().getJiraBoardId());
+		verify(jira, never()).getBoard(any(), any(), any());
+	}
+
+	@Test
+	void saveJiraSelectionRejectsInaccessibleProject() {
+		stubJiraLeaderAndPending();
+		when(jira.accessibleResources("jira-access"))
+				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
+						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "https://example.atlassian.net", "Saga")));
+		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067")).thenReturn(null);
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.saveJiraSelection(
+						student.getId(),
+						projectId,
+						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "68")));
+		assertEquals(IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, ex.getCode());
+	}
+
+	@Test
+	void saveJiraSelectionRejectsInaccessibleBoard() {
+		stubJiraLeaderAndPending();
+		when(jira.accessibleResources("jira-access"))
+				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
+						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "https://example.atlassian.net", "Saga")));
+		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("10067", "SAGA", "Saga Learning to Hero"));
+		when(jira.getBoard("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "68")).thenReturn(null);
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.saveJiraSelection(
+						student.getId(),
+						projectId,
+						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "68")));
+		assertEquals(IntegrationErrorCode.JIRA_BOARD_NOT_ACCESSIBLE, ex.getCode());
+	}
+
+	@Test
 	void teamWithoutProjectIsDeniedCleanly() {
 		when(teams.findByProject_Id(projectId)).thenReturn(Optional.empty());
 		IntegrationException github = assertThrows(
@@ -451,6 +517,35 @@ class ProjectIntegrationServiceTest {
 		assertNull(ProjectIntegrationService.safeReturnPath("https://evil.example"));
 		assertNull(ProjectIntegrationService.safeReturnPath("//evil.example"));
 		assertNull(ProjectIntegrationService.safeReturnPath("projects"));
+	}
+
+	private void stubJiraLeaderAndPending() {
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		when(pendingJira.consume(student.getId(), projectId))
+				.thenReturn(Optional.of(new PendingJiraConnect(
+						student.getId(), projectId, "jira-access", null, "read:jira-work", Instant.now())));
+	}
+
+	private void stubJiraSelection() {
+		stubJiraLeaderAndPending();
+		when(jira.accessibleResources("jira-access"))
+				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
+						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "https://example.atlassian.net", "Saga")));
+		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("10067", "SAGA", "Saga Learning to Hero"));
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		when(jiraIntegrations.save(any(JiraIntegration.class))).thenAnswer(invocation -> {
+			JiraIntegration saved = invocation.getArgument(0);
+			if (saved.getId() == null) {
+				saved.setId(UUID.randomUUID());
+			}
+			return saved;
+		});
 	}
 
 	private void stubSelectGithubRepos(GitHubOAuthClient.RepoSummary... accessible) {
