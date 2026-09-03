@@ -2,6 +2,7 @@ package com.saga.be.service.audit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,11 +11,13 @@ import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.audit.AuditLog;
 import com.saga.be.entity.enums.AccountRole;
 import com.saga.be.entity.enums.AuditSource;
+import com.saga.be.entity.project.Project;
 import com.saga.be.repository.AuditLogRepository;
 import com.saga.be.repository.StudentProfileRepository;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.hibernate.LazyInitializationException;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -58,5 +61,35 @@ class AuditServiceTest {
 		ArgumentCaptor<AuditLog> captor = ArgumentCaptor.forClass(AuditLog.class);
 		Mockito.verify(logs).save(captor.capture());
 		assertEquals("GITHUB_IDENTITY_LINKED", captor.getValue().getAction());
+	}
+
+	@Test
+	void lazyCourseOnProjectIsNotSwallowed() {
+		AuditLogRepository logs = Mockito.mock(AuditLogRepository.class);
+		StudentProfileRepository students = Mockito.mock(StudentProfileRepository.class);
+		Project project = Mockito.mock(Project.class);
+		Mockito.when(project.getCourse())
+				.thenThrow(new LazyInitializationException("could not initialize proxy [Course] - no Session"));
+		AuditService service = new AuditService(logs, students, new AuditRedactor(new ObjectMapper()), new ObjectMapper());
+		UserAccount actor = new UserAccount();
+		actor.setId(UUID.randomUUID());
+		LazyInitializationException ex = assertThrows(
+				LazyInitializationException.class,
+				() -> service.record(
+						actor,
+						project,
+						null,
+						"GITHUB_INSTALLATION_CONNECTED",
+						"github_installation",
+						UUID.randomUUID(),
+						Map.of(),
+						Map.of("installationId", 158868603L),
+						Map.of(),
+						AuditSource.OAUTH,
+						null,
+						null,
+						null));
+		assertTrue(ex.getMessage().contains("could not initialize proxy"));
+		Mockito.verify(logs, Mockito.never()).save(Mockito.any());
 	}
 }

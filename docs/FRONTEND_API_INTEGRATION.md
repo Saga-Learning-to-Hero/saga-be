@@ -2,7 +2,7 @@
 
 File này là **contract tích hợp Backend ↔ Frontend có hiệu lực** khi public API đã được implement.
 
-> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim) đã chốt. Lecturer Team Management V1 (assigned courses, ACTIVE roster, team XLSX preview/confirm, student my-team) đã chốt. Team Leader Project Setup V1 (project-type catalog, student team project create/read, then existing GitHub/Jira project integrations) đã chốt. Graph/SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
+> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim) đã chốt. Lecturer Team Management V1 (assigned courses, ACTIVE roster, team XLSX preview/confirm, student my-team) đã chốt. Student My Courses V1 (`GET /api/student/courses`) đã chốt. Team Leader Project Setup V1 (project-type catalog, student team project create/read, then existing GitHub/Jira project integrations) đã chốt. Graph/SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
 
 ---
 
@@ -823,8 +823,9 @@ Lecturer assigns teams. The **Team Leader** creates the Project. Lecturer does *
 | Lecturer | No | Lecturer team list may show `projectId` | No | No |
 | ADMIN | Not via `/api/student/**` | Support via existing integration ADMIN bypass | Existing bypass | Existing bypass |
 
-### FE sequence
+### FE bootstrap / sequence
 
+0. Login, then `GET /api/student/courses` to discover the student's own `courseId` values. Empty list is `200 []`.
 1. `GET /api/student/courses/{courseId}/team`
 2. If `myRole != LEADER`: read-only Project behavior (step 11). Do not POST project.
 3. `GET /api/student/project-types` (optional catalog)
@@ -833,6 +834,26 @@ Lecturer assigns teams. The **Team Leader** creates the Project. Lecturer does *
 6. Optionally link personal identities: `POST /api/integrations/github/link`, `POST /api/integrations/jira/link`
 7. `POST /api/projects/{projectId}/integrations/github/connect`
 8. GitHub App setup callback + `GET/PUT /api/projects/{projectId}/integrations/github/repositories`
+
+After GET returns the installation's repos, the Team Leader selects with:
+
+```json
+PUT /api/projects/{projectId}/integrations/github/repositories
+[
+  {
+    "repositoryId": 1338790015,
+    "role": "FRONTEND"
+  },
+  {
+    "repositoryId": 1339720224,
+    "role": "BACKEND"
+  }
+]
+```
+
+`repositoryId` is required and must be the numeric GitHub `id` from `GET /api/projects/{projectId}/integrations/github/repositories`. Do not send `fullName`, `name`, or `owner` as selection authority.
+
+`role` is optional. Allowed values: `FRONTEND`, `BACKEND`, `OTHER`. Omit or `null` leaves `repository_role` unset. Invalid values such as `frontend` or `FE` return `400 REQUEST_INVALID`.
 9. `POST /api/projects/{projectId}/integrations/jira/connect`
 10. Jira team callback + sites / projects / boards + `PUT /api/projects/{projectId}/integrations/jira`
 11. Members: `GET /api/student/courses/{courseId}/project` then `GET /api/projects/{projectId}/integrations`
@@ -919,4 +940,59 @@ Create is `201`. Second create for the same team is `409` `PROJECT_ALREADY_EXIST
 | `NOT_TEAM_LEADER` | 403 | Member tries to configure GitHub/Jira |
 
 GitHub/Jira connect endpoints are unchanged. They require an existing `projectId` (team attached). WITHDRAWN/COMPLETED students are denied even if `team_member` still exists.
+
+---
+
+## 17. Student My Courses V1
+
+After login, FE must discover the student's own `courseId` values before calling team/project APIs.
+
+`GET /api/student/courses` — **STUDENT** only.
+
+Authority is the session `userId` → `StudentProfile` → ACTIVE `CourseEnrollment` → `Course`. Do not send `studentProfileId`, `userId`, or email.
+
+Missing `StudentProfile` → `403 STUDENT_COURSE_FORBIDDEN`. No ACTIVE enrollments → `200 []`. An empty list is not `404`.
+
+```json
+GET /api/student/courses
+[
+  {
+    "courseId": "2bf1c497-71d4-43f2-a683-b74b7ad74327",
+    "courseCode": "SWP391-SE18B01",
+    "subjectCode": "SWP391",
+    "subjectName": "Software Development Project",
+    "classCode": "SE18B01",
+    "semesterCode": "FA26",
+    "semesterName": "Fall 2026",
+    "enrollmentStatus": "ACTIVE",
+    "teamId": null,
+    "teamNo": null,
+    "teamName": null,
+    "projectId": null
+  }
+]
+```
+
+`enrollmentStatus` is always `ACTIVE` on this endpoint. WITHDRAWN and COMPLETED enrollments are omitted.
+
+Team / project next-step fields:
+
+| State | `teamId` / `teamNo` / `teamName` | `projectId` | Next FE action |
+| --- | --- | --- | --- |
+| No team | `null` | `null` | Wait for lecturer team assignment |
+| Team, no project | populated | `null` | `GET .../team`; Leader may `POST .../project` |
+| Team + project | populated | populated | `GET .../project` and integration APIs |
+
+Do not treat `fullName` or invitation rows as authority. Tokens and lecturer secrets are not returned.
+
+Bootstrap:
+
+```text
+login
+→ GET /api/student/courses
+→ choose courseId
+→ GET /api/student/courses/{courseId}/team
+→ GET /api/student/courses/{courseId}/project
+→ GitHub/Jira project integration APIs when projectId exists
+```
 

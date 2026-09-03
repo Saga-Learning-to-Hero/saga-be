@@ -1,6 +1,7 @@
 package com.saga.be.repository;
 
 import com.saga.be.entity.project.TeamMember;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -38,4 +39,14 @@ public interface TeamMemberRepository extends JpaRepository<TeamMember, UUID> {
 			WHERE m.course.id = :courseId
 			""")
 	List<TeamMember> findFetchedByCourse_Id(@Param("courseId") UUID courseId);
+
+	@Query(
+			"""
+			SELECT m FROM TeamMember m
+			JOIN FETCH m.team t
+			LEFT JOIN FETCH t.project
+			JOIN FETCH m.courseEnrollment
+			WHERE m.courseEnrollment.id IN :enrollmentIds
+			""")
+	List<TeamMember> findFetchedByCourseEnrollment_IdIn(@Param("enrollmentIds") Collection<UUID> enrollmentIds);
 }

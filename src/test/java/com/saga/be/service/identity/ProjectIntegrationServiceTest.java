@@ -7,12 +7,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.saga.be.config.IntegrationProperties;
 import com.saga.be.dto.integration.OAuthStartResponse;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse;
+import com.saga.be.dto.integration.SelectGitHubRepositoryRequest;
 import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.academic.Course;
@@ -20,8 +24,12 @@ import com.saga.be.entity.academic.CourseEnrollment;
 import com.saga.be.entity.enums.AccountRole;
 import com.saga.be.entity.enums.AccountStatus;
 import com.saga.be.entity.enums.EnrollmentStatus;
+import com.saga.be.entity.enums.GitHubInstallationStatus;
+import com.saga.be.entity.enums.GitProvider;
 import com.saga.be.entity.enums.OAuthFlowType;
+import com.saga.be.entity.enums.RepositoryRole;
 import com.saga.be.entity.enums.RoleInTeam;
+import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.github.GithubInstallation;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
@@ -53,6 +61,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -272,7 +281,7 @@ class ProjectIntegrationServiceTest {
 		when(properties.getSuccessUrl()).thenReturn("http://localhost:3000/integrations/success");
 		Project project = new Project();
 		project.setId(projectId);
-		when(projects.findById(projectId)).thenReturn(Optional.of(project));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
 		when(installations.findByProject_Id(projectId)).thenReturn(Optional.empty());
 		when(installations.findByInstallationId(158866076L)).thenReturn(Optional.empty());
 		when(installations.save(any(GithubInstallation.class))).thenAnswer(invocation -> {
@@ -287,6 +296,141 @@ class ProjectIntegrationServiceTest {
 
 		assertEquals("http://localhost:3000/integrations/success", target);
 		verify(installations).save(any(GithubInstallation.class));
+		verify(audit)
+				.record(
+						eq(student),
+						eq(project),
+						eq(team),
+						eq("GITHUB_INSTALLATION_CONNECTED"),
+						eq("github_installation"),
+						any(),
+						any(),
+						any(),
+						any(),
+						eq(com.saga.be.entity.enums.AuditSource.OAUTH),
+						isNull(),
+						isNull(),
+						isNull());
+	}
+
+	@Test
+	void auditLazyCourseFailurePropagatesFromCallback() {
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		when(oauthStates.consumeForUser(eq("state"), eq(student.getId()), eq(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY)))
+				.thenReturn(state(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY));
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 158866076L))
+				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
+						158866076L,
+						123456L,
+						new GitHubOAuthClient.GitHubAccountResponse("Saga-Learning-to-Hero", "Organization"),
+						"https://github.com/settings/installations/158866076",
+						"selected"));
+		IntegrationProperties.GitHub githubProps = new IntegrationProperties.GitHub();
+		githubProps.setAppId("123456");
+		when(properties.getGithub()).thenReturn(githubProps);
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(installations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		when(installations.findByInstallationId(158866076L)).thenReturn(Optional.empty());
+		when(installations.save(any(GithubInstallation.class))).thenAnswer(invocation -> {
+			GithubInstallation saved = invocation.getArgument(0);
+			saved.setId(UUID.randomUUID());
+			return saved;
+		});
+		when(audit.record(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+				.thenThrow(new org.hibernate.LazyInitializationException("could not initialize proxy [Course]"));
+
+		org.hibernate.LazyInitializationException ex = assertThrows(
+				org.hibernate.LazyInitializationException.class,
+				() -> service.completeGithubInstallation(student.getId(), "state", 158866076L, null));
+		assertEquals("could not initialize proxy [Course]", ex.getMessage());
+	}
+
+	@Test
+	void completeGithubInstallationKeepsPersistAndAuditInOneTransaction() throws Exception {
+		var complete = ProjectIntegrationService.class.getMethod(
+				"completeGithubInstallation", UUID.class, String.class, Long.class, String.class);
+		var persist = ProjectIntegrationService.class.getDeclaredMethod(
+				"persistVerifiedInstallation",
+				UUID.class,
+				UUID.class,
+				Long.class,
+				GitHubOAuthClient.GitHubInstallationResponse.class);
+		assertEquals(
+				org.springframework.transaction.annotation.Transactional.class,
+				complete.getAnnotation(org.springframework.transaction.annotation.Transactional.class).annotationType());
+		assertEquals(
+				org.springframework.transaction.annotation.Transactional.class,
+				persist.getAnnotation(org.springframework.transaction.annotation.Transactional.class).annotationType());
+	}
+
+	@Test
+	void selectGithubReposPersistsFrontendBackendAndOtherRoles() {
+		stubSelectGithubRepos(
+				repo(1_338_790_015L, "saga-fe"),
+				repo(1_339_720_224L, "saga-be"),
+				repo(99L, "other"));
+		service.selectGithubRepos(
+				student.getId(),
+				projectId,
+				List.of(
+						new SelectGitHubRepositoryRequest(1_338_790_015L, RepositoryRole.FRONTEND),
+						new SelectGitHubRepositoryRequest(1_339_720_224L, RepositoryRole.BACKEND),
+						new SelectGitHubRepositoryRequest(99L, RepositoryRole.OTHER)));
+		ArgumentCaptor<GitRepo> captor = ArgumentCaptor.forClass(GitRepo.class);
+		verify(repos, times(3)).save(captor.capture());
+		assertEquals(RepositoryRole.FRONTEND, captor.getAllValues().get(0).getRepositoryRole());
+		assertEquals(RepositoryRole.BACKEND, captor.getAllValues().get(1).getRepositoryRole());
+		assertEquals(RepositoryRole.OTHER, captor.getAllValues().get(2).getRepositoryRole());
+	}
+
+	@Test
+	void selectGithubReposOmitsRoleWhenNull() {
+		stubSelectGithubRepos(repo(1_338_790_015L, "saga-fe"));
+		service.selectGithubRepos(
+				student.getId(),
+				projectId,
+				List.of(new SelectGitHubRepositoryRequest(1_338_790_015L, null)));
+		ArgumentCaptor<GitRepo> captor = ArgumentCaptor.forClass(GitRepo.class);
+		verify(repos).save(captor.capture());
+		assertNull(captor.getValue().getRepositoryRole());
+	}
+
+	@Test
+	void selectGithubReposRejectsUnknownRepositoryId() {
+		stubSelectGithubRepos(repo(1_338_790_015L, "saga-fe"));
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.selectGithubRepos(
+						student.getId(),
+						projectId,
+						List.of(new SelectGitHubRepositoryRequest(404L, RepositoryRole.FRONTEND))));
+		assertEquals(IntegrationErrorCode.GITHUB_REPOSITORY_NOT_ACCESSIBLE, ex.getCode());
+		verify(repos, never()).save(any());
+	}
+
+	@Test
+	void selectGithubReposAcceptsTwoRepositoriesTogether() {
+		stubSelectGithubRepos(repo(1_338_790_015L, "saga-fe"), repo(1_339_720_224L, "saga-be"));
+		service.selectGithubRepos(
+				student.getId(),
+				projectId,
+				List.of(
+						new SelectGitHubRepositoryRequest(1_338_790_015L, RepositoryRole.FRONTEND),
+						new SelectGitHubRepositoryRequest(1_339_720_224L, RepositoryRole.BACKEND)));
+		verify(repos, times(2)).save(any(GitRepo.class));
+	}
+
+	@Test
+	void selectGithubReposEmptyListStillStartsSyncWithoutSavingRepos() {
+		stubSelectGithubRepos(repo(1_338_790_015L, "saga-fe"));
+		service.selectGithubRepos(student.getId(), projectId, List.of());
+		verify(repos, never()).save(any());
+		verify(syncJobs).save(any());
 	}
 
 	@Test
@@ -307,6 +451,37 @@ class ProjectIntegrationServiceTest {
 		assertNull(ProjectIntegrationService.safeReturnPath("https://evil.example"));
 		assertNull(ProjectIntegrationService.safeReturnPath("//evil.example"));
 		assertNull(ProjectIntegrationService.safeReturnPath("projects"));
+	}
+
+	private void stubSelectGithubRepos(GitHubOAuthClient.RepoSummary... accessible) {
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		GithubInstallation installation = new GithubInstallation();
+		installation.setId(UUID.randomUUID());
+		installation.setInstallationId(158868603L);
+		installation.setInstallationStatus(GitHubInstallationStatus.ACTIVE);
+		when(installations.findByProject_Id(projectId)).thenReturn(Optional.of(installation));
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.createInstallationToken("app-jwt", 158868603L)).thenReturn("inst-token");
+		when(github.listInstallationRepos("inst-token")).thenReturn(null);
+		when(github.parseRepos(null)).thenReturn(List.of(accessible));
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		lenient().when(repos.findByProviderAndRepositoryId(eq(GitProvider.GITHUB), any())).thenReturn(Optional.empty());
+		lenient().when(repos.save(any(GitRepo.class))).thenAnswer(invocation -> {
+			GitRepo saved = invocation.getArgument(0);
+			if (saved.getId() == null) {
+				saved.setId(UUID.randomUUID());
+			}
+			return saved;
+		});
+	}
+
+	private static GitHubOAuthClient.RepoSummary repo(long id, String name) {
+		return new GitHubOAuthClient.RepoSummary(
+				id, name, "Saga-Learning-to-Hero/" + name, "Saga-Learning-to-Hero", "main", false);
 	}
 
 	private void assertDenied(SummaryCall call) {

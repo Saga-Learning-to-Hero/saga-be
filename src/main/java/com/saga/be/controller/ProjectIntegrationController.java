@@ -1,13 +1,24 @@
 package com.saga.be.controller;
 
+import com.saga.be.dto.ApiErrorResponse;
+import com.saga.be.dto.integration.OAuthStartResponse;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraBoardOption;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraProjectOption;
-import com.saga.be.dto.integration.OAuthStartResponse;
+import com.saga.be.dto.integration.SelectGitHubRepositoryRequest;
 import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.identity.ProjectIntegrationService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -27,6 +38,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @Profile("!test")
 @RequestMapping("/api/projects/{projectId}/integrations")
+@Tag(name = "Project integrations", description = "Team Leader GitHub App and Jira Cloud connections for a project.")
+@SecurityRequirement(name = "SAGA_SESSION")
 public class ProjectIntegrationController {
 
 	private final ProjectIntegrationService integrations;
@@ -66,10 +79,31 @@ public class ProjectIntegrationController {
 	}
 
 	@PutMapping("/github/repositories")
+	@Operation(summary = "Select GitHub repositories for the project. Team Leader only.")
+	@io.swagger.v3.oas.annotations.parameters.RequestBody(
+			required = true,
+			content =
+					@Content(
+							array = @ArraySchema(schema = @Schema(implementation = SelectGitHubRepositoryRequest.class)),
+							examples =
+									@ExampleObject(
+											name = "frontendAndBackend",
+											value =
+													"""
+													[
+													  {"repositoryId":1338790015,"role":"FRONTEND"},
+													  {"repositoryId":1339720224,"role":"BACKEND"}
+													]
+													""")))
+	@ApiResponse(responseCode = "204", description = "Repositories selected")
+	@ApiResponse(
+			responseCode = "400",
+			description = "Missing repositoryId or invalid role",
+			content = @Content(schema = @Schema(implementation = ApiErrorResponse.class)))
 	public ResponseEntity<Void> selectGithubRepos(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
-			@RequestBody List<Map<String, Object>> body) {
+			@Valid @RequestBody List<@Valid SelectGitHubRepositoryRequest> body) {
 		integrations.selectGithubRepos(principal.getUserId(), projectId, body);
 		return ResponseEntity.noContent().build();
 	}

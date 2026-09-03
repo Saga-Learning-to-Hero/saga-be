@@ -8,9 +8,11 @@ import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.RedisSystemException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -35,8 +37,12 @@ public class GlobalExceptionHandler {
 		return ResponseEntity.status(ex.getStatus()).body(new ApiErrorResponse(ex.getCode().name(), ex.getMessage()));
 	}
 
-	@ExceptionHandler(MethodArgumentNotValidException.class)
-	public ResponseEntity<ApiErrorResponse> handleValidation(MethodArgumentNotValidException ex) {
+	@ExceptionHandler({
+		MethodArgumentNotValidException.class,
+		HandlerMethodValidationException.class,
+		HttpMessageNotReadableException.class
+	})
+	public ResponseEntity<ApiErrorResponse> handleValidation(Exception ex) {
 		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
 				.body(new ApiErrorResponse("REQUEST_INVALID", "Request is invalid."));
 	}

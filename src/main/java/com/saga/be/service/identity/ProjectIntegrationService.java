@@ -3,6 +3,7 @@ package com.saga.be.service.identity;
 import com.saga.be.config.IntegrationProperties;
 import com.saga.be.dto.integration.OAuthStartResponse;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse;
+import com.saga.be.dto.integration.SelectGitHubRepositoryRequest;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.ConnectedRepo;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.GithubIntegrationSummary;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraBoardOption;
@@ -17,7 +18,6 @@ import com.saga.be.entity.enums.GitProvider;
 import com.saga.be.entity.enums.IntegrationProvider;
 import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.OAuthFlowType;
-import com.saga.be.entity.enums.RepositoryRole;
 import com.saga.be.entity.enums.SyncJobStatus;
 import com.saga.be.entity.enums.SyncJobType;
 import com.saga.be.entity.github.GitRepo;
@@ -163,6 +163,7 @@ public class ProjectIntegrationService {
 		return new OAuthStartResponse(github.installationUrl(state.state()), state.state());
 	}
 
+	@Transactional
 	public String completeGithubInstallation(UUID userId, String rawState, Long installationId, String userCode) {
 		OAuthState state = oauthStates.consumeForUser(rawState, userId, OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY);
 		requireLeader(userId, state.projectId());
@@ -212,7 +213,7 @@ public class ProjectIntegrationService {
 	@Transactional
 	protected void persistVerifiedInstallation(
 			UUID userId, UUID projectId, Long installationId, GitHubOAuthClient.GitHubInstallationResponse installation) {
-		Project project = projects.findById(projectId).orElseThrow();
+		Project project = requireFetchedProject(projectId);
 		installations.findByProject_Id(projectId).ifPresent(existing -> {
 			if (!installationId.equals(existing.getInstallationId())) {
 				existing.setProject(null);
@@ -261,7 +262,8 @@ public class ProjectIntegrationService {
 		return github.parseRepos(github.listInstallationRepos(token));
 	}
 
-	public void selectGithubRepos(UUID userId, UUID projectId, List<Map<String, Object>> selected) {
+	@Transactional
+	public void selectGithubRepos(UUID userId, UUID projectId, List<SelectGitHubRepositoryRequest> selected) {
 		requireLeader(userId, projectId);
 		GithubInstallation installation = installations.findByProject_Id(projectId).orElseThrow(() -> new IntegrationException(
 				IntegrationErrorCode.GITHUB_INSTALLATION_INVALID, HttpStatus.BAD_REQUEST, "No verified GitHub installation."));
@@ -275,12 +277,12 @@ public class ProjectIntegrationService {
 			UUID userId,
 			UUID projectId,
 			GithubInstallation installation,
-			List<Map<String, Object>> selected,
+			List<SelectGitHubRepositoryRequest> selected,
 			List<GitHubOAuthClient.RepoSummary> accessible) {
-		Project project = projects.findById(projectId).orElseThrow();
+		Project project = requireFetchedProject(projectId);
 		UserAccount actor = users.findById(userId).orElseThrow();
-		for (Map<String, Object> item : selected) {
-			long repositoryId = ((Number) item.get("repositoryId")).longValue();
+		for (SelectGitHubRepositoryRequest item : selected) {
+			long repositoryId = item.repositoryId();
 			GitHubOAuthClient.RepoSummary match = accessible.stream()
 					.filter(repo -> repo.id() == repositoryId)
 					.findFirst()
@@ -300,8 +302,8 @@ public class ProjectIntegrationService {
 			repo.setPrivateRepository(match.privateRepo());
 			repo.setConnectionStatus(IntegrationStatus.ACTIVE);
 			repo.setConsecutiveFailures(0);
-			if (item.get("role") != null) {
-				repo.setRepositoryRole(RepositoryRole.valueOf(item.get("role").toString()));
+			if (item.role() != null) {
+				repo.setRepositoryRole(item.role());
 			}
 			GitRepo saved = repos.save(repo);
 			audit.record(
@@ -326,7 +328,7 @@ public class ProjectIntegrationService {
 	@Transactional
 	public void disconnectGithub(UUID userId, UUID projectId) {
 		requireLeader(userId, projectId);
-		Project project = projects.findById(projectId).orElseThrow();
+		Project project = requireFetchedProject(projectId);
 		repos.findByProject_Id(projectId).forEach(repo -> {
 			repo.setConnectionStatus(IntegrationStatus.REVOKED);
 			repos.save(repo);
@@ -425,6 +427,7 @@ public class ProjectIntegrationService {
 				.toList();
 	}
 
+	@Transactional
 	public void saveJiraSelection(UUID userId, UUID projectId, Map<String, String> selection) {
 		requireLeader(userId, projectId);
 		PendingJiraConnect pending = pendingJira
@@ -464,7 +467,7 @@ public class ProjectIntegrationService {
 					HttpStatus.SERVICE_UNAVAILABLE,
 					"Integration token encryption key is not configured.");
 		}
-		Project project = projects.findById(projectId).orElseThrow();
+		Project project = requireFetchedProject(projectId);
 		UserAccount actor = users.findById(userId).orElseThrow();
 		JiraIntegration integration = jiraIntegrations.findByProject_Id(project.getId()).orElseGet(JiraIntegration::new);
 		integration.setProject(project);
@@ -514,7 +517,7 @@ public class ProjectIntegrationService {
 		jiraIntegrations.save(integration);
 		audit.record(
 				users.findById(userId).orElseThrow(),
-				projects.findById(projectId).orElse(null),
+				requireFetchedProject(projectId),
 				teams.findByProject_Id(projectId).orElse(null),
 				"JIRA_INTEGRATION_DISCONNECTED",
 				"jira_integration",
@@ -569,6 +572,10 @@ public class ProjectIntegrationService {
 			return;
 		}
 		TeamAuthorization.requireMember(membership(userId, projectId));
+	}
+
+	private Project requireFetchedProject(UUID projectId) {
+		return projects.findFetchedById(projectId).orElseThrow();
 	}
 
 	private Team requireTeamForProject(UUID projectId) {

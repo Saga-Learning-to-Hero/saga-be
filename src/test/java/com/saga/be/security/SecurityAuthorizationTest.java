@@ -187,6 +187,15 @@ class SecurityAuthorizationTest {
 	}
 
 	@Test
+	void studentCoursesEndpointStaysStudentOnly() throws Exception {
+		mockMvc.perform(get("/api/student/courses")).andExpect(status().isUnauthorized());
+		mockMvc.perform(get("/api/student/courses").with(authentication(auth(AccountRole.LECTURER, "hash"))))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(get("/api/student/courses").with(authentication(auth(AccountRole.ADMIN, "hash"))))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
 	void lecturerWithPasswordCanAccessLecturerApi() throws Exception {
 		mockMvc.perform(get("/api/lecturer/anything").with(authentication(auth(AccountRole.LECTURER, "hash"))))
 				.andExpect(status().isOk())

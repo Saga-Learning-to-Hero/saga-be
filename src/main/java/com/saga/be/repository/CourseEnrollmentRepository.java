@@ -29,4 +29,18 @@ public interface CourseEnrollmentRepository extends JpaRepository<CourseEnrollme
 			""")
 	List<CourseEnrollment> findFetchedByCourse_IdAndEnrollmentStatus(
 			@Param("courseId") UUID courseId, @Param("status") EnrollmentStatus status);
+
+	@Query(
+			"""
+			SELECT e FROM CourseEnrollment e
+			JOIN FETCH e.course c
+			JOIN FETCH c.subject
+			JOIN FETCH c.academicClass
+			JOIN FETCH c.semester
+			WHERE e.studentProfile.id = :studentProfileId
+				AND e.enrollmentStatus = :status
+				AND c.deletedAt IS NULL
+			""")
+	List<CourseEnrollment> findFetchedByStudentProfile_IdAndEnrollmentStatus(
+			@Param("studentProfileId") UUID studentProfileId, @Param("status") EnrollmentStatus status);
 }
