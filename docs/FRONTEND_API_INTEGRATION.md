@@ -2,7 +2,7 @@
 
 File này là **contract tích hợp Backend ↔ Frontend có hiệu lực** khi public API đã được implement.
 
-> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim) đã chốt. Graph/SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
+> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim) đã chốt. Lecturer Team Management V1 (assigned courses, ACTIVE roster, team XLSX preview/confirm, student my-team) đã chốt. Graph/SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
 
 ---
 
@@ -260,9 +260,9 @@ Requires configured `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. If unset, Googl
 
 | DB role | Spring authority | Path example |
 | --- | --- | --- |
-| STUDENT | `ROLE_STUDENT` | authenticated APIs except `/api/lecturer/**`, `/api/admin/**` |
+| STUDENT | `ROLE_STUDENT` | `/api/student/**` and other authenticated APIs except `/api/lecturer/**`, `/api/admin/**` |
 | LECTURER | `ROLE_LECTURER` | `/api/lecturer/**` |
-| ADMIN | `ROLE_ADMIN` | `/api/admin/**` and lecturer paths |
+| ADMIN | `ROLE_ADMIN` | `/api/admin/**` and lecturer paths (explicit support bypass). Not `/api/student/**` |
 
 While `passwordSetupRequired=true`, only `/api/auth/me`, `/api/auth/csrf`, `POST /api/auth/password/setup`, `POST /api/auth/logout` (plus docs/OAuth/login/register) are allowed.
 
@@ -497,6 +497,14 @@ Breaking change phải được nêu rõ.
 | POST | `/api/admin/courses/{courseId}/roster/import/preview` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
 | POST | `/api/admin/courses/{courseId}/roster/import/confirm` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
 | POST | `/api/admin/dev/email-test` | Session + CSRF | ADMIN | Email delivery V1, **local/dev only** | `AdminDevEmailController` |
+| GET | `/api/lecturer/courses` | Session | LECTURER or ADMIN | Lecturer Team V1 | `LecturerCourseController` |
+| GET | `/api/lecturer/courses/{courseId}` | Session | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerCourseController` |
+| GET | `/api/lecturer/courses/{courseId}/roster` | Session | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerCourseController` |
+| GET | `/api/lecturer/courses/{courseId}/teams/template` | Session | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerTeamController` |
+| POST | `/api/lecturer/courses/{courseId}/teams/import/preview` | Session + CSRF | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerTeamController` |
+| POST | `/api/lecturer/courses/{courseId}/teams/import/confirm` | Session + CSRF | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerTeamController` |
+| GET | `/api/lecturer/courses/{courseId}/teams` | Session | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerTeamController` |
+| GET | `/api/student/courses/{courseId}/team` | Session | STUDENT | Lecturer Team V1 | `StudentCourseTeamController` |
 
 ---
 
@@ -644,7 +652,7 @@ The handler enqueues `DEV_SMOKE`, runs the worker once, and returns `{ outboxId,
 
 Leave `SAGA_MAIL_SMTP_HEALTH_ENABLED` unset/false so `/actuator/health` does not depend on SMTP.
 
-Do not use this endpoint as a public mail API. Forgot-password and team mails are not implemented.
+Do not use this endpoint as a public mail API. Forgot-password is not implemented. Team assignment mail uses template `team-assigned` / type `TEAM_ASSIGNED` via the same outbox worker.
 
 ---
 
@@ -707,3 +715,91 @@ After successful Student register, local login, or Google STUDENT onboarding, ma
 Manual Admin add-student HTTP API is deferred; the same `CourseRosterService` apply path is ready for it.
 
 Errors: `ROSTER_FILE_INVALID`, `ROSTER_FILE_TOO_LARGE`, `ROSTER_PREVIEW_INVALID`, `ROSTER_PREVIEW_EXPIRED`, `ROSTER_PREVIEW_MISMATCH`, `ROSTER_CONFIRM_BLOCKED`.
+
+---
+
+## 15. Lecturer Team Management V1
+
+Lecturer (or ADMIN support) session. CSRF on writes. A Lecturer may only operate on courses where `course.instructor.userAccount.id` equals the authenticated user. Unassigned course or another lecturer's course → `LECTURER_COURSE_FORBIDDEN` (403). ADMIN is an explicit bypass and is not resolved as `LecturerProfile`. `GET /api/lecturer/courses` returns assigned courses for a Lecturer, and **all** non-deleted courses for ADMIN (explicit support list, not a null-filter accident).
+
+Lecturers cannot create courses or enroll students. Admin Course Roster remains the enrollment authority.
+
+### Course + ACTIVE roster
+
+`GET /api/lecturer/courses` and `GET /api/lecturer/courses/{courseId}` return the existing `CourseResponse` shape (course/subject/class/semester/syllabus/lecturer fields).
+
+`GET /api/lecturer/courses/{courseId}/roster` returns **ACTIVE** `course_enrollment` rows only. No invitations, `WITHDRAWN`, or `COMPLETED`.
+
+```json
+{
+  "courseId": "...",
+  "classCode": "SE1705",
+  "enrolledCount": 2,
+  "entries": [
+    {
+      "courseEnrollmentId": "...",
+      "studentProfileId": "...",
+      "studentCode": "SE111111",
+      "fullName": "Alpha Student",
+      "email": "alpha@gmail.com",
+      "classCode": "SE1705"
+    }
+  ]
+}
+```
+
+### XLSX contract
+
+`GET /api/lecturer/courses/{courseId}/teams/template` returns `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`.
+
+Sheet: `Team_Assignment`. Columns: `No, Class, FullName, StudentCode, Email, TeamNo, TeamName, TeamRole`.
+
+Identity columns are generated from the ACTIVE roster. Existing memberships are pre-filled. `TeamRole` dropdown: `Leader`, `Member`. `MENTOR` is not valid Excel input. `TeamNo` is a positive integer and the canonical team identity in the course. Rows with the same `TeamNo` must share the same `TeamName`. Duplicate names on different `TeamNo` values are a V1 preview CONFLICT (not a DB unique).
+
+The workbook is a complete desired state: every currently ACTIVE enrollment must appear exactly once. Omitted ACTIVE students block confirm. Identity fields are not authority — the backend resolves `StudentCode` to the ACTIVE enrollment and rejects edited name/email/class.
+
+CSV / non-XLSX rejected. Size limit follows `saga.roster.max-file-bytes` (default 2MB). TTL follows `saga.roster.preview-ttl` (default 15m).
+
+### Preview / confirm
+
+Multipart field name: `file`.
+
+`POST /api/lecturer/courses/{courseId}/teams/import/preview` does not write `team` / `team_member`. Redis key `saga:team:preview:{token}`, bound to actor user id + course id, consumed after successful confirm. Wrong actor/course → `TEAM_PREVIEW_MISMATCH` (403). Missing/expired → `TEAM_PREVIEW_EXPIRED`.
+
+Row `action`: `READY_CREATE` | `READY_ASSIGN` | `READY_REASSIGN` | `ALREADY_ASSIGNED` | `INVALID` | `CONFLICT`.
+
+`hasBlockingErrors` is true when any row is `INVALID`/`CONFLICT` or an ACTIVE student is omitted.
+
+```json
+POST /api/lecturer/courses/{courseId}/teams/import/confirm
+{ "previewToken": "..." }
+```
+
+Atomic transaction: create/update `team` by `(course_id, team_no)` (no dummy `project` rows; `project_id` stays null), upsert exactly one `team_member` per enrollment (create / move / role update). Each participating team must have exactly one ACTIVE `LEADER`. Identical re-upload is idempotent (`unchanged`, no extra `TEAM_ASSIGNED` mail).
+
+Confirm summary: `createdTeams`, `updatedTeams`, `assignedMembers`, `reassignedMembers`, `updatedRoles`, `unchanged`, `emailsEnqueued`.
+
+`GET /api/lecturer/courses/{courseId}/teams` returns teams ordered by `teamNo`, members LEADER first then `studentCode`. `projectId` is nullable.
+
+### Student my-team
+
+`GET /api/student/courses/{courseId}/team` is STUDENT-only. Requires ACTIVE enrollment in that course, otherwise `STUDENT_COURSE_FORBIDDEN` (403). No membership → `TEAM_NOT_FOUND` (404). Identity always comes from the session. Member emails are not returned.
+
+```json
+{
+  "teamId": "...",
+  "teamNo": 1,
+  "teamName": "Alpha",
+  "myRole": "LEADER",
+  "members": [
+    { "studentCode": "SE111111", "fullName": "Alpha Student", "role": "LEADER" }
+  ]
+}
+```
+
+### Mail
+
+Changed memberships (new assign, reassignment, role change) enqueue `email_type=TEAM_ASSIGNED` / `template_key=team-assigned` inside the confirm transaction. The outbox worker sends later through the runtime `EmailSender` (`SAGA_MAIL_PROVIDER`). Unchanged rows do not enqueue.
+
+Errors: `LECTURER_COURSE_FORBIDDEN`, `STUDENT_COURSE_FORBIDDEN`, `TEAM_FILE_INVALID`, `TEAM_FILE_TOO_LARGE`, `TEAM_PREVIEW_INVALID`, `TEAM_PREVIEW_EXPIRED`, `TEAM_PREVIEW_MISMATCH`, `TEAM_CONFIRM_BLOCKED`, `TEAM_NOT_FOUND`, `TEAM_LEADER_INVALID`.
+

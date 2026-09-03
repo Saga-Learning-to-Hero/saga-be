@@ -180,6 +180,26 @@ class SecurityAuthorizationTest {
 				.andExpect(content().string("student-ok"));
 	}
 
+	@Test
+	void lecturerCannotAccessStudentApi() throws Exception {
+		mockMvc.perform(get("/api/student/anything").with(authentication(auth(AccountRole.LECTURER, "hash"))))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void lecturerWithPasswordCanAccessLecturerApi() throws Exception {
+		mockMvc.perform(get("/api/lecturer/anything").with(authentication(auth(AccountRole.LECTURER, "hash"))))
+				.andExpect(status().isOk())
+				.andExpect(content().string("lecturer-ok"));
+	}
+
+	@Test
+	void adminCanAccessLecturerApi() throws Exception {
+		mockMvc.perform(get("/api/lecturer/anything").with(authentication(auth(AccountRole.ADMIN, "hash"))))
+				.andExpect(status().isOk())
+				.andExpect(content().string("lecturer-ok"));
+	}
+
 	private static org.springframework.security.core.Authentication auth(AccountRole role, String passwordHash) {
 		return auth(role, passwordHash, null);
 	}

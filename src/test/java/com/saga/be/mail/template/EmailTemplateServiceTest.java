@@ -133,6 +133,36 @@ class EmailTemplateServiceTest {
 	}
 
 	@Test
+	void teamAssignedContainsTeamDetailsAndTextFallback() {
+		EmailTemplateModel model = EmailTemplateModel.teamAssigned(
+				"Nguyễn Văn Ánh",
+				"student@gmail.com",
+				"Software Development Project",
+				"SWP391",
+				"SE1705",
+				"FA26",
+				"Fall 2026",
+				1,
+				"Alpha",
+				"Leader");
+		EmailTemplate rendered = templates.render(EmailTemplateService.TEAM_ASSIGNED, model);
+		assertEquals("SAGA — Team assignment for SWP391", rendered.subject());
+		assertTrue(rendered.textBody().contains("Nguyễn Văn Ánh"));
+		assertTrue(rendered.textBody().contains("Alpha"));
+		assertTrue(rendered.textBody().contains("Leader"));
+		assertTrue(rendered.textBody().contains("Open SAGA: http://localhost:3000/dashboard"));
+		assertTrue(rendered.htmlBody().contains("You were assigned to a team"));
+		assertTrue(rendered.htmlBody().contains("Alpha"));
+		assertTrue(rendered.htmlBody().contains("Leader"));
+		assertTrue(rendered.htmlBody().contains("http://localhost:3000/dashboard"));
+		assertFalse(rendered.htmlBody().contains("student@gmail.com") && rendered.htmlBody().contains("mailto:"));
+		Map<String, Object> payload = templates.payload(EmailTemplateService.TEAM_ASSIGNED, model);
+		assertEquals("1", payload.get("teamNo"));
+		assertEquals("Alpha", payload.get("teamName"));
+		assertEquals("Leader", payload.get("teamRole"));
+	}
+
+	@Test
 	void configuredFrontendOriginIsUsedWithoutHardcodedHostWhenOverridden() {
 		AuthProperties auth = new AuthProperties();
 		auth.setFrontendOrigins(List.of("https://app.saga.example/"));

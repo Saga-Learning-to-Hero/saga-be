@@ -155,7 +155,7 @@ public class ProjectIntegrationService {
 	public OAuthStartResponse startGithub(UUID userId, UUID projectId, String returnPath) {
 		requireLeader(userId, projectId);
 		String verifier = Pkce.newVerifier();
-		Team team = teams.findByProject_Id(projectId).orElseThrow();
+		Team team = requireTeamForProject(projectId);
 		OAuthState state = oauthStates.start(
 				userId, OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY, returnPath, projectId, team.getId(), verifier);
 		return new OAuthStartResponse(github.installationUrl(state.state()), state.state());
@@ -351,7 +351,7 @@ public class ProjectIntegrationService {
 
 	public OAuthStartResponse startJira(UUID userId, UUID projectId, String returnPath) {
 		requireLeader(userId, projectId);
-		Team team = teams.findByProject_Id(projectId).orElseThrow();
+		Team team = requireTeamForProject(projectId);
 		String verifier = Pkce.newVerifier();
 		OAuthState state = oauthStates.start(
 				userId, OAuthFlowType.JIRA_TEAM_CONNECT, returnPath, projectId, team.getId(), verifier);
@@ -567,10 +567,16 @@ public class ProjectIntegrationService {
 		TeamAuthorization.requireMember(membership(userId, projectId));
 	}
 
-	private TeamAuthorization.Membership membership(UUID userId, UUID projectId) {
-		Team team = teams.findByProject_Id(projectId)
+	private Team requireTeamForProject(UUID projectId) {
+		return teams.findByProject_Id(projectId)
 				.orElseThrow(() -> new IntegrationException(
-						IntegrationErrorCode.INTEGRATION_FORBIDDEN, HttpStatus.FORBIDDEN, "Team was not found for this project."));
+						IntegrationErrorCode.INTEGRATION_FORBIDDEN,
+						HttpStatus.FORBIDDEN,
+						"Team was not found for this project."));
+	}
+
+	private TeamAuthorization.Membership membership(UUID userId, UUID projectId) {
+		Team team = requireTeamForProject(projectId);
 		TeamMember member = members.findByTeam_Id(team.getId()).stream()
 				.filter(item -> item.getCourseEnrollment().getStudentProfile().getUserAccount().getId().equals(userId))
 				.findFirst()

@@ -12,6 +12,7 @@ public class EmailTemplateService {
 
 	public static final String COURSE_ENROLLED = "course-enrolled";
 	public static final String COURSE_INVITATION = "course-invitation";
+	public static final String TEAM_ASSIGNED = "team-assigned";
 	public static final String DEV_SMOKE = "dev-smoke";
 
 	private final FrontendLinkResolver links;
@@ -27,6 +28,7 @@ public class EmailTemplateService {
 		return switch (normalize(templateKey)) {
 			case COURSE_ENROLLED -> enrolled(safe);
 			case COURSE_INVITATION -> invitation(safe);
+			case TEAM_ASSIGNED -> teamAssigned(safe);
 			case DEV_SMOKE -> smoke(safe);
 			default -> throw new IllegalArgumentException("Unknown email template.");
 		};
@@ -48,6 +50,9 @@ public class EmailTemplateService {
 		payload.put("semesterName", text(model == null ? null : model.semesterName()));
 		payload.put("ctaUrl", ctaUrl(normalize(templateKey), model));
 		payload.put("institutionalGoogle", model != null && model.institutional());
+		payload.put("teamNo", model == null || model.teamNo() == null ? "" : String.valueOf(model.teamNo()));
+		payload.put("teamName", text(model == null ? null : model.teamName()));
+		payload.put("teamRole", text(model == null ? null : model.teamRole()));
 		return payload;
 	}
 
@@ -59,6 +64,7 @@ public class EmailTemplateService {
 		return switch (key) {
 			case "course-enrolled", "courseenrolled" -> COURSE_ENROLLED;
 			case "course-invitation", "courseinvitation" -> COURSE_INVITATION;
+			case "team-assigned", "teamassigned" -> TEAM_ASSIGNED;
 			case "dev-smoke", "devsmoke" -> DEV_SMOKE;
 			default -> key;
 		};
@@ -163,6 +169,55 @@ public class EmailTemplateService {
 		return new EmailTemplate(subject, text, html);
 	}
 
+	private EmailTemplate teamAssigned(EmailTemplateModel model) {
+		String code = displayCode(model);
+		String subject = "SAGA — Team assignment for " + code;
+		String greeting = greeting(model.fullName());
+		String courseLine = courseLine(model);
+		String semester = semesterLine(model);
+		String teamLine = teamLine(model);
+		String role = EmailHtml.blankTo(model.teamRole(), "Member");
+		String cta = links.dashboardUrl();
+		String text = greeting
+				+ "\n\nYou were assigned to a course team.\n\n"
+				+ "Course: "
+				+ courseLine
+				+ "\nClass: "
+				+ displayClass(model)
+				+ "\nSemester: "
+				+ semester
+				+ "\nTeam: "
+				+ teamLine
+				+ "\nRole: "
+				+ role
+				+ "\n\nOpen SAGA: "
+				+ cta
+				+ footerText();
+		String inner = """
+			<p style="margin:0 0 16px 0;">%s</p>
+			<h1 style="margin:0 0 12px 0;font-size:22px;line-height:28px;color:#0f172a;">You were assigned to a team</h1>
+			<p style="margin:0 0 20px 0;">Your SAGA course team assignment is ready. Use the button below to open SAGA.</p>
+			"""
+				.formatted(EmailHtml.escape(greeting));
+		String html = SagaEmailLayout.document(
+				subject,
+				inner,
+				"Open SAGA",
+				cta,
+				SagaEmailLayout.infoPanel(
+						"Course",
+						courseLine,
+						"Class",
+						displayClass(model),
+						"Semester",
+						semester,
+						"Team",
+						teamLine,
+						"Role",
+						role));
+		return new EmailTemplate(subject, text, html);
+	}
+
 	private EmailTemplate smoke(EmailTemplateModel model) {
 		String subject = "SAGA — Mail delivery test";
 		String cta = links.dashboardUrl();
@@ -183,7 +238,7 @@ public class EmailTemplateService {
 
 	private String ctaUrl(String key, EmailTemplateModel model) {
 		return switch (key) {
-			case COURSE_ENROLLED, DEV_SMOKE -> links.dashboardUrl();
+			case COURSE_ENROLLED, TEAM_ASSIGNED, DEV_SMOKE -> links.dashboardUrl();
 			case COURSE_INVITATION -> model != null && model.institutional() ? links.loginUrl() : links.registerUrl();
 			default -> links.dashboardUrl();
 		};
@@ -229,6 +284,18 @@ public class EmailTemplateService {
 			return code + " — " + name;
 		}
 		return EmailHtml.blankTo(code.isEmpty() ? name : code, "—");
+	}
+
+	private static String teamLine(EmailTemplateModel model) {
+		String number = model.teamNo() == null ? "" : String.valueOf(model.teamNo());
+		String name = text(model.teamName());
+		if (!number.isEmpty() && !name.isEmpty()) {
+			return number + " — " + name;
+		}
+		if (!name.isEmpty()) {
+			return name;
+		}
+		return EmailHtml.blankTo(number, "—");
 	}
 
 	private static String footerText() {

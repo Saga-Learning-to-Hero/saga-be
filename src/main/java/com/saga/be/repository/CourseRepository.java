@@ -2,6 +2,7 @@ package com.saga.be.repository;
 
 import com.saga.be.entity.academic.Course;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -30,5 +31,18 @@ public interface CourseRepository extends JpaRepository<Course, UUID> {
 			@Param("academicClassId") UUID academicClassId,
 			@Param("subjectId") UUID subjectId,
 			@Param("lecturerId") UUID lecturerId);
+
+	@Query(
+			"""
+			SELECT c FROM Course c
+			LEFT JOIN FETCH c.academicClass
+			LEFT JOIN FETCH c.semester
+			LEFT JOIN FETCH c.subject
+			LEFT JOIN FETCH c.syllabusVersion
+			LEFT JOIN FETCH c.instructor i
+			LEFT JOIN FETCH i.userAccount
+			WHERE c.id = :courseId AND c.deletedAt IS NULL
+			""")
+	Optional<Course> findActiveFetchedById(@Param("courseId") UUID courseId);
 }
 

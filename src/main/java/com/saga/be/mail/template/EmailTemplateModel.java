@@ -8,7 +8,10 @@ public record EmailTemplateModel(
 		String classCode,
 		String semesterCode,
 		String semesterName,
-		boolean institutional) {
+		boolean institutional,
+		Integer teamNo,
+		String teamName,
+		String teamRole) {
 
 	public static EmailTemplateModel course(
 			String fullName,
@@ -27,6 +30,34 @@ public record EmailTemplateModel(
 				classCode,
 				semesterCode,
 				semesterName,
-				institutional);
+				institutional,
+				null,
+				null,
+				null);
+	}
+
+	public static EmailTemplateModel teamAssigned(
+			String fullName,
+			String recipientEmail,
+			String courseName,
+			String courseCode,
+			String classCode,
+			String semesterCode,
+			String semesterName,
+			Integer teamNo,
+			String teamName,
+			String teamRole) {
+		return new EmailTemplateModel(
+				fullName,
+				recipientEmail,
+				courseName,
+				courseCode,
+				classCode,
+				semesterCode,
+				semesterName,
+				false,
+				teamNo,
+				teamName,
+				teamRole);
 	}
 }

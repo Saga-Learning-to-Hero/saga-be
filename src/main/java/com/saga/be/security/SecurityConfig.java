@@ -112,6 +112,8 @@ public class SecurityConfig {
 						.hasRole("ADMIN")
 						.requestMatchers("/api/lecturer/**")
 						.hasAnyRole("LECTURER", "ADMIN")
+						.requestMatchers("/api/student/**")
+						.hasRole("STUDENT")
 						.anyRequest()
 						.authenticated())
 				.exceptionHandling(ex -> ex.authenticationEntryPoint(this::writeUnauthorized)

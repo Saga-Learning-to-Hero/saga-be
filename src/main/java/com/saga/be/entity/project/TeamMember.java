@@ -26,7 +26,8 @@ import lombok.Setter;
 @Table(
 	name = "team_member",
 	uniqueConstraints = {
-		@UniqueConstraint(name = "uk_team_member_enrollment", columnNames = {"team_id", "course_enrollment_id"})
+		@UniqueConstraint(name = "uk_team_member_enrollment", columnNames = {"team_id", "course_enrollment_id"}),
+		@UniqueConstraint(name = "uk_team_member_enrollment_once", columnNames = {"course_enrollment_id"})
 	},
 	indexes = {
 		@Index(name = "ix_team_member_enrollment", columnList = "course_enrollment_id")
