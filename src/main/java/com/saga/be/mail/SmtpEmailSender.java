@@ -23,7 +23,9 @@ public class SmtpEmailSender implements EmailSender {
 
 	@Override
 	public boolean isEnabled() {
-		return properties.isReadyToSend();
+		return properties.isEnabled()
+				&& StringUtils.hasText(properties.getFrom())
+				&& StringUtils.hasText(properties.getHost());
 	}
 
 	@Override

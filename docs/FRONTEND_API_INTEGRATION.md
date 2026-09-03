@@ -627,7 +627,7 @@ No DELETE in this contract. Team and Graph are out of scope. Course roster impor
 
 ## 13. Email delivery smoke (local/dev only)
 
-Transactional mail is enqueue-only. Business services must not call SMTP. A scheduled worker claims `email_outbox` rows and sends through `EmailSender`.
+Transactional mail is enqueue-only. Business services must not call the mail provider. A scheduled worker claims `email_outbox` rows and sends through `EmailSender`. Runtime provider is `SAGA_MAIL_PROVIDER` (`smtp` or `gmail-api`); the same build works in every environment.
 
 `POST /api/admin/dev/email-test` exists **only** when the `local` or `dev` profile is active. ADMIN + session + CSRF. It is not registered in test/production profiles.
 
@@ -640,7 +640,9 @@ POST /api/admin/dev/email-test
 
 The handler enqueues `DEV_SMOKE`, runs the worker once, and returns `{ outboxId, deliveryStatus, attemptCount, lastFailureCode, sentAt, mailEnabled }`.
 
-`SENT` requires `SAGA_MAIL_ENABLED=true`, `SAGA_MAIL_FROM`, and `MAIL_HOST`. If mail is disabled the row stays `PENDING` and `mailEnabled` is `false`.
+`SENT` requires `SAGA_MAIL_ENABLED=true`, `SAGA_MAIL_FROM`, and credentials for the selected provider only. `SAGA_MAIL_PROVIDER=smtp` needs `MAIL_HOST` (and SMTP username/password). `SAGA_MAIL_PROVIDER=gmail-api` needs `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, and `GMAIL_REFRESH_TOKEN` — SMTP connectivity is not required. If mail is disabled the row stays `PENDING` and `mailEnabled` is `false`.
+
+Leave `SAGA_MAIL_SMTP_HEALTH_ENABLED` unset/false so `/actuator/health` does not depend on SMTP.
 
 Do not use this endpoint as a public mail API. Forgot-password and team mails are not implemented.
 

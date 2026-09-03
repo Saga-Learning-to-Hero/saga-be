@@ -1,11 +1,14 @@
 package com.saga.be.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.saga.be.mail.DisabledEmailSender;
 import com.saga.be.mail.EmailSender;
+import com.saga.be.mail.GmailApiEmailSender;
+import com.saga.be.mail.RestClientGmailApiTransport;
 import com.saga.be.mail.SmtpEmailSender;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -21,22 +24,55 @@ public class MailConfiguration {
 	private static final Logger log = LoggerFactory.getLogger(MailConfiguration.class);
 
 	@Bean
-	@ConditionalOnProperty(prefix = "saga.mail", name = "enabled", havingValue = "true")
-	public EmailSender smtpEmailSender(JavaMailSender mailSender, SagaMailProperties properties) {
+	public EmailSender emailSender(
+			ObjectProvider<JavaMailSender> mailSenders,
+			ObjectProvider<ObjectMapper> mappers,
+			SagaMailProperties properties) {
+		if (!properties.isEnabled()) {
+			log.info("mail sender implementation={} provider=disabled", DisabledEmailSender.class.getSimpleName());
+			return new DisabledEmailSender();
+		}
+		MailProvider provider = resolveProvider(properties);
+		return switch (provider) {
+			case SMTP -> smtpSender(mailSenders, properties);
+			case GMAIL_API -> gmailApiSender(mappers, properties);
+		};
+	}
+
+	private static MailProvider resolveProvider(SagaMailProperties properties) {
+		try {
+			return properties.resolvedProvider();
+		} catch (IllegalArgumentException ex) {
+			throw new IllegalStateException("saga.mail.provider must be smtp or gmail-api.", ex);
+		}
+	}
+
+	private static EmailSender smtpSender(ObjectProvider<JavaMailSender> mailSenders, SagaMailProperties properties) {
 		if (!StringUtils.hasText(properties.getFrom()) || !StringUtils.hasText(properties.getHost())) {
-			throw new IllegalStateException("saga.mail.enabled=true requires saga.mail.from and saga.mail.host.");
+			throw new IllegalStateException(
+					"saga.mail.enabled=true with provider=smtp requires saga.mail.from and saga.mail.host.");
+		}
+		JavaMailSender mailSender = mailSenders.getIfAvailable();
+		if (mailSender == null) {
+			throw new IllegalStateException("saga.mail.enabled=true with provider=smtp requires JavaMailSender.");
 		}
 		log.info(
-				"mail sender implementation={} javaMailSenderPresent=true ready={}",
+				"mail sender implementation={} provider=smtp javaMailSenderPresent=true ready={}",
 				SmtpEmailSender.class.getSimpleName(),
 				properties.isReadyToSend());
 		return new SmtpEmailSender(mailSender, properties);
 	}
 
-	@Bean
-	@ConditionalOnProperty(prefix = "saga.mail", name = "enabled", havingValue = "false", matchIfMissing = true)
-	public EmailSender disabledEmailSender() {
-		log.info("mail sender implementation={}", DisabledEmailSender.class.getSimpleName());
-		return new DisabledEmailSender();
+	private static EmailSender gmailApiSender(ObjectProvider<ObjectMapper> mappers, SagaMailProperties properties) {
+		if (!StringUtils.hasText(properties.getFrom()) || !properties.getGmailApi().isConfigured()) {
+			throw new IllegalStateException(
+					"saga.mail.enabled=true with provider=gmail-api requires saga.mail.from, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, and GMAIL_REFRESH_TOKEN.");
+		}
+		ObjectMapper mapper = mappers.getIfAvailable(ObjectMapper::new);
+		log.info(
+				"mail sender implementation={} provider=gmail-api ready={}",
+				GmailApiEmailSender.class.getSimpleName(),
+				properties.isReadyToSend());
+		return new GmailApiEmailSender(new RestClientGmailApiTransport(mapper), properties);
 	}
 }
