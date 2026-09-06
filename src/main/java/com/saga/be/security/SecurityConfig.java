@@ -72,6 +72,9 @@ public class SecurityConfig {
 		CookieCsrfTokenRepository csrfRepo = CookieCsrfTokenRepository.withHttpOnlyFalse();
 		csrfRepo.setCookieName("XSRF-TOKEN");
 		csrfRepo.setHeaderName("X-XSRF-TOKEN");
+		csrfRepo.setCookieCustomizer(builder -> builder
+				.secure(properties.getCookie().isSecure())
+				.sameSite(properties.getCookie().getSameSite()));
 
 		http.cors(Customizer.withDefaults())
 				.csrf(csrf -> csrf.csrfTokenRepository(csrfRepo)

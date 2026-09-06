@@ -58,6 +58,8 @@ class AuthLoginCsrfTest {
 		Cookie cookie = csrf.getResponse().getCookie("XSRF-TOKEN");
 		assertThat(cookie).isNotNull();
 		assertThat(cookie.isHttpOnly()).isFalse();
+		assertThat(cookie.getSecure()).isFalse();
+		assertThat(cookie.getAttribute("SameSite")).isEqualTo("Lax");
 		String bodyToken = JsonPath.read(csrf.getResponse().getContentAsString(), "$.token");
 		assertThat(bodyToken).isEqualTo(cookie.getValue());
 	}
