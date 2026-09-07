@@ -1,6 +1,7 @@
 package com.saga.be.service.academic;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -299,6 +300,21 @@ class AcademicRuntimeServiceTest {
 						admin,
 						auditReq()));
 		assertEquals(AcademicErrorCode.COURSE_SYLLABUS_SUBJECT_MISMATCH, ex.getCode());
+	}
+
+	@Test
+	void userAccountIdIsRejectedAsCourseLecturerId() {
+		Fixture fx = fixture();
+		LecturerProfile lecturer = store.lecturers.get(fx.lecturerId());
+		UUID userId = lecturer.getUserAccount().getId();
+		assertNotEquals(fx.lecturerId(), userId);
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.createCourse(
+						new CreateCourseRequest(fx.classId, fx.subjectId, fx.syllabusId, userId, null, null),
+						admin,
+						auditReq()));
+		assertEquals(AcademicErrorCode.COURSE_LECTURER_INVALID, ex.getCode());
 	}
 
 	@Test
