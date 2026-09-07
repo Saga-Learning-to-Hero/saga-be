@@ -12,6 +12,7 @@ public record ProjectTaskResponse(
 		String issueTypeName,
 		String assigneeExternalId,
 		UUID assigneeStudentId,
+		long linkedCommitCount,
 		LocalDateTime externalUpdatedAt,
 		LocalDateTime createdAt,
 		LocalDateTime updatedAt) {}

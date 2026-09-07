@@ -19,4 +19,16 @@ public interface ProjectRepository extends JpaRepository<Project, UUID> {
 			WHERE p.id = :id
 			""")
 	Optional<Project> findFetchedById(@Param("id") UUID id);
+
+	@Query(
+			"""
+			SELECT CASE WHEN COUNT(p) > 0 THEN true ELSE false END
+			FROM Project p
+			JOIN p.course c
+			JOIN c.instructor i
+			JOIN i.userAccount u
+			WHERE p.id = :projectId AND u.id = :lecturerUserId
+			""")
+	boolean existsAssignedToLecturerUser(
+			@Param("projectId") UUID projectId, @Param("lecturerUserId") UUID lecturerUserId);
 }

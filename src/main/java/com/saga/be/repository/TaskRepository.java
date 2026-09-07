@@ -29,5 +29,7 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			""")
 	List<Task> findActiveFetchedByProject_Id(@Param("projectId") UUID projectId);
 
+	Optional<Task> findByIdAndProject_IdAndDeletedAtIsNull(UUID id, UUID projectId);
+
 	long countByProject_IdAndDeletedAtIsNull(UUID projectId);
 }

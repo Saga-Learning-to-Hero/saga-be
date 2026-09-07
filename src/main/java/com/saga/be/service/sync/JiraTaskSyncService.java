@@ -6,6 +6,8 @@ import com.saga.be.entity.enums.SyncJobStatus;
 import com.saga.be.entity.enums.SyncJobType;
 import com.saga.be.entity.integration.SyncJobLog;
 import com.saga.be.entity.jira.JiraIntegration;
+import com.saga.be.exception.IntegrationException;
+import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.jira.JiraOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSearchPage;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
@@ -34,6 +36,8 @@ public class JiraTaskSyncService {
 	private final JiraTaskProjectionService projection;
 	private final SyncJobLogRepository syncJobs;
 	private final IntegrationProperties properties;
+	private final JiraIntegrationCredentialService credentials;
+	private final SyncJobClaimService claims;
 	private final TransactionTemplate writes;
 
 	public JiraTaskSyncService(
@@ -42,40 +46,67 @@ public class JiraTaskSyncService {
 			JiraTaskProjectionService projection,
 			SyncJobLogRepository syncJobs,
 			IntegrationProperties properties,
+			JiraIntegrationCredentialService credentials,
+			SyncJobClaimService claims,
 			PlatformTransactionManager transactionManager) {
 		this.integrations = integrations;
 		this.jira = jira;
 		this.projection = projection;
 		this.syncJobs = syncJobs;
 		this.properties = properties;
+		this.credentials = credentials;
+		this.claims = claims;
 		this.writes = new TransactionTemplate(transactionManager);
 	}
 
+	/** Resolve credentials from DB (refresh if needed). */
+	public SyncJobLog initialSync(UUID projectId) {
+		return initialSync(projectId, null);
+	}
+
 	/**
-	 * Provider HTTP outside JDBC TX. Failures do not revoke the integration.
-	 * {@code jiraIssueBackfillLimit} is the hard soft-cap (not overridden by page size).
+	 * Provider HTTP outside JDBC TX. Optional preferredAccess avoids refresh right after connect.
+	 * On 401: one credential refresh + one provider retry maximum.
 	 */
-	public SyncJobLog initialSync(UUID projectId, String accessToken) {
+	public SyncJobLog initialSync(UUID projectId, String preferredAccess) {
 		SyncJobLog job = beginJob(projectId);
+		if (job == null) {
+			return alreadyRunning(projectId);
+		}
 		try {
 			JiraIntegration integration = integrations.findFetchedByProject_Id(projectId).orElse(null);
 			if (integration == null
 					|| integration.getConnectionStatus() != IntegrationStatus.ACTIVE
-					|| accessToken == null
-					|| accessToken.isBlank()
 					|| integration.getProjectKey() == null
 					|| integration.getCloudId() == null) {
 				return fail(job, "JIRA_INTEGRATION_INACTIVE", "persist");
 			}
+			String accessToken = preferredAccess != null && !preferredAccess.isBlank()
+					? preferredAccess
+					: credentials.resolveAccessToken(projectId);
 			int pageSize = Math.max(1, properties.getJiraIssuePageSize());
 			int limit = Math.max(1, properties.getJiraIssueBackfillLimit());
 			int startAt = 0;
 			int processed = 0;
+			boolean refreshedForUnauthorized = false;
 			while (processed < limit) {
 				int remaining = limit - processed;
 				int requestSize = Math.min(pageSize, remaining);
-				IssueSearchPage page = jira.searchIssues(
-						accessToken, integration.getCloudId(), integration.getProjectKey(), startAt, requestSize);
+				IssueSearchPage page;
+				try {
+					page = jira.searchIssues(
+							accessToken, integration.getCloudId(), integration.getProjectKey(), startAt, requestSize);
+				} catch (IntegrationException ex) {
+					if (ex.getCode() == IntegrationErrorCode.JIRA_UNAUTHORIZED && !refreshedForUnauthorized) {
+						String rejected = accessToken;
+						accessToken = credentials.forceRefresh(projectId, rejected);
+						refreshedForUnauthorized = true;
+						page = jira.searchIssues(
+								accessToken, integration.getCloudId(), integration.getProjectKey(), startAt, requestSize);
+					} else {
+						throw ex;
+					}
+				}
 				List<IssueSummary> issues = page.issues() == null ? List.of() : page.issues();
 				if (issues.isEmpty()) {
 					break;
@@ -104,33 +135,46 @@ public class JiraTaskSyncService {
 				}
 			});
 			return succeed(job, processed);
+		} catch (IntegrationException ex) {
+			log.warn("jira initial sync failed projectId={} code={}", projectId, ex.getCode());
+			markIntegrationFailure(projectId, ex.getCode().name());
+			return fail(job, ex.getCode().name(), "provider");
 		} catch (RuntimeException ex) {
 			log.warn("jira initial sync failed projectId={} type={}", projectId, ex.getClass().getSimpleName());
-			writes.executeWithoutResult(status -> {
-				JiraIntegration row = integrations.findByProject_Id(projectId).orElse(null);
-				if (row != null) {
-					row.setConsecutiveFailures(row.getConsecutiveFailures() == null ? 1 : row.getConsecutiveFailures() + 1);
-					row.setLastErrorCode("JIRA_SYNC_FAILED");
-					row.setLastSyncedAt(LocalDateTime.now());
-					integrations.save(row);
-				}
-			});
+			markIntegrationFailure(projectId, "JIRA_SYNC_FAILED");
 			return fail(job, "JIRA_SYNC_FAILED", "provider");
 		}
 	}
 
-	private SyncJobLog beginJob(UUID projectId) {
-		return writes.execute(status -> {
-			SyncJobLog job = new SyncJobLog();
-			job.setTargetSystem("JIRA");
-			job.setTargetId(projectId);
-			job.setJobType(SyncJobType.INITIAL);
-			job.setStatus(SyncJobStatus.RUNNING);
-			job.setStartedAt(LocalDateTime.now());
-			job.setItemsProcessed(0);
-			job.setItemsFailed(0);
-			return syncJobs.save(job);
+	private void markIntegrationFailure(UUID projectId, String code) {
+		writes.executeWithoutResult(status -> {
+			JiraIntegration row = integrations.findByProject_Id(projectId).orElse(null);
+			if (row != null) {
+				row.setConsecutiveFailures(row.getConsecutiveFailures() == null ? 1 : row.getConsecutiveFailures() + 1);
+				row.setLastErrorCode(code);
+				row.setLastSyncedAt(LocalDateTime.now());
+				integrations.save(row);
+			}
 		});
+	}
+
+	private SyncJobLog beginJob(UUID projectId) {
+		return claims.tryClaim("JIRA", projectId, SyncJobType.INITIAL).orElse(null);
+	}
+
+	private SyncJobLog alreadyRunning(UUID projectId) {
+		SyncJobLog job = new SyncJobLog();
+		job.setTargetSystem("JIRA");
+		job.setTargetId(projectId);
+		job.setJobType(SyncJobType.INITIAL);
+		job.setStatus(SyncJobStatus.FAILED);
+		job.setErrorCategory("JIRA_SYNC_ALREADY_RUNNING");
+		job.setFailureStage("claim");
+		job.setStartedAt(LocalDateTime.now());
+		job.setCompletedAt(LocalDateTime.now());
+		job.setItemsProcessed(0);
+		job.setItemsFailed(0);
+		return writes.execute(status -> syncJobs.save(job));
 	}
 
 	private SyncJobLog succeed(SyncJobLog job, int processed) {

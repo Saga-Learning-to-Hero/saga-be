@@ -59,6 +59,8 @@ class GitHubCommitSyncServiceTest {
 	@Mock
 	private SyncJobLogRepository syncJobs;
 	@Mock
+	private SyncJobClaimService claims;
+	@Mock
 	private PlatformTransactionManager transactionManager;
 
 	private IntegrationProperties properties;
@@ -72,10 +74,20 @@ class GitHubCommitSyncServiceTest {
 		when(transactionManager.getTransaction(any(TransactionDefinition.class)))
 				.thenAnswer(inv -> new SimpleTransactionStatus());
 		service = new GitHubCommitSyncService(
-				repos, installations, github, githubJwt, projection, syncJobs, properties, transactionManager);
+				repos, installations, github, githubJwt, projection, syncJobs, properties, claims, transactionManager);
 		projectId = UUID.randomUUID();
 		project = new Project();
 		project.setId(projectId);
+		when(claims.tryClaim(eq("GITHUB"), eq(projectId), any()))
+				.thenAnswer(inv -> {
+					SyncJobLog job = new SyncJobLog();
+					job.setTargetSystem("GITHUB");
+					job.setTargetId(projectId);
+					job.setStatus(SyncJobStatus.RUNNING);
+					job.setItemsProcessed(0);
+					job.setItemsFailed(0);
+					return Optional.of(job);
+				});
 		when(syncJobs.save(any(SyncJobLog.class))).thenAnswer(inv -> inv.getArgument(0));
 		when(repos.save(any(GitRepo.class))).thenAnswer(inv -> inv.getArgument(0));
 	}

@@ -191,7 +191,16 @@ public class JiraOAuthClient {
 					.toList();
 			return new IssueSearchPage(
 					issues, node.total() == null ? issues.size() : node.total(), safeStart, safeMax);
-		} catch (RestClientResponseException | HttpMessageConversionException ex) {
+		} catch (RestClientResponseException ex) {
+			if (ex.getStatusCode().value() == 401) {
+				throw new IntegrationException(
+						IntegrationErrorCode.JIRA_UNAUTHORIZED, HttpStatus.UNAUTHORIZED, "Jira access token rejected.");
+			}
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE,
+					HttpStatus.BAD_GATEWAY,
+					"Jira issues could not be listed.");
+		} catch (HttpMessageConversionException ex) {
 			throw new IntegrationException(
 					IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE,
 					HttpStatus.BAD_GATEWAY,

@@ -25,9 +25,19 @@ public class IntegrationInitialSyncLauncher {
 	}
 
 	@Async("integrationSyncExecutor")
-	public void enqueueJiraInitialSync(UUID projectId, String accessToken) {
+	public void enqueueJiraInitialSync(UUID projectId) {
 		try {
-			jiraTaskSync.initialSync(projectId, accessToken);
+			jiraTaskSync.initialSync(projectId);
+		} catch (RuntimeException ex) {
+			log.warn("jira initial sync failed projectId={} type={}", projectId, ex.getClass().getSimpleName());
+		}
+	}
+
+	/** Optional preferred access token used immediately after connect (still refreshes on 401). */
+	@Async("integrationSyncExecutor")
+	public void enqueueJiraInitialSync(UUID projectId, String preferredAccessToken) {
+		try {
+			jiraTaskSync.initialSync(projectId, preferredAccessToken);
 		} catch (RuntimeException ex) {
 			log.warn("jira initial sync failed projectId={} type={}", projectId, ex.getClass().getSimpleName());
 		}

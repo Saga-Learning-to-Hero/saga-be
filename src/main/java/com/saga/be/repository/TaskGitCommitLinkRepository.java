@@ -18,4 +18,29 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			where l.gitCommit.id in :commitIds
 			""")
 	List<TaskGitCommitLink> findByGitCommit_IdIn(@Param("commitIds") Collection<UUID> commitIds);
+
+	@Query(
+			"""
+			select l.task.id, count(l)
+			from TaskGitCommitLink l
+			join l.task t
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			group by l.task.id
+			""")
+	List<Object[]> countLinksByProjectGrouped(@Param("projectId") UUID projectId);
+
+	@Query(
+			"""
+			select c from TaskGitCommitLink l
+			join l.gitCommit c
+			join fetch c.repo
+			left join fetch c.authorStudent
+			join l.task t
+			where t.id = :taskId
+			  and t.project.id = :projectId
+			order by coalesce(c.committedAt, c.createdAt) desc
+			""")
+	List<com.saga.be.entity.github.GitCommit> findFetchedCommitsByProjectAndTask(
+			@Param("projectId") UUID projectId, @Param("taskId") UUID taskId);
 }

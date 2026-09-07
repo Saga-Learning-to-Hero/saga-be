@@ -501,6 +501,7 @@ public class ProjectIntegrationService {
 			saved.setEncryptedAccessToken(
 					encryptor.encrypt(
 							pending.accessToken(), TokenEncryptor.aad(saved.getId().toString(), "JIRA", userId.toString())));
+			saved.setTokenExpiresAt(LocalDateTime.now().plusMinutes(50));
 			jiraIntegrations.save(saved);
 		}
 		audit.record(

@@ -33,8 +33,10 @@ class IntegrationInitialSyncLauncherTest {
 		UUID projectId = UUID.randomUUID();
 		launcher.enqueueGithubInitialSync(projectId);
 		launcher.enqueueJiraInitialSync(projectId, "token");
+		launcher.enqueueJiraInitialSync(projectId);
 		verify(githubCommitSync).initialSync(projectId);
 		verify(jiraTaskSync).initialSync(projectId, "token");
+		verify(jiraTaskSync).initialSync(projectId);
 	}
 
 	/**

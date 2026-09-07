@@ -45,6 +45,7 @@ public class GitHubCommitSyncService {
 	private final GitCommitProjectionService projection;
 	private final SyncJobLogRepository syncJobs;
 	private final IntegrationProperties properties;
+	private final SyncJobClaimService claims;
 	private final TransactionTemplate writes;
 
 	public GitHubCommitSyncService(
@@ -55,6 +56,7 @@ public class GitHubCommitSyncService {
 			GitCommitProjectionService projection,
 			SyncJobLogRepository syncJobs,
 			IntegrationProperties properties,
+			SyncJobClaimService claims,
 			PlatformTransactionManager transactionManager) {
 		this.repos = repos;
 		this.installations = installations;
@@ -63,6 +65,7 @@ public class GitHubCommitSyncService {
 		this.projection = projection;
 		this.syncJobs = syncJobs;
 		this.properties = properties;
+		this.claims = claims;
 		this.writes = new TransactionTemplate(transactionManager);
 	}
 
@@ -72,6 +75,9 @@ public class GitHubCommitSyncService {
 	 */
 	public SyncJobLog initialSync(UUID projectId) {
 		SyncJobLog job = beginJob(projectId);
+		if (job == null) {
+			return alreadyRunning(projectId);
+		}
 		try {
 			GithubInstallation installation = installations.findByProject_Id(projectId).orElse(null);
 			if (installation == null || installation.getInstallationStatus() != GitHubInstallationStatus.ACTIVE) {
@@ -174,17 +180,22 @@ public class GitHubCommitSyncService {
 	}
 
 	private SyncJobLog beginJob(UUID projectId) {
-		return writes.execute(status -> {
-			SyncJobLog job = new SyncJobLog();
-			job.setTargetSystem("GITHUB");
-			job.setTargetId(projectId);
-			job.setJobType(SyncJobType.INITIAL);
-			job.setStatus(SyncJobStatus.RUNNING);
-			job.setStartedAt(LocalDateTime.now());
-			job.setItemsProcessed(0);
-			job.setItemsFailed(0);
-			return syncJobs.save(job);
-		});
+		return claims.tryClaim("GITHUB", projectId, SyncJobType.INITIAL).orElse(null);
+	}
+
+	private SyncJobLog alreadyRunning(UUID projectId) {
+		SyncJobLog job = new SyncJobLog();
+		job.setTargetSystem("GITHUB");
+		job.setTargetId(projectId);
+		job.setJobType(SyncJobType.INITIAL);
+		job.setStatus(SyncJobStatus.FAILED);
+		job.setErrorCategory("GITHUB_SYNC_ALREADY_RUNNING");
+		job.setFailureStage("claim");
+		job.setStartedAt(LocalDateTime.now());
+		job.setCompletedAt(LocalDateTime.now());
+		job.setItemsProcessed(0);
+		job.setItemsFailed(0);
+		return writes.execute(status -> syncJobs.save(job));
 	}
 
 	private SyncJobLog succeed(SyncJobLog job, int processed) {

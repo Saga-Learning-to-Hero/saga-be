@@ -38,6 +38,35 @@ public interface TeamMemberRepository extends JpaRepository<TeamMember, UUID> {
 			JOIN m.courseEnrollment e
 			JOIN e.studentProfile p
 			JOIN p.userAccount u
+			WHERE t.project.id = :projectId
+			  AND u.id = :userId
+			  AND e.enrollmentStatus = com.saga.be.entity.enums.EnrollmentStatus.ACTIVE
+			""")
+	boolean existsActiveByProjectIdAndUserId(@Param("projectId") UUID projectId, @Param("userId") UUID userId);
+
+	@Query(
+			"""
+			SELECT m.roleInTeam
+			FROM TeamMember m
+			JOIN m.team t
+			JOIN m.courseEnrollment e
+			JOIN e.studentProfile p
+			JOIN p.userAccount u
+			WHERE t.project.id = :projectId
+			  AND u.id = :userId
+			  AND e.enrollmentStatus = com.saga.be.entity.enums.EnrollmentStatus.ACTIVE
+			""")
+	java.util.Optional<com.saga.be.entity.enums.RoleInTeam> findActiveRoleByProjectIdAndUserId(
+			@Param("projectId") UUID projectId, @Param("userId") UUID userId);
+
+	@Query(
+			"""
+			SELECT CASE WHEN COUNT(m) > 0 THEN true ELSE false END
+			FROM TeamMember m
+			JOIN m.team t
+			JOIN m.courseEnrollment e
+			JOIN e.studentProfile p
+			JOIN p.userAccount u
 			WHERE t.project.id = :projectId AND u.id = :userId
 			""")
 	boolean existsByProjectIdAndUserId(@Param("projectId") UUID projectId, @Param("userId") UUID userId);

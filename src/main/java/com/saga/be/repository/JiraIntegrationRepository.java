@@ -20,6 +20,7 @@ public interface JiraIntegrationRepository extends JpaRepository<JiraIntegration
 			"""
 			select j from JiraIntegration j
 			join fetch j.project
+			left join fetch j.connectedBy
 			where j.project.id = :projectId
 			""")
 	Optional<JiraIntegration> findFetchedByProject_Id(@Param("projectId") UUID projectId);
