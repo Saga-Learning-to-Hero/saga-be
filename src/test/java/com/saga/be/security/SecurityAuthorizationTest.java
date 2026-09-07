@@ -126,6 +126,17 @@ class SecurityAuthorizationTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"previewToken\":\"abc\"}"))
 				.andExpect(status().isForbidden());
+		mockMvc.perform(post("/api/admin/courses/" + courseId + "/roster/students")
+						.with(csrf())
+						.with(authentication(auth(AccountRole.STUDENT, "hash")))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"fullName\":\"A\",\"studentCode\":\"SE123456\",\"email\":\"a@gmail.com\"}"))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(post("/api/admin/courses/" + courseId + "/roster/students")
+						.with(authentication(auth(AccountRole.STUDENT, "hash")))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"fullName\":\"A\",\"studentCode\":\"SE123456\",\"email\":\"a@gmail.com\"}"))
+				.andExpect(status().isForbidden());
 	}
 
 	@Test

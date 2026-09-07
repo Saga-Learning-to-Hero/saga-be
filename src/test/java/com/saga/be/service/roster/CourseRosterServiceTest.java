@@ -16,6 +16,8 @@ import com.saga.be.auth.InstitutionalEmailPolicy;
 import com.saga.be.config.AuthProperties;
 import com.saga.be.config.RosterProperties;
 import com.saga.be.dto.mail.EmailEnqueueRequest;
+import com.saga.be.dto.roster.AddRosterStudentRequest;
+import com.saga.be.dto.roster.AddRosterStudentResponse;
 import com.saga.be.dto.roster.CourseRosterResponse;
 import com.saga.be.dto.roster.RosterConfirmResponse;
 import com.saga.be.dto.roster.RosterPreviewResponse;
@@ -469,6 +471,188 @@ class CourseRosterServiceTest {
 		assertEquals(1, store.enrollments.size());
 		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.values().iterator().next().getEnrollmentStatus());
 		verify(emails, times(1)).enqueue(any());
+	}
+
+	@Test
+	void addStudentEnrollsExistingAccount() {
+		student("student@gmail.com", "SE123456", "A");
+		AddRosterStudentResponse response =
+				service.addStudent(course.getId(), addRequest("A", "SE123456", "student@gmail.com"), admin, auditReq());
+		assertEquals("ENROLLED", response.result());
+		assertEquals("ENROLLMENT", response.entry().kind());
+		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.values().iterator().next().getEnrollmentStatus());
+		assertEquals("SE123456", response.entry().studentCode());
+		ArgumentCaptor<EmailEnqueueRequest> captor = ArgumentCaptor.forClass(EmailEnqueueRequest.class);
+		verify(emails).enqueue(captor.capture());
+		assertEquals("COURSE_ENROLLED", captor.getValue().emailType());
+		verify(audit)
+				.record(
+						eq(admin),
+						isNull(),
+						isNull(),
+						eq(CourseRosterService.COURSE_ROSTER_IMPORTED),
+						eq("course"),
+						eq(course.getId()),
+						isNull(),
+						any(),
+						any(),
+						eq(AuditSource.API),
+						any(),
+						any(),
+						any());
+	}
+
+	@Test
+	void addStudentInvitesUnknownAccountWithoutCreatingUser() {
+		AddRosterStudentResponse response =
+				service.addStudent(course.getId(), addRequest("New", "SE000001", "new@gmail.com"), admin, auditReq());
+		assertEquals("INVITED", response.result());
+		assertEquals("INVITATION", response.entry().kind());
+		assertEquals("PENDING", response.entry().invitationStatus());
+		assertTrue(store.users.values().stream().noneMatch(user -> "new@gmail.com".equals(user.getEmail())));
+		assertTrue(store.students.isEmpty());
+		ArgumentCaptor<EmailEnqueueRequest> captor = ArgumentCaptor.forClass(EmailEnqueueRequest.class);
+		verify(emails).enqueue(captor.capture());
+		assertEquals("COURSE_INVITATION", captor.getValue().emailType());
+	}
+
+	@Test
+	void addStudentAlreadyEnrolledIsIdempotent() {
+		student("student@gmail.com", "SE123456", "A");
+		service.addStudent(course.getId(), addRequest("A", "SE123456", "student@gmail.com"), admin, auditReq());
+		AddRosterStudentResponse again =
+				service.addStudent(course.getId(), addRequest("A", "SE123456", "student@gmail.com"), admin, auditReq());
+		assertEquals("ALREADY_ENROLLED", again.result());
+		assertEquals(1, store.enrollments.size());
+		verify(emails, times(1)).enqueue(any());
+	}
+
+	@Test
+	void addStudentAlreadyInvitedIsIdempotent() {
+		seedInvitation("pending@gmail.com", "SE000010", StudentInvitationStatus.PENDING);
+		AddRosterStudentResponse response =
+				service.addStudent(course.getId(), addRequest("P", "SE000010", "pending@gmail.com"), admin, auditReq());
+		assertEquals("ALREADY_INVITED", response.result());
+		assertEquals(1, store.invitations.size());
+		verify(emails, never()).enqueue(any());
+	}
+
+	@Test
+	void addStudentEmailOwnedByAnotherStudentCodeIsConflict() {
+		student("owner@gmail.com", "SE123456", "Owner");
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.addStudent(
+						course.getId(), addRequest("Other", "SE123456", "other@gmail.com"), admin, auditReq()));
+		assertEquals(AcademicErrorCode.ROSTER_CONFIRM_BLOCKED, ex.getCode());
+		assertTrue(store.enrollments.isEmpty());
+		verify(emails, never()).enqueue(any());
+	}
+
+	@Test
+	void addStudentStudentCodeMismatchIsConflict() {
+		student("student@gmail.com", "SE111111", "A");
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.addStudent(
+						course.getId(), addRequest("A", "SE222222", "student@gmail.com"), admin, auditReq()));
+		assertEquals(AcademicErrorCode.ROSTER_CONFIRM_BLOCKED, ex.getCode());
+		verify(emails, never()).enqueue(any());
+	}
+
+	@Test
+	void addStudentRejectsNonStudentAccount() {
+		account(AccountRole.LECTURER, "lecturer@fe.edu.vn");
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.addStudent(
+						course.getId(), addRequest("Lecturer", "SE999999", "lecturer@fe.edu.vn"), admin, auditReq()));
+		assertEquals(AcademicErrorCode.ROSTER_CONFIRM_BLOCKED, ex.getCode());
+		verify(emails, never()).enqueue(any());
+	}
+
+	@Test
+	void addStudentUsesOneBoundedLookupPass() {
+		CountingCourseRosterStore counting = new CountingCourseRosterStore(store);
+		AuthProperties authProperties = new AuthProperties();
+		authProperties.setFrontendOrigins(List.of("http://localhost:3000"));
+		service = new CourseRosterService(
+				counting,
+				previews,
+				new RosterProperties(),
+				authProperties,
+				new InstitutionalEmailPolicy(authProperties),
+				emails,
+				audit);
+		student("one@gmail.com", "SE100001", "One");
+		service.addStudent(course.getId(), addRequest("One", "SE100001", "one@gmail.com"), admin, auditReq());
+		assertEquals(1, counting.usersByEmails);
+		assertEquals(1, counting.studentsByCodes);
+		assertEquals(1, counting.studentsByUserIds);
+		assertEquals(1, counting.listEnrollments);
+		assertEquals(1, counting.listInvitations);
+		assertEquals(0, counting.userByEmail);
+		assertEquals(0, counting.studentByCode);
+		assertEquals(0, counting.invitationByEmail);
+	}
+
+	@Test
+	void importWorkbookContainingOnlyDLeavesAbcAndAddsD() throws Exception {
+		enrollExisting("a@gmail.com", "SE00000A", "A");
+		enrollExisting("b@gmail.com", "SE00000B", "B");
+		enrollExisting("c@gmail.com", "SE00000C", "C");
+		RosterPreviewResponse preview = service.preview(
+				course.getId(),
+				CourseRosterWorkbookTest.filledWorkbook(
+						"SE1705", List.<String[]>of(new String[] {"1", "SE1705", "D", "SE00000D", "d@gmail.com", ""})),
+				admin);
+		assertEquals(RosterRowAction.READY_INVITE, preview.rows().getFirst().action());
+		service.confirm(course.getId(), preview.previewToken(), admin, auditReq());
+		assertEquals(3, store.enrollments.size());
+		assertEquals(1, store.invitations.size());
+		assertTrue(store.enrollments.values().stream()
+				.allMatch(row -> row.getEnrollmentStatus() == EnrollmentStatus.ACTIVE));
+		assertEquals("d@gmail.com", store.invitations.values().iterator().next().getEmail());
+		CourseRosterResponse roster = service.getRoster(course.getId());
+		assertEquals(3, roster.enrolledCount());
+		assertEquals(1, roster.pendingInvitationCount());
+	}
+
+	@Test
+	void importWorkbookOmittingBDoesNotDeleteOrWithdrawB() throws Exception {
+		enrollExisting("a@gmail.com", "SE00000A", "A");
+		CourseEnrollment b = enrollExisting("b@gmail.com", "SE00000B", "B");
+		enrollExisting("c@gmail.com", "SE00000C", "C");
+		RosterPreviewResponse preview = service.preview(
+				course.getId(),
+				CourseRosterWorkbookTest.filledWorkbook(
+						"SE1705",
+						List.<String[]>of(
+								new String[] {"1", "SE1705", "A", "SE00000A", "a@gmail.com", ""},
+								new String[] {"2", "SE1705", "C", "SE00000C", "c@gmail.com", ""})),
+				admin);
+		assertEquals(RosterRowAction.ALREADY_ENROLLED, preview.rows().get(0).action());
+		assertEquals(RosterRowAction.ALREADY_ENROLLED, preview.rows().get(1).action());
+		RosterConfirmResponse confirmed = service.confirm(course.getId(), preview.previewToken(), admin, auditReq());
+		assertEquals(2, confirmed.unchanged());
+		assertEquals(3, store.enrollments.size());
+		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.get(b.getId()).getEnrollmentStatus());
+		verify(emails, never()).enqueue(any());
+	}
+
+	private AddRosterStudentRequest addRequest(String fullName, String studentCode, String email) {
+		return new AddRosterStudentRequest(fullName, studentCode, email, null);
+	}
+
+	private CourseEnrollment enrollExisting(String email, String studentCode, String fullName) {
+		StudentProfile profile = student(email, studentCode, fullName);
+		CourseEnrollment enrollment = new CourseEnrollment();
+		enrollment.setStudentProfile(profile);
+		enrollment.setCourse(course);
+		enrollment.setEnrollmentStatus(EnrollmentStatus.ACTIVE);
+		enrollment.setEnrolledAt(LocalDateTime.now());
+		store.saveEnrollment(enrollment);
+		return enrollment;
 	}
 
 	private RosterPreviewResponse previewRow(

@@ -1,8 +1,11 @@
 package com.saga.be.controller;
 
+import com.saga.be.config.IntegrationProperties;
 import com.saga.be.dto.integration.MyIntegrationsResponse;
 import com.saga.be.dto.integration.OAuthStartResponse;
 import com.saga.be.entity.account.UserAccount;
+import com.saga.be.exception.IntegrationException;
+import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.identity.PersonalIntegrationService;
@@ -30,10 +33,13 @@ public class PersonalIntegrationController {
 
 	private final PersonalIntegrationService integrations;
 	private final UserAccountRepository users;
+	private final IntegrationProperties properties;
 
-	public PersonalIntegrationController(PersonalIntegrationService integrations, UserAccountRepository users) {
+	public PersonalIntegrationController(
+			PersonalIntegrationService integrations, UserAccountRepository users, IntegrationProperties properties) {
 		this.integrations = integrations;
 		this.users = users;
+		this.properties = properties;
 	}
 
 	@GetMapping("/me")
@@ -54,8 +60,12 @@ public class PersonalIntegrationController {
 			@RequestParam String code,
 			@RequestParam String state) {
 		UserAccount actor = users.findById(principal.getUserId()).orElseThrow();
-		String target = integrations.completeGithub(principal.getUserId(), code, state, actor);
-		return ResponseEntity.status(302).header("Location", target).build();
+		try {
+			return IntegrationFrontendRedirects.seeOther(
+					integrations.completeGithub(principal.getUserId(), code, state, actor));
+		} catch (IntegrationException ex) {
+			return IntegrationFrontendRedirects.failure(properties.getFailureUrl(), ex);
+		}
 	}
 
 	@PatchMapping("/github/{identityId}/primary")
@@ -84,8 +94,12 @@ public class PersonalIntegrationController {
 			@RequestParam String code,
 			@RequestParam String state) {
 		UserAccount actor = users.findById(principal.getUserId()).orElseThrow();
-		String target = integrations.completeJira(principal.getUserId(), code, state, actor);
-		return ResponseEntity.status(302).header("Location", target).build();
+		try {
+			return IntegrationFrontendRedirects.seeOther(
+					integrations.completeJira(principal.getUserId(), code, state, actor));
+		} catch (IntegrationException ex) {
+			return IntegrationFrontendRedirects.failure(properties.getFailureUrl(), ex);
+		}
 	}
 
 	@PatchMapping("/jira/{identityId}/primary")

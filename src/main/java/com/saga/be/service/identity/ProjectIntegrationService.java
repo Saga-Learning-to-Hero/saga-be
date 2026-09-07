@@ -34,6 +34,7 @@ import com.saga.be.integration.crypto.TokenEncryptor;
 import com.saga.be.integration.github.GitHubAppJwtService;
 import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient;
+import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
 import com.saga.be.integration.oauth.OAuthState;
 import com.saga.be.integration.oauth.OAuthStateService;
 import com.saga.be.integration.oauth.PendingJiraConnect;
@@ -62,7 +63,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.web.util.UriComponentsBuilder;
 
 @Service
 @Profile("!test")
@@ -628,21 +628,10 @@ public class ProjectIntegrationService {
 	}
 
 	private String redirect(String returnPath) {
-		String safe = safeReturnPath(returnPath);
-		if (safe != null) {
-			return UriComponentsBuilder.fromUriString(properties.getPublicBaseUrl()).path(safe).build().toUriString();
-		}
-		return properties.getSuccessUrl();
+		return IntegrationFrontendRedirects.successLocation(properties.getSuccessUrl(), returnPath);
 	}
 
 	static String safeReturnPath(String returnPath) {
-		if (returnPath == null || returnPath.isBlank()) {
-			return null;
-		}
-		String trimmed = returnPath.trim();
-		if (!trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed.contains("://") || trimmed.contains("\\")) {
-			return null;
-		}
-		return trimmed;
+		return IntegrationFrontendRedirects.safeReturnPath(returnPath);
 	}
 }

@@ -1,5 +1,7 @@
 package com.saga.be.controller;
 
+import com.saga.be.dto.roster.AddRosterStudentRequest;
+import com.saga.be.dto.roster.AddRosterStudentResponse;
 import com.saga.be.dto.roster.CourseRosterResponse;
 import com.saga.be.dto.roster.RosterConfirmRequest;
 import com.saga.be.dto.roster.RosterConfirmResponse;
@@ -96,6 +98,17 @@ public class AdminCourseRosterController {
 			@Valid @RequestBody RosterConfirmRequest request,
 			HttpServletRequest http) {
 		return roster.confirm(courseId, request.previewToken(), actor(principal), audit(http));
+	}
+
+	@PostMapping("/students")
+	@ResponseStatus(HttpStatus.OK)
+	@Operation(summary = "Add or invite one student using the same rules as roster import")
+	public AddRosterStudentResponse addStudent(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID courseId,
+			@Valid @RequestBody AddRosterStudentRequest request,
+			HttpServletRequest http) {
+		return roster.addStudent(courseId, request, actor(principal), audit(http));
 	}
 
 	private UserAccount actor(SagaUserPrincipal principal) {

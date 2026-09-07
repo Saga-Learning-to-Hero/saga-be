@@ -33,6 +33,7 @@ import com.saga.be.entity.enums.RepositoryRole;
 import com.saga.be.entity.enums.RoleInTeam;
 import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.github.GithubInstallation;
+import com.saga.be.entity.integration.IdentityMap;
 import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
@@ -678,6 +679,69 @@ class ProjectIntegrationServiceTest {
 		assertNull(ProjectIntegrationService.safeReturnPath("projects"));
 	}
 
+	@Test
+	void githubCallbackResolvesSafeReturnPathAgainstFrontendSuccessOrigin() {
+		stubGithubCallbackSuccess(stateWithReturn("/projects/123/integrations"));
+		when(properties.getSuccessUrl()).thenReturn("http://localhost:3000/integrations/success");
+		assertEquals(
+				"http://localhost:3000/projects/123/integrations",
+				service.completeGithubInstallation(student.getId(), "state", 158866076L, null));
+	}
+
+	@Test
+	void githubCallbackWithoutReturnPathUsesSuccessUrl() {
+		stubGithubCallbackSuccess(state(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY));
+		when(properties.getSuccessUrl()).thenReturn("http://localhost:3000/integrations/success");
+		assertEquals(
+				"http://localhost:3000/integrations/success",
+				service.completeGithubInstallation(student.getId(), "state", 158866076L, null));
+	}
+
+	@Test
+	void githubCallbackIgnoresUnsafeReturnPathAndUsesSuccessUrl() {
+		stubGithubCallbackSuccess(stateWithReturn("//evil.example"));
+		when(properties.getSuccessUrl()).thenReturn("http://localhost:3000/integrations/success");
+		assertEquals(
+				"http://localhost:3000/integrations/success",
+				service.completeGithubInstallation(student.getId(), "state", 158866076L, null));
+	}
+
+	@Test
+	void githubCallbackResolvesAgainstProductionFrontendOrigin() {
+		stubGithubCallbackSuccess(stateWithReturn("/projects/123"));
+		when(properties.getSuccessUrl()).thenReturn("https://app.saga.vn/integrations/success");
+		assertEquals(
+				"https://app.saga.vn/projects/123",
+				service.completeGithubInstallation(student.getId(), "state", 158866076L, null));
+	}
+
+	@Test
+	void jiraTeamCallbackResolvesSafeReturnPathAgainstFrontendSuccessOrigin() {
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		when(oauthStates.consumeForUser(eq("state"), eq(student.getId()), eq(OAuthFlowType.JIRA_TEAM_CONNECT)))
+				.thenReturn(stateWithReturn(OAuthFlowType.JIRA_TEAM_CONNECT, "/projects/123/integrations"));
+		when(properties.getJira()).thenReturn(new IntegrationProperties.Jira());
+		when(properties.getOauthStateTtl()).thenReturn(java.time.Duration.ofMinutes(10));
+		when(properties.getSuccessUrl()).thenReturn("http://localhost:3000/integrations/success");
+		when(properties.getPublicBaseUrl()).thenReturn("https://saga-be-production.up.railway.app");
+		when(jira.exchange(eq("code"), eq("verifier"), any()))
+				.thenReturn(new JiraOAuthClient.TokenResponse("access", "refresh", 3600, "read:jira-work"));
+		when(jira.accessibleResources("access"))
+				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource("cloud", "https://ex.atlassian.net", "Ex")));
+		when(jira.myself("access", "cloud"))
+				.thenReturn(new JiraOAuthClient.Myself("acct-1", "Leader", "leader@gmail.com", null));
+		IdentityMap identity = new IdentityMap();
+		identity.setExternalAccountId("acct-1");
+		identity.setMappingStatus(com.saga.be.entity.enums.IdentityMappingStatus.ACTIVE);
+		when(identities.findByUserAccount_IdAndProvider(student.getId(), com.saga.be.entity.enums.IntegrationProvider.JIRA))
+				.thenReturn(List.of(identity));
+		assertEquals(
+				"http://localhost:3000/projects/123/integrations",
+				service.completeJiraTeamCallback(student.getId(), "code", "state"));
+	}
+
 	private void stubJiraLeaderAndPending() {
 		when(users.findById(student.getId())).thenReturn(Optional.of(student));
 		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
@@ -759,6 +823,46 @@ class ProjectIntegrationServiceTest {
 
 	private OAuthState state(OAuthFlowType flow) {
 		return new OAuthState("state", student.getId(), flow, null, projectId, team.getId(), "verifier", Instant.now());
+	}
+
+	private OAuthState stateWithReturn(String returnPath) {
+		return stateWithReturn(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY, returnPath);
+	}
+
+	private OAuthState stateWithReturn(OAuthFlowType flow, String returnPath) {
+		return new OAuthState(
+				"state", student.getId(), flow, returnPath, projectId, team.getId(), "verifier", Instant.now());
+	}
+
+	private void stubGithubCallbackSuccess(OAuthState oauthState) {
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		when(oauthStates.consumeForUser(eq("state"), eq(student.getId()), eq(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY)))
+				.thenReturn(oauthState);
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 158866076L))
+				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
+						158866076L,
+						123456L,
+						new GitHubOAuthClient.GitHubAccountResponse("Saga-Learning-to-Hero", "Organization"),
+						"https://github.com/settings/installations/158866076",
+						"selected"));
+		IntegrationProperties.GitHub githubProps = new IntegrationProperties.GitHub();
+		githubProps.setAppId("123456");
+		when(properties.getGithub()).thenReturn(githubProps);
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(installations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		when(installations.findByInstallationId(158866076L)).thenReturn(Optional.empty());
+		when(installations.save(any(GithubInstallation.class))).thenAnswer(invocation -> {
+			GithubInstallation saved = invocation.getArgument(0);
+			if (saved.getId() == null) {
+				saved.setId(UUID.randomUUID());
+			}
+			return saved;
+		});
 	}
 
 	private static UserAccount account(AccountRole role, String email) {

@@ -1,6 +1,9 @@
 package com.saga.be.controller;
 
+import com.saga.be.config.IntegrationProperties;
 import com.saga.be.dto.ApiErrorResponse;
+import com.saga.be.exception.IntegrationException;
+import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
 import com.saga.be.dto.integration.OAuthStartResponse;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraBoardOption;
@@ -43,9 +46,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class ProjectIntegrationController {
 
 	private final ProjectIntegrationService integrations;
+	private final IntegrationProperties properties;
 
-	public ProjectIntegrationController(ProjectIntegrationService integrations) {
+	public ProjectIntegrationController(ProjectIntegrationService integrations, IntegrationProperties properties) {
 		this.integrations = integrations;
+		this.properties = properties;
 	}
 
 	@GetMapping
@@ -68,8 +73,12 @@ public class ProjectIntegrationController {
 			@RequestParam String state,
 			@RequestParam("installation_id") Long installationId,
 			@RequestParam(value = "code", required = false) String code) {
-		String target = integrations.completeGithubInstallation(principal.getUserId(), state, installationId, code);
-		return ResponseEntity.status(302).header("Location", target).build();
+		try {
+			return IntegrationFrontendRedirects.seeOther(
+					integrations.completeGithubInstallation(principal.getUserId(), state, installationId, code));
+		} catch (IntegrationException ex) {
+			return IntegrationFrontendRedirects.failure(properties.getFailureUrl(), ex);
+		}
 	}
 
 	@GetMapping("/github/repositories")

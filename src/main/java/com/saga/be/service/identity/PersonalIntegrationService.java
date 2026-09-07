@@ -16,6 +16,7 @@ import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient;
+import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
 import com.saga.be.integration.oauth.OAuthState;
 import com.saga.be.integration.oauth.OAuthStateService;
 import com.saga.be.integration.oauth.Pkce;
@@ -33,7 +34,6 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.util.UriComponentsBuilder;
 
 @Service
 @Profile("!test")
@@ -96,7 +96,12 @@ public class PersonalIntegrationService {
 		requireGithub();
 		String verifier = Pkce.newVerifier();
 		OAuthState state = oauthStates.start(
-				userId, OAuthFlowType.GITHUB_USER_LINK, returnPath, null, null, verifier);
+				userId,
+				OAuthFlowType.GITHUB_USER_LINK,
+				IntegrationFrontendRedirects.safeReturnPath(returnPath),
+				null,
+				null,
+				verifier);
 		String url = github.authorizationUrl(
 				state.state(), Pkce.challengeS256(verifier), callbackOr(properties.getGithub().getOauthCallbackUrl(), "/api/integrations/github/oauth/callback"));
 		return new OAuthStartResponse(url, state.state());
@@ -105,7 +110,13 @@ public class PersonalIntegrationService {
 	public OAuthStartResponse startJira(UUID userId, String returnPath) {
 		requireJira();
 		String verifier = Pkce.newVerifier();
-		OAuthState state = oauthStates.start(userId, OAuthFlowType.JIRA_USER_LINK, returnPath, null, null, verifier);
+		OAuthState state = oauthStates.start(
+				userId,
+				OAuthFlowType.JIRA_USER_LINK,
+				IntegrationFrontendRedirects.safeReturnPath(returnPath),
+				null,
+				null,
+				verifier);
 		String url = jira.authorizationUrl(
 				state.state(),
 				Pkce.challengeS256(verifier),
@@ -257,11 +268,10 @@ public class PersonalIntegrationService {
 	}
 
 	private String redirect(String returnPath, boolean success) {
-		String base = success ? properties.getSuccessUrl() : properties.getFailureUrl();
-		if (returnPath != null && returnPath.startsWith("/")) {
-			return UriComponentsBuilder.fromUriString(properties.getPublicBaseUrl()).path(returnPath).build().toUriString();
+		if (success) {
+			return IntegrationFrontendRedirects.successLocation(properties.getSuccessUrl(), returnPath);
 		}
-		return base;
+		return IntegrationFrontendRedirects.failureLocation(properties.getFailureUrl(), null);
 	}
 
 	private String callbackOr(String configured, String path) {

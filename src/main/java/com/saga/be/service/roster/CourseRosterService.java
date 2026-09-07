@@ -4,6 +4,8 @@ import com.saga.be.auth.InstitutionalEmailPolicy;
 import com.saga.be.config.AuthProperties;
 import com.saga.be.config.RosterProperties;
 import com.saga.be.dto.mail.EmailEnqueueRequest;
+import com.saga.be.dto.roster.AddRosterStudentRequest;
+import com.saga.be.dto.roster.AddRosterStudentResponse;
 import com.saga.be.dto.roster.CourseRosterEntryResponse;
 import com.saga.be.dto.roster.CourseRosterResponse;
 import com.saga.be.dto.roster.RosterConfirmResponse;
@@ -180,6 +182,15 @@ public class CourseRosterService {
 		return result;
 	}
 
+	public AddRosterStudentResponse addStudent(
+			UUID courseId, AddRosterStudentRequest request, UserAccount admin, AuditRequest auditRequest) {
+		if (request == null) {
+			throw new AcademicException(
+					AcademicErrorCode.ROSTER_CONFIRM_BLOCKED, HttpStatus.BAD_REQUEST, "Student details are required.");
+		}
+		return writeAtomic(() -> applyAddStudent(requireCourse(courseId), request, admin, auditRequest));
+	}
+
 	private RosterConfirmResponse applyConfirm(
 			Course course, List<RosterPreviewRow> rows, UserAccount admin, AuditRequest auditRequest) {
 		int enrolled = 0;
@@ -215,40 +226,63 @@ public class CourseRosterService {
 		return new RosterConfirmResponse(course.getId(), enrolled, invited, unchanged, emailsEnqueued, LocalDateTime.now());
 	}
 
+	private AddRosterStudentResponse applyAddStudent(
+			Course course, AddRosterStudentRequest request, UserAccount admin, AuditRequest auditRequest) {
+		CourseRosterWorkbook.RawRow raw = new CourseRosterWorkbook.RawRow(
+				1,
+				"1",
+				course.getAcademicClass().getClassCode(),
+				request.fullName(),
+				request.studentCode(),
+				request.email(),
+				request.memberCode());
+		RosterLookups lookups = RosterLookups.preload(
+				store, course.getId(), List.of(normalizeEmail(raw.email())), List.of(normalizeCode(raw.studentCode())));
+		RosterPreviewRow row = classifyWithLookups(course, List.of(raw), lookups).getFirst();
+		if (row.action() == RosterRowAction.INVALID || row.action() == RosterRowAction.CONFLICT) {
+			throw new AcademicException(
+					AcademicErrorCode.ROSTER_CONFIRM_BLOCKED,
+					HttpStatus.CONFLICT,
+					row.errors().isEmpty() ? "Roster student could not be added." : row.errors().getFirst());
+		}
+		ApplyResult applied = applyRow(course, row, lookups);
+		audit.record(
+				admin,
+				null,
+				null,
+				COURSE_ROSTER_IMPORTED,
+				"course",
+				course.getId(),
+				null,
+				Map.of("classCode", course.getAcademicClass().getClassCode()),
+				Map.of(
+						"enrolled",
+						applied.enrolledCount(),
+						"invited",
+						applied.invitedCount(),
+						"unchanged",
+						applied.unchangedCount(),
+						"emailsEnqueued",
+						applied.emailCount()),
+				AuditSource.API,
+				auditRequest == null ? null : auditRequest.requestId(),
+				auditRequest == null ? null : auditRequest.ip(),
+				auditRequest == null ? null : auditRequest.userAgent());
+		return new AddRosterStudentResponse(resultOf(row, applied), entryOf(row, lookups));
+	}
+
 	@Transactional(readOnly = true)
 	public CourseRosterResponse getRoster(UUID courseId) {
 		Course course = requireCourse(courseId);
 		List<CourseRosterEntryResponse> entries = new ArrayList<>();
 		for (CourseEnrollment enrollment : store.listEnrollments(courseId)) {
-			StudentProfile profile = enrollment.getStudentProfile();
-			UserAccount user = profile == null ? null : profile.getUserAccount();
-			entries.add(new CourseRosterEntryResponse(
-					"ENROLLMENT",
-					enrollment.getId(),
-					null,
-					user == null ? null : user.getId(),
-					sanitize(profile == null ? null : profile.getStudentCode()),
-					sanitize(user == null ? null : user.getFullName()),
-					sanitize(user == null ? null : user.getEmail()),
-					enrollment.getEnrollmentStatus() == null ? null : enrollment.getEnrollmentStatus().name(),
-					null,
-					"REGISTERED"));
+			entries.add(enrollmentEntry(enrollment));
 		}
 		for (StudentCourseInvitation invitation : store.listInvitations(courseId)) {
 			if (invitation.getInvitationStatus() == null || !invitation.getInvitationStatus().isOutstanding()) {
 				continue;
 			}
-			entries.add(new CourseRosterEntryResponse(
-					"INVITATION",
-					null,
-					invitation.getId(),
-					null,
-					sanitize(invitation.getStudentCode()),
-					sanitize(invitation.getFullName()),
-					sanitize(invitation.getEmail()),
-					null,
-					invitation.getInvitationStatus().name(),
-					"NOT_REGISTERED"));
+			entries.add(invitationEntry(invitation));
 		}
 		long enrolled = entries.stream().filter(row -> "ENROLLMENT".equals(row.kind())).count();
 		long pending = entries.stream().filter(row -> "INVITATION".equals(row.kind())).count();
@@ -263,9 +297,6 @@ public class CourseRosterService {
 	}
 
 	private List<RosterPreviewRow> classify(Course course, List<CourseRosterWorkbook.RawRow> rawRows) {
-		String expectedClass = normalizeCode(course.getAcademicClass().getClassCode());
-		Map<String, Integer> emails = new LinkedHashMap<>();
-		Map<String, Integer> codes = new LinkedHashMap<>();
 		List<String> lookupEmails = new ArrayList<>();
 		List<String> lookupCodes = new ArrayList<>();
 		for (CourseRosterWorkbook.RawRow raw : rawRows) {
@@ -279,6 +310,14 @@ public class CourseRosterService {
 			}
 		}
 		RosterLookups lookups = RosterLookups.preload(store, course.getId(), lookupEmails, lookupCodes);
+		return classifyWithLookups(course, rawRows, lookups);
+	}
+
+	private List<RosterPreviewRow> classifyWithLookups(
+			Course course, List<CourseRosterWorkbook.RawRow> rawRows, RosterLookups lookups) {
+		String expectedClass = normalizeCode(course.getAcademicClass().getClassCode());
+		Map<String, Integer> emails = new LinkedHashMap<>();
+		Map<String, Integer> codes = new LinkedHashMap<>();
 		List<RosterPreviewRow> rows = new ArrayList<>();
 		for (CourseRosterWorkbook.RawRow raw : rawRows) {
 			List<String> errors = new ArrayList<>();
@@ -502,6 +541,68 @@ public class CourseRosterService {
 			return new TransactionTemplate(transactionManager).execute(status -> action.get());
 		}
 		return store.inTransaction(action);
+	}
+
+	private static String resultOf(RosterPreviewRow row, ApplyResult applied) {
+		return switch (row.action()) {
+			case ALREADY_ENROLLED -> "ALREADY_ENROLLED";
+			case ALREADY_INVITED -> "ALREADY_INVITED";
+			case READY_ENROLL -> applied.enrolledCount() > 0 ? "ENROLLED" : "ALREADY_ENROLLED";
+			case READY_INVITE -> applied.invitedCount() > 0 ? "INVITED" : "ALREADY_INVITED";
+			case INVALID, CONFLICT -> throw new AcademicException(
+					AcademicErrorCode.ROSTER_CONFIRM_BLOCKED,
+					HttpStatus.CONFLICT,
+					"Roster student could not be added.");
+		};
+	}
+
+	private CourseRosterEntryResponse entryOf(RosterPreviewRow row, RosterLookups lookups) {
+		UserAccount account = lookups.userByEmail(row.email());
+		if (account != null) {
+			StudentProfile profile = lookups.studentByUserId(account.getId());
+			CourseEnrollment enrollment = profile == null ? null : lookups.enrollmentByProfileId(profile.getId());
+			if (enrollment != null) {
+				return enrollmentEntry(enrollment);
+			}
+		}
+		StudentCourseInvitation invitation = lookups.invitationByEmail(row.email());
+		if (invitation == null) {
+			invitation = lookups.invitationByStudentCode(row.studentCode());
+		}
+		if (invitation != null && isOutstandingInvitation(invitation.getInvitationStatus())) {
+			return invitationEntry(invitation);
+		}
+		return null;
+	}
+
+	private static CourseRosterEntryResponse enrollmentEntry(CourseEnrollment enrollment) {
+		StudentProfile profile = enrollment.getStudentProfile();
+		UserAccount user = profile == null ? null : profile.getUserAccount();
+		return new CourseRosterEntryResponse(
+				"ENROLLMENT",
+				enrollment.getId(),
+				null,
+				user == null ? null : user.getId(),
+				sanitize(profile == null ? null : profile.getStudentCode()),
+				sanitize(user == null ? null : user.getFullName()),
+				sanitize(user == null ? null : user.getEmail()),
+				enrollment.getEnrollmentStatus() == null ? null : enrollment.getEnrollmentStatus().name(),
+				null,
+				"REGISTERED");
+	}
+
+	private static CourseRosterEntryResponse invitationEntry(StudentCourseInvitation invitation) {
+		return new CourseRosterEntryResponse(
+				"INVITATION",
+				null,
+				invitation.getId(),
+				null,
+				sanitize(invitation.getStudentCode()),
+				sanitize(invitation.getFullName()),
+				sanitize(invitation.getEmail()),
+				null,
+				invitation.getInvitationStatus() == null ? null : invitation.getInvitationStatus().name(),
+				"NOT_REGISTERED");
 	}
 
 	private Course requireCourse(UUID courseId) {
