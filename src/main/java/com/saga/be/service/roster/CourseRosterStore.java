@@ -23,9 +23,15 @@ public interface CourseRosterStore {
 
 	Optional<CourseEnrollment> findEnrollment(UUID studentProfileId, UUID courseId);
 
+	Optional<CourseEnrollment> findEnrollmentById(UUID enrollmentId, UUID courseId);
+
 	List<CourseEnrollment> listEnrollments(UUID courseId);
 
 	CourseEnrollment saveEnrollment(CourseEnrollment enrollment);
+
+	boolean deleteTeamMemberByEnrollmentId(UUID enrollmentId);
+
+	Optional<StudentCourseInvitation> findInvitationById(UUID invitationId, UUID courseId);
 
 	Optional<StudentCourseInvitation> findInvitationByCourseAndEmail(UUID courseId, String email);
 

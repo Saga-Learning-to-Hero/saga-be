@@ -6,6 +6,7 @@ import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.academic.Course;
 import com.saga.be.entity.academic.CourseEnrollment;
 import com.saga.be.entity.enums.StudentInvitationStatus;
+import com.saga.be.entity.project.TeamMember;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +21,7 @@ final class InMemoryCourseRosterStore implements CourseRosterStore {
 	final Map<UUID, StudentProfile> students = new LinkedHashMap<>();
 	final Map<UUID, CourseEnrollment> enrollments = new LinkedHashMap<>();
 	final Map<UUID, StudentCourseInvitation> invitations = new LinkedHashMap<>();
+	final Map<UUID, TeamMember> members = new LinkedHashMap<>();
 
 	@Override
 	public Optional<Course> findCourse(UUID courseId) {
@@ -63,6 +65,15 @@ final class InMemoryCourseRosterStore implements CourseRosterStore {
 	}
 
 	@Override
+	public Optional<CourseEnrollment> findEnrollmentById(UUID enrollmentId, UUID courseId) {
+		CourseEnrollment row = enrollments.get(enrollmentId);
+		if (row == null || row.getCourse() == null || !courseId.equals(row.getCourse().getId())) {
+			return Optional.empty();
+		}
+		return Optional.of(row);
+	}
+
+	@Override
 	public List<CourseEnrollment> listEnrollments(UUID courseId) {
 		return enrollments.values().stream()
 				.filter(row -> row.getCourse() != null && courseId.equals(row.getCourse().getId()))
@@ -76,6 +87,30 @@ final class InMemoryCourseRosterStore implements CourseRosterStore {
 		}
 		enrollments.put(enrollment.getId(), enrollment);
 		return enrollment;
+	}
+
+	@Override
+	public boolean deleteTeamMemberByEnrollmentId(UUID enrollmentId) {
+		UUID found = members.values().stream()
+				.filter(member -> member.getCourseEnrollment() != null
+						&& enrollmentId.equals(member.getCourseEnrollment().getId()))
+				.map(TeamMember::getId)
+				.findFirst()
+				.orElse(null);
+		if (found == null) {
+			return false;
+		}
+		members.remove(found);
+		return true;
+	}
+
+	@Override
+	public Optional<StudentCourseInvitation> findInvitationById(UUID invitationId, UUID courseId) {
+		StudentCourseInvitation row = invitations.get(invitationId);
+		if (row == null || row.getCourse() == null || !courseId.equals(row.getCourse().getId())) {
+			return Optional.empty();
+		}
+		return Optional.of(row);
 	}
 
 	@Override
@@ -153,8 +188,15 @@ final class InMemoryCourseRosterStore implements CourseRosterStore {
 		students.put(profile.getId(), profile);
 	}
 
+	void putMember(TeamMember member) {
+		if (member.getId() == null) {
+			member.setId(UUID.randomUUID());
+		}
+		members.put(member.getId(), member);
+	}
+
 	private Snapshot snapshot() {
-		return new Snapshot(copyEnrollments(), copyInvitations());
+		return new Snapshot(copyEnrollments(), copyInvitations(), copyMembers());
 	}
 
 	private void restore(Snapshot snapshot) {
@@ -162,6 +204,8 @@ final class InMemoryCourseRosterStore implements CourseRosterStore {
 		enrollments.putAll(snapshot.enrollments);
 		invitations.clear();
 		invitations.putAll(snapshot.invitations);
+		members.clear();
+		members.putAll(snapshot.members);
 	}
 
 	private Map<UUID, CourseEnrollment> copyEnrollments() {
@@ -201,6 +245,22 @@ final class InMemoryCourseRosterStore implements CourseRosterStore {
 		return copy;
 	}
 
+	private Map<UUID, TeamMember> copyMembers() {
+		Map<UUID, TeamMember> copy = new LinkedHashMap<>();
+		for (TeamMember row : members.values()) {
+			TeamMember clone = new TeamMember();
+			clone.setId(row.getId());
+			clone.setTeam(row.getTeam());
+			clone.setCourse(row.getCourse());
+			clone.setCourseEnrollment(row.getCourseEnrollment());
+			clone.setRoleInTeam(row.getRoleInTeam());
+			copy.put(clone.getId(), clone);
+		}
+		return copy;
+	}
+
 	private record Snapshot(
-			Map<UUID, CourseEnrollment> enrollments, Map<UUID, StudentCourseInvitation> invitations) {}
+			Map<UUID, CourseEnrollment> enrollments,
+			Map<UUID, StudentCourseInvitation> invitations,
+			Map<UUID, TeamMember> members) {}
 }

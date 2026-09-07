@@ -2,7 +2,7 @@
 
 File này là **contract tích hợp Backend ↔ Frontend có hiệu lực** khi public API đã được implement.
 
-> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim) đã chốt. Lecturer Team Management V1 (assigned courses, ACTIVE roster, team XLSX preview/confirm, student my-team) đã chốt. Student My Courses V1 (`GET /api/student/courses`) đã chốt. Team Leader Project Setup V1 (project-type catalog, student team project create/read, then existing GitHub/Jira project integrations) đã chốt. Graph/SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
+> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim + manual add/remove) đã chốt. Lecturer Team Management V1 (assigned courses, ACTIVE roster, team XLSX preview/confirm, student my-team) đã chốt. Student My Courses V1 (`GET /api/student/courses`) đã chốt. Team Leader Project Setup V1 (project-type catalog, student team project create/read, then existing GitHub/Jira project integrations) đã chốt. Graph/SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
 
 ---
 
@@ -496,6 +496,9 @@ Breaking change phải được nêu rõ.
 | GET | `/api/admin/courses/{courseId}/roster` | Session | ADMIN | Course roster V1 | `AdminCourseRosterController` |
 | POST | `/api/admin/courses/{courseId}/roster/import/preview` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
 | POST | `/api/admin/courses/{courseId}/roster/import/confirm` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
+| POST | `/api/admin/courses/{courseId}/roster/students` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
+| DELETE | `/api/admin/courses/{courseId}/roster/enrollments/{enrollmentId}` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
+| DELETE | `/api/admin/courses/{courseId}/roster/invitations/{invitationId}` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
 | POST | `/api/admin/dev/email-test` | Session + CSRF | ADMIN | Email delivery V1, **local/dev only** | `AdminDevEmailController` |
 | GET | `/api/lecturer/courses` | Session | LECTURER or ADMIN | Lecturer Team V1 | `LecturerCourseController` |
 | GET | `/api/lecturer/courses/{courseId}` | Session | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerCourseController` |
@@ -706,15 +709,62 @@ Institutional FPT/FE invitation text tells the student to use Google onboarding,
 
 ### Read
 
-`GET /api/admin/courses/{courseId}/roster` returns enrollments and PENDING invitations. A pending invitee has `accountState=NOT_REGISTERED` without a fake account.
+`GET /api/admin/courses/{courseId}/roster` returns **ACTIVE** enrollments and outstanding (PENDING/SENT) invitations. WITHDRAWN / COMPLETED enrollments and CANCELLED / CLAIMED / FAILED invitations are omitted. A pending invitee has `accountState=NOT_REGISTERED` without a fake account.
+
+### Manual add / remove
+
+Excel import remains the bulk path. These endpoints add or remove **one** student using the same identity rules.
+
+```json
+POST /api/admin/courses/{courseId}/roster/students
+{ "fullName": "Nguyễn Văn Ánh", "studentCode": "SE123456", "email": "student@gmail.com" }
+```
+
+- existing STUDENT account → ACTIVE enrollment (reactivates WITHDRAWN)
+- no account → PENDING invitation (no phantom `user_account`)
+- already ACTIVE / outstanding invitation → `200` `ALREADY_ENROLLED` / `ALREADY_INVITED`, no extra mail
+- new enroll/invite → `201`, enqueue `COURSE_ENROLLED` or `COURSE_INVITATION`
+- identity conflict (lecturer email, StudentCode mismatch, …) → `409` `ROSTER_IDENTITY_CONFLICT`
+
+```json
+{
+  "courseId": "...",
+  "action": "ENROLLED",
+  "emailsEnqueued": 1,
+  "teamMembershipRemoved": false,
+  "entry": {
+    "kind": "ENROLLMENT",
+    "enrollmentId": "...",
+    "invitationId": null,
+    "studentUserId": "...",
+    "studentCode": "SE123456",
+    "fullName": "Nguyễn Văn Ánh",
+    "email": "student@gmail.com",
+    "enrollmentStatus": "ACTIVE",
+    "invitationStatus": null,
+    "accountState": "REGISTERED"
+  }
+}
+```
+
+`action`: `ENROLLED` | `INVITED` | `ALREADY_ENROLLED` | `ALREADY_INVITED`.
+
+```http
+DELETE /api/admin/courses/{courseId}/roster/enrollments/{enrollmentId}
+DELETE /api/admin/courses/{courseId}/roster/invitations/{invitationId}
+```
+
+Use the ids from GET roster. Enrollment delete sets `WITHDRAWN` (does **not** delete `user_account` / `student_profile`). `team_member` for that enrollment is detached. Empty leftover teams / missing Leader are repaired by the lecturer team import. COMPLETED → `409` `ROSTER_ENROLLMENT_NOT_REMOVABLE`. Already WITHDRAWN → `200` `ALREADY_REMOVED`.
+
+Invitation delete sets `CANCELLED` (row reused if Admin adds the same email/StudentCode later). CLAIMED → `409` `ROSTER_INVITATION_NOT_REMOVABLE` (withdraw the enrollment instead). Already CANCELLED → `200` `ALREADY_REMOVED`. Wrong course or unknown id → `404` `ROSTER_ENTRY_NOT_FOUND`. No mail is sent on remove.
+
+Remove `action`: `WITHDRAWN` | `INVITATION_CANCELLED` | `ALREADY_REMOVED`.
 
 ### Claim
 
 After successful Student register, local login, or Google STUDENT onboarding, matching PENDING invitations (email + StudentCode, case-insensitive) become CLAIMED and create/activate ACTIVE enrollment. Idempotent. Claim failure must not fail login.
 
-Manual Admin add-student HTTP API is deferred; the same `CourseRosterService` apply path is ready for it.
-
-Errors: `ROSTER_FILE_INVALID`, `ROSTER_FILE_TOO_LARGE`, `ROSTER_PREVIEW_INVALID`, `ROSTER_PREVIEW_EXPIRED`, `ROSTER_PREVIEW_MISMATCH`, `ROSTER_CONFIRM_BLOCKED`.
+Errors: `ROSTER_FILE_INVALID`, `ROSTER_FILE_TOO_LARGE`, `ROSTER_PREVIEW_INVALID`, `ROSTER_PREVIEW_EXPIRED`, `ROSTER_PREVIEW_MISMATCH`, `ROSTER_CONFIRM_BLOCKED`, `ROSTER_STUDENT_INVALID`, `ROSTER_IDENTITY_CONFLICT`, `ROSTER_ENTRY_NOT_FOUND`, `ROSTER_ENROLLMENT_NOT_REMOVABLE`, `ROSTER_INVITATION_NOT_REMOVABLE`.
 
 ---
 

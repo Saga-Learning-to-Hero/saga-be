@@ -2,6 +2,7 @@ package com.saga.be.security;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -125,6 +126,20 @@ class SecurityAuthorizationTest {
 						.with(authentication(auth(AccountRole.STUDENT, "hash")))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"previewToken\":\"abc\"}"))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(post("/api/admin/courses/" + courseId + "/roster/students")
+						.with(csrf())
+						.with(authentication(auth(AccountRole.STUDENT, "hash")))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"fullName\":\"A\",\"studentCode\":\"SE123456\",\"email\":\"a@gmail.com\"}"))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(delete("/api/admin/courses/" + courseId + "/roster/enrollments/" + courseId)
+						.with(csrf())
+						.with(authentication(auth(AccountRole.STUDENT, "hash"))))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(delete("/api/admin/courses/" + courseId + "/roster/invitations/" + courseId)
+						.with(csrf())
+						.with(authentication(auth(AccountRole.STUDENT, "hash"))))
 				.andExpect(status().isForbidden());
 	}
 
