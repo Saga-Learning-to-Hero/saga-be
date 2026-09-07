@@ -22,12 +22,25 @@ public interface TeamMemberRepository extends JpaRepository<TeamMember, UUID> {
 			SELECT m FROM TeamMember m
 			JOIN FETCH m.team t
 			JOIN FETCH t.course
+			LEFT JOIN FETCH t.project
 			JOIN FETCH m.courseEnrollment e
 			JOIN FETCH e.studentProfile p
 			JOIN FETCH p.userAccount
 			WHERE m.team.id = :teamId
 			""")
 	List<TeamMember> findFetchedByTeam_Id(@Param("teamId") UUID teamId);
+
+	@Query(
+			"""
+			SELECT CASE WHEN COUNT(m) > 0 THEN true ELSE false END
+			FROM TeamMember m
+			JOIN m.team t
+			JOIN m.courseEnrollment e
+			JOIN e.studentProfile p
+			JOIN p.userAccount u
+			WHERE t.project.id = :projectId AND u.id = :userId
+			""")
+	boolean existsByProjectIdAndUserId(@Param("projectId") UUID projectId, @Param("userId") UUID userId);
 
 	@Query(
 			"""

@@ -2,6 +2,8 @@ package com.saga.be.repository;
 
 import com.saga.be.entity.account.UserAccount;
 import jakarta.persistence.LockModeType;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -12,6 +14,8 @@ import org.springframework.data.repository.query.Param;
 public interface UserAccountRepository extends JpaRepository<UserAccount, UUID> {
 
 	Optional<UserAccount> findByEmail(String email);
+
+	List<UserAccount> findByEmailIn(Collection<String> emails);
 
 	Optional<UserAccount> findByUsername(String username);
 

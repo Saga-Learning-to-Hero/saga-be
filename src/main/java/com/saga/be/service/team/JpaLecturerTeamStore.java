@@ -53,6 +53,10 @@ public class JpaLecturerTeamStore implements LecturerTeamStore {
 
 	@Override
 	public List<Team> listTeams(UUID courseId) {
+		List<Team> fetched = teams.findFetchedByCourse_IdOrderByTeamNoAsc(courseId);
+		if (!fetched.isEmpty()) {
+			return fetched;
+		}
 		return teams.findByCourse_IdOrderByTeamNoAsc(courseId);
 	}
 

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -68,6 +69,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 @ExtendWith(MockitoExtension.class)
 class ProjectIntegrationServiceTest {
@@ -108,6 +112,8 @@ class ProjectIntegrationServiceTest {
 	private AuditService audit;
 	@Mock
 	private OutboxPublisher outbox;
+	@Mock
+	private PlatformTransactionManager transactionManager;
 
 	@InjectMocks
 	private ProjectIntegrationService service;
@@ -123,6 +129,8 @@ class ProjectIntegrationServiceTest {
 
 	@BeforeEach
 	void setUp() {
+		lenient().when(transactionManager.getTransaction(any(TransactionDefinition.class)))
+				.thenReturn(new SimpleTransactionStatus());
 		student = account(AccountRole.STUDENT, "leader@gmail.com");
 		admin = account(AccountRole.ADMIN, "admin@saga.local");
 		course = new Course();
@@ -354,7 +362,7 @@ class ProjectIntegrationServiceTest {
 	}
 
 	@Test
-	void completeGithubInstallationKeepsPersistAndAuditInOneTransaction() throws Exception {
+	void persistPhaseMethodsAreNotIndependentlyTransactional() throws Exception {
 		var complete = ProjectIntegrationService.class.getMethod(
 				"completeGithubInstallation", UUID.class, String.class, Long.class, String.class);
 		var persist = ProjectIntegrationService.class.getDeclaredMethod(
@@ -363,12 +371,163 @@ class ProjectIntegrationServiceTest {
 				UUID.class,
 				Long.class,
 				GitHubOAuthClient.GitHubInstallationResponse.class);
-		assertEquals(
-				org.springframework.transaction.annotation.Transactional.class,
-				complete.getAnnotation(org.springframework.transaction.annotation.Transactional.class).annotationType());
-		assertEquals(
-				org.springframework.transaction.annotation.Transactional.class,
-				persist.getAnnotation(org.springframework.transaction.annotation.Transactional.class).annotationType());
+		var reposPersist = ProjectIntegrationService.class.getDeclaredMethod(
+				"persistSelectedRepos",
+				UUID.class,
+				UUID.class,
+				GithubInstallation.class,
+				List.class,
+				List.class);
+		var jiraPersist = ProjectIntegrationService.class.getDeclaredMethod(
+				"persistJiraIntegration",
+				UUID.class,
+				UUID.class,
+				PendingJiraConnect.class,
+				JiraOAuthClient.AccessibleResource.class,
+				JiraOAuthClient.JiraProjectResponse.class,
+				String.class);
+		assertNull(complete.getAnnotation(org.springframework.transaction.annotation.Transactional.class));
+		assertNull(persist.getAnnotation(org.springframework.transaction.annotation.Transactional.class));
+		assertNull(reposPersist.getAnnotation(org.springframework.transaction.annotation.Transactional.class));
+		assertNull(jiraPersist.getAnnotation(org.springframework.transaction.annotation.Transactional.class));
+		assertTrue(List.of(ProjectIntegrationService.class.getConstructors()[0].getParameterTypes())
+				.contains(PlatformTransactionManager.class));
+	}
+
+	@Test
+	void completeGithubInstallationLeavesDbUnchangedWhenProviderFails() {
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		when(oauthStates.consumeForUser(eq("state"), eq(student.getId()), eq(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY)))
+				.thenReturn(state(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY));
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 158866076L)).thenReturn(null);
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.completeGithubInstallation(student.getId(), "state", 158866076L, null));
+		assertEquals(IntegrationErrorCode.GITHUB_INSTALLATION_INVALID, ex.getCode());
+		verify(installations, never()).save(any());
+		verify(audit, never())
+				.record(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void completeGithubInstallationRevalidatesLeaderAfterProviderHttp() {
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId()))
+				.thenReturn(List.of(leaderMember))
+				.thenReturn(List.of(memberRow));
+		when(oauthStates.consumeForUser(eq("state"), eq(student.getId()), eq(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY)))
+				.thenReturn(state(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY));
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 158866076L))
+				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
+						158866076L,
+						123456L,
+						new GitHubOAuthClient.GitHubAccountResponse("Saga-Learning-to-Hero", "Organization"),
+						"https://github.com/settings/installations/158866076",
+						"selected"));
+		IntegrationProperties.GitHub githubProps = new IntegrationProperties.GitHub();
+		githubProps.setAppId("123456");
+		when(properties.getGithub()).thenReturn(githubProps);
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.completeGithubInstallation(student.getId(), "state", 158866076L, null));
+		assertEquals(IntegrationErrorCode.NOT_TEAM_LEADER, ex.getCode());
+		verify(installations, never()).save(any());
+		verify(audit, never())
+				.record(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void selectGithubReposRevalidatesLeaderAfterProviderHttp() {
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId()))
+				.thenReturn(List.of(leaderMember))
+				.thenReturn(List.of(memberRow));
+		GithubInstallation installation = new GithubInstallation();
+		installation.setId(UUID.randomUUID());
+		installation.setInstallationId(158868603L);
+		installation.setInstallationStatus(GitHubInstallationStatus.ACTIVE);
+		when(installations.findByProject_Id(projectId)).thenReturn(Optional.of(installation));
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.createInstallationToken("app-jwt", 158868603L)).thenReturn("inst-token");
+		when(github.listInstallationRepos("inst-token")).thenReturn(null);
+		when(github.parseRepos(null)).thenReturn(List.of(repo(1_338_790_015L, "saga-fe")));
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.selectGithubRepos(
+						student.getId(),
+						projectId,
+						List.of(new SelectGitHubRepositoryRequest(1_338_790_015L, RepositoryRole.FRONTEND))));
+		assertEquals(IntegrationErrorCode.NOT_TEAM_LEADER, ex.getCode());
+		verify(repos, never()).save(any());
+	}
+
+	@Test
+	void saveJiraSelectionRevalidatesLeaderAfterProviderHttp() {
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId()))
+				.thenReturn(List.of(leaderMember))
+				.thenReturn(List.of(memberRow));
+		when(pendingJira.consume(student.getId(), projectId))
+				.thenReturn(Optional.of(new PendingJiraConnect(
+						student.getId(), projectId, "jira-access", null, "read:jira-work", Instant.now())));
+		when(jira.accessibleResources("jira-access"))
+				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
+						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "https://example.atlassian.net", "Saga")));
+		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("10067", "SAGA", "Saga Learning to Hero"));
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.saveJiraSelection(
+						student.getId(),
+						projectId,
+						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", null)));
+		assertEquals(IntegrationErrorCode.NOT_TEAM_LEADER, ex.getCode());
+		verify(jiraIntegrations, never()).save(any());
+	}
+
+	@Test
+	void persistPhaseKeepsAdminBypassAfterProviderHttp() {
+		when(users.findById(admin.getId())).thenReturn(Optional.of(admin));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of());
+		when(oauthStates.consumeForUser(eq("state"), eq(admin.getId()), eq(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY)))
+				.thenReturn(new OAuthState(
+						"state", admin.getId(), OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY, null, projectId, team.getId(), "verifier", Instant.now()));
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 158866076L))
+				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
+						158866076L,
+						123456L,
+						new GitHubOAuthClient.GitHubAccountResponse("Saga-Learning-to-Hero", "Organization"),
+						"https://github.com/settings/installations/158866076",
+						"selected"));
+		IntegrationProperties.GitHub githubProps = new IntegrationProperties.GitHub();
+		githubProps.setAppId("123456");
+		when(properties.getGithub()).thenReturn(githubProps);
+		when(properties.getSuccessUrl()).thenReturn("http://localhost:3000/integrations/success");
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(installations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		when(installations.findByInstallationId(158866076L)).thenReturn(Optional.empty());
+		when(installations.save(any(GithubInstallation.class))).thenAnswer(invocation -> {
+			GithubInstallation saved = invocation.getArgument(0);
+			saved.setId(UUID.randomUUID());
+			return saved;
+		});
+
+		String target = service.completeGithubInstallation(admin.getId(), "state", 158866076L, null);
+
+		assertEquals("http://localhost:3000/integrations/success", target);
+		verify(installations).save(any(GithubInstallation.class));
 	}
 
 	@Test

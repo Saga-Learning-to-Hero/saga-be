@@ -44,7 +44,8 @@ public class StudentTeamService {
 	public StudentTeamResponse myTeam(UUID userId, UUID courseId) {
 		ActiveTeamMembership membership = requireActiveMembership(userId, courseId);
 		Team team = membership.team();
-		List<StudentTeamMemberResponse> roster = members.findByTeam_Id(team.getId()).stream()
+		List<TeamMember> fetchedMembers = members.findFetchedByTeam_Id(team.getId());
+		List<StudentTeamMemberResponse> roster = fetchedMembers.stream()
 				.sorted(Comparator.comparing((TeamMember member) -> member.getRoleInTeam() != RoleInTeam.LEADER)
 						.thenComparing(member -> {
 							CourseEnrollment row = member.getCourseEnrollment();
@@ -53,7 +54,8 @@ public class StudentTeamService {
 						}, String.CASE_INSENSITIVE_ORDER))
 				.map(StudentTeamService::toMember)
 				.toList();
-		Project project = team.getProject();
+		Team fetchedTeam = fetchedMembers.isEmpty() ? team : fetchedMembers.getFirst().getTeam();
+		Project project = fetchedTeam.getProject();
 		return new StudentTeamResponse(
 				team.getId(),
 				team.getTeamNo() == null ? 0 : team.getTeamNo(),

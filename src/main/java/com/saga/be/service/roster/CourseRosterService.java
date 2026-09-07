@@ -31,6 +31,7 @@ import com.saga.be.service.mail.EmailOutboxService;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -185,8 +186,13 @@ public class CourseRosterService {
 		int invited = 0;
 		int unchanged = 0;
 		int emailsEnqueued = 0;
+		RosterLookups lookups = RosterLookups.preload(
+				store,
+				course.getId(),
+				rows.stream().map(RosterPreviewRow::email).toList(),
+				rows.stream().map(RosterPreviewRow::studentCode).toList());
 		for (RosterPreviewRow row : rows) {
-			ApplyResult result = applyRow(course, row);
+			ApplyResult result = applyRow(course, row, lookups);
 			enrolled += result.enrolledCount();
 			invited += result.invitedCount();
 			unchanged += result.unchangedCount();
@@ -260,6 +266,19 @@ public class CourseRosterService {
 		String expectedClass = normalizeCode(course.getAcademicClass().getClassCode());
 		Map<String, Integer> emails = new LinkedHashMap<>();
 		Map<String, Integer> codes = new LinkedHashMap<>();
+		List<String> lookupEmails = new ArrayList<>();
+		List<String> lookupCodes = new ArrayList<>();
+		for (CourseRosterWorkbook.RawRow raw : rawRows) {
+			String email = normalizeEmail(raw.email());
+			String studentCode = normalizeCode(raw.studentCode());
+			if (StringUtils.hasText(email)) {
+				lookupEmails.add(email);
+			}
+			if (StringUtils.hasText(studentCode)) {
+				lookupCodes.add(studentCode);
+			}
+		}
+		RosterLookups lookups = RosterLookups.preload(store, course.getId(), lookupEmails, lookupCodes);
 		List<RosterPreviewRow> rows = new ArrayList<>();
 		for (CourseRosterWorkbook.RawRow raw : rawRows) {
 			List<String> errors = new ArrayList<>();
@@ -297,7 +316,7 @@ public class CourseRosterService {
 			}
 			RosterRowAction action = RosterRowAction.INVALID;
 			if (errors.isEmpty()) {
-				action = classifyIdentity(course, email, studentCode, errors, warnings);
+				action = classifyIdentity(lookups, email, studentCode, errors, warnings);
 			}
 			rows.add(new RosterPreviewRow(
 					raw.rowNumber(),
@@ -314,9 +333,9 @@ public class CourseRosterService {
 	}
 
 	private RosterRowAction classifyIdentity(
-			Course course, String email, String studentCode, List<String> errors, List<String> warnings) {
-		UserAccount account = store.findUserByEmail(email).orElse(null);
-		StudentProfile byCode = store.findStudentByCode(studentCode).orElse(null);
+			RosterLookups lookups, String email, String studentCode, List<String> errors, List<String> warnings) {
+		UserAccount account = lookups.userByEmail(email);
+		StudentProfile byCode = lookups.studentByCode(studentCode);
 		if (account != null && account.getAccountRole() != AccountRole.STUDENT) {
 			errors.add("Existing account is not a Student.");
 			return RosterRowAction.CONFLICT;
@@ -329,7 +348,7 @@ public class CourseRosterService {
 			}
 		}
 		if (account != null) {
-			StudentProfile profile = store.findStudentByUserId(account.getId()).orElse(null);
+			StudentProfile profile = lookups.studentByUserId(account.getId());
 			if (profile == null) {
 				errors.add("Student profile is missing.");
 				return RosterRowAction.CONFLICT;
@@ -339,15 +358,14 @@ public class CourseRosterService {
 				errors.add("StudentCode does not match the existing Student profile.");
 				return RosterRowAction.CONFLICT;
 			}
-			CourseEnrollment enrollment = store.findEnrollment(profile.getId(), course.getId()).orElse(null);
+			CourseEnrollment enrollment = lookups.enrollmentByProfileId(profile.getId());
 			if (enrollment != null && enrollment.getEnrollmentStatus() == EnrollmentStatus.ACTIVE) {
 				return RosterRowAction.ALREADY_ENROLLED;
 			}
 			return RosterRowAction.READY_ENROLL;
 		}
-		StudentCourseInvitation byEmail = store.findInvitationByCourseAndEmail(course.getId(), email).orElse(null);
-		StudentCourseInvitation byStudentCode =
-				store.findInvitationByCourseAndStudentCode(course.getId(), studentCode).orElse(null);
+		StudentCourseInvitation byEmail = lookups.invitationByEmail(email);
+		StudentCourseInvitation byStudentCode = lookups.invitationByStudentCode(studentCode);
 		if (byEmail != null && byStudentCode != null && !byEmail.getId().equals(byStudentCode.getId())) {
 			errors.add("Email and StudentCode match different invitations.");
 			return RosterRowAction.CONFLICT;
@@ -368,28 +386,31 @@ public class CourseRosterService {
 		return RosterRowAction.READY_INVITE;
 	}
 
-	private ApplyResult applyRow(Course course, RosterPreviewRow row) {
+	private ApplyResult applyRow(Course course, RosterPreviewRow row, RosterLookups lookups) {
 		if (row.action() == RosterRowAction.ALREADY_ENROLLED || row.action() == RosterRowAction.ALREADY_INVITED) {
 			return ApplyResult.noop();
 		}
 		if (row.action() == RosterRowAction.READY_ENROLL) {
-			return enrollExisting(course, row);
+			return enrollExisting(course, row, lookups);
 		}
 		if (row.action() == RosterRowAction.READY_INVITE) {
-			return inviteNew(course, row);
+			return inviteNew(course, row, lookups);
 		}
 		return ApplyResult.noop();
 	}
 
-	private ApplyResult enrollExisting(Course course, RosterPreviewRow row) {
-		UserAccount account = store.findUserByEmail(row.email()).orElse(null);
+	private ApplyResult enrollExisting(Course course, RosterPreviewRow row, RosterLookups lookups) {
+		UserAccount account = lookups.userByEmail(row.email());
 		if (account == null || account.getAccountRole() != AccountRole.STUDENT) {
 			throw new AcademicException(
 					AcademicErrorCode.ROSTER_CONFIRM_BLOCKED, HttpStatus.CONFLICT, "Student account changed after preview.");
 		}
-		StudentProfile profile = store.findStudentByUserId(account.getId()).orElseThrow(() -> new AcademicException(
-				AcademicErrorCode.ROSTER_CONFIRM_BLOCKED, HttpStatus.CONFLICT, "Student profile is missing."));
-		CourseEnrollment enrollment = store.findEnrollment(profile.getId(), course.getId()).orElse(null);
+		StudentProfile profile = lookups.studentByUserId(account.getId());
+		if (profile == null) {
+			throw new AcademicException(
+					AcademicErrorCode.ROSTER_CONFIRM_BLOCKED, HttpStatus.CONFLICT, "Student profile is missing.");
+		}
+		CourseEnrollment enrollment = lookups.enrollmentByProfileId(profile.getId());
 		if (enrollment == null) {
 			enrollment = new CourseEnrollment();
 			enrollment.setStudentProfile(profile);
@@ -397,10 +418,12 @@ public class CourseRosterService {
 			enrollment.setEnrollmentStatus(EnrollmentStatus.ACTIVE);
 			enrollment.setEnrolledAt(LocalDateTime.now());
 			store.saveEnrollment(enrollment);
+			lookups.rememberEnrollment(enrollment);
 		} else if (enrollment.getEnrollmentStatus() != EnrollmentStatus.ACTIVE) {
 			enrollment.setEnrollmentStatus(EnrollmentStatus.ACTIVE);
 			enrollment.setEnrolledAt(LocalDateTime.now());
 			store.saveEnrollment(enrollment);
+			lookups.rememberEnrollment(enrollment);
 		} else {
 			return ApplyResult.noop();
 		}
@@ -418,10 +441,11 @@ public class CourseRosterService {
 		return new ApplyResult(1, 0, 0, 1);
 	}
 
-	private ApplyResult inviteNew(Course course, RosterPreviewRow row) {
-		StudentCourseInvitation invitation = store.findInvitationByCourseAndEmail(course.getId(), row.email())
-				.or(() -> store.findInvitationByCourseAndStudentCode(course.getId(), row.studentCode()))
-				.orElse(null);
+	private ApplyResult inviteNew(Course course, RosterPreviewRow row, RosterLookups lookups) {
+		StudentCourseInvitation invitation = lookups.invitationByEmail(row.email());
+		if (invitation == null) {
+			invitation = lookups.invitationByStudentCode(row.studentCode());
+		}
 		if (invitation != null && (isOutstandingInvitation(invitation.getInvitationStatus())
 				|| invitation.getInvitationStatus() == StudentInvitationStatus.CLAIMED)) {
 			return ApplyResult.noop();
@@ -439,6 +463,7 @@ public class CourseRosterService {
 		invitation.setInvitationStatus(StudentInvitationStatus.PENDING);
 		invitation.setStudentProfile(null);
 		store.saveInvitation(invitation);
+		lookups.rememberInvitation(invitation);
 		enqueue(
 				row.email(),
 				null,
@@ -546,6 +571,113 @@ public class CourseRosterService {
 	private record ApplyResult(int enrolledCount, int invitedCount, int unchangedCount, int emailCount) {
 		static ApplyResult noop() {
 			return new ApplyResult(0, 0, 1, 0);
+		}
+	}
+
+	static final class RosterLookups {
+		private final Map<String, UserAccount> usersByEmail = new LinkedHashMap<>();
+		private final Map<String, StudentProfile> studentsByCode = new LinkedHashMap<>();
+		private final Map<UUID, StudentProfile> studentsByUserId = new LinkedHashMap<>();
+		private final Map<UUID, CourseEnrollment> enrollmentsByProfileId = new LinkedHashMap<>();
+		private final Map<String, StudentCourseInvitation> invitationsByEmail = new LinkedHashMap<>();
+		private final Map<String, StudentCourseInvitation> invitationsByCode = new LinkedHashMap<>();
+
+		static RosterLookups preload(
+				CourseRosterStore store, UUID courseId, Collection<String> emails, Collection<String> studentCodes) {
+			RosterLookups lookups = new RosterLookups();
+			List<String> emailKeys = distinctNormalizedEmails(emails);
+			List<String> codeKeys = distinctNormalizedCodes(studentCodes);
+			for (UserAccount user : store.findUsersByEmails(emailKeys)) {
+				if (user != null && StringUtils.hasText(user.getEmail())) {
+					lookups.usersByEmail.putIfAbsent(normalizeEmail(user.getEmail()), user);
+				}
+			}
+			for (StudentProfile profile : store.findStudentsByCodes(codeKeys)) {
+				lookups.rememberStudent(profile);
+			}
+			List<UUID> userIds = lookups.usersByEmail.values().stream().map(UserAccount::getId).distinct().toList();
+			for (StudentProfile profile : store.findStudentsByUserIds(userIds)) {
+				lookups.rememberStudent(profile);
+			}
+			for (CourseEnrollment enrollment : store.listEnrollments(courseId)) {
+				lookups.rememberEnrollment(enrollment);
+			}
+			for (StudentCourseInvitation invitation : store.listInvitations(courseId)) {
+				lookups.rememberInvitation(invitation);
+			}
+			return lookups;
+		}
+
+		UserAccount userByEmail(String email) {
+			return StringUtils.hasText(email) ? usersByEmail.get(normalizeEmail(email)) : null;
+		}
+
+		StudentProfile studentByCode(String studentCode) {
+			return StringUtils.hasText(studentCode) ? studentsByCode.get(normalizeCode(studentCode)) : null;
+		}
+
+		StudentProfile studentByUserId(UUID userId) {
+			return userId == null ? null : studentsByUserId.get(userId);
+		}
+
+		CourseEnrollment enrollmentByProfileId(UUID studentProfileId) {
+			return studentProfileId == null ? null : enrollmentsByProfileId.get(studentProfileId);
+		}
+
+		StudentCourseInvitation invitationByEmail(String email) {
+			return StringUtils.hasText(email) ? invitationsByEmail.get(normalizeEmail(email)) : null;
+		}
+
+		StudentCourseInvitation invitationByStudentCode(String studentCode) {
+			return StringUtils.hasText(studentCode) ? invitationsByCode.get(normalizeCode(studentCode)) : null;
+		}
+
+		void rememberEnrollment(CourseEnrollment enrollment) {
+			if (enrollment != null && enrollment.getStudentProfile() != null) {
+				enrollmentsByProfileId.put(enrollment.getStudentProfile().getId(), enrollment);
+			}
+		}
+
+		void rememberInvitation(StudentCourseInvitation invitation) {
+			if (invitation == null) {
+				return;
+			}
+			if (StringUtils.hasText(invitation.getEmail())) {
+				invitationsByEmail.put(normalizeEmail(invitation.getEmail()), invitation);
+			}
+			if (StringUtils.hasText(invitation.getStudentCode())) {
+				invitationsByCode.put(normalizeCode(invitation.getStudentCode()), invitation);
+			}
+		}
+
+		private void rememberStudent(StudentProfile profile) {
+			if (profile == null) {
+				return;
+			}
+			if (StringUtils.hasText(profile.getStudentCode())) {
+				studentsByCode.putIfAbsent(normalizeCode(profile.getStudentCode()), profile);
+			}
+			if (profile.getUserAccount() != null) {
+				studentsByUserId.putIfAbsent(profile.getUserAccount().getId(), profile);
+			}
+		}
+
+		private static List<String> distinctNormalizedEmails(Collection<String> emails) {
+			if (emails == null || emails.isEmpty()) {
+				return List.of();
+			}
+			return emails.stream().map(CourseRosterService::normalizeEmail).filter(StringUtils::hasText).distinct().toList();
+		}
+
+		private static List<String> distinctNormalizedCodes(Collection<String> studentCodes) {
+			if (studentCodes == null || studentCodes.isEmpty()) {
+				return List.of();
+			}
+			return studentCodes.stream()
+					.map(CourseRosterService::normalizeCode)
+					.filter(StringUtils::hasText)
+					.distinct()
+					.toList();
 		}
 	}
 }

@@ -107,10 +107,7 @@ public class TaskEvidenceService {
 
 	private void requireMember(UUID userId, UUID projectId) {
 		Team team = teams.findByProject_Id(projectId).orElse(null);
-		boolean member = team != null
-				&& members.findByTeam_Id(team.getId()).stream()
-						.anyMatch(item ->
-								item.getCourseEnrollment().getStudentProfile().getUserAccount().getId().equals(userId));
+		boolean member = team != null && members.existsByProjectIdAndUserId(projectId, userId);
 		TeamAuthorization.requireMember(
 				member
 						? new TeamAuthorization.Membership(

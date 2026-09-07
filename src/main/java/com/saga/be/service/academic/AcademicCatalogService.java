@@ -35,6 +35,7 @@ import com.saga.be.entity.enums.SyllabusStatus;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.service.audit.AuditService;
+import com.saga.be.web.RequestTiming;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -102,10 +103,12 @@ public class AcademicCatalogService {
 
 	@Transactional(readOnly = true)
 	public List<SubjectResponse> listSubjects(String code, SubjectStatus status, String search) {
-		String normalized = StringUtils.hasText(code) ? normalizeSubjectCode(code) : null;
-		return store.listSubjects(normalized, status, blankToNull(search)).stream()
-				.map(subject -> toSubjectResponse(subject, List.of()))
-				.toList();
+		return RequestTiming.record("listSubjects", () -> {
+			String normalized = StringUtils.hasText(code) ? normalizeSubjectCode(code) : null;
+			return store.listSubjects(normalized, status, blankToNull(search)).stream()
+					.map(subject -> toSubjectResponse(subject, List.of()))
+					.toList();
+		});
 	}
 
 	@Transactional(readOnly = true)
@@ -200,13 +203,15 @@ public class AcademicCatalogService {
 
 	@Transactional(readOnly = true)
 	public List<SyllabusSummaryResponse> listSyllabi(UUID subjectId) {
-		requireSubject(subjectId);
-		return store.listSyllabi(subjectId).stream().map(this::toSummary).toList();
+		return RequestTiming.record("listSyllabi", () -> {
+			requireSubject(subjectId);
+			return store.listSyllabi(subjectId).stream().map(this::toSummary).toList();
+		});
 	}
 
 	@Transactional(readOnly = true)
 	public SyllabusDetailResponse getSyllabus(UUID subjectId, UUID syllabusId) {
-		return toDetail(requireSyllabus(subjectId, syllabusId));
+		return RequestTiming.record("getSyllabus", () -> toDetail(requireSyllabus(subjectId, syllabusId)));
 	}
 
 	@Transactional

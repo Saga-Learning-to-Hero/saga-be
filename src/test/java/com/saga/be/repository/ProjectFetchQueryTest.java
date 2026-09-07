@@ -19,6 +19,7 @@ class ProjectFetchQueryTest {
 		assertTrue(service.contains("findFetchedById"));
 		assertTrue(service.contains("@Transactional"));
 		assertTrue(service.contains("public String completeGithubInstallation"));
+		assertTrue(service.contains("requireFetchedProject"));
 		assertTrue(service.contains("audit.record"));
 	}
 }

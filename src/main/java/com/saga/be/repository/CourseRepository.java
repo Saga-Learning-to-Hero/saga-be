@@ -19,6 +19,12 @@ public interface CourseRepository extends JpaRepository<Course, UUID> {
 	@Query(
 			"""
 			SELECT c FROM Course c
+			LEFT JOIN FETCH c.academicClass
+			LEFT JOIN FETCH c.semester
+			LEFT JOIN FETCH c.subject
+			LEFT JOIN FETCH c.syllabusVersion
+			LEFT JOIN FETCH c.instructor i
+			LEFT JOIN FETCH i.userAccount
 			WHERE c.deletedAt IS NULL
 			AND (:semesterId IS NULL OR c.semester.id = :semesterId)
 			AND (:academicClassId IS NULL OR c.academicClass.id = :academicClassId)

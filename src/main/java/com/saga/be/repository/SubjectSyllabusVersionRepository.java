@@ -5,12 +5,27 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface SubjectSyllabusVersionRepository extends JpaRepository<SubjectSyllabusVersion, UUID> {
 
-	List<SubjectSyllabusVersion> findBySubject_IdOrderByCreatedAtDesc(UUID subjectId);
+	@Query(
+			"""
+			SELECT s FROM SubjectSyllabusVersion s
+			JOIN FETCH s.subject
+			WHERE s.subject.id = :subjectId
+			ORDER BY s.createdAt DESC
+			""")
+	List<SubjectSyllabusVersion> findBySubject_IdOrderByCreatedAtDesc(@Param("subjectId") UUID subjectId);
 
-	Optional<SubjectSyllabusVersion> findByIdAndSubject_Id(UUID id, UUID subjectId);
+	@Query(
+			"""
+			SELECT s FROM SubjectSyllabusVersion s
+			JOIN FETCH s.subject
+			WHERE s.id = :id AND s.subject.id = :subjectId
+			""")
+	Optional<SubjectSyllabusVersion> findByIdAndSubject_Id(@Param("id") UUID id, @Param("subjectId") UUID subjectId);
 
 	boolean existsBySubject_IdAndVersionLabelIgnoreCase(UUID subjectId, String versionLabel);
 

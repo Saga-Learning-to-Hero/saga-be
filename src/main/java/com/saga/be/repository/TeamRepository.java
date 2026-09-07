@@ -14,6 +14,15 @@ public interface TeamRepository extends JpaRepository<Team, UUID> {
 
 	List<Team> findByCourse_IdOrderByTeamNoAsc(UUID courseId);
 
+	@Query(
+			"""
+			SELECT t FROM Team t
+			LEFT JOIN FETCH t.project
+			WHERE t.course.id = :courseId
+			ORDER BY t.teamNo ASC
+			""")
+	List<Team> findFetchedByCourse_IdOrderByTeamNoAsc(@Param("courseId") UUID courseId);
+
 	Optional<Team> findByCourse_IdAndTeamNo(UUID courseId, Integer teamNo);
 
 	@Lock(LockModeType.PESSIMISTIC_WRITE)

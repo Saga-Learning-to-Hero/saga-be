@@ -3,6 +3,10 @@ package com.saga.be.service.student;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.saga.be.dto.team.StudentTeamResponse;
@@ -81,7 +85,7 @@ class StudentTeamServiceTest {
 		team.setName("Alpha");
 		TeamMember mine = member(team, enrollment, RoleInTeam.LEADER);
 		when(members.findByCourseEnrollment_Id(enrollment.getId())).thenReturn(Optional.of(mine));
-		when(members.findByTeam_Id(team.getId())).thenReturn(List.of(mine));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(mine));
 		StudentTeamResponse response = service.myTeam(student.getId(), course.getId());
 		assertEquals(team.getId(), response.teamId());
 		assertEquals(1, response.teamNo());
@@ -112,9 +116,27 @@ class StudentTeamServiceTest {
 		team.setProject(project);
 		TeamMember mine = member(team, enrollment, RoleInTeam.LEADER);
 		when(members.findByCourseEnrollment_Id(enrollment.getId())).thenReturn(Optional.of(mine));
-		when(members.findByTeam_Id(team.getId())).thenReturn(List.of(mine));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(mine));
 		StudentTeamResponse response = service.myTeam(student.getId(), course.getId());
 		assertEquals(project.getId(), response.projectId());
+	}
+
+	@Test
+	void ownTeamLoadsMembersOnceRegardlessOfRosterSize() {
+		Team team = new Team();
+		team.setId(UUID.randomUUID());
+		team.setTeamNo(1);
+		team.setName("Alpha");
+		TeamMember mine = member(team, enrollment, RoleInTeam.LEADER);
+		TeamMember second = member(team, enrollment, RoleInTeam.MEMBER);
+		second.getCourseEnrollment().getStudentProfile().setStudentCode("SE222222");
+		TeamMember third = member(team, enrollment, RoleInTeam.MEMBER);
+		when(members.findByCourseEnrollment_Id(enrollment.getId())).thenReturn(Optional.of(mine));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(mine, second, third));
+		StudentTeamResponse response = service.myTeam(student.getId(), course.getId());
+		assertEquals(3, response.members().size());
+		verify(members, times(1)).findFetchedByTeam_Id(team.getId());
+		verify(members, never()).findByTeam_Id(any());
 	}
 
 	@Test

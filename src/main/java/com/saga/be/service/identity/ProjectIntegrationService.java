@@ -54,11 +54,14 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 @Service
@@ -83,6 +86,7 @@ public class ProjectIntegrationService {
 	private final TokenEncryptor encryptor;
 	private final AuditService audit;
 	private final OutboxPublisher outbox;
+	private final TransactionTemplate writes;
 
 	public ProjectIntegrationService(
 			UserAccountRepository users,
@@ -102,7 +106,8 @@ public class ProjectIntegrationService {
 			JiraOAuthClient jira,
 			TokenEncryptor encryptor,
 			AuditService audit,
-			OutboxPublisher outbox) {
+			OutboxPublisher outbox,
+			PlatformTransactionManager transactionManager) {
 		this.users = users;
 		this.projects = projects;
 		this.teams = teams;
@@ -121,6 +126,7 @@ public class ProjectIntegrationService {
 		this.encryptor = encryptor;
 		this.audit = audit;
 		this.outbox = outbox;
+		this.writes = new TransactionTemplate(Objects.requireNonNull(transactionManager, "transactionManager"));
 	}
 
 	@Transactional(readOnly = true)
@@ -164,7 +170,6 @@ public class ProjectIntegrationService {
 		return new OAuthStartResponse(github.installationUrl(state.state()), state.state());
 	}
 
-	@Transactional
 	public String completeGithubInstallation(UUID userId, String rawState, Long installationId, String userCode) {
 		OAuthState state = oauthStates.consumeForUser(rawState, userId, OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY);
 		requireLeader(userId, state.projectId());
@@ -207,13 +212,13 @@ public class ProjectIntegrationService {
 						"Current GitHub user is not authorized for this installation.");
 			}
 		}
-		persistVerifiedInstallation(userId, state.projectId(), installationId, installation);
+		persistAtomically(() -> persistVerifiedInstallation(userId, state.projectId(), installationId, installation));
 		return redirect(state.frontendReturnPath());
 	}
 
-	@Transactional
 	protected void persistVerifiedInstallation(
 			UUID userId, UUID projectId, Long installationId, GitHubOAuthClient.GitHubInstallationResponse installation) {
+		requireLeader(userId, projectId);
 		Project project = requireFetchedProject(projectId);
 		installations.findByProject_Id(projectId).ifPresent(existing -> {
 			if (!installationId.equals(existing.getInstallationId())) {
@@ -263,23 +268,22 @@ public class ProjectIntegrationService {
 		return github.parseRepos(github.listInstallationRepos(token));
 	}
 
-	@Transactional
 	public void selectGithubRepos(UUID userId, UUID projectId, List<SelectGitHubRepositoryRequest> selected) {
 		requireLeader(userId, projectId);
 		GithubInstallation installation = installations.findByProject_Id(projectId).orElseThrow(() -> new IntegrationException(
 				IntegrationErrorCode.GITHUB_INSTALLATION_INVALID, HttpStatus.BAD_REQUEST, "No verified GitHub installation."));
 		String token = github.createInstallationToken(githubJwt.createJwt(), installation.getInstallationId());
 		List<GitHubOAuthClient.RepoSummary> accessible = github.parseRepos(github.listInstallationRepos(token));
-		persistSelectedRepos(userId, projectId, installation, selected, accessible);
+		persistAtomically(() -> persistSelectedRepos(userId, projectId, installation, selected, accessible));
 	}
 
-	@Transactional
 	protected void persistSelectedRepos(
 			UUID userId,
 			UUID projectId,
 			GithubInstallation installation,
 			List<SelectGitHubRepositoryRequest> selected,
 			List<GitHubOAuthClient.RepoSummary> accessible) {
+		requireLeader(userId, projectId);
 		Project project = requireFetchedProject(projectId);
 		UserAccount actor = users.findById(userId).orElseThrow();
 		for (SelectGitHubRepositoryRequest item : selected) {
@@ -428,7 +432,6 @@ public class ProjectIntegrationService {
 				.toList();
 	}
 
-	@Transactional
 	public void saveJiraSelection(UUID userId, UUID projectId, SelectJiraIntegrationRequest selection) {
 		requireLeader(userId, projectId);
 		PendingJiraConnect pending = pendingJira
@@ -451,10 +454,9 @@ public class ProjectIntegrationService {
 						IntegrationErrorCode.JIRA_BOARD_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira board is not accessible.");
 			}
 		}
-		persistJiraIntegration(userId, projectId, pending, site, projectNode, selection.boardId());
+		persistAtomically(() -> persistJiraIntegration(userId, projectId, pending, site, projectNode, selection.boardId()));
 	}
 
-	@Transactional
 	protected void persistJiraIntegration(
 			UUID userId,
 			UUID projectId,
@@ -462,6 +464,7 @@ public class ProjectIntegrationService {
 			JiraOAuthClient.AccessibleResource site,
 			JiraOAuthClient.JiraProjectResponse projectNode,
 			String boardId) {
+		requireLeader(userId, projectId);
 		if (pending.refreshToken() != null && !encryptor.isReady()) {
 			throw new IntegrationException(
 					IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
@@ -530,6 +533,10 @@ public class ProjectIntegrationService {
 				null,
 				null,
 				null);
+	}
+
+	void persistAtomically(Runnable action) {
+		writes.executeWithoutResult(status -> action.run());
 	}
 
 	private PendingJiraConnect pending(UUID userId, UUID projectId) {

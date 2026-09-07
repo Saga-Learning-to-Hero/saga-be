@@ -95,7 +95,7 @@ public class SecurityConfig {
 						.permitAll()
 						.requestMatchers("/error")
 						.permitAll()
-						.requestMatchers("/actuator/health", "/actuator/info")
+						.requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info")
 						.permitAll()
 						.requestMatchers("/oauth2/**", "/login/oauth2/**")
 						.permitAll()

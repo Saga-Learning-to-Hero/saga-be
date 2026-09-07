@@ -6,6 +6,7 @@ import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.academic.Course;
 import com.saga.be.entity.academic.CourseEnrollment;
 import com.saga.be.entity.enums.StudentInvitationStatus;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -17,9 +18,15 @@ public interface CourseRosterStore {
 
 	Optional<UserAccount> findUserByEmail(String email);
 
+	List<UserAccount> findUsersByEmails(Collection<String> emails);
+
 	Optional<StudentProfile> findStudentByUserId(UUID userId);
 
+	List<StudentProfile> findStudentsByUserIds(Collection<UUID> userIds);
+
 	Optional<StudentProfile> findStudentByCode(String studentCode);
+
+	List<StudentProfile> findStudentsByCodes(Collection<String> studentCodes);
 
 	Optional<CourseEnrollment> findEnrollment(UUID studentProfileId, UUID courseId);
 

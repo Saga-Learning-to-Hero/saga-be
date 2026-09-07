@@ -27,6 +27,7 @@ import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.audit.AuditService;
+import com.saga.be.web.RequestTiming;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -81,8 +82,12 @@ public class AcademicRuntimeService {
 
 	@Transactional(readOnly = true)
 	public List<SemesterResponse> listSemesters() {
-		UUID activeId = activeSemesterId();
-		return store.listSemesters().stream().map(semester -> toSemester(semester, semester.getId().equals(activeId))).toList();
+		return RequestTiming.record("listSemesters", () -> {
+			UUID activeId = activeSemesterId();
+			return store.listSemesters().stream()
+					.map(semester -> toSemester(semester, semester.getId().equals(activeId)))
+					.toList();
+		});
 	}
 
 	@Transactional(readOnly = true)
@@ -184,10 +189,12 @@ public class AcademicRuntimeService {
 
 	@Transactional(readOnly = true)
 	public List<AcademicClassResponse> listClasses(UUID semesterId) {
-		if (semesterId != null) {
-			requireSemester(semesterId);
-		}
-		return store.listClasses(semesterId).stream().map(this::toClass).toList();
+		return RequestTiming.record("listClasses", () -> {
+			if (semesterId != null) {
+				requireSemester(semesterId);
+			}
+			return store.listClasses(semesterId).stream().map(this::toClass).toList();
+		});
 	}
 
 	@Transactional(readOnly = true)
@@ -272,18 +279,22 @@ public class AcademicRuntimeService {
 
 	@Transactional(readOnly = true)
 	public List<CourseResponse> listCourses(UUID semesterId, UUID academicClassId, UUID subjectId, UUID lecturerId) {
-		if (semesterId != null) {
-			requireSemester(semesterId);
-		}
-		if (academicClassId != null) {
-			requireClass(academicClassId);
-		}
-		return store.listCourses(semesterId, academicClassId, subjectId, lecturerId).stream().map(this::toCourse).toList();
+		return RequestTiming.record("listCourses", () -> {
+			if (semesterId != null) {
+				requireSemester(semesterId);
+			}
+			if (academicClassId != null) {
+				requireClass(academicClassId);
+			}
+			return store.listCourses(semesterId, academicClassId, subjectId, lecturerId).stream()
+					.map(this::toCourse)
+					.toList();
+		});
 	}
 
 	@Transactional(readOnly = true)
 	public CourseResponse getCourse(UUID courseId) {
-		return toCourse(requireCourse(courseId));
+		return RequestTiming.record("getCourse", () -> toCourse(requireCourse(courseId)));
 	}
 
 	@Transactional

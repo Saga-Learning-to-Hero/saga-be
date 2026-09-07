@@ -1,5 +1,6 @@
 package com.saga.be.repository;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -16,6 +17,14 @@ class TeamMemberFetchQueryTest {
 		assertTrue(members.contains("JOIN FETCH e.studentProfile"));
 		assertTrue(members.contains("JOIN FETCH p.userAccount"));
 		assertTrue(members.contains("JOIN FETCH t.course"));
+		assertTrue(members.contains("LEFT JOIN FETCH t.project"));
+		assertTrue(members.contains("existsByProjectIdAndUserId"));
+		String studentTeam = Files.readString(Path.of("src/main/java/com/saga/be/service/student/StudentTeamService.java"));
+		assertTrue(studentTeam.contains("findFetchedByTeam_Id"));
+		assertFalse(studentTeam.contains("findByTeam_Id("));
+		String evidence = Files.readString(Path.of("src/main/java/com/saga/be/service/evidence/TaskEvidenceService.java"));
+		assertTrue(evidence.contains("existsByProjectIdAndUserId"));
+		assertFalse(evidence.contains("findByTeam_Id("));
 		String service = Files.readString(Path.of("src/main/java/com/saga/be/service/identity/ProjectIntegrationService.java"));
 		assertTrue(service.contains("findFetchedByTeam_Id"));
 		assertTrue(service.contains("@Transactional(readOnly = true)"));

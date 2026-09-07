@@ -11,6 +11,7 @@ import com.saga.be.repository.CourseRepository;
 import com.saga.be.repository.StudentCourseInvitationRepository;
 import com.saga.be.repository.StudentProfileRepository;
 import com.saga.be.repository.UserAccountRepository;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -42,7 +43,8 @@ public class JpaCourseRosterStore implements CourseRosterStore {
 
 	@Override
 	public Optional<Course> findCourse(UUID courseId) {
-		return courses.findById(courseId).filter(course -> course.getDeletedAt() == null);
+		return courses.findActiveFetchedById(courseId)
+				.or(() -> courses.findById(courseId).filter(course -> course.getDeletedAt() == null));
 	}
 
 	@Override
@@ -51,13 +53,37 @@ public class JpaCourseRosterStore implements CourseRosterStore {
 	}
 
 	@Override
+	public List<UserAccount> findUsersByEmails(Collection<String> emails) {
+		if (emails == null || emails.isEmpty()) {
+			return List.of();
+		}
+		return users.findByEmailIn(emails);
+	}
+
+	@Override
 	public Optional<StudentProfile> findStudentByUserId(UUID userId) {
 		return students.findByUserAccount_Id(userId);
 	}
 
 	@Override
+	public List<StudentProfile> findStudentsByUserIds(Collection<UUID> userIds) {
+		if (userIds == null || userIds.isEmpty()) {
+			return List.of();
+		}
+		return students.findFetchedByUserAccount_IdIn(userIds);
+	}
+
+	@Override
 	public Optional<StudentProfile> findStudentByCode(String studentCode) {
 		return students.findByStudentCodeIgnoreCase(studentCode);
+	}
+
+	@Override
+	public List<StudentProfile> findStudentsByCodes(Collection<String> studentCodes) {
+		if (studentCodes == null || studentCodes.isEmpty()) {
+			return List.of();
+		}
+		return students.findFetchedByStudentCodeUpperIn(studentCodes);
 	}
 
 	@Override
@@ -67,6 +93,10 @@ public class JpaCourseRosterStore implements CourseRosterStore {
 
 	@Override
 	public List<CourseEnrollment> listEnrollments(UUID courseId) {
+		List<CourseEnrollment> fetched = enrollments.findFetchedByCourse_Id(courseId);
+		if (!fetched.isEmpty()) {
+			return fetched;
+		}
 		return enrollments.findByCourse_Id(courseId);
 	}
 

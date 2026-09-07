@@ -150,6 +150,81 @@ class CourseRosterServiceTest {
 	}
 
 	@Test
+	void studentCodeOwnedByAnotherAccountIsConflict() throws Exception {
+		student("owner@gmail.com", "SE123456", "Owner");
+		RosterPreviewResponse preview = previewRow("SE1705", "Other", "SE123456", "other@gmail.com", "");
+		assertEquals(RosterRowAction.CONFLICT, preview.rows().getFirst().action());
+		assertTrue(preview.rows().getFirst().errors().getFirst().contains("another account"));
+	}
+
+	@Test
+	void emailAndStudentCodeMatchingDifferentInvitationsIsConflict() throws Exception {
+		seedInvitation("a@gmail.com", "SE000001", StudentInvitationStatus.PENDING);
+		seedInvitation("b@gmail.com", "SE000002", StudentInvitationStatus.PENDING);
+		RosterPreviewResponse preview = previewRow("SE1705", "Mixed", "SE000002", "a@gmail.com", "");
+		assertEquals(RosterRowAction.CONFLICT, preview.rows().getFirst().action());
+		assertTrue(preview.rows().getFirst().errors().getFirst().contains("different invitations"));
+	}
+
+	@Test
+	void claimedInvitationWithoutAccountIsAlreadyEnrolled() throws Exception {
+		seedInvitation("ghost@gmail.com", "SE000020", StudentInvitationStatus.CLAIMED);
+		RosterPreviewResponse preview = previewRow("SE1705", "Ghost", "SE000020", "ghost@gmail.com", "");
+		assertEquals(RosterRowAction.ALREADY_ENROLLED, preview.rows().getFirst().action());
+		assertTrue(preview.rows().getFirst().warnings().stream().anyMatch(item -> item.contains("claimed")));
+	}
+
+	@Test
+	void previewAndConfirmUseBoundedLookupCallsAsRosterGrows() throws Exception {
+		CountingCourseRosterStore counting = new CountingCourseRosterStore(store);
+		AuthProperties authProperties = new AuthProperties();
+		authProperties.setFrontendOrigins(List.of("http://localhost:3000"));
+		service = new CourseRosterService(
+				counting,
+				previews,
+				new RosterProperties(),
+				authProperties,
+				new InstitutionalEmailPolicy(authProperties),
+				emails,
+				audit);
+		student("one@gmail.com", "SE100001", "One");
+		student("two@gmail.com", "SE100002", "Two");
+		RosterPreviewResponse preview = service.preview(
+				course.getId(),
+				CourseRosterWorkbookTest.filledWorkbook(
+						"SE1705",
+						List.of(
+								new String[] {"1", "SE1705", "One", "SE100001", "one@gmail.com", ""},
+								new String[] {"2", "SE1705", "Two", "SE100002", "two@gmail.com", ""},
+								new String[] {"3", "SE1705", "New A", "SE100003", "new-a@gmail.com", ""},
+								new String[] {"4", "SE1705", "New B", "SE100004", "new-b@gmail.com", ""},
+								new String[] {"5", "SE1705", "New C", "SE100005", "new-c@gmail.com", ""})),
+				admin);
+		assertEquals(RosterRowAction.READY_ENROLL, preview.rows().get(0).action());
+		assertEquals(RosterRowAction.READY_ENROLL, preview.rows().get(1).action());
+		assertEquals(RosterRowAction.READY_INVITE, preview.rows().get(2).action());
+		assertEquals(1, counting.usersByEmails);
+		assertEquals(1, counting.studentsByCodes);
+		assertEquals(1, counting.studentsByUserIds);
+		assertEquals(1, counting.listEnrollments);
+		assertEquals(1, counting.listInvitations);
+		assertEquals(0, counting.userByEmail);
+		assertEquals(0, counting.studentByCode);
+		assertEquals(0, counting.studentByUserId);
+		assertEquals(0, counting.enrollmentByProfile);
+		assertEquals(0, counting.invitationByEmail);
+		assertEquals(0, counting.invitationByCode);
+		counting.reset();
+		service.confirm(course.getId(), preview.previewToken(), admin, auditReq());
+		assertEquals(1, counting.usersByEmails);
+		assertEquals(1, counting.studentsByCodes);
+		assertEquals(1, counting.listEnrollments);
+		assertEquals(1, counting.listInvitations);
+		assertEquals(0, counting.userByEmail);
+		assertEquals(0, counting.invitationByEmail);
+	}
+
+	@Test
 	void lecturerCannotBeRosterStudent() throws Exception {
 		account(AccountRole.LECTURER, "lecturer@fe.edu.vn");
 		RosterPreviewResponse preview = previewRow("SE1705", "Lecturer", "SE999999", "lecturer@fe.edu.vn", "");
@@ -466,5 +541,130 @@ class CourseRosterServiceTest {
 
 	private static AuditRequest auditReq() {
 		return new AuditRequest("req-1", "127.0.0.1", "JUnit");
+	}
+
+	private static final class CountingCourseRosterStore implements CourseRosterStore {
+		private final CourseRosterStore delegate;
+		int usersByEmails;
+		int studentsByCodes;
+		int studentsByUserIds;
+		int listEnrollments;
+		int listInvitations;
+		int userByEmail;
+		int studentByCode;
+		int studentByUserId;
+		int enrollmentByProfile;
+		int invitationByEmail;
+		int invitationByCode;
+
+		CountingCourseRosterStore(CourseRosterStore delegate) {
+			this.delegate = delegate;
+		}
+
+		void reset() {
+			usersByEmails = 0;
+			studentsByCodes = 0;
+			studentsByUserIds = 0;
+			listEnrollments = 0;
+			listInvitations = 0;
+			userByEmail = 0;
+			studentByCode = 0;
+			studentByUserId = 0;
+			enrollmentByProfile = 0;
+			invitationByEmail = 0;
+			invitationByCode = 0;
+		}
+
+		@Override
+		public java.util.Optional<Course> findCourse(UUID courseId) {
+			return delegate.findCourse(courseId);
+		}
+
+		@Override
+		public java.util.Optional<UserAccount> findUserByEmail(String email) {
+			userByEmail++;
+			return delegate.findUserByEmail(email);
+		}
+
+		@Override
+		public List<UserAccount> findUsersByEmails(java.util.Collection<String> emails) {
+			usersByEmails++;
+			return delegate.findUsersByEmails(emails);
+		}
+
+		@Override
+		public java.util.Optional<StudentProfile> findStudentByUserId(UUID userId) {
+			studentByUserId++;
+			return delegate.findStudentByUserId(userId);
+		}
+
+		@Override
+		public List<StudentProfile> findStudentsByUserIds(java.util.Collection<UUID> userIds) {
+			studentsByUserIds++;
+			return delegate.findStudentsByUserIds(userIds);
+		}
+
+		@Override
+		public java.util.Optional<StudentProfile> findStudentByCode(String studentCode) {
+			studentByCode++;
+			return delegate.findStudentByCode(studentCode);
+		}
+
+		@Override
+		public List<StudentProfile> findStudentsByCodes(java.util.Collection<String> studentCodes) {
+			studentsByCodes++;
+			return delegate.findStudentsByCodes(studentCodes);
+		}
+
+		@Override
+		public java.util.Optional<CourseEnrollment> findEnrollment(UUID studentProfileId, UUID courseId) {
+			enrollmentByProfile++;
+			return delegate.findEnrollment(studentProfileId, courseId);
+		}
+
+		@Override
+		public List<CourseEnrollment> listEnrollments(UUID courseId) {
+			listEnrollments++;
+			return delegate.listEnrollments(courseId);
+		}
+
+		@Override
+		public CourseEnrollment saveEnrollment(CourseEnrollment enrollment) {
+			return delegate.saveEnrollment(enrollment);
+		}
+
+		@Override
+		public java.util.Optional<StudentCourseInvitation> findInvitationByCourseAndEmail(UUID courseId, String email) {
+			invitationByEmail++;
+			return delegate.findInvitationByCourseAndEmail(courseId, email);
+		}
+
+		@Override
+		public java.util.Optional<StudentCourseInvitation> findInvitationByCourseAndStudentCode(
+				UUID courseId, String studentCode) {
+			invitationByCode++;
+			return delegate.findInvitationByCourseAndStudentCode(courseId, studentCode);
+		}
+
+		@Override
+		public List<StudentCourseInvitation> listInvitations(UUID courseId) {
+			listInvitations++;
+			return delegate.listInvitations(courseId);
+		}
+
+		@Override
+		public List<StudentCourseInvitation> listPendingByEmail(String email) {
+			return delegate.listPendingByEmail(email);
+		}
+
+		@Override
+		public StudentCourseInvitation saveInvitation(StudentCourseInvitation invitation) {
+			return delegate.saveInvitation(invitation);
+		}
+
+		@Override
+		public <T> T inTransaction(java.util.function.Supplier<T> action) {
+			return delegate.inTransaction(action);
+		}
 	}
 }

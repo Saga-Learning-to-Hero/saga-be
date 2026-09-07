@@ -6,6 +6,7 @@ import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.academic.Course;
 import com.saga.be.entity.academic.CourseEnrollment;
 import com.saga.be.entity.enums.StudentInvitationStatus;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,10 +36,26 @@ final class InMemoryCourseRosterStore implements CourseRosterStore {
 	}
 
 	@Override
+	public List<UserAccount> findUsersByEmails(Collection<String> emails) {
+		if (emails == null || emails.isEmpty()) {
+			return List.of();
+		}
+		return emails.stream().distinct().map(this::findUserByEmail).flatMap(Optional::stream).toList();
+	}
+
+	@Override
 	public Optional<StudentProfile> findStudentByUserId(UUID userId) {
 		return students.values().stream()
 				.filter(profile -> profile.getUserAccount() != null && userId.equals(profile.getUserAccount().getId()))
 				.findFirst();
+	}
+
+	@Override
+	public List<StudentProfile> findStudentsByUserIds(Collection<UUID> userIds) {
+		if (userIds == null || userIds.isEmpty()) {
+			return List.of();
+		}
+		return userIds.stream().distinct().map(this::findStudentByUserId).flatMap(Optional::stream).toList();
 	}
 
 	@Override
@@ -50,6 +67,14 @@ final class InMemoryCourseRosterStore implements CourseRosterStore {
 				.filter(profile -> profile.getStudentCode() != null
 						&& studentCode.equalsIgnoreCase(profile.getStudentCode()))
 				.findFirst();
+	}
+
+	@Override
+	public List<StudentProfile> findStudentsByCodes(Collection<String> studentCodes) {
+		if (studentCodes == null || studentCodes.isEmpty()) {
+			return List.of();
+		}
+		return studentCodes.stream().distinct().map(this::findStudentByCode).flatMap(Optional::stream).toList();
 	}
 
 	@Override

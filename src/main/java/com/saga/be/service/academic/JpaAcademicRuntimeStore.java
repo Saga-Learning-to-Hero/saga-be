@@ -146,7 +146,7 @@ public class JpaAcademicRuntimeStore implements AcademicRuntimeStore {
 
 	@Override
 	public Optional<Course> findCourse(UUID id) {
-		return courses.findById(id).filter(row -> row.getDeletedAt() == null);
+		return courses.findActiveFetchedById(id);
 	}
 
 	@Override
