@@ -157,6 +157,67 @@ public class JiraOAuthClient {
 		}
 	}
 
+	/**
+	 * Search issues in one Jira project. startAt is 0-based; maxResults capped at 100 by Jira.
+	 */
+	public IssueSearchPage searchIssues(
+			String accessToken, String cloudId, String projectKey, int startAt, int maxResults) {
+		try {
+			int safeMax = Math.max(1, Math.min(maxResults, 100));
+			int safeStart = Math.max(0, startAt);
+			String jql = "project = \"" + projectKey.replace("\"", "") + "\" ORDER BY updated DESC";
+			IssueSearchResponse node = restClient
+					.get()
+					.uri(builder -> builder
+							.scheme("https")
+							.host("api.atlassian.com")
+							.path("/ex/jira/{cloudId}/rest/api/3/search")
+							.queryParam("jql", jql)
+							.queryParam("startAt", safeStart)
+							.queryParam("maxResults", safeMax)
+							.queryParam(
+									"fields",
+									"summary,status,issuetype,assignee,updated,created,description,priority,resolution")
+							.build(cloudId))
+					.header("Authorization", "Bearer " + accessToken)
+					.retrieve()
+					.body(IssueSearchResponse.class);
+			if (node == null || node.issues() == null) {
+				return new IssueSearchPage(List.of(), 0, safeStart, safeMax);
+			}
+			List<IssueSummary> issues = node.issues().stream()
+					.filter(item -> item != null && item.id() != null)
+					.map(JiraOAuthClient::toSummary)
+					.toList();
+			return new IssueSearchPage(
+					issues, node.total() == null ? issues.size() : node.total(), safeStart, safeMax);
+		} catch (RestClientResponseException | HttpMessageConversionException ex) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE,
+					HttpStatus.BAD_GATEWAY,
+					"Jira issues could not be listed.");
+		}
+	}
+
+	private static IssueSummary toSummary(IssueApiResponse item) {
+		IssueFields fields = item.fields();
+		IssueStatus status = fields == null ? null : fields.status();
+		IssueStatusCategory category = status == null ? null : status.statusCategory();
+		IssueType type = fields == null ? null : fields.issuetype();
+		IssueAssignee assignee = fields == null ? null : fields.assignee();
+		return new IssueSummary(
+				item.id(),
+				item.key(),
+				fields == null ? null : fields.summary(),
+				status == null ? null : status.id(),
+				status == null ? null : status.name(),
+				category == null ? null : category.key(),
+				type == null ? null : type.name(),
+				assignee == null ? null : assignee.accountId(),
+				fields == null ? null : fields.created(),
+				fields == null ? null : fields.updated());
+	}
+
 	private TokenResponse postToken(String json) {
 		try {
 			JiraTokenApiResponse node = restClient
@@ -224,4 +285,54 @@ public class JiraOAuthClient {
 	public record JiraProjectOption(String id, String key, String name) {}
 
 	public record JiraBoardOption(String id, String name, String type) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record IssueSearchResponse(List<IssueApiResponse> issues, Integer total, Integer startAt, Integer maxResults) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record IssueApiResponse(String id, String key, IssueFields fields) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record IssueFields(
+			String summary,
+			IssueStatus status,
+			IssueType issuetype,
+			IssueAssignee assignee,
+			String created,
+			String updated,
+			String description,
+			IssuePriority priority,
+			IssueResolution resolution) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record IssueStatus(String id, String name, IssueStatusCategory statusCategory) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record IssueStatusCategory(String key, String name) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record IssueType(String id, String name) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record IssueAssignee(String accountId, String displayName) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record IssuePriority(String name) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record IssueResolution(String name) {}
+
+	public record IssueSummary(
+			String id,
+			String key,
+			String summary,
+			String statusId,
+			String statusName,
+			String statusCategory,
+			String issueTypeName,
+			String assigneeAccountId,
+			String created,
+			String updated) {}
+
+	public record IssueSearchPage(List<IssueSummary> issues, int total, int startAt, int maxResults) {}
 }

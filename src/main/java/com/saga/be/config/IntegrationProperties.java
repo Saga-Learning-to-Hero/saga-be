@@ -24,6 +24,12 @@ public class IntegrationProperties {
 	private int reauthMaxFailures = 5;
 	private Duration reauthLock = Duration.ofMinutes(15);
 	private Duration initialSyncFallback = Duration.ofDays(90);
+	/** Bounded GitHub commit backfill per selected repository (newest first). */
+	private int githubCommitBackfillLimit = 50;
+	/** Max Jira issues fetched per search page during initial sync. */
+	private int jiraIssuePageSize = 50;
+	/** Soft cap on Jira issues imported during one initial sync. */
+	private int jiraIssueBackfillLimit = 500;
 	private final GitHub github = new GitHub();
 	private final Jira jira = new Jira();
 	private final WebAuthn webauthn = new WebAuthn();
@@ -122,6 +128,30 @@ public class IntegrationProperties {
 
 	public void setInitialSyncFallback(Duration initialSyncFallback) {
 		this.initialSyncFallback = initialSyncFallback;
+	}
+
+	public int getGithubCommitBackfillLimit() {
+		return githubCommitBackfillLimit;
+	}
+
+	public void setGithubCommitBackfillLimit(int githubCommitBackfillLimit) {
+		this.githubCommitBackfillLimit = githubCommitBackfillLimit;
+	}
+
+	public int getJiraIssuePageSize() {
+		return jiraIssuePageSize;
+	}
+
+	public void setJiraIssuePageSize(int jiraIssuePageSize) {
+		this.jiraIssuePageSize = jiraIssuePageSize;
+	}
+
+	public int getJiraIssueBackfillLimit() {
+		return jiraIssueBackfillLimit;
+	}
+
+	public void setJiraIssueBackfillLimit(int jiraIssueBackfillLimit) {
+		this.jiraIssueBackfillLimit = jiraIssueBackfillLimit;
 	}
 
 	public GitHub getGithub() {

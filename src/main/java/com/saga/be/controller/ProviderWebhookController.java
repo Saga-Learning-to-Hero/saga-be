@@ -8,6 +8,7 @@ import com.saga.be.config.IntegrationProperties;
 import com.saga.be.integration.webhook.WebhookReceiptService;
 import com.saga.be.repository.WebhookReceiptRepository;
 import com.saga.be.service.attribution.AttributionWarningService;
+import com.saga.be.service.projection.ProviderWebhookProjectionService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -27,11 +28,13 @@ public class ProviderWebhookController {
 	private final IntegrationProperties properties;
 	private final WebhookReceiptService receipts;
 	private final AttributionWarningService warnings;
+	private final ProviderWebhookProjectionService projection;
 
 	public ProviderWebhookController(
 			IntegrationProperties properties,
 			WebhookReceiptRepository receiptRepository,
-			AttributionWarningService warnings) {
+			AttributionWarningService warnings,
+			ProviderWebhookProjectionService projection) {
 		this.properties = properties;
 		this.receipts = new WebhookReceiptService(new WebhookReceiptService.Store() {
 			@Override
@@ -47,6 +50,7 @@ public class ProviderWebhookController {
 			}
 		});
 		this.warnings = warnings;
+		this.projection = projection;
 	}
 
 	@PostMapping("/github")
@@ -62,16 +66,12 @@ public class ProviderWebhookController {
 			throw new IntegrationException(
 					IntegrationErrorCode.WEBHOOK_SIGNATURE_INVALID, HttpStatus.UNAUTHORIZED, "Invalid webhook signature.");
 		}
+		String payload = new String(body, java.nio.charset.StandardCharsets.UTF_8);
+		String eventType = event == null ? "unknown" : event;
 		WebhookReceiptService.IngestResult result = receipts.ingest(
-				IntegrationProvider.GITHUB,
-				delivery,
-				event == null ? "unknown" : event,
-				null,
-				new String(body, java.nio.charset.StandardCharsets.UTF_8),
-				null,
-				LocalDateTime.now());
-		if (result.duplicate()) {
-			return ResponseEntity.accepted().build();
+				IntegrationProvider.GITHUB, delivery, eventType, null, payload, null, LocalDateTime.now());
+		if (!result.duplicate()) {
+			projection.projectGithub(result.receipt(), eventType, payload);
 		}
 		return ResponseEntity.accepted().build();
 	}
@@ -90,15 +90,13 @@ public class ProviderWebhookController {
 			throw new IntegrationException(
 					IntegrationErrorCode.WEBHOOK_SIGNATURE_INVALID, HttpStatus.UNAUTHORIZED, "Invalid webhook signature.");
 		}
+		String payload = new String(body, java.nio.charset.StandardCharsets.UTF_8);
 		String deliveryId = delivery == null ? java.util.UUID.nameUUIDFromBytes(body).toString() : delivery;
-		receipts.ingest(
-				IntegrationProvider.JIRA,
-				deliveryId,
-				"jira:issue",
-				null,
-				new String(body, java.nio.charset.StandardCharsets.UTF_8),
-				null,
-				LocalDateTime.now());
+		WebhookReceiptService.IngestResult result = receipts.ingest(
+				IntegrationProvider.JIRA, deliveryId, "jira:issue", null, payload, null, LocalDateTime.now());
+		if (!result.duplicate()) {
+			projection.projectJira(result.receipt(), payload);
+		}
 		return ResponseEntity.accepted().build();
 	}
 }

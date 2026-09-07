@@ -115,6 +115,8 @@ class ProjectIntegrationServiceTest {
 	private OutboxPublisher outbox;
 	@Mock
 	private PlatformTransactionManager transactionManager;
+	@Mock
+	private com.saga.be.service.sync.IntegrationInitialSyncLauncher initialSyncLauncher;
 
 	@InjectMocks
 	private ProjectIntegrationService service;
@@ -593,7 +595,8 @@ class ProjectIntegrationServiceTest {
 		stubSelectGithubRepos(repo(1_338_790_015L, "saga-fe"));
 		service.selectGithubRepos(student.getId(), projectId, List.of());
 		verify(repos, never()).save(any());
-		verify(syncJobs).save(any());
+		verify(initialSyncLauncher).enqueueGithubInitialSync(projectId);
+		verify(initialSyncLauncher, never()).enqueueJiraInitialSync(any(), any());
 	}
 
 	@Test
@@ -610,6 +613,7 @@ class ProjectIntegrationServiceTest {
 		assertEquals("10067", captor.getValue().getJiraProjectId());
 		assertEquals("SAGA", captor.getValue().getProjectKey());
 		assertEquals("68", captor.getValue().getJiraBoardId());
+		verify(initialSyncLauncher).enqueueJiraInitialSync(eq(projectId), eq("jira-access"));
 	}
 
 	@Test

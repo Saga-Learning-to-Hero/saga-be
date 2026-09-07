@@ -19,11 +19,10 @@ import com.saga.be.entity.enums.GitProvider;
 import com.saga.be.entity.enums.IntegrationProvider;
 import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.OAuthFlowType;
-import com.saga.be.entity.enums.SyncJobStatus;
-import com.saga.be.entity.enums.SyncJobType;
+import com.saga.be.entity.enums.GitProvider;
+import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.github.GithubInstallation;
-import com.saga.be.entity.integration.SyncJobLog;
 import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
@@ -51,6 +50,7 @@ import com.saga.be.repository.TeamByProjectRepository;
 import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.service.audit.AuditService;
+import com.saga.be.service.sync.IntegrationInitialSyncLauncher;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -86,6 +86,7 @@ public class ProjectIntegrationService {
 	private final TokenEncryptor encryptor;
 	private final AuditService audit;
 	private final OutboxPublisher outbox;
+	private final IntegrationInitialSyncLauncher initialSyncLauncher;
 	private final TransactionTemplate writes;
 
 	public ProjectIntegrationService(
@@ -107,6 +108,7 @@ public class ProjectIntegrationService {
 			TokenEncryptor encryptor,
 			AuditService audit,
 			OutboxPublisher outbox,
+			IntegrationInitialSyncLauncher initialSyncLauncher,
 			PlatformTransactionManager transactionManager) {
 		this.users = users;
 		this.projects = projects;
@@ -126,6 +128,7 @@ public class ProjectIntegrationService {
 		this.encryptor = encryptor;
 		this.audit = audit;
 		this.outbox = outbox;
+		this.initialSyncLauncher = initialSyncLauncher;
 		this.writes = new TransactionTemplate(Objects.requireNonNull(transactionManager, "transactionManager"));
 	}
 
@@ -275,6 +278,7 @@ public class ProjectIntegrationService {
 		String token = github.createInstallationToken(githubJwt.createJwt(), installation.getInstallationId());
 		List<GitHubOAuthClient.RepoSummary> accessible = github.parseRepos(github.listInstallationRepos(token));
 		persistAtomically(() -> persistSelectedRepos(userId, projectId, installation, selected, accessible));
+		triggerGithubInitialSync(projectId);
 	}
 
 	protected void persistSelectedRepos(
@@ -327,7 +331,6 @@ public class ProjectIntegrationService {
 					null);
 			outbox.publish("git_repo", saved.getId(), "GITHUB_REPOSITORY_CONNECTED", Map.of("projectId", projectId.toString()));
 		}
-		startSync("GITHUB", projectId);
 	}
 
 	@Transactional
@@ -455,6 +458,7 @@ public class ProjectIntegrationService {
 			}
 		}
 		persistAtomically(() -> persistJiraIntegration(userId, projectId, pending, site, projectNode, selection.boardId()));
+		triggerJiraInitialSync(projectId, pending.accessToken());
 	}
 
 	protected void persistJiraIntegration(
@@ -493,7 +497,12 @@ public class ProjectIntegrationService {
 							pending.refreshToken(), TokenEncryptor.aad(saved.getId().toString(), "JIRA", userId.toString())));
 			jiraIntegrations.save(saved);
 		}
-		startSync("JIRA", project.getId());
+		if (pending.accessToken() != null && encryptor.isReady()) {
+			saved.setEncryptedAccessToken(
+					encryptor.encrypt(
+							pending.accessToken(), TokenEncryptor.aad(saved.getId().toString(), "JIRA", userId.toString())));
+			jiraIntegrations.save(saved);
+		}
 		audit.record(
 				actor,
 				project,
@@ -539,6 +548,14 @@ public class ProjectIntegrationService {
 		writes.executeWithoutResult(status -> action.run());
 	}
 
+	private void triggerJiraInitialSync(UUID projectId, String accessToken) {
+		initialSyncLauncher.enqueueJiraInitialSync(projectId, accessToken);
+	}
+
+	private void triggerGithubInitialSync(UUID projectId) {
+		initialSyncLauncher.enqueueGithubInitialSync(projectId);
+	}
+
 	private PendingJiraConnect pending(UUID userId, UUID projectId) {
 		return pendingJira
 				.get(userId, projectId)
@@ -554,18 +571,6 @@ public class ProjectIntegrationService {
 				.findFirst()
 				.orElseThrow(() -> new IntegrationException(
 						IntegrationErrorCode.JIRA_SITE_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira site is not accessible."));
-	}
-
-	private void startSync(String system, UUID targetId) {
-		SyncJobLog job = new SyncJobLog();
-		job.setTargetSystem(system);
-		job.setTargetId(targetId);
-		job.setJobType(SyncJobType.INITIAL);
-		job.setStatus(SyncJobStatus.RUNNING);
-		job.setStartedAt(LocalDateTime.now());
-		job.setItemsProcessed(0);
-		job.setItemsFailed(0);
-		syncJobs.save(job);
 	}
 
 	private TeamAuthorization.Membership requireLeader(UUID userId, UUID projectId) {

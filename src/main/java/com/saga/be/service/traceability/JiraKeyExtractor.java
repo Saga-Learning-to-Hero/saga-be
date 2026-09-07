@@ -28,4 +28,19 @@ public final class JiraKeyExtractor {
 		}
 		return keys;
 	}
+
+	/** Only keys belonging to the selected Jira projectKey (e.g. SAGA → SAGA-123). */
+	public static Set<String> extractForProject(String projectKey, String... texts) {
+		if (projectKey == null || projectKey.isBlank()) {
+			return Set.of();
+		}
+		String prefix = projectKey.trim().toUpperCase(Locale.ROOT) + "-";
+		Set<String> filtered = new LinkedHashSet<>();
+		for (String key : extract(texts)) {
+			if (key.startsWith(prefix)) {
+				filtered.add(key);
+			}
+		}
+		return filtered;
+	}
 }

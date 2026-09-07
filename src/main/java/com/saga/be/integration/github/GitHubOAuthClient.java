@@ -176,6 +176,51 @@ public class GitHubOAuthClient {
 				.toList();
 	}
 
+	/**
+	 * Newest commits first for owner/repo. Caller must enforce a V1 backfill limit.
+	 * GitHub returns at most 100 commits per page.
+	 */
+	public List<CommitSummary> listCommits(
+			String installationToken, String owner, String repo, String sha, int page, int perPage) {
+		try {
+			int safePerPage = Math.max(1, Math.min(perPage, 100));
+			int safePage = Math.max(1, page);
+			String uri = "https://api.github.com/repos/{owner}/{repo}/commits?per_page={perPage}&page={page}"
+					+ (sha == null || sha.isBlank() ? "" : "&sha={sha}");
+			GitHubCommitApiResponse[] nodes = sha == null || sha.isBlank()
+					? restClient
+							.get()
+							.uri(uri, owner, repo, safePerPage, safePage)
+							.header("Authorization", "Bearer " + installationToken)
+							.header("Accept", "application/vnd.github+json")
+							.retrieve()
+							.body(GitHubCommitApiResponse[].class)
+					: restClient
+							.get()
+							.uri(uri, owner, repo, safePerPage, safePage, sha)
+							.header("Authorization", "Bearer " + installationToken)
+							.header("Accept", "application/vnd.github+json")
+							.retrieve()
+							.body(GitHubCommitApiResponse[].class);
+			if (nodes == null) {
+				return List.of();
+			}
+			return java.util.Arrays.stream(nodes)
+					.filter(node -> node != null && node.sha() != null && !node.sha().isBlank())
+					.map(node -> new CommitSummary(
+							node.sha(),
+							node.commit() == null ? null : node.commit().message(),
+							node.commit() == null || node.commit().author() == null
+									? null
+									: node.commit().author().date(),
+							node.author() == null ? null : node.author().id(),
+							node.author() == null ? null : node.author().login()))
+					.toList();
+		} catch (RestClientResponseException | HttpMessageConversionException ex) {
+			throw installationInvalid("GitHub commits could not be listed.");
+		}
+	}
+
 	private static IntegrationException tokenExchangeFailed() {
 		return new IntegrationException(
 				IntegrationErrorCode.INTEGRATION_UNAVAILABLE, HttpStatus.BAD_GATEWAY, "GitHub token exchange failed.");
@@ -228,4 +273,18 @@ public class GitHubOAuthClient {
 			@JsonProperty("private") boolean privateRepo) {}
 
 	public record RepoSummary(long id, String name, String fullName, String owner, String defaultBranch, boolean privateRepo) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record GitHubCommitApiResponse(String sha, GitHubCommitBody commit, GitHubCommitAuthorUser author) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record GitHubCommitBody(String message, GitHubCommitAuthorMeta author) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record GitHubCommitAuthorMeta(String name, String email, String date) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record GitHubCommitAuthorUser(Long id, String login) {}
+
+	public record CommitSummary(String sha, String message, String committedAt, Long authorId, String authorLogin) {}
 }

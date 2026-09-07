@@ -484,6 +484,7 @@ class ProjectIntegrationTransactionTest {
 					encryptor,
 					audit,
 					outbox,
+					Mockito.mock(com.saga.be.service.sync.IntegrationInitialSyncLauncher.class),
 					transactionManager);
 		}
 	}

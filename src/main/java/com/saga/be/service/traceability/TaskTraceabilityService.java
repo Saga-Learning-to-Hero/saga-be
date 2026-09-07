@@ -34,7 +34,14 @@ public class TaskTraceabilityService {
 	}
 
 	public List<TaskGitCommitLink> linkCommit(UUID projectId, GitCommit commit, String branchName) {
-		Set<String> keys = JiraKeyExtractor.extract(commit.getMessage(), branchName, commit.getHeadRef());
+		return linkCommit(projectId, null, commit, branchName);
+	}
+
+	public List<TaskGitCommitLink> linkCommit(
+			UUID projectId, String jiraProjectKey, GitCommit commit, String branchName) {
+		Set<String> keys = jiraProjectKey == null || jiraProjectKey.isBlank()
+				? JiraKeyExtractor.extract(commit.getMessage(), branchName, commit.getHeadRef())
+				: JiraKeyExtractor.extractForProject(jiraProjectKey, commit.getMessage(), branchName, commit.getHeadRef());
 		List<TaskGitCommitLink> created = new ArrayList<>();
 		for (String key : keys) {
 			store.findByProjectAndKey(projectId, key).ifPresent(task -> {
