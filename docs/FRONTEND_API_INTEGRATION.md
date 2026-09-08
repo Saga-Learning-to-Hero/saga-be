@@ -496,9 +496,9 @@ Breaking change phải được nêu rõ.
 | GET | `/api/admin/courses/{courseId}/roster` | Session | ADMIN | Course roster V1 | `AdminCourseRosterController` |
 | POST | `/api/admin/courses/{courseId}/roster/import/preview` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
 | POST | `/api/admin/courses/{courseId}/roster/import/confirm` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
-| POST | `/api/admin/courses/{courseId}/roster/students` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
-| DELETE | `/api/admin/courses/{courseId}/roster/enrollments/{enrollmentId}` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
-| DELETE | `/api/admin/courses/{courseId}/roster/invitations/{invitationId}` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
+| POST | `/api/admin/courses/{courseId}/students` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseStudentController` |
+| DELETE | `/api/admin/courses/{courseId}/enrollments/{enrollmentId}` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseStudentController` |
+| DELETE | `/api/admin/courses/{courseId}/invitations/{invitationId}` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseStudentController` |
 | POST | `/api/admin/dev/email-test` | Session + CSRF | ADMIN | Email delivery V1, **local/dev only** | `AdminDevEmailController` |
 | GET | `/api/lecturer/courses` | Session | LECTURER or ADMIN | Lecturer Team V1 | `LecturerCourseController` |
 | GET | `/api/lecturer/courses/{courseId}` | Session | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerCourseController` |
@@ -713,10 +713,10 @@ Institutional FPT/FE invitation text tells the student to use Google onboarding,
 
 ### Manual add / remove
 
-Excel import remains the bulk path. These endpoints add or remove **one** student using the same identity rules.
+Excel import remains the bulk path under `/roster/import/*`. Manual add/remove uses separate course-student URLs and the same identity rules.
 
 ```json
-POST /api/admin/courses/{courseId}/roster/students
+POST /api/admin/courses/{courseId}/students
 { "fullName": "Nguyễn Văn Ánh", "studentCode": "SE123456", "email": "student@gmail.com" }
 ```
 
@@ -750,8 +750,8 @@ POST /api/admin/courses/{courseId}/roster/students
 `action`: `ENROLLED` | `INVITED` | `ALREADY_ENROLLED` | `ALREADY_INVITED`.
 
 ```http
-DELETE /api/admin/courses/{courseId}/roster/enrollments/{enrollmentId}
-DELETE /api/admin/courses/{courseId}/roster/invitations/{invitationId}
+DELETE /api/admin/courses/{courseId}/enrollments/{enrollmentId}
+DELETE /api/admin/courses/{courseId}/invitations/{invitationId}
 ```
 
 Use the ids from GET roster. Enrollment delete sets `WITHDRAWN` (does **not** delete `user_account` / `student_profile`). `team_member` for that enrollment is detached. Empty leftover teams / missing Leader are repaired by the lecturer team import. COMPLETED → `409` `ROSTER_ENROLLMENT_NOT_REMOVABLE`. Already WITHDRAWN → `200` `ALREADY_REMOVED`.

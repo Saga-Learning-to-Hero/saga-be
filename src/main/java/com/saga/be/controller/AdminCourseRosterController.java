@@ -1,11 +1,9 @@
 package com.saga.be.controller;
 
-import com.saga.be.dto.roster.AddRosterStudentRequest;
 import com.saga.be.dto.roster.CourseRosterResponse;
 import com.saga.be.dto.roster.RosterConfirmRequest;
 import com.saga.be.dto.roster.RosterConfirmResponse;
 import com.saga.be.dto.roster.RosterPreviewResponse;
-import com.saga.be.dto.roster.RosterStudentMutationResponse;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
@@ -27,7 +25,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -41,7 +38,7 @@ import org.springframework.web.multipart.MultipartFile;
 @RestController
 @Profile("!test")
 @RequestMapping("/api/admin/courses/{courseId}/roster")
-	@Tag(name = "Admin course roster", description = "XLSX import plus manual add/remove. ADMIN only.")
+@Tag(name = "Admin course roster", description = "XLSX roster template, preview, confirm, and read. ADMIN only.")
 @SecurityRequirement(name = "SAGA_SESSION")
 public class AdminCourseRosterController {
 
@@ -99,41 +96,6 @@ public class AdminCourseRosterController {
 			@Valid @RequestBody RosterConfirmRequest request,
 			HttpServletRequest http) {
 		return roster.confirm(courseId, request.previewToken(), actor(principal), audit(http));
-	}
-
-	@PostMapping("/students")
-	@Operation(summary = "Manually add one student to the course roster")
-	public ResponseEntity<RosterStudentMutationResponse> addStudent(
-			@AuthenticationPrincipal SagaUserPrincipal principal,
-			@PathVariable UUID courseId,
-			@Valid @RequestBody AddRosterStudentRequest request,
-			HttpServletRequest http) {
-		RosterStudentMutationResponse body = roster.addStudent(courseId, request, actor(principal), audit(http));
-		HttpStatus status = CourseRosterService.ACTION_ENROLLED.equals(body.action())
-						|| CourseRosterService.ACTION_INVITED.equals(body.action())
-				? HttpStatus.CREATED
-				: HttpStatus.OK;
-		return ResponseEntity.status(status).body(body);
-	}
-
-	@DeleteMapping("/enrollments/{enrollmentId}")
-	@Operation(summary = "Withdraw an ACTIVE enrollment from the course roster")
-	public RosterStudentMutationResponse removeEnrollment(
-			@AuthenticationPrincipal SagaUserPrincipal principal,
-			@PathVariable UUID courseId,
-			@PathVariable UUID enrollmentId,
-			HttpServletRequest http) {
-		return roster.removeEnrollment(courseId, enrollmentId, actor(principal), audit(http));
-	}
-
-	@DeleteMapping("/invitations/{invitationId}")
-	@Operation(summary = "Cancel an outstanding course invitation")
-	public RosterStudentMutationResponse removeInvitation(
-			@AuthenticationPrincipal SagaUserPrincipal principal,
-			@PathVariable UUID courseId,
-			@PathVariable UUID invitationId,
-			HttpServletRequest http) {
-		return roster.removeInvitation(courseId, invitationId, actor(principal), audit(http));
 	}
 
 	private UserAccount actor(SagaUserPrincipal principal) {

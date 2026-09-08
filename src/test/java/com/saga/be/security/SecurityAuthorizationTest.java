@@ -127,17 +127,17 @@ class SecurityAuthorizationTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"previewToken\":\"abc\"}"))
 				.andExpect(status().isForbidden());
-		mockMvc.perform(post("/api/admin/courses/" + courseId + "/roster/students")
+		mockMvc.perform(post("/api/admin/courses/" + courseId + "/students")
 						.with(csrf())
 						.with(authentication(auth(AccountRole.STUDENT, "hash")))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"fullName\":\"A\",\"studentCode\":\"SE123456\",\"email\":\"a@gmail.com\"}"))
 				.andExpect(status().isForbidden());
-		mockMvc.perform(delete("/api/admin/courses/" + courseId + "/roster/enrollments/" + courseId)
+		mockMvc.perform(delete("/api/admin/courses/" + courseId + "/enrollments/" + courseId)
 						.with(csrf())
 						.with(authentication(auth(AccountRole.STUDENT, "hash"))))
 				.andExpect(status().isForbidden());
-		mockMvc.perform(delete("/api/admin/courses/" + courseId + "/roster/invitations/" + courseId)
+		mockMvc.perform(delete("/api/admin/courses/" + courseId + "/invitations/" + courseId)
 						.with(csrf())
 						.with(authentication(auth(AccountRole.STUDENT, "hash"))))
 				.andExpect(status().isForbidden());
