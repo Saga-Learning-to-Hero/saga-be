@@ -60,6 +60,7 @@ class JiraTaskProjectionServiceTest {
 		Task existing = new Task();
 		existing.setId(UUID.randomUUID());
 		existing.setExternalId("10001");
+		existing.setExternalKey("SAGA-1");
 		existing.setProject(project);
 		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
 		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
@@ -70,7 +71,61 @@ class JiraTaskProjectionServiceTest {
 		verify(tasks, times(2)).saveAll(captor.capture());
 		assertThat(captor.getAllValues().get(1)).hasSize(1);
 		assertThat(captor.getAllValues().get(1).getFirst().getId()).isEqualTo(existing.getId());
-		verify(autoLink, times(2)).linkTasks(eq(project.getId()), eq("SAGA"), any());
+		verify(autoLink, times(1)).linkTasks(eq(project.getId()), eq("SAGA"), any());
+	}
+
+	@Test
+	void ordinaryMetadataUpdate_doesNotTriggerReverseCommitScan() {
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10001");
+		existing.setExternalKey("SAGA-1");
+		existing.setProject(project);
+		existing.setTitle("Old title");
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary updated = issue("10001", "SAGA-1", "New title", "2026-01-02T10:00:00Z");
+		assertThat(service.upsertBatch(project, "SAGA", List.of(updated))).isEqualTo(1);
+		verify(tasks, times(1)).saveAll(any());
+		verify(autoLink, never()).linkTasks(any(), any(), any());
+	}
+
+	@Test
+	void newlyCreatedTask_triggersReverseCommitScan() {
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of());
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary created = issue("10001", "SAGA-1", "Login", "2026-01-02T10:00:00Z");
+		assertThat(service.upsertBatch(project, "SAGA", List.of(created))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> linked = ArgumentCaptor.forClass(List.class);
+		verify(autoLink).linkTasks(eq(project.getId()), eq("SAGA"), linked.capture());
+		assertThat(linked.getValue()).hasSize(1);
+		assertThat(linked.getValue().getFirst().getExternalKey()).isEqualTo("SAGA-1");
+	}
+
+	@Test
+	void externalKeyChange_triggersReverseCommitScan() {
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10001");
+		existing.setExternalKey("SAGA-1");
+		existing.setProject(project);
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary renamed = issue("10001", "SAGA-99", "Login", "2026-01-02T10:00:00Z");
+		assertThat(service.upsertBatch(project, "SAGA", List.of(renamed))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> linked = ArgumentCaptor.forClass(List.class);
+		verify(autoLink).linkTasks(eq(project.getId()), eq("SAGA"), linked.capture());
+		assertThat(linked.getValue()).hasSize(1);
+		assertThat(linked.getValue().getFirst().getExternalKey()).isEqualTo("SAGA-99");
 	}
 
 	@Test

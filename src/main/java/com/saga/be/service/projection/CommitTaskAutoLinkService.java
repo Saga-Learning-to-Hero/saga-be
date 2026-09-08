@@ -61,8 +61,9 @@ public class CommitTaskAutoLinkService {
 	}
 
 	/**
-	 * Commit-first / task-later reconciliation: for newly projected tasks, find project commits
-	 * whose message/headRef contain those keys (bounded query, not full-table scan).
+	 * Commit-first / task-later reconciliation: LIKE-scan project commits whose message/headRef
+	 * contain the given task keys (bounded to {@code MAX_CANDIDATE_COMMITS}). Callers should pass
+	 * only newly created tasks or tasks whose externalKey changed — not ordinary metadata updates.
 	 */
 	@Transactional
 	public int linkTasks(UUID projectId, String jiraProjectKey, List<Task> projectedTasks) {

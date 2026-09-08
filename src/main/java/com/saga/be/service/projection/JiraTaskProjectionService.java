@@ -66,13 +66,19 @@ public class JiraTaskProjectionService {
 				.collect(Collectors.toMap(Task::getExternalId, Function.identity(), (a, b) -> a));
 		Map<String, StudentProfile> assignees = resolveJiraAssignees(valid);
 		List<Task> toSave = new ArrayList<>();
+		// Reverse Commit←Task LIKE scan is only needed for commit-first/task-later cases:
+		// newly inserted tasks, or rare externalKey changes. Ordinary metadata updates
+		// rely on forward Commit→Task linking from new GitHub commits.
+		Set<String> reverseLinkExternalIds = new HashSet<>();
 		for (IssueSummary issue : valid) {
 			Task task = existing.getOrDefault(issue.id(), new Task());
 			LocalDateTime incoming = ProjectionMappings.parseInstant(issue.updated());
 			if (!shouldApply(task, incoming)) {
 				continue;
 			}
-			if (task.getId() == null) {
+			boolean newlyCreated = task.getId() == null;
+			String previousKey = task.getExternalKey();
+			if (newlyCreated) {
 				task.setProject(project);
 				task.setExternalId(issue.id());
 			}
@@ -103,12 +109,20 @@ public class JiraTaskProjectionService {
 				task.setDeletedAt(null);
 			}
 			toSave.add(task);
+			if (newlyCreated || externalKeyChanged(previousKey, issue.key())) {
+				reverseLinkExternalIds.add(issue.id());
+			}
 		}
 		if (toSave.isEmpty()) {
 			return 0;
 		}
 		List<Task> persisted = saveAllConflictSafe(project.getId(), toSave);
-		autoLink.linkTasks(project.getId(), jiraProjectKey, persisted);
+		List<Task> forReverseLink = persisted.stream()
+				.filter(task -> reverseLinkExternalIds.contains(task.getExternalId()))
+				.toList();
+		if (!forReverseLink.isEmpty()) {
+			autoLink.linkTasks(project.getId(), jiraProjectKey, forReverseLink);
+		}
 		return persisted.size();
 	}
 
@@ -146,6 +160,15 @@ public class JiraTaskProjectionService {
 			return false;
 		}
 		return true;
+	}
+
+	static boolean externalKeyChanged(String previousKey, String incomingKey) {
+		String previous = previousKey == null ? "" : previousKey.trim();
+		String incoming = incomingKey == null ? "" : incomingKey.trim();
+		if (previous.isEmpty() && incoming.isEmpty()) {
+			return false;
+		}
+		return !previous.equalsIgnoreCase(incoming);
 	}
 
 	private List<Task> saveAllConflictSafe(UUID projectId, List<Task> toSave) {
