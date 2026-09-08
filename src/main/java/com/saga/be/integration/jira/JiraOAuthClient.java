@@ -2,11 +2,14 @@ package com.saga.be.integration.jira;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.saga.be.config.IntegrationProperties;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
 import java.util.List;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -18,6 +21,9 @@ import org.springframework.web.client.RestClientResponseException;
 @Component
 @Profile("!test")
 public class JiraOAuthClient {
+
+	private static final Logger log = LoggerFactory.getLogger(JiraOAuthClient.class);
+	private static final ObjectMapper SAFE_ERROR_MAPPER = new ObjectMapper();
 
 	private final RestClient restClient;
 	private final IntegrationProperties properties;
@@ -94,7 +100,13 @@ public class JiraOAuthClient {
 					.header("Authorization", "Bearer " + accessToken)
 					.retrieve()
 					.body(JiraProjectResponse.class);
-		} catch (RestClientResponseException | HttpMessageConversionException ex) {
+		} catch (RestClientResponseException ex) {
+			throw mapProjectFailure("getProject", cloudId, projectIdOrKey, ex);
+		} catch (HttpMessageConversionException ex) {
+			log.warn(
+					"jira operation=getProject httpStatus=null errorCode=JIRA_PROJECT_NOT_ACCESSIBLE cloudIdPresent={} projectKey={} cause=body_parse",
+					cloudId != null && !cloudId.isBlank(),
+					safeProjectKey(projectIdOrKey));
 			throw new IntegrationException(
 					IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira project is not accessible.");
 		}
@@ -158,54 +170,142 @@ public class JiraOAuthClient {
 	}
 
 	/**
-	 * Search issues in one Jira project. startAt is 0-based; maxResults capped at 100 by Jira.
+	 * Search issues in one Jira project via enhanced JQL API
+	 * ({@code GET /rest/api/3/search/jql}). Legacy {@code /rest/api/3/search} was removed by
+	 * Atlassian (HTTP 410). Pagination uses {@code nextPageToken} / {@code isLast}.
 	 */
 	public IssueSearchPage searchIssues(
-			String accessToken, String cloudId, String projectKey, int startAt, int maxResults) {
+			String accessToken, String cloudId, String projectKey, String nextPageToken, int maxResults) {
 		try {
 			int safeMax = Math.max(1, Math.min(maxResults, 100));
-			int safeStart = Math.max(0, startAt);
 			String jql = "project = \"" + projectKey.replace("\"", "") + "\" ORDER BY updated DESC";
-			IssueSearchResponse node = restClient
+			String fields =
+					"summary,status,issuetype,assignee,updated,created,description,priority,resolution";
+			IssueSearchJqlResponse node = restClient
 					.get()
-					.uri(builder -> builder
-							.scheme("https")
-							.host("api.atlassian.com")
-							.path("/ex/jira/{cloudId}/rest/api/3/search")
-							.queryParam("jql", jql)
-							.queryParam("startAt", safeStart)
-							.queryParam("maxResults", safeMax)
-							.queryParam(
-									"fields",
-									"summary,status,issuetype,assignee,updated,created,description,priority,resolution")
-							.build(cloudId))
+					.uri(builder -> {
+						var uri = builder
+								.scheme("https")
+								.host("api.atlassian.com")
+								.path("/ex/jira/{cloudId}/rest/api/3/search/jql")
+								.queryParam("jql", jql)
+								.queryParam("maxResults", safeMax)
+								.queryParam("fields", fields);
+						if (nextPageToken != null && !nextPageToken.isBlank()) {
+							uri = uri.queryParam("nextPageToken", nextPageToken);
+						}
+						return uri.build(cloudId);
+					})
 					.header("Authorization", "Bearer " + accessToken)
 					.retrieve()
-					.body(IssueSearchResponse.class);
+					.body(IssueSearchJqlResponse.class);
 			if (node == null || node.issues() == null) {
-				return new IssueSearchPage(List.of(), 0, safeStart, safeMax);
+				return new IssueSearchPage(List.of(), null, true, safeMax);
 			}
 			List<IssueSummary> issues = node.issues().stream()
 					.filter(item -> item != null && item.id() != null)
 					.map(JiraOAuthClient::toSummary)
 					.toList();
-			return new IssueSearchPage(
-					issues, node.total() == null ? issues.size() : node.total(), safeStart, safeMax);
+			boolean last = Boolean.TRUE.equals(node.isLast())
+					|| node.nextPageToken() == null
+					|| node.nextPageToken().isBlank()
+					|| issues.isEmpty();
+			return new IssueSearchPage(issues, blankToNull(node.nextPageToken()), last, safeMax);
 		} catch (RestClientResponseException ex) {
-			if (ex.getStatusCode().value() == 401) {
-				throw new IntegrationException(
-						IntegrationErrorCode.JIRA_UNAUTHORIZED, HttpStatus.UNAUTHORIZED, "Jira access token rejected.");
-			}
-			throw new IntegrationException(
-					IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE,
-					HttpStatus.BAD_GATEWAY,
-					"Jira issues could not be listed.");
+			throw mapSearchFailure("searchIssues", cloudId, projectKey, ex);
 		} catch (HttpMessageConversionException ex) {
+			log.warn(
+					"jira operation=searchIssues httpStatus=null errorCode=JIRA_PROJECT_NOT_ACCESSIBLE cloudIdPresent={} projectKey={} cause=body_parse",
+					cloudId != null && !cloudId.isBlank(),
+					safeProjectKey(projectKey));
 			throw new IntegrationException(
 					IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE,
 					HttpStatus.BAD_GATEWAY,
 					"Jira issues could not be listed.");
 		}
+	}
+
+	private IntegrationException mapProjectFailure(
+			String operation, String cloudId, String projectIdOrKey, RestClientResponseException ex) {
+		int status = ex.getStatusCode().value();
+		IntegrationErrorCode code = status == 401
+				? IntegrationErrorCode.JIRA_UNAUTHORIZED
+				: IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE;
+		log.warn(
+				"jira operation={} httpStatus={} errorCode={} cloudIdPresent={} projectKey={} errorMessages={}",
+				operation,
+				status,
+				code.name(),
+				cloudId != null && !cloudId.isBlank(),
+				safeProjectKey(projectIdOrKey),
+				safeErrorMessages(ex));
+		HttpStatus mapped = status == 401 ? HttpStatus.UNAUTHORIZED : HttpStatus.FORBIDDEN;
+		return new IntegrationException(code, mapped, "Jira project is not accessible.");
+	}
+
+	private IntegrationException mapSearchFailure(
+			String operation, String cloudId, String projectKey, RestClientResponseException ex) {
+		int status = ex.getStatusCode().value();
+		IntegrationErrorCode code;
+		HttpStatus mapped;
+		String message;
+		if (status == 401) {
+			code = IntegrationErrorCode.JIRA_UNAUTHORIZED;
+			mapped = HttpStatus.UNAUTHORIZED;
+			message = "Jira access token rejected.";
+		} else if (status == 410) {
+			code = IntegrationErrorCode.JIRA_SYNC_INCOMPLETE;
+			mapped = HttpStatus.BAD_GATEWAY;
+			message = "Jira issue search API was removed or unavailable.";
+		} else if (status == 403 || status == 404) {
+			code = IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE;
+			mapped = HttpStatus.BAD_GATEWAY;
+			message = "Jira issues could not be listed.";
+		} else {
+			code = IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE;
+			mapped = HttpStatus.BAD_GATEWAY;
+			message = "Jira issues could not be listed.";
+		}
+		log.warn(
+				"jira operation={} httpStatus={} errorCode={} cloudIdPresent={} projectKey={} errorMessages={}",
+				operation,
+				status,
+				code.name(),
+				cloudId != null && !cloudId.isBlank(),
+				safeProjectKey(projectKey),
+				safeErrorMessages(ex));
+		return new IntegrationException(code, mapped, message);
+	}
+
+	static String safeErrorMessages(RestClientResponseException ex) {
+		try {
+			String body = ex.getResponseBodyAsString();
+			if (body == null || body.isBlank()) {
+				return "";
+			}
+			JiraErrorBody parsed = SAFE_ERROR_MAPPER.readValue(body, JiraErrorBody.class);
+			if (parsed.errorMessages() == null || parsed.errorMessages().isEmpty()) {
+				return "";
+			}
+			return parsed.errorMessages().stream()
+					.filter(msg -> msg != null && !msg.isBlank())
+					.limit(3)
+					.map(msg -> msg.length() > 200 ? msg.substring(0, 200) : msg)
+					.collect(Collectors.joining("; "));
+		} catch (Exception ignored) {
+			return "";
+		}
+	}
+
+	private static String safeProjectKey(String projectKey) {
+		if (projectKey == null || projectKey.isBlank()) {
+			return "";
+		}
+		return projectKey.length() > 64 ? projectKey.substring(0, 64) : projectKey;
+	}
+
+	private static String blankToNull(String value) {
+		return value == null || value.isBlank() ? null : value;
 	}
 
 	private static IssueSummary toSummary(IssueApiResponse item) {
@@ -296,7 +396,11 @@ public class JiraOAuthClient {
 	public record JiraBoardOption(String id, String name, String type) {}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record IssueSearchResponse(List<IssueApiResponse> issues, Integer total, Integer startAt, Integer maxResults) {}
+	public record IssueSearchJqlResponse(
+			List<IssueApiResponse> issues, String nextPageToken, Boolean isLast) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record JiraErrorBody(List<String> errorMessages) {}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record IssueApiResponse(String id, String key, IssueFields fields) {}
@@ -343,5 +447,5 @@ public class JiraOAuthClient {
 			String created,
 			String updated) {}
 
-	public record IssueSearchPage(List<IssueSummary> issues, int total, int startAt, int maxResults) {}
+	public record IssueSearchPage(List<IssueSummary> issues, String nextPageToken, boolean last, int maxResults) {}
 }

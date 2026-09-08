@@ -169,7 +169,12 @@ class SyncJobStaleRecoveryTest {
 		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
 		when(jiraIntegrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(integration));
 		when(credentials.resolveAccessToken(projectId)).thenReturn("token");
-		when(jira.searchIssues(any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt()))
+		when(jira.searchIssues(
+						any(),
+						any(),
+						any(),
+						org.mockito.ArgumentMatchers.nullable(String.class),
+						org.mockito.ArgumentMatchers.anyInt()))
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.BAD_GATEWAY, "down"));
 		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));

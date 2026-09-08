@@ -11,6 +11,7 @@ import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.jira.JiraOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSearchPage;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
+import com.saga.be.integration.jira.JiraOAuthClient.JiraProjectResponse;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.SyncJobLogRepository;
 import com.saga.be.service.projection.JiraTaskProjectionService;
@@ -27,7 +28,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Complete Jira issue reconciliation for the selected ACTIVE project.
- * Pages until the provider returns a short/empty page or startAt reaches total.
+ * Pages via enhanced {@code /rest/api/3/search/jql} until {@code isLast}/empty token.
  * No product backfill cap — SUCCESS only after complete traversal.
  */
 @Service
@@ -100,8 +101,9 @@ public class JiraTaskSyncService {
 			String accessToken = preferredAccess != null && !preferredAccess.isBlank()
 					? preferredAccess
 					: credentials.resolveAccessToken(projectId);
+			probeProjectAccess(accessToken, integration);
 			int pageSize = Math.max(1, Math.min(properties.getJiraIssuePageSize(), 100));
-			int startAt = 0;
+			String nextPageToken = null;
 			int processed = 0;
 			boolean refreshedForUnauthorized = false;
 			int pagesFetched = 0;
@@ -110,14 +112,22 @@ public class JiraTaskSyncService {
 				IssueSearchPage page;
 				try {
 					page = jira.searchIssues(
-							accessToken, integration.getCloudId(), integration.getProjectKey(), startAt, pageSize);
+							accessToken,
+							integration.getCloudId(),
+							integration.getProjectKey(),
+							nextPageToken,
+							pageSize);
 				} catch (IntegrationException ex) {
 					if (ex.getCode() == IntegrationErrorCode.JIRA_UNAUTHORIZED && !refreshedForUnauthorized) {
 						String rejected = accessToken;
 						accessToken = credentials.forceRefresh(projectId, rejected);
 						refreshedForUnauthorized = true;
 						page = jira.searchIssues(
-								accessToken, integration.getCloudId(), integration.getProjectKey(), startAt, pageSize);
+								accessToken,
+								integration.getCloudId(),
+								integration.getProjectKey(),
+								nextPageToken,
+								pageSize);
 					} else {
 						throw ex;
 					}
@@ -131,11 +141,11 @@ public class JiraTaskSyncService {
 				Integer upserted = writes.execute(status ->
 						projection.upsertBatch(integration.getProject(), integration.getProjectKey(), issues));
 				processed += upserted == null ? 0 : upserted;
-				startAt += issues.size();
-				if (startAt >= page.total() || issues.size() < pageSize) {
+				if (page.last() || page.nextPageToken() == null || page.nextPageToken().isBlank()) {
 					exhausted = true;
 					break;
 				}
+				nextPageToken = page.nextPageToken();
 			}
 			if (!exhausted) {
 				throw new IntegrationException(
@@ -169,6 +179,44 @@ public class JiraTaskSyncService {
 			if (!finalized) {
 				claims.markFailed(job, "SYNC_JOB_ABORTED", "finalize");
 			}
+		}
+	}
+
+	/**
+	 * Diagnostic-only: distinguishes project permission vs search-API failures in logs.
+	 * Does not abort sync — issue search remains the authoritative sync path.
+	 */
+	private void probeProjectAccess(String accessToken, JiraIntegration integration) {
+		String keyOrId = integration.getJiraProjectId() != null && !integration.getJiraProjectId().isBlank()
+				? integration.getJiraProjectId()
+				: integration.getProjectKey();
+		boolean jiraProjectIdPresent =
+				integration.getJiraProjectId() != null && !integration.getJiraProjectId().isBlank();
+		try {
+			JiraProjectResponse project = jira.getProject(accessToken, integration.getCloudId(), keyOrId);
+			if (project == null || project.id() == null) {
+				log.warn(
+						"jira operation=getProjectProbeFailed errorCode=JIRA_PROJECT_NOT_ACCESSIBLE cloudIdPresent=true jiraProjectIdPresent={} projectKey={} cause=empty_body",
+						jiraProjectIdPresent,
+						integration.getProjectKey());
+				return;
+			}
+			log.info(
+					"jira operation=getProject httpStatus=200 errorCode=none cloudIdPresent=true jiraProjectIdPresent={} projectKey={}",
+					jiraProjectIdPresent,
+					project.key() != null ? project.key() : integration.getProjectKey());
+		} catch (IntegrationException ex) {
+			log.warn(
+					"jira operation=getProjectProbeFailed errorCode={} cloudIdPresent=true jiraProjectIdPresent={} projectKey={}",
+					ex.getCode(),
+					jiraProjectIdPresent,
+					integration.getProjectKey());
+		} catch (RuntimeException ex) {
+			log.warn(
+					"jira operation=getProjectProbeFailed errorCode=UNEXPECTED type={} cloudIdPresent=true jiraProjectIdPresent={} projectKey={}",
+					ex.getClass().getSimpleName(),
+					jiraProjectIdPresent,
+					integration.getProjectKey());
 		}
 	}
 
