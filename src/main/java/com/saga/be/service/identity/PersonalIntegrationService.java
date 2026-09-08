@@ -17,6 +17,7 @@ import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient;
 import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
+import com.saga.be.integration.oauth.JiraOAuthCallbackSupport;
 import com.saga.be.integration.oauth.OAuthState;
 import com.saga.be.integration.oauth.OAuthStateService;
 import com.saga.be.integration.oauth.Pkce;
@@ -87,7 +88,8 @@ public class PersonalIntegrationService {
 						map.getProviderDisplayName(),
 						map.isPrimary(),
 						map.getMappingStatus().name(),
-						map.getLinkedAt()))
+						map.getLinkedAt(),
+						map.getLastVerifiedAt()))
 				.toList();
 		return new MyIntegrationsResponse(items);
 	}
@@ -150,7 +152,13 @@ public class PersonalIntegrationService {
 
 	@Transactional
 	public String completeJira(UUID userId, String code, String rawState, UserAccount actor) {
+		return completeJira(userId, code, rawState, null, actor);
+	}
+
+	@Transactional
+	public String completeJira(UUID userId, String code, String rawState, String error, UserAccount actor) {
 		OAuthState state = oauthStates.consumeForUser(rawState, userId, OAuthFlowType.JIRA_USER_LINK);
+		JiraOAuthCallbackSupport.requireAuthorizationCodeOrThrow(code, error);
 		JiraOAuthClient.TokenResponse tokens = jira.exchange(
 				code,
 				state.pkceVerifier(),

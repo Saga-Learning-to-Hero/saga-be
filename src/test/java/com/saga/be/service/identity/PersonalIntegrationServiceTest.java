@@ -1,19 +1,27 @@
 package com.saga.be.service.identity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.saga.be.config.IntegrationProperties;
+import com.saga.be.dto.integration.LinkedIdentityResponse;
+import com.saga.be.dto.integration.MyIntegrationsResponse;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.enums.AccountRole;
 import com.saga.be.entity.enums.AccountStatus;
+import com.saga.be.entity.enums.IdentityMappingStatus;
+import com.saga.be.entity.enums.IntegrationProvider;
 import com.saga.be.entity.enums.OAuthFlowType;
 import com.saga.be.entity.integration.IdentityMap;
 import com.saga.be.entity.integration.IdentityMappingHistory;
+import com.saga.be.exception.IntegrationException;
+import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient;
 import com.saga.be.integration.oauth.OAuthState;
@@ -25,6 +33,7 @@ import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.service.attribution.AttributionWarningService;
 import com.saga.be.service.audit.AuditService;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -129,6 +138,80 @@ class PersonalIntegrationServiceTest {
 		assertEquals(
 				"http://localhost:3000/projects/123/integrations",
 				service.completeJira(user.getId(), "code", "state", user));
+	}
+
+	@Test
+	void personalJiraAccessDeniedConsumesStateAndDoesNotExchangeOrMutate() {
+		when(oauthStates.consumeForUser(eq("state"), eq(user.getId()), eq(OAuthFlowType.JIRA_USER_LINK)))
+				.thenReturn(personalState(OAuthFlowType.JIRA_USER_LINK, "/projects/123/integrations"));
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.completeJira(user.getId(), null, "state", "access_denied", user));
+		assertEquals(IntegrationErrorCode.JIRA_OAUTH_CANCELLED, ex.getCode());
+		verify(oauthStates).consumeForUser(eq("state"), eq(user.getId()), eq(OAuthFlowType.JIRA_USER_LINK));
+		verify(jira, never()).exchange(any(), any(), any());
+		verify(identities, never()).save(any());
+		verify(history, never()).save(any());
+	}
+
+	@Test
+	void personalJiraInvalidStateOnAccessDeniedDoesNotExchange() {
+		when(oauthStates.consumeForUser(eq("bad"), eq(user.getId()), eq(OAuthFlowType.JIRA_USER_LINK)))
+				.thenThrow(new IntegrationException(
+						IntegrationErrorCode.OAUTH_STATE_INVALID, org.springframework.http.HttpStatus.BAD_REQUEST, "bad"));
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.completeJira(user.getId(), null, "bad", "access_denied", user));
+		assertEquals(IntegrationErrorCode.OAUTH_STATE_INVALID, ex.getCode());
+		verify(jira, never()).exchange(any(), any(), any());
+		verify(identities, never()).save(any());
+	}
+
+	@Test
+	void personalJiraRejectsTeamFlowState() {
+		when(oauthStates.consumeForUser(eq("state"), eq(user.getId()), eq(OAuthFlowType.JIRA_USER_LINK)))
+				.thenThrow(new IntegrationException(
+						IntegrationErrorCode.OAUTH_STATE_INVALID, org.springframework.http.HttpStatus.BAD_REQUEST, "flow"));
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.completeJira(user.getId(), null, "state", "access_denied", user));
+		assertEquals(IntegrationErrorCode.OAUTH_STATE_INVALID, ex.getCode());
+		verify(jira, never()).exchange(any(), any(), any());
+	}
+
+	@Test
+	void personalJiraMissingCodeWithoutErrorDoesNotExchange() {
+		when(oauthStates.consumeForUser(eq("state"), eq(user.getId()), eq(OAuthFlowType.JIRA_USER_LINK)))
+				.thenReturn(personalState(OAuthFlowType.JIRA_USER_LINK, null));
+		IntegrationException ex = assertThrows(
+				IntegrationException.class, () -> service.completeJira(user.getId(), null, "state", null, user));
+		assertEquals(IntegrationErrorCode.JIRA_OAUTH_CALLBACK_INVALID, ex.getCode());
+		verify(jira, never()).exchange(any(), any(), any());
+	}
+
+	@Test
+	void meReturnsLinkedAtAndLastVerifiedAtForPersonalJira() {
+		LocalDateTime first = LocalDateTime.of(2026, 1, 10, 8, 0);
+		LocalDateTime last = LocalDateTime.of(2026, 3, 15, 14, 30);
+		IdentityMap map = new IdentityMap();
+		map.setId(UUID.randomUUID());
+		map.setUserAccount(user);
+		map.setProvider(IntegrationProvider.JIRA);
+		map.setExternalAccountId("acct-1");
+		map.setExternalUsername("User");
+		map.setProviderDisplayName("User");
+		map.setPrimary(true);
+		map.setMappingStatus(IdentityMappingStatus.ACTIVE);
+		map.setLinkedAt(first);
+		map.setLastVerifiedAt(last);
+		when(identities.findByUserAccount_Id(user.getId())).thenReturn(List.of(map));
+
+		MyIntegrationsResponse response = service.me(user.getId());
+		assertEquals(1, response.identities().size());
+		LinkedIdentityResponse item = response.identities().getFirst();
+		assertEquals(IntegrationProvider.JIRA, item.provider());
+		assertEquals(first, item.linkedAt());
+		assertEquals(last, item.lastVerifiedAt());
 	}
 
 	private void stubPersonalGithubLink(String returnPath) {

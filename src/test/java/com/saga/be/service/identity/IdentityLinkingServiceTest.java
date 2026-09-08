@@ -93,6 +93,45 @@ class IdentityLinkingServiceTest {
 	}
 
 	@Test
+	void firstLinkSetsLinkedAtAndLastVerifiedAtTogether() {
+		LocalDateTime first = LocalDateTime.of(2026, 1, 10, 8, 0);
+		IdentityMap identity =
+				service.link(cmdAt(alice, IntegrationProvider.JIRA, "jira-1", "Alice", first)).identity();
+		assertEquals(first, identity.getLinkedAt());
+		assertEquals(first, identity.getLastVerifiedAt());
+		assertEquals(first, identity.getVerifiedAt());
+	}
+
+	@Test
+	void reconnectPreservesLinkedAtAndAdvancesLastVerifiedAt() {
+		LocalDateTime first = LocalDateTime.of(2026, 1, 10, 8, 0);
+		LocalDateTime reconnect = LocalDateTime.of(2026, 3, 15, 14, 30);
+		service.link(cmdAt(alice, IntegrationProvider.JIRA, "jira-1", "Alice", first));
+		IdentityLinkingService.LinkResult again =
+				service.link(cmdAt(alice, IntegrationProvider.JIRA, "jira-1", "Alice", reconnect));
+		assertEquals(IdentityMappingAction.VERIFIED, again.action());
+		assertEquals(first, again.identity().getLinkedAt());
+		assertEquals(reconnect, again.identity().getLastVerifiedAt());
+		assertEquals(reconnect, again.identity().getVerifiedAt());
+	}
+
+	@Test
+	void failedConflictLinkDoesNotAdvanceLastVerifiedAtOnExistingOwner() {
+		LocalDateTime first = LocalDateTime.of(2026, 1, 10, 8, 0);
+		LocalDateTime attempt = LocalDateTime.of(2026, 4, 1, 9, 0);
+		IdentityMap owner =
+				service.link(cmdAt(alice, IntegrationProvider.JIRA, "jira-1", "Alice", first)).identity();
+		IdentityLinkingService.LinkResult conflict =
+				service.link(cmdAt(bob, IntegrationProvider.JIRA, "jira-1", "Bob", attempt));
+		assertTrue(conflict.claimedConflict());
+		assertEquals(IdentityMappingAction.LINK_FAILED, conflict.action());
+		IdentityMap persisted = store.maps.get(owner.getId());
+		assertEquals(first, persisted.getLinkedAt());
+		assertEquals(first, persisted.getLastVerifiedAt());
+		assertEquals(first, persisted.getVerifiedAt());
+	}
+
+	@Test
 	void primaryTransitionWorks() {
 		IdentityMap first = service.link(cmd(alice, IntegrationProvider.GITHUB, "111", "a")).identity();
 		IdentityMap second = service.link(cmd(alice, IntegrationProvider.GITHUB, "222", "b")).identity();
@@ -124,8 +163,17 @@ class IdentityLinkingServiceTest {
 
 	private IdentityLinkingService.LinkCommand cmd(
 			UserAccount user, IntegrationProvider provider, String subject, String login) {
+		return cmdAt(user, provider, subject, login, LocalDateTime.now());
+	}
+
+	private IdentityLinkingService.LinkCommand cmdAt(
+			UserAccount user,
+			IntegrationProvider provider,
+			String subject,
+			String login,
+			LocalDateTime now) {
 		return new IdentityLinkingService.LinkCommand(
-				user, user, provider, subject, login, login, null, null, LocalDateTime.now());
+				user, user, provider, subject, login, login, null, null, now);
 	}
 
 	private static UserAccount user(String name) {

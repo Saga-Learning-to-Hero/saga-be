@@ -43,11 +43,13 @@ public class IntegrationCallbackController {
 	@GetMapping("/jira/team/callback")
 	public ResponseEntity<Void> jiraTeam(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
-			@RequestParam String code,
-			@RequestParam String state) {
+			@RequestParam(required = false) String code,
+			@RequestParam(required = false) String state,
+			@RequestParam(required = false) String error,
+			@RequestParam(value = "error_description", required = false) String errorDescription) {
 		try {
 			return IntegrationFrontendRedirects.seeOther(
-					projects.completeJiraTeamCallback(principal.getUserId(), code, state));
+					projects.completeJiraTeamCallback(principal.getUserId(), code, state, error));
 		} catch (IntegrationException ex) {
 			return IntegrationFrontendRedirects.failure(properties.getFailureUrl(), ex);
 		}

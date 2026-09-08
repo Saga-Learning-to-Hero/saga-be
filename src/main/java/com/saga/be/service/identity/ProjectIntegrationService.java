@@ -34,6 +34,7 @@ import com.saga.be.integration.github.GitHubAppJwtService;
 import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient;
 import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
+import com.saga.be.integration.oauth.JiraOAuthCallbackSupport;
 import com.saga.be.integration.oauth.OAuthState;
 import com.saga.be.integration.oauth.OAuthStateService;
 import com.saga.be.integration.oauth.PendingJiraConnect;
@@ -379,7 +380,12 @@ public class ProjectIntegrationService {
 	}
 
 	public String completeJiraTeamCallback(UUID userId, String code, String rawState) {
+		return completeJiraTeamCallback(userId, code, rawState, null);
+	}
+
+	public String completeJiraTeamCallback(UUID userId, String code, String rawState, String error) {
 		OAuthState state = oauthStates.consumeForUser(rawState, userId, OAuthFlowType.JIRA_TEAM_CONNECT);
+		JiraOAuthCallbackSupport.requireAuthorizationCodeOrThrow(code, error);
 		requireLeader(userId, state.projectId());
 		JiraOAuthClient.TokenResponse tokens = jira.exchange(
 				code,

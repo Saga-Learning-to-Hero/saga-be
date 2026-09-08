@@ -1,5 +1,6 @@
 package com.saga.be.controller;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -84,7 +85,7 @@ class IntegrationCallbackRedirectWebTest {
 
 	@Test
 	void jiraTeamCallbackRedirectsKnownFailureToFrontend() throws Exception {
-		when(projects.completeJiraTeamCallback(eq(principal.getUserId()), eq("code"), eq("state")))
+		when(projects.completeJiraTeamCallback(eq(principal.getUserId()), eq("code"), eq("state"), eq(null)))
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.OAUTH_STATE_EXPIRED, HttpStatus.BAD_REQUEST, "do-not-leak"));
 		callbacks.perform(get("/api/integrations/jira/team/callback").param("code", "code").param("state", "state"))
@@ -106,12 +107,57 @@ class IntegrationCallbackRedirectWebTest {
 	@Test
 	void personalJiraCallbackRedirectsKnownFailureToFrontend() throws Exception {
 		when(users.findById(principal.getUserId())).thenReturn(Optional.of(actor));
-		when(personal.completeJira(eq(principal.getUserId()), eq("code"), eq("state"), eq(actor)))
+		when(personal.completeJira(eq(principal.getUserId()), eq("code"), eq("state"), eq(null), eq(actor)))
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.JIRA_SITE_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "secret"));
 		callbacks.perform(get("/api/integrations/jira/oauth/callback").param("code", "code").param("state", "state"))
 				.andExpect(status().isFound())
 				.andExpect(header().string("Location", "http://localhost:3000/integrations/failure?code=JIRA_SITE_NOT_ACCESSIBLE"));
+	}
+
+	@Test
+	void personalJiraAccessDeniedRedirectsToFrontendFailureWithoutWhitelabel() throws Exception {
+		when(users.findById(principal.getUserId())).thenReturn(Optional.of(actor));
+		when(personal.completeJira(eq(principal.getUserId()), eq(null), eq("state"), eq("access_denied"), eq(actor)))
+				.thenThrow(new IntegrationException(
+						IntegrationErrorCode.JIRA_OAUTH_CANCELLED, HttpStatus.BAD_REQUEST, "cancelled"));
+		callbacks.perform(get("/api/integrations/jira/oauth/callback")
+						.param("state", "state")
+						.param("error", "access_denied")
+						.param("error_description", "User denied access to your app"))
+				.andExpect(status().isFound())
+				.andExpect(header().string("Location", "http://localhost:3000/integrations/failure?code=JIRA_OAUTH_CANCELLED"))
+				.andExpect(result -> {
+					String location = result.getResponse().getHeader("Location");
+					assertFalse(location.contains("User denied"));
+					assertFalse(location.contains("error_description"));
+				});
+	}
+
+	@Test
+	void personalJiraMissingCodeAndErrorRedirectsControlledFailure() throws Exception {
+		when(users.findById(principal.getUserId())).thenReturn(Optional.of(actor));
+		when(personal.completeJira(eq(principal.getUserId()), eq(null), eq("state"), eq(null), eq(actor)))
+				.thenThrow(new IntegrationException(
+						IntegrationErrorCode.JIRA_OAUTH_CALLBACK_INVALID, HttpStatus.BAD_REQUEST, "missing"));
+		callbacks.perform(get("/api/integrations/jira/oauth/callback").param("state", "state"))
+				.andExpect(status().isFound())
+				.andExpect(header().string(
+						"Location", "http://localhost:3000/integrations/failure?code=JIRA_OAUTH_CALLBACK_INVALID"));
+	}
+
+	@Test
+	void teamJiraAccessDeniedRedirectsToFrontendFailure() throws Exception {
+		when(projects.completeJiraTeamCallback(eq(principal.getUserId()), eq(null), eq("state"), eq("access_denied")))
+				.thenThrow(new IntegrationException(
+						IntegrationErrorCode.JIRA_OAUTH_CANCELLED, HttpStatus.BAD_REQUEST, "cancelled"));
+		callbacks.perform(get("/api/integrations/jira/team/callback")
+						.param("state", "state")
+						.param("error", "access_denied")
+						.param("error_description", "The user denied the request"))
+				.andExpect(status().isFound())
+				.andExpect(header().string("Location", "http://localhost:3000/integrations/failure?code=JIRA_OAUTH_CANCELLED"))
+				.andExpect(result -> assertFalse(result.getResponse().getHeader("Location").contains("denied the request")));
 	}
 
 	@Test

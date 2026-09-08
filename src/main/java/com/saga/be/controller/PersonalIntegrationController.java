@@ -91,12 +91,14 @@ public class PersonalIntegrationController {
 	@GetMapping("/jira/oauth/callback")
 	public ResponseEntity<Void> jiraCallback(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
-			@RequestParam String code,
-			@RequestParam String state) {
+			@RequestParam(required = false) String code,
+			@RequestParam(required = false) String state,
+			@RequestParam(required = false) String error,
+			@RequestParam(value = "error_description", required = false) String errorDescription) {
 		UserAccount actor = users.findById(principal.getUserId()).orElseThrow();
 		try {
 			return IntegrationFrontendRedirects.seeOther(
-					integrations.completeJira(principal.getUserId(), code, state, actor));
+					integrations.completeJira(principal.getUserId(), code, state, error, actor));
 		} catch (IntegrationException ex) {
 			return IntegrationFrontendRedirects.failure(properties.getFailureUrl(), ex);
 		}

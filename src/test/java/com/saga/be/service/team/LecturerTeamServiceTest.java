@@ -195,6 +195,28 @@ class LecturerTeamServiceTest {
 	}
 
 	@Test
+	void previewAcceptsSingleLeaderOrMemberAndRejectsCombinedRole() throws Exception {
+		TeamPreviewResponse leaderOk = preview(List.of(
+				row("1", "SE1705", "Alpha Student", "SE111111", "alpha@gmail.com", "1", "Alpha", "Leader"),
+				row("2", "SE1705", "Beta Student", "SE222222", "beta@gmail.com", "1", "Alpha", "Member")));
+		assertFalse(leaderOk.hasBlockingErrors());
+		assertEquals("LEADER", leaderOk.rows().getFirst().teamRole());
+		assertEquals("MEMBER", leaderOk.rows().get(1).teamRole());
+
+		TeamPreviewResponse memberOk = preview(List.of(
+				row("1", "SE1705", "Alpha Student", "SE111111", "alpha@gmail.com", "1", "Alpha", "Member"),
+				row("2", "SE1705", "Beta Student", "SE222222", "beta@gmail.com", "1", "Alpha", "Leader")));
+		assertFalse(memberOk.hasBlockingErrors());
+
+		TeamPreviewResponse combined = preview(List.of(
+				row("1", "SE1705", "Alpha Student", "SE111111", "alpha@gmail.com", "1", "Alpha", "Leader,Member"),
+				row("2", "SE1705", "Beta Student", "SE222222", "beta@gmail.com", "1", "Alpha", "Member")));
+		assertTrue(combined.hasBlockingErrors());
+		assertTrue(combined.rows().getFirst().errors().stream()
+				.anyMatch(error -> error.contains("TeamRole must be Leader or Member")));
+	}
+
+	@Test
 	void oversizedFileIsRejected() {
 		RosterProperties tiny = new RosterProperties();
 		tiny.setMaxFileBytes(4);

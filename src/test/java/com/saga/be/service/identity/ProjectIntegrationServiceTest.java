@@ -746,6 +746,45 @@ class ProjectIntegrationServiceTest {
 				service.completeJiraTeamCallback(student.getId(), "code", "state"));
 	}
 
+	@Test
+	void jiraTeamAccessDeniedConsumesStateAndDoesNotExchangeOrPersistPending() {
+		when(oauthStates.consumeForUser(eq("state"), eq(student.getId()), eq(OAuthFlowType.JIRA_TEAM_CONNECT)))
+				.thenReturn(stateWithReturn(OAuthFlowType.JIRA_TEAM_CONNECT, "/projects/123/integrations"));
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.completeJiraTeamCallback(student.getId(), null, "state", "access_denied"));
+		assertEquals(IntegrationErrorCode.JIRA_OAUTH_CANCELLED, ex.getCode());
+		verify(oauthStates).consumeForUser(eq("state"), eq(student.getId()), eq(OAuthFlowType.JIRA_TEAM_CONNECT));
+		verify(jira, never()).exchange(any(), any(), any());
+		verify(pendingJira, never()).save(any(), any());
+		verify(jiraIntegrations, never()).save(any());
+	}
+
+	@Test
+	void jiraTeamRejectsPersonalFlowStateOnCancel() {
+		when(oauthStates.consumeForUser(eq("state"), eq(student.getId()), eq(OAuthFlowType.JIRA_TEAM_CONNECT)))
+				.thenThrow(new IntegrationException(
+						IntegrationErrorCode.OAUTH_STATE_INVALID,
+						org.springframework.http.HttpStatus.BAD_REQUEST,
+						"wrong flow"));
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.completeJiraTeamCallback(student.getId(), null, "state", "access_denied"));
+		assertEquals(IntegrationErrorCode.OAUTH_STATE_INVALID, ex.getCode());
+		verify(jira, never()).exchange(any(), any(), any());
+		verify(pendingJira, never()).save(any(), any());
+	}
+
+	@Test
+	void jiraTeamMissingCodeWithoutErrorDoesNotExchange() {
+		when(oauthStates.consumeForUser(eq("state"), eq(student.getId()), eq(OAuthFlowType.JIRA_TEAM_CONNECT)))
+				.thenReturn(stateWithReturn(OAuthFlowType.JIRA_TEAM_CONNECT, null));
+		IntegrationException ex = assertThrows(
+				IntegrationException.class, () -> service.completeJiraTeamCallback(student.getId(), null, "state", null));
+		assertEquals(IntegrationErrorCode.JIRA_OAUTH_CALLBACK_INVALID, ex.getCode());
+		verify(jira, never()).exchange(any(), any(), any());
+	}
+
 	private void stubJiraLeaderAndPending() {
 		when(users.findById(student.getId())).thenReturn(Optional.of(student));
 		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));

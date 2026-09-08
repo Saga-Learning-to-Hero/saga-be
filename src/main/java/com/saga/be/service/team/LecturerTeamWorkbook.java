@@ -13,6 +13,7 @@ import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.DataValidation;
 import org.apache.poi.ss.usermodel.DataValidationConstraint;
 import org.apache.poi.ss.usermodel.DataValidationHelper;
+import org.apache.poi.ss.usermodel.Name;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.util.CellRangeAddress;
@@ -29,6 +30,9 @@ public final class LecturerTeamWorkbook {
 
 	public static final String SHEET_NAME = "Team_Assignment";
 	public static final String INSTRUCTION_SHEET = "Huong_Dan";
+	/** Hidden sheet backing the TeamRole dropdown (avoids Excel treating "Leader,Member" as one choice). */
+	public static final String ROLE_LIST_SHEET = "_TeamRoleList";
+	public static final String ROLE_LIST_NAME = "TeamRoles";
 	public static final List<String> HEADERS =
 			List.of("No", "Class", "FullName", "StudentCode", "Email", "TeamNo", "TeamName", "TeamRole");
 	public static final String ROLE_LEADER = "Leader";
@@ -77,21 +81,39 @@ public final class LecturerTeamWorkbook {
 			sheet.setColumnWidth(7, 14 * 256);
 			int lastDataRow = Math.max(1, rows.size());
 			sheet.setAutoFilter(new CellRangeAddress(0, lastDataRow, 0, HEADERS.size() - 1));
-			DataValidationHelper helper = sheet.getDataValidationHelper();
-			DataValidationConstraint constraint =
-					helper.createExplicitListConstraint(new String[] {ROLE_LEADER, ROLE_MEMBER});
-			CellRangeAddressList addressList = new CellRangeAddressList(1, Math.max(500, rows.size() + 50), 7, 7);
-			DataValidation validation = helper.createValidation(constraint, addressList);
-			validation.setSuppressDropDownArrow(true);
-			validation.setShowErrorBox(true);
-			sheet.addValidationData(validation);
+			addTeamRoleDropdown(workbook, sheet, rows.size());
 			helpNote(workbook, classCode == null ? "" : classCode);
+			workbook.setActiveSheet(workbook.getSheetIndex(sheet));
 			workbook.write(out);
 			return out.toByteArray();
 		} catch (IOException ex) {
 			throw new AcademicException(
 					AcademicErrorCode.TEAM_FILE_INVALID, HttpStatus.BAD_REQUEST, "Unable to build team template.");
 		}
+	}
+
+	/**
+	 * Excel list validation via createExplicitListConstraint joins values with commas into one formula
+	 * ({@code "Leader,Member"}). Some Excel builds treat that as a single invalid choice. A hidden-sheet
+	 * named range yields two distinct dropdown items without relying on locale list separators.
+	 */
+	private static void addTeamRoleDropdown(XSSFWorkbook workbook, XSSFSheet sheet, int studentCount) {
+		XSSFSheet roleList = workbook.createSheet(ROLE_LIST_SHEET);
+		roleList.createRow(0).createCell(0).setCellValue(ROLE_LEADER);
+		roleList.createRow(1).createCell(0).setCellValue(ROLE_MEMBER);
+		Name named = workbook.createName();
+		named.setNameName(ROLE_LIST_NAME);
+		named.setRefersToFormula("'" + ROLE_LIST_SHEET + "'!$A$1:$A$2");
+		workbook.setSheetHidden(workbook.getSheetIndex(roleList), true);
+
+		DataValidationHelper helper = sheet.getDataValidationHelper();
+		DataValidationConstraint constraint = helper.createFormulaListConstraint(ROLE_LIST_NAME);
+		CellRangeAddressList addressList = new CellRangeAddressList(1, Math.max(500, studentCount + 50), 7, 7);
+		DataValidation validation = helper.createValidation(constraint, addressList);
+		validation.setSuppressDropDownArrow(true);
+		validation.setShowErrorBox(true);
+		validation.setEmptyCellAllowed(true);
+		sheet.addValidationData(validation);
 	}
 
 	private static void helpNote(XSSFWorkbook workbook, String classCode) {
