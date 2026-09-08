@@ -8,9 +8,12 @@ import com.saga.be.config.IntegrationProperties;
 import com.saga.be.integration.webhook.WebhookReceiptService;
 import com.saga.be.repository.WebhookReceiptRepository;
 import com.saga.be.service.attribution.AttributionWarningService;
+import com.saga.be.service.jira.JiraIssueEvidenceSyncService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.concurrent.CompletableFuture;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,11 +30,13 @@ public class ProviderWebhookController {
 	private final IntegrationProperties properties;
 	private final WebhookReceiptService receipts;
 	private final AttributionWarningService warnings;
+	private final JiraIssueEvidenceSyncService jiraEvidence;
 
 	public ProviderWebhookController(
 			IntegrationProperties properties,
 			WebhookReceiptRepository receiptRepository,
-			AttributionWarningService warnings) {
+			AttributionWarningService warnings,
+			JiraIssueEvidenceSyncService jiraEvidence) {
 		this.properties = properties;
 		this.receipts = new WebhookReceiptService(new WebhookReceiptService.Store() {
 			@Override
@@ -47,6 +52,7 @@ public class ProviderWebhookController {
 			}
 		});
 		this.warnings = warnings;
+		this.jiraEvidence = jiraEvidence;
 	}
 
 	@PostMapping("/github")
@@ -90,15 +96,19 @@ public class ProviderWebhookController {
 			throw new IntegrationException(
 					IntegrationErrorCode.WEBHOOK_SIGNATURE_INVALID, HttpStatus.UNAUTHORIZED, "Invalid webhook signature.");
 		}
+		String json = new String(body, StandardCharsets.UTF_8);
 		String deliveryId = delivery == null ? java.util.UUID.nameUUIDFromBytes(body).toString() : delivery;
-		receipts.ingest(
+		WebhookReceiptService.IngestResult result = receipts.ingest(
 				IntegrationProvider.JIRA,
 				deliveryId,
 				"jira:issue",
 				null,
-				new String(body, java.nio.charset.StandardCharsets.UTF_8),
+				json,
 				null,
 				LocalDateTime.now());
+		if (!result.duplicate()) {
+			CompletableFuture.runAsync(() -> jiraEvidence.handleWebhook(json));
+		}
 		return ResponseEntity.accepted().build();
 	}
 }

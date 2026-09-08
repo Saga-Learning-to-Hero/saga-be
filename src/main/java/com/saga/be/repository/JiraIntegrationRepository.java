@@ -16,8 +16,29 @@ public interface JiraIntegrationRepository extends JpaRepository<JiraIntegration
 
 	Optional<JiraIntegration> findByProject_Id(UUID projectId);
 
+	Optional<JiraIntegration> findByCloudIdAndJiraProjectId(String cloudId, String jiraProjectId);
+
+	@Query(
+			"""
+			SELECT j FROM JiraIntegration j
+			JOIN FETCH j.project
+			LEFT JOIN FETCH j.connectedBy
+			WHERE j.jiraProjectId = :jiraProjectId AND j.connectionStatus = :status
+			""")
+	List<JiraIntegration> findByJiraProjectIdAndConnectionStatus(
+			@Param("jiraProjectId") String jiraProjectId, @Param("status") IntegrationStatus status);
+
+	@Query(
+			"""
+			SELECT j FROM JiraIntegration j
+			JOIN FETCH j.project
+			LEFT JOIN FETCH j.connectedBy
+			WHERE j.project.id = :projectId
+			""")
+	Optional<JiraIntegration> findFetchedByProject_Id(@Param("projectId") UUID projectId);
+
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
-	@Query("select j from JiraIntegration j where j.id = :id")
+	@Query("select j from JiraIntegration j left join fetch j.connectedBy where j.id = :id")
 	Optional<JiraIntegration> lockById(@Param("id") UUID id);
 
 	List<JiraIntegration> findByConnectionStatusAndWebhookExpiresAtBefore(

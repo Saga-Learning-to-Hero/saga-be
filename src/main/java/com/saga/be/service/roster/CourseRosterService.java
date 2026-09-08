@@ -4,14 +4,12 @@ import com.saga.be.auth.InstitutionalEmailPolicy;
 import com.saga.be.config.AuthProperties;
 import com.saga.be.config.RosterProperties;
 import com.saga.be.dto.mail.EmailEnqueueRequest;
-import com.saga.be.dto.roster.AddRosterStudentRequest;
 import com.saga.be.dto.roster.CourseRosterEntryResponse;
 import com.saga.be.dto.roster.CourseRosterResponse;
 import com.saga.be.dto.roster.RosterConfirmResponse;
 import com.saga.be.dto.roster.RosterPreviewResponse;
 import com.saga.be.dto.roster.RosterPreviewRow;
 import com.saga.be.dto.roster.RosterPreviewSummary;
-import com.saga.be.dto.roster.RosterStudentMutationResponse;
 import com.saga.be.entity.account.StudentCourseInvitation;
 import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.account.UserAccount;
@@ -57,17 +55,6 @@ public class CourseRosterService {
 	public static final String COURSE_ENROLLMENT_CREATED = "COURSE_ENROLLMENT_CREATED";
 	public static final String COURSE_ENROLLMENT_REACTIVATED = "COURSE_ENROLLMENT_REACTIVATED";
 	public static final String COURSE_INVITATION_CREATED = "COURSE_INVITATION_CREATED";
-	public static final String COURSE_ROSTER_STUDENT_ADDED = "COURSE_ROSTER_STUDENT_ADDED";
-	public static final String COURSE_ENROLLMENT_WITHDRAWN = "COURSE_ENROLLMENT_WITHDRAWN";
-	public static final String COURSE_INVITATION_CANCELLED = "COURSE_INVITATION_CANCELLED";
-
-	public static final String ACTION_ENROLLED = "ENROLLED";
-	public static final String ACTION_INVITED = "INVITED";
-	public static final String ACTION_ALREADY_ENROLLED = "ALREADY_ENROLLED";
-	public static final String ACTION_ALREADY_INVITED = "ALREADY_INVITED";
-	public static final String ACTION_WITHDRAWN = "WITHDRAWN";
-	public static final String ACTION_INVITATION_CANCELLED = "INVITATION_CANCELLED";
-	public static final String ACTION_ALREADY_REMOVED = "ALREADY_REMOVED";
 
 	private final CourseRosterStore store;
 	private final RosterPreviewStore previews;
@@ -227,16 +214,35 @@ public class CourseRosterService {
 		Course course = requireCourse(courseId);
 		List<CourseRosterEntryResponse> entries = new ArrayList<>();
 		for (CourseEnrollment enrollment : store.listEnrollments(courseId)) {
-			if (enrollment.getEnrollmentStatus() != EnrollmentStatus.ACTIVE) {
-				continue;
-			}
-			entries.add(toEnrollmentEntry(enrollment));
+			StudentProfile profile = enrollment.getStudentProfile();
+			UserAccount user = profile == null ? null : profile.getUserAccount();
+			entries.add(new CourseRosterEntryResponse(
+					"ENROLLMENT",
+					enrollment.getId(),
+					null,
+					user == null ? null : user.getId(),
+					sanitize(profile == null ? null : profile.getStudentCode()),
+					sanitize(user == null ? null : user.getFullName()),
+					sanitize(user == null ? null : user.getEmail()),
+					enrollment.getEnrollmentStatus() == null ? null : enrollment.getEnrollmentStatus().name(),
+					null,
+					"REGISTERED"));
 		}
 		for (StudentCourseInvitation invitation : store.listInvitations(courseId)) {
 			if (invitation.getInvitationStatus() == null || !invitation.getInvitationStatus().isOutstanding()) {
 				continue;
 			}
-			entries.add(toInvitationEntry(invitation));
+			entries.add(new CourseRosterEntryResponse(
+					"INVITATION",
+					null,
+					invitation.getId(),
+					null,
+					sanitize(invitation.getStudentCode()),
+					sanitize(invitation.getFullName()),
+					sanitize(invitation.getEmail()),
+					null,
+					invitation.getInvitationStatus().name(),
+					"NOT_REGISTERED"));
 		}
 		long enrolled = entries.stream().filter(row -> "ENROLLMENT".equals(row.kind())).count();
 		long pending = entries.stream().filter(row -> "INVITATION".equals(row.kind())).count();
@@ -248,236 +254,6 @@ public class CourseRosterService {
 				(int) enrolled,
 				(int) pending,
 				entries);
-	}
-
-	public RosterStudentMutationResponse addStudent(
-			UUID courseId, AddRosterStudentRequest request, UserAccount admin, AuditRequest auditRequest) {
-		Course course = requireCourse(courseId);
-		String fullName = trimToNull(request == null ? null : request.fullName());
-		String studentCode = normalizeCode(request == null ? null : request.studentCode());
-		String email = normalizeEmail(request == null ? null : request.email());
-		List<String> errors = new ArrayList<>();
-		List<String> warnings = new ArrayList<>();
-		if (!StringUtils.hasText(fullName)) {
-			errors.add("FullName is required.");
-		}
-		if (!StringUtils.hasText(studentCode)) {
-			errors.add("StudentCode is required.");
-		}
-		if (!StringUtils.hasText(email) || !email.contains("@")) {
-			errors.add("Email is required.");
-		}
-		RosterRowAction classified = RosterRowAction.INVALID;
-		if (errors.isEmpty()) {
-			classified = classifyIdentity(course, email, studentCode, errors, warnings);
-		}
-		if (!errors.isEmpty()
-				|| classified == RosterRowAction.INVALID
-				|| classified == RosterRowAction.CONFLICT) {
-			AcademicErrorCode code = classified == RosterRowAction.CONFLICT
-					? AcademicErrorCode.ROSTER_IDENTITY_CONFLICT
-					: AcademicErrorCode.ROSTER_STUDENT_INVALID;
-			HttpStatus status = classified == RosterRowAction.CONFLICT ? HttpStatus.CONFLICT : HttpStatus.BAD_REQUEST;
-			throw new AcademicException(
-					code, status, errors.isEmpty() ? "Student identity is invalid." : errors.getFirst());
-		}
-		RosterPreviewRow row = new RosterPreviewRow(
-				1,
-				course.getAcademicClass().getClassCode(),
-				fullName,
-				studentCode,
-				email,
-				null,
-				classified,
-				List.of(),
-				List.copyOf(warnings));
-		final RosterRowAction action = classified;
-		return writeAtomic(() -> applyManualAdd(requireCourse(courseId), row, action, admin, auditRequest));
-	}
-
-	public RosterStudentMutationResponse removeEnrollment(
-			UUID courseId, UUID enrollmentId, UserAccount admin, AuditRequest auditRequest) {
-		if (enrollmentId == null) {
-			throw new AcademicException(
-					AcademicErrorCode.ROSTER_ENTRY_NOT_FOUND, HttpStatus.NOT_FOUND, "Enrollment was not found.");
-		}
-		requireCourse(courseId);
-		return writeAtomic(() -> applyRemoveEnrollment(requireCourse(courseId), enrollmentId, admin, auditRequest));
-	}
-
-	public RosterStudentMutationResponse removeInvitation(
-			UUID courseId, UUID invitationId, UserAccount admin, AuditRequest auditRequest) {
-		if (invitationId == null) {
-			throw new AcademicException(
-					AcademicErrorCode.ROSTER_ENTRY_NOT_FOUND, HttpStatus.NOT_FOUND, "Invitation was not found.");
-		}
-		requireCourse(courseId);
-		return writeAtomic(() -> applyRemoveInvitation(requireCourse(courseId), invitationId, admin, auditRequest));
-	}
-
-	private RosterStudentMutationResponse applyManualAdd(
-			Course course,
-			RosterPreviewRow row,
-			RosterRowAction classified,
-			UserAccount admin,
-			AuditRequest auditRequest) {
-		ApplyResult applied = applyRow(course, row);
-		String action = switch (classified) {
-			case READY_ENROLL -> ACTION_ENROLLED;
-			case READY_INVITE -> ACTION_INVITED;
-			case ALREADY_ENROLLED -> ACTION_ALREADY_ENROLLED;
-			case ALREADY_INVITED -> ACTION_ALREADY_INVITED;
-			default -> ACTION_ALREADY_ENROLLED;
-		};
-		if (applied.unchangedCount() > 0 && classified == RosterRowAction.READY_ENROLL) {
-			action = ACTION_ALREADY_ENROLLED;
-		}
-		if (applied.unchangedCount() > 0 && classified == RosterRowAction.READY_INVITE) {
-			action = ACTION_ALREADY_INVITED;
-		}
-		CourseRosterEntryResponse entry = currentEntry(course, row.email(), row.studentCode());
-		audit.record(
-				admin,
-				null,
-				null,
-				COURSE_ROSTER_STUDENT_ADDED,
-				"course",
-				course.getId(),
-				null,
-				Map.of("action", action, "studentCode", row.studentCode(), "emailsEnqueued", applied.emailCount()),
-				Map.of("classCode", course.getAcademicClass().getClassCode()),
-				AuditSource.API,
-				auditRequest == null ? null : auditRequest.requestId(),
-				auditRequest == null ? null : auditRequest.ip(),
-				auditRequest == null ? null : auditRequest.userAgent());
-		return new RosterStudentMutationResponse(course.getId(), action, applied.emailCount(), false, entry);
-	}
-
-	private RosterStudentMutationResponse applyRemoveEnrollment(
-			Course course, UUID enrollmentId, UserAccount admin, AuditRequest auditRequest) {
-		CourseEnrollment enrollment = store.findEnrollmentById(enrollmentId, course.getId())
-				.orElseThrow(() -> new AcademicException(
-						AcademicErrorCode.ROSTER_ENTRY_NOT_FOUND, HttpStatus.NOT_FOUND, "Enrollment was not found."));
-		if (enrollment.getEnrollmentStatus() == EnrollmentStatus.COMPLETED) {
-			throw new AcademicException(
-					AcademicErrorCode.ROSTER_ENROLLMENT_NOT_REMOVABLE,
-					HttpStatus.CONFLICT,
-					"Completed enrollment cannot be removed.");
-		}
-		boolean alreadyWithdrawn = enrollment.getEnrollmentStatus() == EnrollmentStatus.WITHDRAWN;
-		boolean removedMembership = store.deleteTeamMemberByEnrollmentId(enrollment.getId());
-		if (!alreadyWithdrawn) {
-			enrollment.setEnrollmentStatus(EnrollmentStatus.WITHDRAWN);
-			store.saveEnrollment(enrollment);
-		}
-		String action = alreadyWithdrawn ? ACTION_ALREADY_REMOVED : ACTION_WITHDRAWN;
-		audit.record(
-				admin,
-				null,
-				null,
-				COURSE_ENROLLMENT_WITHDRAWN,
-				"course_enrollment",
-				enrollment.getId(),
-				Map.of("enrollmentStatus", alreadyWithdrawn ? EnrollmentStatus.WITHDRAWN.name() : EnrollmentStatus.ACTIVE.name()),
-				Map.of(
-						"enrollmentStatus",
-						EnrollmentStatus.WITHDRAWN.name(),
-						"teamMembershipRemoved",
-						removedMembership),
-				Map.of("courseId", course.getId(), "action", action),
-				AuditSource.API,
-				auditRequest == null ? null : auditRequest.requestId(),
-				auditRequest == null ? null : auditRequest.ip(),
-				auditRequest == null ? null : auditRequest.userAgent());
-		return new RosterStudentMutationResponse(
-				course.getId(), action, 0, removedMembership, toEnrollmentEntry(enrollment));
-	}
-
-	private RosterStudentMutationResponse applyRemoveInvitation(
-			Course course, UUID invitationId, UserAccount admin, AuditRequest auditRequest) {
-		StudentCourseInvitation invitation = store.findInvitationById(invitationId, course.getId())
-				.orElseThrow(() -> new AcademicException(
-						AcademicErrorCode.ROSTER_ENTRY_NOT_FOUND, HttpStatus.NOT_FOUND, "Invitation was not found."));
-		if (invitation.getInvitationStatus() == StudentInvitationStatus.CLAIMED) {
-			throw new AcademicException(
-					AcademicErrorCode.ROSTER_INVITATION_NOT_REMOVABLE,
-					HttpStatus.CONFLICT,
-					"Claimed invitation cannot be cancelled. Withdraw the enrollment instead.");
-		}
-		boolean alreadyCancelled = invitation.getInvitationStatus() == StudentInvitationStatus.CANCELLED;
-		StudentInvitationStatus before = invitation.getInvitationStatus();
-		if (!alreadyCancelled) {
-			invitation.setInvitationStatus(StudentInvitationStatus.CANCELLED);
-			store.saveInvitation(invitation);
-		}
-		String action = alreadyCancelled ? ACTION_ALREADY_REMOVED : ACTION_INVITATION_CANCELLED;
-		audit.record(
-				admin,
-				null,
-				null,
-				COURSE_INVITATION_CANCELLED,
-				"student_course_invitation",
-				invitation.getId(),
-				Map.of("invitationStatus", before == null ? "" : before.name()),
-				Map.of("invitationStatus", StudentInvitationStatus.CANCELLED.name()),
-				Map.of("courseId", course.getId(), "action", action),
-				AuditSource.API,
-				auditRequest == null ? null : auditRequest.requestId(),
-				auditRequest == null ? null : auditRequest.ip(),
-				auditRequest == null ? null : auditRequest.userAgent());
-		return new RosterStudentMutationResponse(
-				course.getId(), action, 0, false, toInvitationEntry(invitation));
-	}
-
-	private CourseRosterEntryResponse currentEntry(Course course, String email, String studentCode) {
-		UserAccount account = store.findUserByEmail(email).orElse(null);
-		if (account != null) {
-			StudentProfile profile = store.findStudentByUserId(account.getId()).orElse(null);
-			if (profile != null) {
-				CourseEnrollment enrollment = store.findEnrollment(profile.getId(), course.getId()).orElse(null);
-				if (enrollment != null) {
-					return toEnrollmentEntry(enrollment);
-				}
-			}
-		}
-		StudentCourseInvitation invitation = store.findInvitationByCourseAndEmail(course.getId(), email)
-				.or(() -> store.findInvitationByCourseAndStudentCode(course.getId(), studentCode))
-				.orElse(null);
-		if (invitation != null) {
-			return toInvitationEntry(invitation);
-		}
-		throw new AcademicException(
-				AcademicErrorCode.ROSTER_CONFIRM_BLOCKED, HttpStatus.CONFLICT, "Roster entry was not found after apply.");
-	}
-
-	private static CourseRosterEntryResponse toEnrollmentEntry(CourseEnrollment enrollment) {
-		StudentProfile profile = enrollment.getStudentProfile();
-		UserAccount user = profile == null ? null : profile.getUserAccount();
-		return new CourseRosterEntryResponse(
-				"ENROLLMENT",
-				enrollment.getId(),
-				null,
-				user == null ? null : user.getId(),
-				sanitize(profile == null ? null : profile.getStudentCode()),
-				sanitize(user == null ? null : user.getFullName()),
-				sanitize(user == null ? null : user.getEmail()),
-				enrollment.getEnrollmentStatus() == null ? null : enrollment.getEnrollmentStatus().name(),
-				null,
-				"REGISTERED");
-	}
-
-	private static CourseRosterEntryResponse toInvitationEntry(StudentCourseInvitation invitation) {
-		return new CourseRosterEntryResponse(
-				"INVITATION",
-				null,
-				invitation.getId(),
-				null,
-				sanitize(invitation.getStudentCode()),
-				sanitize(invitation.getFullName()),
-				sanitize(invitation.getEmail()),
-				null,
-				invitation.getInvitationStatus() == null ? null : invitation.getInvitationStatus().name(),
-				"NOT_REGISTERED");
 	}
 
 	private List<RosterPreviewRow> classify(Course course, List<CourseRosterWorkbook.RawRow> rawRows) {

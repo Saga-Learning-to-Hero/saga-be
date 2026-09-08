@@ -2,9 +2,10 @@ package com.saga.be.security;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -127,20 +128,6 @@ class SecurityAuthorizationTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"previewToken\":\"abc\"}"))
 				.andExpect(status().isForbidden());
-		mockMvc.perform(post("/api/admin/courses/" + courseId + "/students")
-						.with(csrf())
-						.with(authentication(auth(AccountRole.STUDENT, "hash")))
-						.contentType(MediaType.APPLICATION_JSON)
-						.content("{\"fullName\":\"A\",\"studentCode\":\"SE123456\",\"email\":\"a@gmail.com\"}"))
-				.andExpect(status().isForbidden());
-		mockMvc.perform(delete("/api/admin/courses/" + courseId + "/enrollments/" + courseId)
-						.with(csrf())
-						.with(authentication(auth(AccountRole.STUDENT, "hash"))))
-				.andExpect(status().isForbidden());
-		mockMvc.perform(delete("/api/admin/courses/" + courseId + "/invitations/" + courseId)
-						.with(csrf())
-						.with(authentication(auth(AccountRole.STUDENT, "hash"))))
-				.andExpect(status().isForbidden());
 	}
 
 	@Test
@@ -222,6 +209,56 @@ class SecurityAuthorizationTest {
 		mockMvc.perform(get("/api/lecturer/anything").with(authentication(auth(AccountRole.ADMIN, "hash"))))
 				.andExpect(status().isOk())
 				.andExpect(content().string("lecturer-ok"));
+	}
+
+	@Test
+	void unauthenticatedCannotReadContributionEvaluation() throws Exception {
+		UUID teamId = UUID.fromString("00000000-0000-0000-0000-000000000088");
+		mockMvc.perform(get("/api/teams/" + teamId + "/contribution-evaluation"))
+				.andExpect(status().isUnauthorized());
+	}
+
+	@Test
+	void studentCannotWriteCourseContributionWeights() throws Exception {
+		UUID courseId = UUID.fromString("00000000-0000-0000-0000-000000000077");
+		mockMvc.perform(put("/api/lecturer/courses/" + courseId + "/contribution-slice-weights")
+						.with(csrf())
+						.with(authentication(auth(AccountRole.STUDENT, "hash")))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"codeWeight\":40,\"testWeight\":10,\"documentWeight\":15,\"researchWeight\":35}"))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void studentCannotWriteProjectGroupWeights() throws Exception {
+		UUID projectId = UUID.fromString("00000000-0000-0000-0000-000000000066");
+		mockMvc.perform(put("/api/projects/" + projectId + "/group-weights")
+						.with(csrf())
+						.with(authentication(auth(AccountRole.STUDENT, "hash")))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"codeWeight\":0.4,\"testWeight\":0.1,\"documentWeight\":0.15,\"researchWeight\":0.35}"))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void unauthenticatedCannotReadOrWriteTaskWebLinks() throws Exception {
+		UUID taskId = UUID.fromString("00000000-0000-0000-0000-000000000055");
+		mockMvc.perform(get("/api/tasks/" + taskId + "/web-links")).andExpect(status().isUnauthorized());
+		mockMvc.perform(post("/api/tasks/" + taskId + "/web-links")
+						.with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"url\":\"https://example.com/spec\"}"))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void unauthenticatedCannotReadOrWriteTaskFiles() throws Exception {
+		UUID taskId = UUID.fromString("00000000-0000-0000-0000-000000000055");
+		mockMvc.perform(get("/api/tasks/" + taskId + "/files")).andExpect(status().isUnauthorized());
+		mockMvc.perform(multipart("/api/tasks/" + taskId + "/files")
+						.file("file", "%PDF-1.4".getBytes())
+						.with(csrf()))
+				.andExpect(status().isForbidden());
 	}
 
 	private static org.springframework.security.core.Authentication auth(AccountRole role, String passwordHash) {

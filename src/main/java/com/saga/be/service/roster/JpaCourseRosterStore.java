@@ -6,12 +6,10 @@ import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.academic.Course;
 import com.saga.be.entity.academic.CourseEnrollment;
 import com.saga.be.entity.enums.StudentInvitationStatus;
-import com.saga.be.entity.project.TeamMember;
 import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.CourseRepository;
 import com.saga.be.repository.StudentCourseInvitationRepository;
 import com.saga.be.repository.StudentProfileRepository;
-import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.repository.UserAccountRepository;
 import java.util.List;
 import java.util.Optional;
@@ -28,21 +26,18 @@ public class JpaCourseRosterStore implements CourseRosterStore {
 	private final StudentProfileRepository students;
 	private final CourseEnrollmentRepository enrollments;
 	private final StudentCourseInvitationRepository invitations;
-	private final TeamMemberRepository teamMembers;
 
 	public JpaCourseRosterStore(
 			CourseRepository courses,
 			UserAccountRepository users,
 			StudentProfileRepository students,
 			CourseEnrollmentRepository enrollments,
-			StudentCourseInvitationRepository invitations,
-			TeamMemberRepository teamMembers) {
+			StudentCourseInvitationRepository invitations) {
 		this.courses = courses;
 		this.users = users;
 		this.students = students;
 		this.enrollments = enrollments;
 		this.invitations = invitations;
-		this.teamMembers = teamMembers;
 	}
 
 	@Override
@@ -71,12 +66,6 @@ public class JpaCourseRosterStore implements CourseRosterStore {
 	}
 
 	@Override
-	public Optional<CourseEnrollment> findEnrollmentById(UUID enrollmentId, UUID courseId) {
-		return enrollments.findById(enrollmentId)
-				.filter(row -> row.getCourse() != null && courseId.equals(row.getCourse().getId()));
-	}
-
-	@Override
 	public List<CourseEnrollment> listEnrollments(UUID courseId) {
 		return enrollments.findByCourse_Id(courseId);
 	}
@@ -84,22 +73,6 @@ public class JpaCourseRosterStore implements CourseRosterStore {
 	@Override
 	public CourseEnrollment saveEnrollment(CourseEnrollment enrollment) {
 		return enrollments.save(enrollment);
-	}
-
-	@Override
-	public boolean deleteTeamMemberByEnrollmentId(UUID enrollmentId) {
-		Optional<TeamMember> member = teamMembers.findByCourseEnrollment_Id(enrollmentId);
-		if (member.isEmpty()) {
-			return false;
-		}
-		teamMembers.delete(member.get());
-		return true;
-	}
-
-	@Override
-	public Optional<StudentCourseInvitation> findInvitationById(UUID invitationId, UUID courseId) {
-		return invitations.findById(invitationId)
-				.filter(row -> row.getCourse() != null && courseId.equals(row.getCourse().getId()));
 	}
 
 	@Override

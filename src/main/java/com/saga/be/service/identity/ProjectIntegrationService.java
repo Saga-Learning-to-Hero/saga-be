@@ -485,9 +485,10 @@ public class ProjectIntegrationService {
 		integration.setConsecutiveFailures(0);
 		JiraIntegration saved = jiraIntegrations.save(integration);
 		if (pending.refreshToken() != null) {
-			saved.setEncryptedRefreshToken(
-					encryptor.encrypt(
-							pending.refreshToken(), TokenEncryptor.aad(saved.getId().toString(), "JIRA", userId.toString())));
+			String aad = TokenEncryptor.aad(saved.getId().toString(), "JIRA", userId.toString());
+			saved.setEncryptedRefreshToken(encryptor.encrypt(pending.refreshToken(), aad));
+			saved.setEncryptedAccessToken(encryptor.encrypt(pending.accessToken(), aad));
+			saved.setTokenExpiresAt(LocalDateTime.now().plusMinutes(50));
 			jiraIntegrations.save(saved);
 		}
 		startSync("JIRA", project.getId());

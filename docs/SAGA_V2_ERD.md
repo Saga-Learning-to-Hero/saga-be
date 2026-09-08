@@ -107,6 +107,8 @@ erDiagram
     sprint ||--o{ task : contains
     student_profile ||--o{ task : assigned
     task ||--o{ task_attachment : has
+    task ||--o{ task_web_link : has
+    task ||--o{ task_file : has
 
     github_installation ||--o{ git_repo : hosts
     project ||--o{ git_repo : connects
@@ -315,11 +317,19 @@ Jira does not reference GitHub.
 | Indexes | `(project_id, sprint_id)`, `assignee_student_id`, `due_date`, `external_key` |
 | FK | project, sprint, assignee/reporter student, self `blocks_task_id` |
 
-No `task_web_link` fields. External assignee/reporter ids preserved for unmapped Jira accounts.
+No `task_web_link` or `task_file` columns on `task` itself. Student-submitted URLs live in `task_web_link` (Flyway V9). Student-uploaded documents/images live in `task_file` (Flyway V10; bytes on disk). External assignee/reporter ids preserved for unmapped Jira accounts.
 
 ### 18. `task_attachment`
 
-Unique `(task_id, external_id)`. FK task **ON DELETE CASCADE**.
+Unique `(task_id, external_id)`. FK task **ON DELETE CASCADE**. Jira ingest metadata. File bytes for the same attachments are stored on `task_file` with `source=JIRA`.
+
+### 18b. `task_web_link` (V9, source in V11)
+
+Student-submitted **or Jira remote** http(s) URLs. Unique `(task_id, url_hash)` and `(task_id, external_id)`. `source` = `SAGA` | `JIRA`.
+
+### 18c. `task_file` (V10, source in V11)
+
+Student-uploaded **or Jira-synced** documents/images. Unique `(task_id, content_hash)` and `(task_id, external_id)`. `source` = `SAGA` | `JIRA`. FK task **ON DELETE CASCADE**. Bytes under `saga.task-file.directory`. Jira ingest upserts `source=JIRA` only.
 
 ### 19. `jira_write_operation`
 

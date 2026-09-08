@@ -16,12 +16,10 @@ import com.saga.be.auth.InstitutionalEmailPolicy;
 import com.saga.be.config.AuthProperties;
 import com.saga.be.config.RosterProperties;
 import com.saga.be.dto.mail.EmailEnqueueRequest;
-import com.saga.be.dto.roster.AddRosterStudentRequest;
 import com.saga.be.dto.roster.CourseRosterResponse;
 import com.saga.be.dto.roster.RosterConfirmResponse;
 import com.saga.be.dto.roster.RosterPreviewResponse;
 import com.saga.be.dto.roster.RosterPreviewRow;
-import com.saga.be.dto.roster.RosterStudentMutationResponse;
 import com.saga.be.entity.account.StudentCourseInvitation;
 import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.account.UserAccount;
@@ -35,11 +33,8 @@ import com.saga.be.entity.enums.AccountStatus;
 import com.saga.be.entity.enums.AuditSource;
 import com.saga.be.entity.enums.EnrollmentStatus;
 import com.saga.be.entity.enums.RosterRowAction;
-import com.saga.be.entity.enums.RoleInTeam;
 import com.saga.be.entity.enums.StudentInvitationStatus;
 import com.saga.be.entity.enums.StudentInvitationType;
-import com.saga.be.entity.project.Team;
-import com.saga.be.entity.project.TeamMember;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
@@ -399,170 +394,6 @@ class CourseRosterServiceTest {
 		assertEquals(1, store.enrollments.size());
 		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.values().iterator().next().getEnrollmentStatus());
 		verify(emails, times(1)).enqueue(any());
-	}
-
-	@Test
-	void manualAddEnrollsExistingStudent() {
-		student("student@gmail.com", "SE123456", "Nguyễn Văn Ánh");
-		RosterStudentMutationResponse result = service.addStudent(
-				course.getId(), new AddRosterStudentRequest("Nguyễn Văn Ánh", "SE123456", "student@gmail.com"), admin, auditReq());
-		assertEquals(CourseRosterService.ACTION_ENROLLED, result.action());
-		assertEquals(1, result.emailsEnqueued());
-		assertEquals("ENROLLMENT", result.entry().kind());
-		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.values().iterator().next().getEnrollmentStatus());
-		ArgumentCaptor<EmailEnqueueRequest> captor = ArgumentCaptor.forClass(EmailEnqueueRequest.class);
-		verify(emails).enqueue(captor.capture());
-		assertEquals("COURSE_ENROLLED", captor.getValue().emailType());
-	}
-
-	@Test
-	void manualAddInvitesUnknownStudentWithoutCreatingAnAccount() {
-		RosterStudentMutationResponse result = service.addStudent(
-				course.getId(), new AddRosterStudentRequest("New Student", "SE000001", "new@gmail.com"), admin, auditReq());
-		assertEquals(CourseRosterService.ACTION_INVITED, result.action());
-		assertEquals("INVITATION", result.entry().kind());
-		assertEquals(StudentInvitationStatus.PENDING, store.invitations.values().iterator().next().getInvitationStatus());
-		assertTrue(store.users.values().stream().noneMatch(user -> "new@gmail.com".equals(user.getEmail())));
-		verify(emails).enqueue(any());
-	}
-
-	@Test
-	void manualAddIsIdempotentForAlreadyEnrolledStudent() {
-		student("student@gmail.com", "SE123456", "A");
-		service.addStudent(course.getId(), new AddRosterStudentRequest("A", "SE123456", "student@gmail.com"), admin, auditReq());
-		RosterStudentMutationResponse second = service.addStudent(
-				course.getId(), new AddRosterStudentRequest("A", "se123456", "STUDENT@gmail.com"), admin, auditReq());
-		assertEquals(CourseRosterService.ACTION_ALREADY_ENROLLED, second.action());
-		assertEquals(0, second.emailsEnqueued());
-		assertEquals(1, store.enrollments.size());
-		verify(emails, times(1)).enqueue(any());
-	}
-
-	@Test
-	void manualAddRejectsLecturerIdentity() {
-		account(AccountRole.LECTURER, "lecturer@fe.edu.vn");
-		AcademicException ex = assertThrows(
-				AcademicException.class,
-				() -> service.addStudent(
-						course.getId(),
-						new AddRosterStudentRequest("Lecturer", "SE999999", "lecturer@fe.edu.vn"),
-						admin,
-						auditReq()));
-		assertEquals(AcademicErrorCode.ROSTER_IDENTITY_CONFLICT, ex.getCode());
-		assertEquals(HttpStatus.CONFLICT, ex.getStatus());
-		assertTrue(store.enrollments.isEmpty());
-	}
-
-	@Test
-	void manualAddReactivatesWithdrawnEnrollment() {
-		StudentProfile profile = student("student@gmail.com", "SE123456", "A");
-		CourseEnrollment existing = new CourseEnrollment();
-		existing.setStudentProfile(profile);
-		existing.setCourse(course);
-		existing.setEnrollmentStatus(EnrollmentStatus.WITHDRAWN);
-		existing.setEnrolledAt(LocalDateTime.now().minusDays(3));
-		store.saveEnrollment(existing);
-		RosterStudentMutationResponse result = service.addStudent(
-				course.getId(), new AddRosterStudentRequest("A", "SE123456", "student@gmail.com"), admin, auditReq());
-		assertEquals(CourseRosterService.ACTION_ENROLLED, result.action());
-		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.values().iterator().next().getEnrollmentStatus());
-		verify(emails).enqueue(any());
-	}
-
-	@Test
-	void removeEnrollmentWithdrawsAndDetachesTeamMembership() {
-		StudentProfile profile = student("student@gmail.com", "SE123456", "A");
-		CourseEnrollment enrollment = enrollActive(profile);
-		TeamMember member = new TeamMember();
-		member.setCourse(course);
-		member.setCourseEnrollment(enrollment);
-		member.setRoleInTeam(RoleInTeam.MEMBER);
-		Team team = new Team();
-		team.setId(UUID.randomUUID());
-		team.setCourse(course);
-		team.setTeamNo(1);
-		team.setName("Alpha");
-		member.setTeam(team);
-		store.putMember(member);
-
-		RosterStudentMutationResponse result = service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq());
-		assertEquals(CourseRosterService.ACTION_WITHDRAWN, result.action());
-		assertTrue(result.teamMembershipRemoved());
-		assertEquals(EnrollmentStatus.WITHDRAWN.name(), result.entry().enrollmentStatus());
-		assertTrue(store.members.isEmpty());
-		assertEquals(EnrollmentStatus.WITHDRAWN, store.enrollments.get(enrollment.getId()).getEnrollmentStatus());
-		verify(emails, never()).enqueue(any());
-
-		CourseRosterResponse roster = service.getRoster(course.getId());
-		assertEquals(0, roster.enrolledCount());
-		assertTrue(roster.entries().isEmpty());
-	}
-
-	@Test
-	void removeEnrollmentIsIdempotentWhenAlreadyWithdrawn() {
-		StudentProfile profile = student("student@gmail.com", "SE123456", "A");
-		CourseEnrollment enrollment = enrollActive(profile);
-		enrollment.setEnrollmentStatus(EnrollmentStatus.WITHDRAWN);
-		store.saveEnrollment(enrollment);
-		RosterStudentMutationResponse result = service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq());
-		assertEquals(CourseRosterService.ACTION_ALREADY_REMOVED, result.action());
-		assertFalse(result.teamMembershipRemoved());
-	}
-
-	@Test
-	void removeCompletedEnrollmentIsRejected() {
-		StudentProfile profile = student("student@gmail.com", "SE123456", "A");
-		CourseEnrollment enrollment = enrollActive(profile);
-		enrollment.setEnrollmentStatus(EnrollmentStatus.COMPLETED);
-		store.saveEnrollment(enrollment);
-		AcademicException ex = assertThrows(
-				AcademicException.class,
-				() -> service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq()));
-		assertEquals(AcademicErrorCode.ROSTER_ENROLLMENT_NOT_REMOVABLE, ex.getCode());
-		assertEquals(EnrollmentStatus.COMPLETED, store.enrollments.get(enrollment.getId()).getEnrollmentStatus());
-	}
-
-	@Test
-	void removeEnrollmentFromAnotherCourseIsNotFound() {
-		StudentProfile profile = student("student@gmail.com", "SE123456", "A");
-		CourseEnrollment enrollment = enrollActive(profile);
-		Course other = course("SE1706");
-		AcademicException ex = assertThrows(
-				AcademicException.class,
-				() -> service.removeEnrollment(other.getId(), enrollment.getId(), admin, auditReq()));
-		assertEquals(AcademicErrorCode.ROSTER_ENTRY_NOT_FOUND, ex.getCode());
-		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.get(enrollment.getId()).getEnrollmentStatus());
-	}
-
-	@Test
-	void removeInvitationCancelsOutstandingInvite() {
-		StudentCourseInvitation invitation = seedInvitation("new@gmail.com", "SE000001", StudentInvitationStatus.PENDING);
-		RosterStudentMutationResponse result =
-				service.removeInvitation(course.getId(), invitation.getId(), admin, auditReq());
-		assertEquals(CourseRosterService.ACTION_INVITATION_CANCELLED, result.action());
-		assertEquals(StudentInvitationStatus.CANCELLED.name(), result.entry().invitationStatus());
-		assertEquals(StudentInvitationStatus.CANCELLED, store.invitations.get(invitation.getId()).getInvitationStatus());
-		assertEquals(0, service.getRoster(course.getId()).pendingInvitationCount());
-		verify(emails, never()).enqueue(any());
-	}
-
-	@Test
-	void removeClaimedInvitationIsRejected() {
-		StudentCourseInvitation invitation = seedInvitation("claimed@gmail.com", "SE000014", StudentInvitationStatus.CLAIMED);
-		AcademicException ex = assertThrows(
-				AcademicException.class,
-				() -> service.removeInvitation(course.getId(), invitation.getId(), admin, auditReq()));
-		assertEquals(AcademicErrorCode.ROSTER_INVITATION_NOT_REMOVABLE, ex.getCode());
-		assertEquals(StudentInvitationStatus.CLAIMED, store.invitations.get(invitation.getId()).getInvitationStatus());
-	}
-
-	private CourseEnrollment enrollActive(StudentProfile profile) {
-		CourseEnrollment enrollment = new CourseEnrollment();
-		enrollment.setStudentProfile(profile);
-		enrollment.setCourse(course);
-		enrollment.setEnrollmentStatus(EnrollmentStatus.ACTIVE);
-		enrollment.setEnrolledAt(LocalDateTime.now());
-		return store.saveEnrollment(enrollment);
 	}
 
 	private RosterPreviewResponse previewRow(
