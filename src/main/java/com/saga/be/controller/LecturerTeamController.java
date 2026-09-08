@@ -1,6 +1,8 @@
 package com.saga.be.controller;
 
 import com.saga.be.dto.team.LecturerCourseTeamsResponse;
+import com.saga.be.dto.team.MoveTeamMemberRequest;
+import com.saga.be.dto.team.ReplaceTeamLeaderRequest;
 import com.saga.be.dto.team.TeamConfirmRequest;
 import com.saga.be.dto.team.TeamConfirmResponse;
 import com.saga.be.dto.team.TeamPreviewResponse;
@@ -26,8 +28,10 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
@@ -37,8 +41,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @Profile("!test")
-@RequestMapping("/api/lecturer/courses/{courseId}/teams")
-@Tag(name = "Lecturer teams", description = "Desired-state team assignment for an assigned course.")
+@RequestMapping("/api/lecturer/courses/{courseId}")
+@Tag(name = "Lecturer teams", description = "Desired-state and interactive team assignment for an assigned course.")
 @SecurityRequirement(name = "SAGA_SESSION")
 public class LecturerTeamController {
 
@@ -53,14 +57,14 @@ public class LecturerTeamController {
 		this.users = users;
 	}
 
-	@GetMapping
+	@GetMapping("/teams")
 	@Operation(summary = "List teams and members for an assigned course")
 	public LecturerCourseTeamsResponse list(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID courseId) {
 		return teams.listTeams(actor(principal), courseId);
 	}
 
-	@GetMapping("/template")
+	@GetMapping("/teams/template")
 	@Operation(summary = "Download the team assignment XLSX template")
 	public ResponseEntity<byte[]> template(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID courseId) {
@@ -73,7 +77,7 @@ public class LecturerTeamController {
 				.body(body);
 	}
 
-	@PostMapping(value = "/import/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	@PostMapping(value = "/teams/import/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	@Operation(summary = "Validate a team assignment workbook without writing teams")
 	public TeamPreviewResponse preview(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -89,7 +93,7 @@ public class LecturerTeamController {
 		return teams.preview(actor(principal), courseId, bytes);
 	}
 
-	@PostMapping("/import/confirm")
+	@PostMapping("/teams/import/confirm")
 	@ResponseStatus(HttpStatus.OK)
 	@Operation(summary = "Atomically apply a team assignment preview token")
 	public TeamConfirmResponse confirm(
@@ -98,6 +102,30 @@ public class LecturerTeamController {
 			@Valid @RequestBody TeamConfirmRequest request,
 			HttpServletRequest http) {
 		return teams.confirm(actor(principal), courseId, request.previewToken(), audit(http));
+	}
+
+	@PutMapping("/teams/{teamId}/leader")
+	@ResponseStatus(HttpStatus.OK)
+	@Operation(summary = "Atomically replace the team Leader (old Leader becomes Member)")
+	public LecturerCourseTeamsResponse replaceLeader(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID courseId,
+			@PathVariable UUID teamId,
+			@Valid @RequestBody ReplaceTeamLeaderRequest request,
+			HttpServletRequest http) {
+		return teams.replaceLeader(actor(principal), courseId, teamId, request.teamMemberId(), audit(http));
+	}
+
+	@PatchMapping("/team-members/{teamMemberId}/team")
+	@ResponseStatus(HttpStatus.OK)
+	@Operation(summary = "Move a team member to another team in the same course")
+	public LecturerCourseTeamsResponse moveMember(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID courseId,
+			@PathVariable UUID teamMemberId,
+			@Valid @RequestBody MoveTeamMemberRequest request,
+			HttpServletRequest http) {
+		return teams.moveMember(actor(principal), courseId, teamMemberId, request.targetTeamId(), audit(http));
 	}
 
 	private UserAccount actor(SagaUserPrincipal principal) {

@@ -19,11 +19,19 @@ public interface LecturerTeamStore {
 
 	Optional<Team> findTeam(UUID courseId, Integer teamNo);
 
+	Optional<Team> findTeamById(UUID courseId, UUID teamId);
+
+	Optional<Team> findTeamByIdForUpdate(UUID teamId);
+
 	Team saveTeam(Team team);
 
 	List<TeamMember> listMembers(UUID courseId);
 
+	List<TeamMember> listMembersByTeamId(UUID teamId);
+
 	Optional<TeamMember> findMemberByEnrollment(UUID courseEnrollmentId);
+
+	Optional<TeamMember> findMemberById(UUID teamMemberId);
 
 	TeamMember saveMember(TeamMember member);
 

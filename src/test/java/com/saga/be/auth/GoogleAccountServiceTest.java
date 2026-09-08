@@ -1,12 +1,14 @@
 package com.saga.be.auth;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.enums.AccountRole;
 import com.saga.be.entity.enums.AccountStatus;
@@ -21,6 +23,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -126,6 +129,73 @@ class GoogleAccountServiceTest {
 				allowed);
 		assertEquals(AccountRole.STUDENT, created.getAccountRole());
 		assertEquals("sub-new", created.getGoogleSubject());
+		ArgumentCaptor<StudentProfile> profileCaptor = ArgumentCaptor.forClass(StudentProfile.class);
+		verify(students).save(profileCaptor.capture());
+		assertEquals("SE170102", profileCaptor.getValue().getStudentCode());
+	}
+
+	@Test
+	void googleStudentPersistsTrailingFormalCodeNotFullLocalPart() {
+		when(users.findByGoogleSubject("sub-hai")).thenReturn(Optional.empty());
+		when(users.findByEmail("hailhse183904@fpt.edu.vn")).thenReturn(Optional.empty());
+		when(users.save(any(UserAccount.class))).thenAnswer(invocation -> {
+			UserAccount account = invocation.getArgument(0);
+			account.setId(UUID.randomUUID());
+			return account;
+		});
+		when(students.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+		service.authenticateOrProvision(
+				new GoogleAccountService.GoogleOidcIdentity(
+						"sub-hai", "hailhse183904@fpt.edu.vn", true, "fpt.edu.vn", "Hai", null),
+				allowed);
+
+		ArgumentCaptor<StudentProfile> profileCaptor = ArgumentCaptor.forClass(StudentProfile.class);
+		verify(students).save(profileCaptor.capture());
+		assertEquals("SE183904", profileCaptor.getValue().getStudentCode());
+	}
+
+	@Test
+	void googleStudentWithoutTrailingFormalCodeLeavesStudentCodeNull() {
+		when(users.findByGoogleSubject("sub-odd")).thenReturn(Optional.empty());
+		when(users.findByEmail("a123456@fpt.edu.vn")).thenReturn(Optional.empty());
+		when(users.save(any(UserAccount.class))).thenAnswer(invocation -> {
+			UserAccount account = invocation.getArgument(0);
+			account.setId(UUID.randomUUID());
+			return account;
+		});
+		when(students.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+		// STUDENT_FPT_EMAIL allows letter(s)+6 digits, but formal code needs exactly 2 trailing letters.
+		UserAccount created = service.authenticateOrProvision(
+				new GoogleAccountService.GoogleOidcIdentity(
+						"sub-odd", "a123456@fpt.edu.vn", true, "fpt.edu.vn", "Odd", null),
+				allowed);
+		assertEquals(AccountRole.STUDENT, created.getAccountRole());
+		ArgumentCaptor<StudentProfile> profileCaptor = ArgumentCaptor.forClass(StudentProfile.class);
+		verify(students).save(profileCaptor.capture());
+		assertNull(profileCaptor.getValue().getStudentCode());
+	}
+
+	@Test
+	void googleStudentPersistsNonSePrefixFormalCode() {
+		when(users.findByGoogleSubject("sub-ai")).thenReturn(Optional.empty());
+		when(users.findByEmail("abcai123456@fpt.edu.vn")).thenReturn(Optional.empty());
+		when(users.save(any(UserAccount.class))).thenAnswer(invocation -> {
+			UserAccount account = invocation.getArgument(0);
+			account.setId(UUID.randomUUID());
+			return account;
+		});
+		when(students.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+		service.authenticateOrProvision(
+				new GoogleAccountService.GoogleOidcIdentity(
+						"sub-ai", "abcai123456@fpt.edu.vn", true, "fpt.edu.vn", "AI", null),
+				allowed);
+
+		ArgumentCaptor<StudentProfile> profileCaptor = ArgumentCaptor.forClass(StudentProfile.class);
+		verify(students).save(profileCaptor.capture());
+		assertEquals("AI123456", profileCaptor.getValue().getStudentCode());
 	}
 
 	@Test

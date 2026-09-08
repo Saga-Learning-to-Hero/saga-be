@@ -80,7 +80,9 @@ class LecturerTeamServiceTest {
 				authorization, store, previews, rosterProperties, authProperties, emails, audit);
 		lecturer = account(AccountRole.LECTURER, "lecturer@fe.edu.vn");
 		course = course("SE1705");
-		when(authorization.requireCourse(any(), eq(course.getId()))).thenReturn(course);
+		org.mockito.Mockito.lenient()
+				.when(authorization.requireCourse(any(), eq(course.getId())))
+				.thenReturn(course);
 		alpha = enroll("SE111111", "Alpha Student", "alpha@gmail.com");
 		beta = enroll("SE222222", "Beta Student", "beta@gmail.com");
 	}
@@ -290,6 +292,200 @@ class LecturerTeamServiceTest {
 		assertEquals(1, listed.teams().size());
 		assertEquals("LEADER", listed.teams().getFirst().members().getFirst().role());
 		assertNull(listed.teams().getFirst().projectId());
+		assertEquals(store.members.values().iterator().next().getId(), listed.teams().getFirst().members().getFirst().teamMemberId());
+	}
+
+	@Test
+	void replaceLeaderAtomicallySwapsRoles() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		Team team = store.teams.values().iterator().next();
+		TeamMember leader = store.members.values().stream()
+				.filter(row -> row.getRoleInTeam() == RoleInTeam.LEADER)
+				.findFirst()
+				.orElseThrow();
+		TeamMember member = store.members.values().stream()
+				.filter(row -> row.getRoleInTeam() == RoleInTeam.MEMBER)
+				.findFirst()
+				.orElseThrow();
+
+		LecturerCourseTeamsResponse updated =
+				service.replaceLeader(lecturer, course.getId(), team.getId(), member.getId(), auditReq());
+
+		assertEquals(1, updated.teams().size());
+		assertEquals(
+				1,
+				updated.teams().getFirst().members().stream().filter(row -> "LEADER".equals(row.role())).count());
+		assertEquals(RoleInTeam.MEMBER, leader.getRoleInTeam());
+		assertEquals(RoleInTeam.LEADER, member.getRoleInTeam());
+		assertEquals(member.getId(), updated.teams().getFirst().members().getFirst().teamMemberId());
+	}
+
+	@Test
+	void moveMemberBetweenTeamsKeepsSingleEnrollmentAndProjectOnSource() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		CourseEnrollment gamma = enroll("SE333333", "Gamma Student", "gamma@gmail.com");
+		CourseEnrollment delta = enroll("SE444444", "Delta Student", "delta@gmail.com");
+		Team teamA = store.teams.values().iterator().next();
+		com.saga.be.entity.project.Project project = new com.saga.be.entity.project.Project();
+		project.setId(UUID.randomUUID());
+		teamA.setProject(project);
+		store.saveTeam(teamA);
+
+		Team teamB = new Team();
+		teamB.setCourse(course);
+		teamB.setTeamNo(2);
+		teamB.setName("Bravo");
+		store.saveTeam(teamB);
+		TeamMember gammaLeader = new TeamMember();
+		gammaLeader.setTeam(teamB);
+		gammaLeader.setCourse(course);
+		gammaLeader.setCourseEnrollment(gamma);
+		gammaLeader.setRoleInTeam(RoleInTeam.LEADER);
+		store.saveMember(gammaLeader);
+		TeamMember deltaMember = new TeamMember();
+		deltaMember.setTeam(teamB);
+		deltaMember.setCourse(course);
+		deltaMember.setCourseEnrollment(delta);
+		deltaMember.setRoleInTeam(RoleInTeam.MEMBER);
+		store.saveMember(deltaMember);
+
+		TeamMember moving = store.members.values().stream()
+				.filter(row -> beta.getId().equals(row.getCourseEnrollment().getId()))
+				.findFirst()
+				.orElseThrow();
+
+		LecturerCourseTeamsResponse moved =
+				service.moveMember(lecturer, course.getId(), moving.getId(), teamB.getId(), auditReq());
+
+		assertEquals(2, moved.teams().size());
+		assertEquals(teamB.getId(), moving.getTeam().getId());
+		assertEquals(
+				1,
+				store.members.values().stream()
+						.filter(row -> beta.getId().equals(row.getCourseEnrollment().getId()))
+						.count());
+		assertEquals(project.getId(), teamA.getProject().getId());
+		assertNull(teamB.getProject());
+		assertEquals(
+				RoleInTeam.LEADER,
+				store.members.values().stream()
+						.filter(row -> alpha.getId().equals(row.getCourseEnrollment().getId()))
+						.findFirst()
+						.orElseThrow()
+						.getRoleInTeam());
+	}
+
+	@Test
+	void movingMemberIntoEmptyTeamIsBlocked() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		Team teamA = store.teams.values().iterator().next();
+		Team empty = new Team();
+		empty.setCourse(course);
+		empty.setTeamNo(2);
+		empty.setName("Bravo");
+		store.saveTeam(empty);
+		TeamMember member = store.members.values().stream()
+				.filter(row -> row.getRoleInTeam() == RoleInTeam.MEMBER)
+				.findFirst()
+				.orElseThrow();
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.moveMember(lecturer, course.getId(), member.getId(), empty.getId(), auditReq()));
+		assertEquals(AcademicErrorCode.TEAM_LEADER_INVALID, ex.getCode());
+		assertEquals(teamA.getId(), member.getTeam().getId());
+	}
+
+	@Test
+	void replaceLeaderRejectsMemberFromAnotherTeam() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		Team teamA = store.teams.values().iterator().next();
+		CourseEnrollment gamma = enroll("SE333333", "Gamma Student", "gamma@gmail.com");
+		CourseEnrollment delta = enroll("SE444444", "Delta Student", "delta@gmail.com");
+		Team teamB = new Team();
+		teamB.setCourse(course);
+		teamB.setTeamNo(2);
+		teamB.setName("Bravo");
+		store.saveTeam(teamB);
+		TeamMember gammaLeader = new TeamMember();
+		gammaLeader.setTeam(teamB);
+		gammaLeader.setCourse(course);
+		gammaLeader.setCourseEnrollment(gamma);
+		gammaLeader.setRoleInTeam(RoleInTeam.LEADER);
+		store.saveMember(gammaLeader);
+		TeamMember deltaMember = new TeamMember();
+		deltaMember.setTeam(teamB);
+		deltaMember.setCourse(course);
+		deltaMember.setCourseEnrollment(delta);
+		deltaMember.setRoleInTeam(RoleInTeam.MEMBER);
+		store.saveMember(deltaMember);
+
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.replaceLeader(lecturer, course.getId(), teamA.getId(), deltaMember.getId(), auditReq()));
+		assertEquals(AcademicErrorCode.TEAM_NOT_FOUND, ex.getCode());
+		assertEquals(RoleInTeam.LEADER, store.members.values().stream()
+				.filter(row -> alpha.getId().equals(row.getCourseEnrollment().getId()))
+				.findFirst()
+				.orElseThrow()
+				.getRoleInTeam());
+	}
+
+	@Test
+	void movingOnlyLeaderIsBlocked() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		Team teamA = store.teams.values().iterator().next();
+		Team teamB = new Team();
+		teamB.setCourse(course);
+		teamB.setTeamNo(2);
+		teamB.setName("Bravo");
+		store.saveTeam(teamB);
+		CourseEnrollment gamma = enroll("SE333333", "Gamma Student", "gamma@gmail.com");
+		TeamMember gammaLeader = new TeamMember();
+		gammaLeader.setTeam(teamB);
+		gammaLeader.setCourse(course);
+		gammaLeader.setCourseEnrollment(gamma);
+		gammaLeader.setRoleInTeam(RoleInTeam.LEADER);
+		store.saveMember(gammaLeader);
+
+		TeamMember leader = store.members.values().stream()
+				.filter(row -> row.getRoleInTeam() == RoleInTeam.LEADER && teamA.getId().equals(row.getTeam().getId()))
+				.findFirst()
+				.orElseThrow();
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.moveMember(lecturer, course.getId(), leader.getId(), teamB.getId(), auditReq()));
+		assertEquals(AcademicErrorCode.TEAM_LEADER_INVALID, ex.getCode());
+		assertEquals(teamA.getId(), leader.getTeam().getId());
+	}
+
+	@Test
+	void crossCourseTargetTeamIsBlocked() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		Course other = course("SE1706");
+		Team foreign = new Team();
+		foreign.setCourse(other);
+		foreign.setTeamNo(1);
+		foreign.setName("Foreign");
+		store.saveTeam(foreign);
+		TeamMember member = store.members.values().stream()
+				.filter(row -> row.getRoleInTeam() == RoleInTeam.MEMBER)
+				.findFirst()
+				.orElseThrow();
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.moveMember(lecturer, course.getId(), member.getId(), foreign.getId(), auditReq()));
+		assertEquals(AcademicErrorCode.TEAM_NOT_FOUND, ex.getCode());
+	}
+
+	@Test
+	void unrelatedLecturerIsForbiddenByAuthorization() {
+		UserAccount other = account(AccountRole.LECTURER, "other@fe.edu.vn");
+		when(authorization.requireCourse(eq(other), eq(course.getId())))
+				.thenThrow(new AcademicException(
+						AcademicErrorCode.LECTURER_COURSE_FORBIDDEN, HttpStatus.FORBIDDEN, "forbidden"));
+		AcademicException ex =
+				assertThrows(AcademicException.class, () -> service.listTeams(other, course.getId()));
+		assertEquals(AcademicErrorCode.LECTURER_COURSE_FORBIDDEN, ex.getCode());
 	}
 
 	private TeamPreviewResponse preview(List<String[]> rows) throws Exception {

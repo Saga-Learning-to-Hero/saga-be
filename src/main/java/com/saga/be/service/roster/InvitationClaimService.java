@@ -45,11 +45,15 @@ public class InvitationClaimService {
 			return List.of();
 		}
 		StudentProfile profile = store.findStudentByUserId(account.getId()).orElse(null);
-		if (profile == null || !StringUtils.hasText(profile.getStudentCode())) {
+		if (profile == null) {
 			return List.of();
 		}
 		List<StudentCourseInvitation> claimed = new ArrayList<>();
 		for (StudentCourseInvitation invitation : store.listPendingByEmail(account.getEmail())) {
+			fillOnceFromInvitation(profile, invitation);
+			if (!StringUtils.hasText(profile.getStudentCode())) {
+				continue;
+			}
 			if (!matches(invitation, account, profile)) {
 				continue;
 			}
@@ -61,6 +65,23 @@ public class InvitationClaimService {
 			claimed.add(invitation);
 		}
 		return claimed;
+	}
+
+	/** Fill-once from authoritative invitation studentCode when profile code is still blank. */
+	private void fillOnceFromInvitation(StudentProfile profile, StudentCourseInvitation invitation) {
+		if (profile == null
+				|| StringUtils.hasText(profile.getStudentCode())
+				|| invitation == null
+				|| !StringUtils.hasText(invitation.getStudentCode())) {
+			return;
+		}
+		String code = invitation.getStudentCode().trim();
+		StudentProfile owner = store.findStudentByCode(code).orElse(null);
+		if (owner != null && profile.getId() != null && !profile.getId().equals(owner.getId())) {
+			return;
+		}
+		profile.setStudentCode(code);
+		store.saveStudent(profile);
 	}
 
 	private boolean matches(StudentCourseInvitation invitation, UserAccount account, StudentProfile profile) {

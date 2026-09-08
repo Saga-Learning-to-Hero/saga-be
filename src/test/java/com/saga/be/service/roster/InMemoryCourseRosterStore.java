@@ -156,6 +156,15 @@ final class InMemoryCourseRosterStore implements CourseRosterStore {
 	}
 
 	@Override
+	public StudentProfile saveStudent(StudentProfile profile) {
+		if (profile.getId() == null) {
+			profile.setId(UUID.randomUUID());
+		}
+		students.put(profile.getId(), profile);
+		return profile;
+	}
+
+	@Override
 	public <T> T inTransaction(Supplier<T> action) {
 		Snapshot snapshot = snapshot();
 		try {

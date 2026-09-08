@@ -2,6 +2,7 @@ package com.saga.be.service.roster;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -514,6 +515,131 @@ class CourseRosterServiceTest {
 		ArgumentCaptor<EmailEnqueueRequest> captor = ArgumentCaptor.forClass(EmailEnqueueRequest.class);
 		verify(emails).enqueue(captor.capture());
 		assertEquals("COURSE_INVITATION", captor.getValue().emailType());
+		assertEquals(null, captor.getValue().recipientUserId());
+	}
+
+	@Test
+	void addStudentInvitationOutboxMatchesXlsxConfirm() throws Exception {
+		AddRosterStudentResponse added =
+				service.addStudent(course.getId(), addRequest("New", "SE000002", "invitee@gmail.com"), admin, auditReq());
+		assertEquals("INVITED", added.result());
+		ArgumentCaptor<EmailEnqueueRequest> addCaptor = ArgumentCaptor.forClass(EmailEnqueueRequest.class);
+		verify(emails, times(1)).enqueue(addCaptor.capture());
+		EmailEnqueueRequest fromAdd = addCaptor.getValue();
+
+		org.mockito.Mockito.clearInvocations(emails);
+		RosterPreviewResponse preview = previewRow("SE1705", "Other", "SE000003", "other-invite@gmail.com", "");
+		service.confirm(course.getId(), preview.previewToken(), admin, auditReq());
+		ArgumentCaptor<EmailEnqueueRequest> confirmCaptor = ArgumentCaptor.forClass(EmailEnqueueRequest.class);
+		verify(emails, times(1)).enqueue(confirmCaptor.capture());
+		EmailEnqueueRequest fromConfirm = confirmCaptor.getValue();
+
+		assertEquals(fromConfirm.emailType(), fromAdd.emailType());
+		assertEquals(fromConfirm.templateKey(), fromAdd.templateKey());
+		assertEquals(fromConfirm.recipientUserId(), fromAdd.recipientUserId());
+		assertEquals(fromConfirm.scheduledAt(), fromAdd.scheduledAt());
+	}
+
+	@Test
+	void addStudentMemberCodeIsOptionalAndNotPersisted() {
+		AddRosterStudentResponse response = service.addStudent(
+				course.getId(),
+				new AddRosterStudentRequest("New", "SE000004", "membercode@gmail.com", "HaiLHSE000004"),
+				admin,
+				auditReq());
+		assertEquals("INVITED", response.result());
+		StudentCourseInvitation invitation = store.invitations.values().iterator().next();
+		assertEquals("SE000004", invitation.getStudentCode());
+		assertEquals("membercode@gmail.com", invitation.getEmail());
+		assertFalse(invitation.getFullName().contains("HaiLH"));
+	}
+
+	@Test
+	void addStudentGoogleLocalPartStudentCodeMismatchRemainsBlocked() {
+		student("hailhse183904@fpt.edu.vn", "hailhse183904", "Le Hoang Hai (K18 HCM)");
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.addStudent(
+						course.getId(),
+						addRequest("Lê Hoàng Hải", "SE183904", "hailhse183904@fpt.edu.vn"),
+						admin,
+						auditReq()));
+		assertEquals(AcademicErrorCode.ROSTER_CONFIRM_BLOCKED, ex.getCode());
+		assertTrue(ex.getMessage().contains("StudentCode does not match"));
+		assertEquals("hailhse183904", store.students.values().iterator().next().getStudentCode());
+		assertTrue(store.enrollments.isEmpty());
+		verify(emails, never()).enqueue(any());
+	}
+
+	@Test
+	void addStudentBlankStudentCodeIsFilledOnceFromRoster() {
+		StudentProfile profile = student("hailhse183904@fpt.edu.vn", null, "Le Hoang Hai");
+		assertNull(profile.getStudentCode());
+		AddRosterStudentResponse response = service.addStudent(
+				course.getId(),
+				addRequest("Le Hoang Hai", "SE183904", "hailhse183904@fpt.edu.vn"),
+				admin,
+				auditReq());
+		assertEquals("ENROLLED", response.result());
+		assertEquals("SE183904", profile.getStudentCode());
+		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.values().iterator().next().getEnrollmentStatus());
+	}
+
+	@Test
+	void xlsxConfirmBlankStudentCodeIsFilledOnceSameAsManualAdd() throws Exception {
+		StudentProfile profile = student("blank@gmail.com", null, "Blank");
+		RosterPreviewResponse preview = previewRow("SE1705", "Blank", "SE777777", "blank@gmail.com", "");
+		assertEquals(RosterRowAction.READY_ENROLL, preview.rows().getFirst().action());
+		service.confirm(course.getId(), preview.previewToken(), admin, auditReq());
+		assertEquals("SE777777", profile.getStudentCode());
+	}
+
+	@Test
+	void addStudentDoesNotOverwriteNonblankStudentCode() {
+		student("student@gmail.com", "SE111111", "A");
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.addStudent(
+						course.getId(), addRequest("A", "SE222222", "student@gmail.com"), admin, auditReq()));
+		assertEquals(AcademicErrorCode.ROSTER_CONFIRM_BLOCKED, ex.getCode());
+		assertEquals("SE111111", store.students.values().iterator().next().getStudentCode());
+	}
+
+	@Test
+	void addStudentIncomingCodeOwnedByAnotherProfileIsBlocked() {
+		student("owner@gmail.com", "SE183904", "Owner");
+		student("hailhse183904@fpt.edu.vn", null, "Hai");
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.addStudent(
+						course.getId(),
+						addRequest("Hai", "SE183904", "hailhse183904@fpt.edu.vn"),
+						admin,
+						auditReq()));
+		assertEquals(AcademicErrorCode.ROSTER_CONFIRM_BLOCKED, ex.getCode());
+		StudentProfile hai = store.students.values().stream()
+				.filter(p -> p.getUserAccount().getEmail().equals("hailhse183904@fpt.edu.vn"))
+				.findFirst()
+				.orElseThrow();
+		assertNull(hai.getStudentCode());
+	}
+
+	@Test
+	void addStudentInactiveAccountMatchesXlsxConfirmBehavior() throws Exception {
+		StudentProfile profile = student("inactive@gmail.com", "SE555555", "Inactive");
+		profile.getUserAccount().setAccountStatus(AccountStatus.INACTIVE);
+		AddRosterStudentResponse added = service.addStudent(
+				course.getId(), addRequest("Inactive", "SE555555", "inactive@gmail.com"), admin, auditReq());
+		assertEquals("ENROLLED", added.result());
+		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.values().iterator().next().getEnrollmentStatus());
+		assertEquals(AccountStatus.INACTIVE, profile.getUserAccount().getAccountStatus());
+
+		StudentProfile profile2 = student("inactive2@gmail.com", "SE555556", "Inactive2");
+		profile2.getUserAccount().setAccountStatus(AccountStatus.SUSPENDED);
+		RosterPreviewResponse preview = previewRow("SE1705", "Inactive2", "SE555556", "inactive2@gmail.com", "");
+		assertEquals(RosterRowAction.READY_ENROLL, preview.rows().getFirst().action());
+		service.confirm(course.getId(), preview.previewToken(), admin, auditReq());
+		assertEquals(AccountStatus.SUSPENDED, profile2.getUserAccount().getAccountStatus());
 	}
 
 	@Test
@@ -844,6 +970,11 @@ class CourseRosterServiceTest {
 		@Override
 		public StudentCourseInvitation saveInvitation(StudentCourseInvitation invitation) {
 			return delegate.saveInvitation(invitation);
+		}
+
+		@Override
+		public StudentProfile saveStudent(StudentProfile profile) {
+			return delegate.saveStudent(profile);
 		}
 
 		@Override

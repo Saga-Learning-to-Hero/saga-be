@@ -426,7 +426,11 @@ public class CourseRosterService {
 	}
 
 	private ApplyResult applyRow(Course course, RosterPreviewRow row, RosterLookups lookups) {
-		if (row.action() == RosterRowAction.ALREADY_ENROLLED || row.action() == RosterRowAction.ALREADY_INVITED) {
+		if (row.action() == RosterRowAction.ALREADY_ENROLLED) {
+			fillOnceStudentCode(row, lookups);
+			return ApplyResult.noop();
+		}
+		if (row.action() == RosterRowAction.ALREADY_INVITED) {
 			return ApplyResult.noop();
 		}
 		if (row.action() == RosterRowAction.READY_ENROLL) {
@@ -449,6 +453,7 @@ public class CourseRosterService {
 			throw new AcademicException(
 					AcademicErrorCode.ROSTER_CONFIRM_BLOCKED, HttpStatus.CONFLICT, "Student profile is missing.");
 		}
+		fillOnceStudentCode(profile, row.studentCode(), lookups);
 		CourseEnrollment enrollment = lookups.enrollmentByProfileId(profile.getId());
 		if (enrollment == null) {
 			enrollment = new CourseEnrollment();
@@ -478,6 +483,45 @@ public class CourseRosterService {
 						account.getEmail(),
 						false));
 		return new ApplyResult(1, 0, 0, 1);
+	}
+
+	/**
+	 * Fill-once: blank/null profile.studentCode may be set from authoritative roster code.
+	 * Nonblank mismatches remain CONFLICT in {@link #classifyIdentity}; this never overwrites.
+	 */
+	private void fillOnceStudentCode(RosterPreviewRow row, RosterLookups lookups) {
+		UserAccount account = lookups.userByEmail(row.email());
+		if (account == null) {
+			return;
+		}
+		StudentProfile profile = lookups.studentByUserId(account.getId());
+		if (profile == null) {
+			return;
+		}
+		fillOnceStudentCode(profile, row.studentCode(), lookups);
+	}
+
+	private void fillOnceStudentCode(StudentProfile profile, String incomingCode, RosterLookups lookups) {
+		if (profile == null || StringUtils.hasText(profile.getStudentCode()) || !StringUtils.hasText(incomingCode)) {
+			return;
+		}
+		String normalized = normalizeCode(incomingCode);
+		StudentProfile byCode = lookups.studentByCode(normalized);
+		if (byCode != null && profile.getId() != null && !profile.getId().equals(byCode.getId())) {
+			throw new AcademicException(
+					AcademicErrorCode.ROSTER_CONFIRM_BLOCKED,
+					HttpStatus.CONFLICT,
+					"StudentCode already belongs to another account.");
+		}
+		if (byCode != null && profile.getId() == null) {
+			throw new AcademicException(
+					AcademicErrorCode.ROSTER_CONFIRM_BLOCKED,
+					HttpStatus.CONFLICT,
+					"StudentCode already belongs to another account.");
+		}
+		profile.setStudentCode(normalized);
+		store.saveStudent(profile);
+		lookups.rememberStudent(profile);
 	}
 
 	private ApplyResult inviteNew(Course course, RosterPreviewRow row, RosterLookups lookups) {
@@ -751,7 +795,7 @@ public class CourseRosterService {
 			}
 		}
 
-		private void rememberStudent(StudentProfile profile) {
+		void rememberStudent(StudentProfile profile) {
 			if (profile == null) {
 				return;
 			}

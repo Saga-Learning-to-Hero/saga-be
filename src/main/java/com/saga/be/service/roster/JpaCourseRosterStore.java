@@ -130,4 +130,9 @@ public class JpaCourseRosterStore implements CourseRosterStore {
 	public StudentCourseInvitation saveInvitation(StudentCourseInvitation invitation) {
 		return invitations.save(invitation);
 	}
+
+	@Override
+	public StudentProfile saveStudent(StudentProfile profile) {
+		return students.save(profile);
+	}
 }

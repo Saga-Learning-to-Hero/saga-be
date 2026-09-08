@@ -43,5 +43,10 @@ class RosterTeamFetchQueryTest {
 		assertTrue(service.contains("store.listActiveEnrollments"));
 		assertTrue(service.contains("membershipsByEnrollment"));
 		assertTrue(service.contains("store.listTeams"));
+		assertTrue(service.contains("replaceLeader"));
+		assertTrue(service.contains("moveMember"));
+		assertTrue(service.contains("findTeamByIdForUpdate"));
+		String members = Files.readString(Path.of("src/main/java/com/saga/be/repository/TeamMemberRepository.java"));
+		assertTrue(members.contains("findFetchedById"));
 	}
 }

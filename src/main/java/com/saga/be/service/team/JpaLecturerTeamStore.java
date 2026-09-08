@@ -66,6 +66,16 @@ public class JpaLecturerTeamStore implements LecturerTeamStore {
 	}
 
 	@Override
+	public Optional<Team> findTeamById(UUID courseId, UUID teamId) {
+		return teams.findById(teamId).filter(team -> team.getCourse() != null && courseId.equals(team.getCourse().getId()));
+	}
+
+	@Override
+	public Optional<Team> findTeamByIdForUpdate(UUID teamId) {
+		return teams.findByIdForUpdate(teamId);
+	}
+
+	@Override
 	public Team saveTeam(Team team) {
 		return teams.save(team);
 	}
@@ -80,8 +90,22 @@ public class JpaLecturerTeamStore implements LecturerTeamStore {
 	}
 
 	@Override
+	public List<TeamMember> listMembersByTeamId(UUID teamId) {
+		List<TeamMember> fetched = members.findFetchedByTeam_Id(teamId);
+		if (!fetched.isEmpty()) {
+			return fetched;
+		}
+		return members.findByTeam_Id(teamId);
+	}
+
+	@Override
 	public Optional<TeamMember> findMemberByEnrollment(UUID courseEnrollmentId) {
 		return members.findByCourseEnrollment_Id(courseEnrollmentId);
+	}
+
+	@Override
+	public Optional<TeamMember> findMemberById(UUID teamMemberId) {
+		return members.findFetchedById(teamMemberId).or(() -> members.findById(teamMemberId));
 	}
 
 	@Override

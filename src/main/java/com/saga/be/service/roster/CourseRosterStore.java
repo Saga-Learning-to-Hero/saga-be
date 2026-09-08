@@ -44,6 +44,8 @@ public interface CourseRosterStore {
 
 	StudentCourseInvitation saveInvitation(StudentCourseInvitation invitation);
 
+	StudentProfile saveStudent(StudentProfile profile);
+
 	default <T> T inTransaction(Supplier<T> action) {
 		return action.get();
 	}

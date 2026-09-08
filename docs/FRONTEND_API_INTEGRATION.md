@@ -496,6 +496,7 @@ Breaking change phải được nêu rõ.
 | GET | `/api/admin/courses/{courseId}/roster` | Session | ADMIN | Course roster V1 | `AdminCourseRosterController` |
 | POST | `/api/admin/courses/{courseId}/roster/import/preview` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
 | POST | `/api/admin/courses/{courseId}/roster/import/confirm` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
+| POST | `/api/admin/courses/{courseId}/roster/students` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
 | POST | `/api/admin/dev/email-test` | Session + CSRF | ADMIN | Email delivery V1, **local/dev only** | `AdminDevEmailController` |
 | GET | `/api/lecturer/courses` | Session | LECTURER or ADMIN | Lecturer Team V1 | `LecturerCourseController` |
 | GET | `/api/lecturer/courses/{courseId}` | Session | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerCourseController` |
@@ -504,6 +505,8 @@ Breaking change phải được nêu rõ.
 | POST | `/api/lecturer/courses/{courseId}/teams/import/preview` | Session + CSRF | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerTeamController` |
 | POST | `/api/lecturer/courses/{courseId}/teams/import/confirm` | Session + CSRF | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerTeamController` |
 | GET | `/api/lecturer/courses/{courseId}/teams` | Session | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerTeamController` |
+| PUT | `/api/lecturer/courses/{courseId}/teams/{teamId}/leader` | Session + CSRF | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerTeamController` |
+| PATCH | `/api/lecturer/courses/{courseId}/team-members/{teamMemberId}/team` | Session + CSRF | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerTeamController` |
 | GET | `/api/student/courses/{courseId}/team` | Session | STUDENT | Lecturer Team V1 | `StudentCourseTeamController` |
 
 ---
@@ -779,7 +782,27 @@ Atomic transaction: create/update `team` by `(course_id, team_no)` (no dummy `pr
 
 Confirm summary: `createdTeams`, `updatedTeams`, `assignedMembers`, `reassignedMembers`, `updatedRoles`, `unchanged`, `emailsEnqueued`.
 
-`GET /api/lecturer/courses/{courseId}/teams` returns teams ordered by `teamNo`, members LEADER first then `studentCode`. `projectId` is nullable.
+`GET /api/lecturer/courses/{courseId}/teams` returns teams ordered by `teamNo`, members LEADER first then `studentCode`. `projectId` is nullable. Each member includes `teamMemberId` (mutation id), `courseEnrollmentId`, `studentProfileId`, identity fields, and `role`.
+
+Interactive mutations (same auth as list: assigned LECTURER or ADMIN):
+
+```json
+PUT /api/lecturer/courses/{courseId}/teams/{teamId}/leader
+{ "teamMemberId": "..." }
+```
+
+Atomically demotes the current Leader to Member and promotes the selected member to Leader. Returns the full course teams list.
+
+```json
+PATCH /api/lecturer/courses/{courseId}/team-members/{teamMemberId}/team
+{ "targetTeamId": "..." }
+```
+
+Moves a member within the same course. Moving the only Leader is blocked (`TEAM_LEADER_INVALID`). Project stays attached to the source team; access follows current `team_member` rows. Returns the full course teams list.
+
+### Manual admin roster add
+
+`POST /api/admin/courses/{courseId}/roster/students` uses the same identity + persistence path as XLSX confirm (`READY_ENROLL` / `READY_INVITE` / already / conflict). Body: `fullName`, `studentCode`, `email`, optional `memberCode`. `memberCode` is **not** persisted and is **not** used for Git/Jira attribution — FE must not treat it as required.
 
 ### Student my-team
 

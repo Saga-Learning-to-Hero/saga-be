@@ -21,6 +21,19 @@ public interface TeamMemberRepository extends JpaRepository<TeamMember, UUID> {
 			"""
 			SELECT m FROM TeamMember m
 			JOIN FETCH m.team t
+			LEFT JOIN FETCH t.project
+			JOIN FETCH m.course
+			JOIN FETCH m.courseEnrollment e
+			JOIN FETCH e.studentProfile p
+			JOIN FETCH p.userAccount
+			WHERE m.id = :id
+			""")
+	Optional<TeamMember> findFetchedById(@Param("id") UUID id);
+
+	@Query(
+			"""
+			SELECT m FROM TeamMember m
+			JOIN FETCH m.team t
 			JOIN FETCH t.course
 			LEFT JOIN FETCH t.project
 			JOIN FETCH m.courseEnrollment e

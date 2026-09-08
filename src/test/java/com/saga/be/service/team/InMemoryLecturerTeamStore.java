@@ -59,6 +59,20 @@ final class InMemoryLecturerTeamStore implements LecturerTeamStore {
 	}
 
 	@Override
+	public Optional<Team> findTeamById(UUID courseId, UUID teamId) {
+		Team team = teams.get(teamId);
+		if (team == null || team.getCourse() == null || !courseId.equals(team.getCourse().getId())) {
+			return Optional.empty();
+		}
+		return Optional.of(team);
+	}
+
+	@Override
+	public Optional<Team> findTeamByIdForUpdate(UUID teamId) {
+		return Optional.ofNullable(teams.get(teamId));
+	}
+
+	@Override
 	public Team saveTeam(Team team) {
 		if (team.getId() == null) {
 			team.setId(UUID.randomUUID());
@@ -75,11 +89,23 @@ final class InMemoryLecturerTeamStore implements LecturerTeamStore {
 	}
 
 	@Override
+	public List<TeamMember> listMembersByTeamId(UUID teamId) {
+		return new ArrayList<>(members.values().stream()
+				.filter(row -> row.getTeam() != null && teamId.equals(row.getTeam().getId()))
+				.toList());
+	}
+
+	@Override
 	public Optional<TeamMember> findMemberByEnrollment(UUID courseEnrollmentId) {
 		return members.values().stream()
 				.filter(row -> row.getCourseEnrollment() != null
 						&& courseEnrollmentId.equals(row.getCourseEnrollment().getId()))
 				.findFirst();
+	}
+
+	@Override
+	public Optional<TeamMember> findMemberById(UUID teamMemberId) {
+		return Optional.ofNullable(members.get(teamMemberId));
 	}
 
 	@Override

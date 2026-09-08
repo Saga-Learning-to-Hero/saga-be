@@ -199,14 +199,38 @@ public class LecturerTeamService {
 	@Transactional(readOnly = true)
 	public LecturerCourseTeamsResponse listTeams(UserAccount actor, UUID courseId) {
 		Course course = authorization.requireCourse(actor, courseId);
+		return listTeamsInternal(course);
+	}
+
+	public LecturerCourseTeamsResponse replaceLeader(
+			UserAccount actor, UUID courseId, UUID teamId, UUID teamMemberId, AuditRequest auditRequest) {
+		authorization.requireCourse(actor, courseId);
+		writeAtomic(() -> {
+			applyReplaceLeader(courseId, teamId, teamMemberId, actor, auditRequest);
+			return null;
+		});
+		return listTeams(actor, courseId);
+	}
+
+	public LecturerCourseTeamsResponse moveMember(
+			UserAccount actor, UUID courseId, UUID teamMemberId, UUID targetTeamId, AuditRequest auditRequest) {
+		authorization.requireCourse(actor, courseId);
+		writeAtomic(() -> {
+			applyMoveMember(courseId, teamMemberId, targetTeamId, actor, auditRequest);
+			return null;
+		});
+		return listTeams(actor, courseId);
+	}
+
+	private LecturerCourseTeamsResponse listTeamsInternal(Course course) {
 		Map<UUID, List<TeamMember>> membersByTeam = new LinkedHashMap<>();
-		for (TeamMember member : store.listMembers(courseId)) {
+		for (TeamMember member : store.listMembers(course.getId())) {
 			if (member.getTeam() == null) {
 				continue;
 			}
 			membersByTeam.computeIfAbsent(member.getTeam().getId(), key -> new ArrayList<>()).add(member);
 		}
-		List<LecturerTeamResponse> teams = store.listTeams(courseId).stream()
+		List<LecturerTeamResponse> teams = store.listTeams(course.getId()).stream()
 				.map(team -> new LecturerTeamResponse(
 						team.getId(),
 						team.getTeamNo() == null ? 0 : team.getTeamNo(),
@@ -217,6 +241,194 @@ public class LecturerTeamService {
 								.toList()))
 				.toList();
 		return new LecturerCourseTeamsResponse(course.getId(), teams);
+	}
+
+	private Void applyReplaceLeader(
+			UUID courseId, UUID teamId, UUID teamMemberId, UserAccount actor, AuditRequest auditRequest) {
+		Team team = requireLockedTeam(courseId, teamId);
+		List<TeamMember> members = store.listMembersByTeamId(team.getId());
+		TeamMember selected = members.stream()
+				.filter(member -> teamMemberId != null && teamMemberId.equals(member.getId()))
+				.findFirst()
+				.orElseThrow(() -> new AcademicException(
+						AcademicErrorCode.TEAM_NOT_FOUND, HttpStatus.NOT_FOUND, "Team member was not found on this team."));
+		requireActiveEnrollment(selected);
+		TeamMember previousLeader = members.stream()
+				.filter(member -> member.getRoleInTeam() == RoleInTeam.LEADER)
+				.findFirst()
+				.orElse(null);
+		Map<String, Object> before = new LinkedHashMap<>();
+		before.put("leaderTeamMemberId", previousLeader == null ? null : previousLeader.getId());
+		for (TeamMember member : members) {
+			if (member.getRoleInTeam() == RoleInTeam.LEADER && !member.getId().equals(selected.getId())) {
+				member.setRoleInTeam(RoleInTeam.MEMBER);
+				store.saveMember(member);
+			}
+		}
+		selected.setRoleInTeam(RoleInTeam.LEADER);
+		store.saveMember(selected);
+		Map<UUID, TeamMember> scoped = new LinkedHashMap<>();
+		for (TeamMember row : store.listMembersByTeamId(team.getId())) {
+			if (row.getCourseEnrollment() != null) {
+				scoped.put(row.getCourseEnrollment().getId(), row);
+			}
+		}
+		assertLeadershipForOccupiedTeams(Set.of(team.getId()), scoped);
+		record(
+				actor,
+				team,
+				TEAM_MEMBER_ROLE_CHANGED,
+				"team",
+				team.getId(),
+				before,
+				Map.of("leaderTeamMemberId", selected.getId()),
+				auditRequest);
+		return null;
+	}
+
+	private Void applyMoveMember(
+			UUID courseId, UUID teamMemberId, UUID targetTeamId, UserAccount actor, AuditRequest auditRequest) {
+		TeamMember member = store.findMemberById(teamMemberId)
+				.orElseThrow(() -> new AcademicException(
+						AcademicErrorCode.TEAM_NOT_FOUND, HttpStatus.NOT_FOUND, "Team member was not found."));
+		if (member.getCourse() == null || !courseId.equals(member.getCourse().getId())) {
+			throw new AcademicException(
+					AcademicErrorCode.TEAM_NOT_FOUND, HttpStatus.NOT_FOUND, "Team member was not found in this course.");
+		}
+		requireActiveEnrollment(member);
+		Team source = member.getTeam();
+		if (source == null || source.getId() == null) {
+			throw new AcademicException(AcademicErrorCode.TEAM_NOT_FOUND, HttpStatus.NOT_FOUND, "Source team was not found.");
+		}
+		if (source.getId().equals(targetTeamId)) {
+			return null;
+		}
+		Team targetProbe = store.findTeamById(courseId, targetTeamId)
+				.orElseThrow(() -> new AcademicException(
+						AcademicErrorCode.TEAM_NOT_FOUND, HttpStatus.NOT_FOUND, "Target team was not found in this course."));
+		lockTeamsInOrder(source.getId(), targetProbe.getId());
+		Team target = store.findTeamByIdForUpdate(targetProbe.getId())
+				.orElseThrow(() -> new AcademicException(
+						AcademicErrorCode.TEAM_NOT_FOUND, HttpStatus.NOT_FOUND, "Target team was not found."));
+		if (member.getRoleInTeam() == RoleInTeam.LEADER) {
+			long otherLeaders = store.listMembersByTeamId(source.getId()).stream()
+					.filter(row -> row.getRoleInTeam() == RoleInTeam.LEADER && !row.getId().equals(member.getId()))
+					.filter(this::isActiveMember)
+					.count();
+			if (otherLeaders == 0) {
+				throw new AcademicException(
+						AcademicErrorCode.TEAM_LEADER_INVALID,
+						HttpStatus.CONFLICT,
+						"Cannot move the only Leader without first assigning a replacement Leader.");
+			}
+		}
+		long targetActive = store.listMembersByTeamId(target.getId()).stream().filter(this::isActiveMember).count();
+		long targetLeaders = store.listMembersByTeamId(target.getId()).stream()
+				.filter(this::isActiveMember)
+				.filter(row -> row.getRoleInTeam() == RoleInTeam.LEADER)
+				.count();
+		if (targetActive == 0 || targetLeaders == 0) {
+			// V8 desired-state never places the first occupant as Member-only; require a Leader.
+			throw new AcademicException(
+					AcademicErrorCode.TEAM_LEADER_INVALID,
+					HttpStatus.CONFLICT,
+					"Cannot move a member into a team that has no Leader.");
+		}
+		Map<String, Object> before = new LinkedHashMap<>();
+		before.put("teamId", source.getId());
+		before.put("teamNo", source.getTeamNo());
+		before.put("role", member.getRoleInTeam() == null ? null : member.getRoleInTeam().name());
+		member.setTeam(target);
+		member.setCourse(target.getCourse());
+		if (member.getRoleInTeam() == RoleInTeam.LEADER) {
+			member.setRoleInTeam(RoleInTeam.MEMBER);
+		}
+		store.saveMember(member);
+		Map<UUID, TeamMember> scoped = new LinkedHashMap<>();
+		for (TeamMember row : store.listMembersByTeamId(source.getId())) {
+			if (row.getCourseEnrollment() != null) {
+				scoped.put(row.getCourseEnrollment().getId(), row);
+			}
+		}
+		for (TeamMember row : store.listMembersByTeamId(target.getId())) {
+			if (row.getCourseEnrollment() != null) {
+				scoped.put(row.getCourseEnrollment().getId(), row);
+			}
+		}
+		assertLeadershipForOccupiedTeams(Set.of(source.getId(), target.getId()), scoped);
+		record(
+				actor,
+				target,
+				TEAM_MEMBER_REASSIGNED,
+				"team_member",
+				member.getId(),
+				before,
+				Map.of("teamId", target.getId(), "teamNo", target.getTeamNo(), "role", member.getRoleInTeam().name()),
+				auditRequest);
+		return null;
+	}
+
+	private Team requireLockedTeam(UUID courseId, UUID teamId) {
+		Team locked = store.findTeamByIdForUpdate(teamId)
+				.orElseThrow(() -> new AcademicException(
+						AcademicErrorCode.TEAM_NOT_FOUND, HttpStatus.NOT_FOUND, "Team was not found."));
+		if (locked.getCourse() == null || !courseId.equals(locked.getCourse().getId())) {
+			throw new AcademicException(AcademicErrorCode.TEAM_NOT_FOUND, HttpStatus.NOT_FOUND, "Team was not found in this course.");
+		}
+		return locked;
+	}
+
+	private void lockTeamsInOrder(UUID leftId, UUID rightId) {
+		UUID first = leftId.compareTo(rightId) <= 0 ? leftId : rightId;
+		UUID second = leftId.compareTo(rightId) <= 0 ? rightId : leftId;
+		store.findTeamByIdForUpdate(first)
+				.orElseThrow(() -> new AcademicException(
+						AcademicErrorCode.TEAM_NOT_FOUND, HttpStatus.NOT_FOUND, "Team was not found."));
+		if (!first.equals(second)) {
+			store.findTeamByIdForUpdate(second)
+					.orElseThrow(() -> new AcademicException(
+							AcademicErrorCode.TEAM_NOT_FOUND, HttpStatus.NOT_FOUND, "Team was not found."));
+		}
+	}
+
+	private void requireActiveEnrollment(TeamMember member) {
+		CourseEnrollment enrollment = member.getCourseEnrollment();
+		if (enrollment == null || enrollment.getEnrollmentStatus() != EnrollmentStatus.ACTIVE) {
+			throw new AcademicException(
+					AcademicErrorCode.TEAM_CONFIRM_BLOCKED,
+					HttpStatus.CONFLICT,
+					"Team member enrollment is not ACTIVE.");
+		}
+	}
+
+	private boolean isActiveMember(TeamMember member) {
+		CourseEnrollment enrollment = member.getCourseEnrollment();
+		return enrollment != null && enrollment.getEnrollmentStatus() == EnrollmentStatus.ACTIVE;
+	}
+
+	private void assertLeadershipForOccupiedTeams(Set<UUID> teamIds, Map<UUID, TeamMember> memberships) {
+		for (UUID teamId : teamIds) {
+			int activeMembers = 0;
+			int leaders = 0;
+			for (TeamMember member : memberships.values()) {
+				if (member.getTeam() == null || member.getTeam().getId() == null || !teamId.equals(member.getTeam().getId())) {
+					continue;
+				}
+				if (!isActiveMember(member)) {
+					continue;
+				}
+				activeMembers++;
+				if (member.getRoleInTeam() == RoleInTeam.LEADER) {
+					leaders++;
+				}
+			}
+			if (activeMembers > 0 && leaders != 1) {
+				throw new AcademicException(
+						AcademicErrorCode.TEAM_LEADER_INVALID,
+						HttpStatus.CONFLICT,
+						"Each team must have exactly one Leader.");
+			}
+		}
 	}
 
 	private Classified classify(Course course, List<LecturerTeamWorkbook.RawRow> rawRows) {
@@ -681,6 +893,7 @@ public class LecturerTeamService {
 		StudentProfile profile = enrollment == null ? null : enrollment.getStudentProfile();
 		UserAccount user = profile == null ? null : profile.getUserAccount();
 		return new LecturerTeamMemberResponse(
+				member.getId(),
 				enrollment == null ? null : enrollment.getId(),
 				profile == null ? null : profile.getId(),
 				profile == null ? null : profile.getStudentCode(),

@@ -133,9 +133,7 @@ public class GoogleAccountService {
 			if (role == AccountRole.STUDENT) {
 				StudentProfile profile = new StudentProfile();
 				profile.setUserAccount(saved);
-				if (GoogleRoleResolver.STUDENT_FPT_EMAIL.matcher(email).matches()) {
-					profile.setStudentCode(email.substring(0, email.indexOf('@')));
-				}
+				FormalFptStudentCode.extractFromEmail(email).ifPresent(profile::setStudentCode);
 				students.save(profile);
 			} else {
 				LecturerProfile profile = new LecturerProfile();
