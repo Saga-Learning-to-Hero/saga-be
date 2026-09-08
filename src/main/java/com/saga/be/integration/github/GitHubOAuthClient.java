@@ -177,8 +177,65 @@ public class GitHubOAuthClient {
 	}
 
 	/**
-	 * Newest commits first for owner/repo. Caller must enforce a V1 backfill limit.
-	 * GitHub returns at most 100 commits per page.
+	 * Lists all branch names for owner/repo. Paginates until the final/empty page (per_page=100).
+	 */
+	public List<String> listBranches(String installationToken, String owner, String repo) {
+		List<String> names = new java.util.ArrayList<>();
+		int page = 1;
+		while (page <= MAX_BRANCH_LIST_PAGES) {
+			List<String> pageNames = listBranchesPage(installationToken, owner, repo, page, 100);
+			if (pageNames.isEmpty()) {
+				break;
+			}
+			names.addAll(pageNames);
+			if (pageNames.size() < 100) {
+				break;
+			}
+			page++;
+		}
+		if (page > MAX_BRANCH_LIST_PAGES) {
+			throw new IntegrationException(
+					IntegrationErrorCode.GITHUB_SYNC_INCOMPLETE,
+					HttpStatus.BAD_GATEWAY,
+					"GitHub branch listing exceeded defensive pagination guard.");
+		}
+		return names;
+	}
+
+	private List<String> listBranchesPage(
+			String installationToken, String owner, String repo, int page, int perPage) {
+		try {
+			int safePerPage = Math.max(1, Math.min(perPage, 100));
+			int safePage = Math.max(1, page);
+			GitHubBranchApiResponse[] nodes = restClient
+					.get()
+					.uri(
+							"https://api.github.com/repos/{owner}/{repo}/branches?per_page={perPage}&page={page}",
+							owner,
+							repo,
+							safePerPage,
+							safePage)
+					.header("Authorization", "Bearer " + installationToken)
+					.header("Accept", "application/vnd.github+json")
+					.retrieve()
+					.body(GitHubBranchApiResponse[].class);
+			if (nodes == null || nodes.length == 0) {
+				return List.of();
+			}
+			return java.util.Arrays.stream(nodes)
+					.filter(node -> node != null && node.name() != null && !node.name().isBlank())
+					.map(GitHubBranchApiResponse::name)
+					.toList();
+		} catch (RestClientResponseException ex) {
+			throw mapGithubListFailure(ex, "GitHub branches could not be listed.");
+		} catch (HttpMessageConversionException ex) {
+			throw installationInvalid("GitHub branches could not be listed.");
+		}
+	}
+
+	/**
+	 * Newest commits first for owner/repo reachable from {@code sha} (branch or commit).
+	 * GitHub returns at most 100 commits per page. Caller paginates until a short/empty page.
 	 */
 	public List<CommitSummary> listCommits(
 			String installationToken, String owner, String repo, String sha, int page, int perPage) {
@@ -216,10 +273,26 @@ public class GitHubOAuthClient {
 							node.author() == null ? null : node.author().id(),
 							node.author() == null ? null : node.author().login()))
 					.toList();
-		} catch (RestClientResponseException | HttpMessageConversionException ex) {
+		} catch (RestClientResponseException ex) {
+			throw mapGithubListFailure(ex, "GitHub commits could not be listed.");
+		} catch (HttpMessageConversionException ex) {
 			throw installationInvalid("GitHub commits could not be listed.");
 		}
 	}
+
+	private static IntegrationException mapGithubListFailure(RestClientResponseException ex, String fallback) {
+		int status = ex.getStatusCode().value();
+		if (status == 403 || status == 429) {
+			return new IntegrationException(
+					IntegrationErrorCode.GITHUB_RATE_LIMITED,
+					HttpStatus.BAD_GATEWAY,
+					"GitHub rate limit prevented completing repository sync.");
+		}
+		return installationInvalid(fallback);
+	}
+
+	/** Defensive only — malformed/infinite provider pagination, not a product data cap. */
+	static final int MAX_BRANCH_LIST_PAGES = 1_000;
 
 	private static IntegrationException tokenExchangeFailed() {
 		return new IntegrationException(
@@ -273,6 +346,9 @@ public class GitHubOAuthClient {
 			@JsonProperty("private") boolean privateRepo) {}
 
 	public record RepoSummary(long id, String name, String fullName, String owner, String defaultBranch, boolean privateRepo) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record GitHubBranchApiResponse(String name) {}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record GitHubCommitApiResponse(String sha, GitHubCommitBody commit, GitHubCommitAuthorUser author) {}

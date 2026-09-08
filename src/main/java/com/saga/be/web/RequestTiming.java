@@ -8,6 +8,10 @@ import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+/**
+ * Service-boundary timer only. Does not include Spring Session Redis I/O, security filters,
+ * MVC argument resolution before the supplier runs, or response serialization after it returns.
+ */
 public final class RequestTiming {
 
 	public static final String SERVICE_METHOD_ATTR = "saga.serviceMethod";
@@ -20,19 +24,31 @@ public final class RequestTiming {
 
 	public static <T> T record(String method, Supplier<T> action) {
 		long started = System.nanoTime();
+		HttpServletRequest request = currentRequest();
+		if (request != null) {
+			request.setAttribute(RequestPhaseAttrs.SERVICE_START_NANOS, started);
+		}
 		try {
 			return action.get();
 		} finally {
-			long durationMs = (System.nanoTime() - started) / 1_000_000L;
-			if (durationMs >= SERVICE_LOG_THRESHOLD_MS) {
-				log.info("academic service method={} durationMs={}", method, durationMs);
-			}
-			RequestAttributes attributes = RequestContextHolder.getRequestAttributes();
-			if (attributes instanceof ServletRequestAttributes servletAttributes) {
-				HttpServletRequest request = servletAttributes.getRequest();
+			long ended = System.nanoTime();
+			long durationMs = (ended - started) / 1_000_000L;
+			if (request != null) {
+				request.setAttribute(RequestPhaseAttrs.SERVICE_END_NANOS, ended);
 				request.setAttribute(SERVICE_METHOD_ATTR, method);
 				request.setAttribute(SERVICE_DURATION_MS_ATTR, durationMs);
 			}
+			if (durationMs >= SERVICE_LOG_THRESHOLD_MS) {
+				log.info("academic service method={} durationMs={}", method, durationMs);
+			}
 		}
+	}
+
+	private static HttpServletRequest currentRequest() {
+		RequestAttributes attributes = RequestContextHolder.getRequestAttributes();
+		if (attributes instanceof ServletRequestAttributes servletAttributes) {
+			return servletAttributes.getRequest();
+		}
+		return null;
 	}
 }

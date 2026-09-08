@@ -73,13 +73,15 @@ public class JiraTaskSyncService {
 		if (job == null) {
 			return alreadyRunning(projectId);
 		}
+		boolean finalized = false;
 		try {
 			JiraIntegration integration = integrations.findFetchedByProject_Id(projectId).orElse(null);
 			if (integration == null
 					|| integration.getConnectionStatus() != IntegrationStatus.ACTIVE
 					|| integration.getProjectKey() == null
 					|| integration.getCloudId() == null) {
-				return fail(job, "JIRA_INTEGRATION_INACTIVE", "persist");
+				finalized = true;
+				return claims.markFailed(job, "JIRA_INTEGRATION_INACTIVE", "persist");
 			}
 			String accessToken = preferredAccess != null && !preferredAccess.isBlank()
 					? preferredAccess
@@ -134,15 +136,22 @@ public class JiraTaskSyncService {
 					integrations.save(row);
 				}
 			});
-			return succeed(job, processed);
+			finalized = true;
+			return claims.markSucceeded(job, processed);
 		} catch (IntegrationException ex) {
 			log.warn("jira initial sync failed projectId={} code={}", projectId, ex.getCode());
 			markIntegrationFailure(projectId, ex.getCode().name());
-			return fail(job, ex.getCode().name(), "provider");
+			finalized = true;
+			return claims.markFailed(job, ex.getCode().name(), "provider");
 		} catch (RuntimeException ex) {
 			log.warn("jira initial sync failed projectId={} type={}", projectId, ex.getClass().getSimpleName());
 			markIntegrationFailure(projectId, "JIRA_SYNC_FAILED");
-			return fail(job, "JIRA_SYNC_FAILED", "provider");
+			finalized = true;
+			return claims.markFailed(job, "JIRA_SYNC_FAILED", "provider");
+		} finally {
+			if (!finalized) {
+				claims.markFailed(job, "SYNC_JOB_ABORTED", "finalize");
+			}
 		}
 	}
 
@@ -175,24 +184,5 @@ public class JiraTaskSyncService {
 		job.setItemsProcessed(0);
 		job.setItemsFailed(0);
 		return writes.execute(status -> syncJobs.save(job));
-	}
-
-	private SyncJobLog succeed(SyncJobLog job, int processed) {
-		return writes.execute(status -> {
-			job.setStatus(SyncJobStatus.SUCCEEDED);
-			job.setItemsProcessed(processed);
-			job.setCompletedAt(LocalDateTime.now());
-			return syncJobs.save(job);
-		});
-	}
-
-	private SyncJobLog fail(SyncJobLog job, String category, String stage) {
-		return writes.execute(status -> {
-			job.setStatus(SyncJobStatus.FAILED);
-			job.setErrorCategory(category);
-			job.setFailureStage(stage);
-			job.setCompletedAt(LocalDateTime.now());
-			return syncJobs.save(job);
-		});
 	}
 }

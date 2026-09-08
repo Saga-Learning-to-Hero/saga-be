@@ -82,10 +82,33 @@ class JiraTaskSyncServiceTest {
 		integration.setConsecutiveFailures(0);
 		when(claims.tryClaim("JIRA", projectId, SyncJobType.INITIAL))
 				.thenAnswer(inv -> Optional.of(runningJob()));
-		when(syncJobs.save(any(SyncJobLog.class))).thenAnswer(inv -> inv.getArgument(0));
+		org.mockito.Mockito.lenient()
+				.when(claims.markSucceeded(any(SyncJobLog.class), anyInt()))
+				.thenAnswer(inv -> {
+					SyncJobLog job = inv.getArgument(0);
+					job.setStatus(SyncJobStatus.SUCCEEDED);
+					job.setItemsProcessed(inv.getArgument(1));
+					job.setCompletedAt(java.time.LocalDateTime.now());
+					return job;
+				});
+		org.mockito.Mockito.lenient()
+				.when(claims.markFailed(any(SyncJobLog.class), anyString(), anyString()))
+				.thenAnswer(inv -> {
+					SyncJobLog job = inv.getArgument(0);
+					job.setStatus(SyncJobStatus.FAILED);
+					job.setErrorCategory(inv.getArgument(1));
+					job.setFailureStage(inv.getArgument(2));
+					job.setCompletedAt(java.time.LocalDateTime.now());
+					return job;
+				});
+		org.mockito.Mockito.lenient()
+				.when(syncJobs.save(any(SyncJobLog.class)))
+				.thenAnswer(inv -> inv.getArgument(0));
 		when(integrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(integrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		org.mockito.Mockito.lenient()
+				.when(integrations.findByProject_Id(projectId))
+				.thenReturn(Optional.of(integration));
+		org.mockito.Mockito.lenient().when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
 	}
 
 	@Test

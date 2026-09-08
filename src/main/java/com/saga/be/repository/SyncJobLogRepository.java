@@ -11,6 +11,9 @@ public interface SyncJobLogRepository extends JpaRepository<SyncJobLog, UUID> {
 
 	boolean existsByTargetSystemAndTargetIdAndStatus(String targetSystem, UUID targetId, SyncJobStatus status);
 
+	List<SyncJobLog> findByTargetSystemAndTargetIdAndStatus(
+			String targetSystem, UUID targetId, SyncJobStatus status);
+
 	List<SyncJobLog> findTop20ByTargetIdOrderByStartedAtDesc(UUID targetId);
 
 	Optional<SyncJobLog> findFirstByTargetSystemAndTargetIdOrderByStartedAtDesc(String targetSystem, UUID targetId);

@@ -69,7 +69,7 @@ class SyncJobClaimServiceConcurrencyTest {
 
 	@BeforeEach
 	void setUp() {
-		claims = new SyncJobClaimService(syncJobs, transactionManager);
+		claims = new SyncJobClaimService(syncJobs, new com.saga.be.config.IntegrationProperties(), transactionManager);
 		projectId = UUID.randomUUID();
 	}
 

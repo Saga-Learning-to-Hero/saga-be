@@ -17,6 +17,8 @@ public class IntegrationAsyncConfiguration {
 		executor.setMaxPoolSize(4);
 		executor.setQueueCapacity(200);
 		executor.setThreadNamePrefix("integration-sync-");
+		// Reject on caller so manual sync can releaseEnqueue; never silently drop work.
+		executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
 		executor.initialize();
 		return executor;
 	}

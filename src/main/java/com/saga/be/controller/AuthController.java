@@ -17,6 +17,7 @@ import com.saga.be.entity.account.UserAccount;
 import com.saga.be.exception.AuthException;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.roster.InvitationClaimService;
+import com.saga.be.web.RequestTiming;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -118,12 +119,14 @@ public class AuthController {
 	public AuthMeResponse me(
 			@Parameter(hidden = true) @AuthenticationPrincipal Object principal,
 			@Parameter(hidden = true) Authentication authentication) {
-		if (!(principal instanceof SagaUserPrincipal saga)
-				|| authentication == null
-				|| authentication instanceof AnonymousAuthenticationToken) {
-			return AuthResponses.anonymous();
-		}
-		return AuthResponses.fromPrincipal(saga);
+		return RequestTiming.record("authMe", () -> {
+			if (!(principal instanceof SagaUserPrincipal saga)
+					|| authentication == null
+					|| authentication instanceof AnonymousAuthenticationToken) {
+				return AuthResponses.anonymous();
+			}
+			return AuthResponses.fromPrincipal(saga);
+		});
 	}
 
 	@PostMapping("/login")

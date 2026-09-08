@@ -46,6 +46,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -55,6 +57,8 @@ import org.springframework.util.StringUtils;
 @Service
 @Profile("!test")
 public class AcademicCatalogService {
+
+	private static final Logger log = LoggerFactory.getLogger(AcademicCatalogService.class);
 
 	public static final String SUBJECT_CREATED = "SUBJECT_CREATED";
 	public static final String SUBJECT_UPDATED = "SUBJECT_UPDATED";
@@ -211,7 +215,33 @@ public class AcademicCatalogService {
 
 	@Transactional(readOnly = true)
 	public SyllabusDetailResponse getSyllabus(UUID subjectId, UUID syllabusId) {
-		return RequestTiming.record("getSyllabus", () -> toDetail(requireSyllabus(subjectId, syllabusId)));
+		return RequestTiming.record("getSyllabus", () -> {
+			long requireStarted = System.nanoTime();
+			SubjectSyllabusVersion syllabus = requireSyllabus(subjectId, syllabusId);
+			long requireMs = (System.nanoTime() - requireStarted) / 1_000_000L;
+			long listsStarted = System.nanoTime();
+			SyllabusDetailParts parts = loadDetailParts(syllabus.getId());
+			long listsMs = (System.nanoTime() - listsStarted) / 1_000_000L;
+			long mapStarted = System.nanoTime();
+			SyllabusDetailResponse detail = toDetail(syllabus, parts);
+			long mapMs = (System.nanoTime() - mapStarted) / 1_000_000L;
+			if (requireMs + listsMs + mapMs >= 200) {
+				log.info(
+						"getSyllabus phases subjectPresent=true requireMs={} listsMs={} mapMs={} outcomes={} units={} phases={} activities={} deliverables={} unitLinks={} phaseLinks={} deliverableLinks={}",
+						requireMs,
+						listsMs,
+						mapMs,
+						parts.outcomes().size(),
+						parts.units().size(),
+						parts.phases().size(),
+						parts.activities().size(),
+						parts.deliverables().size(),
+						parts.unitLinks().size(),
+						parts.phaseLinks().size(),
+						parts.deliverableLinks().size());
+			}
+			return detail;
+		});
 	}
 
 	@Transactional
@@ -670,34 +700,77 @@ public class AcademicCatalogService {
 	}
 
 	private SyllabusDetailResponse toDetail(SubjectSyllabusVersion syllabus) {
-		UUID id = syllabus.getId();
+		return toDetail(syllabus, loadDetailParts(syllabus.getId()));
+	}
+
+	private SyllabusDetailParts loadDetailParts(UUID id) {
+		long t0 = System.nanoTime();
 		List<SyllabusLearningOutcome> outcomes = store.listOutcomes(id);
+		long t1 = System.nanoTime();
 		List<SyllabusLearningUnit> units = store.listLearningUnits(id);
+		long t2 = System.nanoTime();
 		List<SyllabusPhase> phases = store.listPhases(id);
+		long t3 = System.nanoTime();
 		List<SyllabusExpectedActivity> activities = store.listActivities(id);
+		long t4 = System.nanoTime();
 		List<SyllabusExpectedDeliverable> deliverables = store.listDeliverables(id);
+		long t5 = System.nanoTime();
+		List<SyllabusLearningUnitOutcome> unitLinks = store.listUnitOutcomeLinks(id);
+		long t6 = System.nanoTime();
+		List<SyllabusPhaseLearningOutcome> phaseLinks = store.listPhaseOutcomeLinks(id);
+		long t7 = System.nanoTime();
+		List<SyllabusDeliverableLearningOutcome> deliverableLinks = store.listDeliverableOutcomeLinks(id);
+		long t8 = System.nanoTime();
+		long totalListsMs = (t8 - t0) / 1_000_000L;
+		if (totalListsMs >= 200) {
+			log.info(
+					"getSyllabus listSqlMs outcomes={} units={} phases={} activities={} deliverables={} unitLinks={} phaseLinks={} deliverableLinks={}",
+					(t1 - t0) / 1_000_000L,
+					(t2 - t1) / 1_000_000L,
+					(t3 - t2) / 1_000_000L,
+					(t4 - t3) / 1_000_000L,
+					(t5 - t4) / 1_000_000L,
+					(t6 - t5) / 1_000_000L,
+					(t7 - t6) / 1_000_000L,
+					(t8 - t7) / 1_000_000L);
+		}
+		return new SyllabusDetailParts(
+				outcomes, units, phases, activities, deliverables, unitLinks, phaseLinks, deliverableLinks);
+	}
+
+	private record SyllabusDetailParts(
+			List<SyllabusLearningOutcome> outcomes,
+			List<SyllabusLearningUnit> units,
+			List<SyllabusPhase> phases,
+			List<SyllabusExpectedActivity> activities,
+			List<SyllabusExpectedDeliverable> deliverables,
+			List<SyllabusLearningUnitOutcome> unitLinks,
+			List<SyllabusPhaseLearningOutcome> phaseLinks,
+			List<SyllabusDeliverableLearningOutcome> deliverableLinks) {}
+
+	private SyllabusDetailResponse toDetail(SubjectSyllabusVersion syllabus, SyllabusDetailParts parts) {
 		Map<UUID, List<String>> unitOutcomes = new HashMap<>();
-		for (SyllabusLearningUnitOutcome link : store.listUnitOutcomeLinks(id)) {
+		for (SyllabusLearningUnitOutcome link : parts.unitLinks()) {
 			unitOutcomes
 					.computeIfAbsent(link.getLearningUnit().getId(), ignored -> new ArrayList<>())
 					.add(link.getLearningOutcome().getCode());
 		}
 		Map<UUID, List<String>> phaseOutcomes = new HashMap<>();
-		for (SyllabusPhaseLearningOutcome link : store.listPhaseOutcomeLinks(id)) {
+		for (SyllabusPhaseLearningOutcome link : parts.phaseLinks()) {
 			phaseOutcomes
 					.computeIfAbsent(link.getPhase().getId(), ignored -> new ArrayList<>())
 					.add(link.getLearningOutcome().getCode());
 		}
 		Map<UUID, List<String>> deliverableOutcomes = new HashMap<>();
-		for (SyllabusDeliverableLearningOutcome link : store.listDeliverableOutcomeLinks(id)) {
+		for (SyllabusDeliverableLearningOutcome link : parts.deliverableLinks()) {
 			deliverableOutcomes
 					.computeIfAbsent(link.getDeliverable().getId(), ignored -> new ArrayList<>())
 					.add(link.getLearningOutcome().getCode());
 		}
-		List<LearningOutcomeResponse> outcomeResponses = outcomes.stream()
+		List<LearningOutcomeResponse> outcomeResponses = parts.outcomes().stream()
 				.map(o -> new LearningOutcomeResponse(o.getId(), o.getCode(), o.getName(), o.getDescription(), o.getOrderIndex()))
 				.toList();
-		List<LearningUnitResponse> unitResponses = units.stream()
+		List<LearningUnitResponse> unitResponses = parts.units().stream()
 				.map(unit -> new LearningUnitResponse(
 						unit.getId(),
 						unit.getCode(),
@@ -706,7 +779,7 @@ public class AcademicCatalogService {
 						unit.getOrderIndex(),
 						List.copyOf(unitOutcomes.getOrDefault(unit.getId(), List.of()))))
 				.toList();
-		List<PhaseResponse> phaseResponses = phases.stream()
+		List<PhaseResponse> phaseResponses = parts.phases().stream()
 				.map(phase -> new PhaseResponse(
 						phase.getId(),
 						phase.getCode(),
@@ -714,13 +787,13 @@ public class AcademicCatalogService {
 						phase.getDescription(),
 						phase.getOrderIndex(),
 						List.copyOf(phaseOutcomes.getOrDefault(phase.getId(), List.of())),
-						activities.stream()
+						parts.activities().stream()
 								.filter(activity -> activity.getPhase().getId().equals(phase.getId()))
 								.sorted((a, b) -> Integer.compare(a.getOrderIndex(), b.getOrderIndex()))
 								.map(a -> new ActivityResponse(
 										a.getId(), a.getCode(), a.getName(), a.getDescription(), a.getOrderIndex()))
 								.toList(),
-						deliverables.stream()
+						parts.deliverables().stream()
 								.filter(deliverable -> deliverable.getPhase().getId().equals(phase.getId()))
 								.sorted((a, b) -> Integer.compare(a.getOrderIndex(), b.getOrderIndex()))
 								.map(d -> new DeliverableResponse(

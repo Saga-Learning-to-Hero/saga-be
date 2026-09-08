@@ -142,4 +142,41 @@ class GitHubOAuthClientTest {
 		assertFalse(source.contains("com.fasterxml.jackson.databind.JsonNode"));
 		assertFalse(source.contains("body(JsonNode.class)"));
 	}
+
+	@Test
+	void listBranches_paginatesUntilShortPage() {
+		String page1 = "["
+				+ String.join(
+						",",
+						java.util.stream.IntStream.range(0, 100)
+								.mapToObj(i -> "{\"name\":\"b" + i + "\"}")
+								.toList())
+				+ "]";
+		server.expect(requestTo("https://api.github.com/repos/org/repo/branches?per_page=100&page=1"))
+				.andRespond(withSuccess(page1, MediaType.APPLICATION_JSON));
+		server.expect(requestTo("https://api.github.com/repos/org/repo/branches?per_page=100&page=2"))
+				.andRespond(withSuccess("[{\"name\":\"last\"}]", MediaType.APPLICATION_JSON));
+
+		List<String> branches = client.listBranches("tok", "org", "repo");
+
+		assertEquals(101, branches.size());
+		assertEquals("b0", branches.getFirst());
+		assertEquals("last", branches.getLast());
+		server.verify();
+	}
+
+	@Test
+	void listCommits_rateLimitMapsToTypedFailure() {
+		server.expect(requestTo("https://api.github.com/repos/org/repo/commits?per_page=100&page=1&sha=main"))
+				.andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(
+								org.springframework.http.HttpStatus.FORBIDDEN)
+						.body("{\"message\":\"API rate limit exceeded\"}")
+						.contentType(MediaType.APPLICATION_JSON));
+
+		com.saga.be.exception.IntegrationException ex = org.junit.jupiter.api.Assertions.assertThrows(
+				com.saga.be.exception.IntegrationException.class,
+				() -> client.listCommits("tok", "org", "repo", "main", 1, 100));
+		assertEquals(com.saga.be.integration.IntegrationErrorCode.GITHUB_RATE_LIMITED, ex.getCode());
+		server.verify();
+	}
 }

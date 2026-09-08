@@ -1,6 +1,5 @@
 package com.saga.be.service.sync;
 
-import com.saga.be.config.IntegrationProperties;
 import com.saga.be.entity.enums.GitHubInstallationStatus;
 import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.SyncJobStatus;
@@ -9,6 +8,7 @@ import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.github.GithubInstallation;
 import com.saga.be.entity.integration.SyncJobLog;
 import com.saga.be.exception.IntegrationException;
+import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.github.GitHubAppJwtService;
 import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.github.GitHubOAuthClient.CommitSummary;
@@ -20,21 +20,36 @@ import com.saga.be.service.projection.GitCommitProjectionService.CommitDraft;
 import com.saga.be.service.projection.ProjectionMappings;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+/**
+ * Complete multi-branch GitHub commit reconciliation for ACTIVE selected repositories.
+ * Canonical commit identity is (repo_id, sha_hash). {@code headRef} is best-effort metadata only
+ * (single column; first-seen branch wins within a run).
+ */
 @Service
 @Profile("!test")
 public class GitHubCommitSyncService {
 
 	/** GitHub list commits API max per_page (enforced by GitHubOAuthClient). */
 	static final int GITHUB_COMMITS_PER_PAGE_MAX = 100;
+
+	/**
+	 * Defensive only against malformed infinite pagination — not a product data ceiling.
+	 * ~100 pages × 100 commits = 10_000 commits per branch before FAIL.
+	 */
+	static final int MAX_COMMIT_PAGES_PER_BRANCH = 10_000;
 
 	private static final Logger log = LoggerFactory.getLogger(GitHubCommitSyncService.class);
 
@@ -44,7 +59,6 @@ public class GitHubCommitSyncService {
 	private final GitHubAppJwtService githubJwt;
 	private final GitCommitProjectionService projection;
 	private final SyncJobLogRepository syncJobs;
-	private final IntegrationProperties properties;
 	private final SyncJobClaimService claims;
 	private final TransactionTemplate writes;
 
@@ -55,7 +69,6 @@ public class GitHubCommitSyncService {
 			GitHubAppJwtService githubJwt,
 			GitCommitProjectionService projection,
 			SyncJobLogRepository syncJobs,
-			IntegrationProperties properties,
 			SyncJobClaimService claims,
 			PlatformTransactionManager transactionManager) {
 		this.repos = repos;
@@ -64,31 +77,32 @@ public class GitHubCommitSyncService {
 		this.githubJwt = githubJwt;
 		this.projection = projection;
 		this.syncJobs = syncJobs;
-		this.properties = properties;
 		this.claims = claims;
 		this.writes = new TransactionTemplate(transactionManager);
 	}
 
 	/**
-	 * Bounded newest-N backfill per ACTIVE selected repo. Provider HTTP outside JDBC TX.
-	 * Per-repository failures are isolated; later healthy repos still sync.
+	 * Full reconciliation: all enumerable branches × full commit pagination per branch.
+	 * Provider HTTP outside JDBC TX. Per-repository failures are isolated.
 	 */
 	public SyncJobLog initialSync(UUID projectId) {
 		SyncJobLog job = beginJob(projectId);
 		if (job == null) {
 			return alreadyRunning(projectId);
 		}
+		boolean finalized = false;
 		try {
 			GithubInstallation installation = installations.findByProject_Id(projectId).orElse(null);
 			if (installation == null || installation.getInstallationStatus() != GitHubInstallationStatus.ACTIVE) {
+				finalized = true;
 				return fail(job, "GITHUB_INSTALLATION_INACTIVE", "persist", 0, 0);
 			}
 			List<GitRepo> active = repos.findFetchedByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE);
 			if (active.isEmpty()) {
-				return succeed(job, 0);
+				finalized = true;
+				return claims.markSucceeded(job, 0);
 			}
 			String token = github.createInstallationToken(githubJwt.createJwt(), installation.getInstallationId());
-			int limit = Math.max(1, properties.getGithubCommitBackfillLimit());
 			int processed = 0;
 			int repoFailures = 0;
 			for (GitRepo repo : active) {
@@ -96,7 +110,7 @@ public class GitHubCommitSyncService {
 					continue;
 				}
 				try {
-					processed += syncOneRepository(token, repo, limit);
+					processed += syncOneRepository(token, repo);
 				} catch (IntegrationException ex) {
 					repoFailures++;
 					log.warn(
@@ -107,69 +121,111 @@ public class GitHubCommitSyncService {
 							repo.getFullName(),
 							ex.getCode());
 					markRepoFailure(repo);
+					if (ex.getCode() == IntegrationErrorCode.GITHUB_RATE_LIMITED) {
+						finalized = true;
+						return fail(job, ex.getCode().name(), "provider", processed, repoFailures);
+					}
 				}
 			}
 			if (repoFailures > 0) {
+				finalized = true;
 				return fail(job, "GITHUB_REPO_SYNC_PARTIAL_OR_FAILED", "provider", processed, repoFailures);
 			}
-			return succeed(job, processed);
+			finalized = true;
+			return claims.markSucceeded(job, processed);
 		} catch (IntegrationException ex) {
-			log.warn(
-					"github initial sync failed projectId={} code={}",
-					projectId,
-					ex.getCode());
-			return fail(job, "GITHUB_SYNC_FAILED", "provider", 0, 0);
+			log.warn("github initial sync failed projectId={} code={}", projectId, ex.getCode());
+			finalized = true;
+			return fail(job, ex.getCode().name(), "provider", 0, 0);
 		} catch (RuntimeException ex) {
 			log.warn("github initial sync failed projectId={} type={}", projectId, ex.getClass().getSimpleName());
+			finalized = true;
 			return fail(job, "GITHUB_SYNC_FAILED", "provider", 0, 0);
+		} finally {
+			if (!finalized) {
+				claims.markFailed(job, "SYNC_JOB_ABORTED", "finalize");
+			}
 		}
 	}
 
-	private int syncOneRepository(String token, GitRepo repo, int targetLimit) {
-		int collected = 0;
+	private int syncOneRepository(String token, GitRepo repo) {
+		List<String> branches = orderBranches(github.listBranches(token, repo.getOwnerLogin(), repo.getName()), repo);
+		if (branches.isEmpty() && repo.getDefaultBranch() != null && !repo.getDefaultBranch().isBlank()) {
+			branches = List.of(repo.getDefaultBranch());
+		}
+		Set<String> seenShas = new HashSet<>();
+		int uniqueUpserted = 0;
+		for (String branch : branches) {
+			uniqueUpserted += syncBranch(token, repo, branch, seenShas);
+		}
+		writes.executeWithoutResult(status -> {
+			repo.setLastSyncedAt(LocalDateTime.now());
+			repo.setConsecutiveFailures(0);
+			repos.save(repo);
+		});
+		return uniqueUpserted;
+	}
+
+	private int syncBranch(String token, GitRepo repo, String branch, Set<String> seenShas) {
 		int page = 1;
-		while (collected < targetLimit) {
-			int remaining = targetLimit - collected;
-			int perPage = Math.min(GITHUB_COMMITS_PER_PAGE_MAX, remaining);
-			List<CommitSummary> providerPage =
-					github.listCommits(token, repo.getOwnerLogin(), repo.getName(), repo.getDefaultBranch(), page, perPage);
+		int upserted = 0;
+		while (page <= MAX_COMMIT_PAGES_PER_BRANCH) {
+			List<CommitSummary> providerPage = github.listCommits(
+					token, repo.getOwnerLogin(), repo.getName(), branch, page, GITHUB_COMMITS_PER_PAGE_MAX);
 			if (providerPage == null || providerPage.isEmpty()) {
 				break;
 			}
-			int take = Math.min(remaining, providerPage.size());
-			List<CommitDraft> drafts = new ArrayList<>(take);
-			for (int i = 0; i < take; i++) {
-				CommitSummary summary = providerPage.get(i);
+			List<CommitDraft> drafts = new ArrayList<>(providerPage.size());
+			for (CommitSummary summary : providerPage) {
+				if (summary == null || summary.sha() == null || summary.sha().isBlank()) {
+					continue;
+				}
+				if (!seenShas.add(summary.sha())) {
+					continue; // already reconciled via another branch in this run
+				}
 				drafts.add(new CommitDraft(
 						summary.sha(),
 						summary.message(),
 						ProjectionMappings.parseInstant(summary.committedAt()),
 						summary.authorId() == null ? null : String.valueOf(summary.authorId()),
 						summary.authorLogin(),
-						repo.getDefaultBranch()));
+						branch));
 			}
-			Integer upserted = writes.execute(status -> projection.upsertBatch(repo, drafts));
-			int applied = upserted == null ? 0 : upserted;
-			collected += applied;
-			if (providerPage.size() < perPage) {
+			if (!drafts.isEmpty()) {
+				Integer applied = writes.execute(status -> projection.upsertBatch(repo, drafts));
+				upserted += applied == null ? 0 : applied;
+			}
+			if (providerPage.size() < GITHUB_COMMITS_PER_PAGE_MAX) {
 				break;
 			}
 			page++;
 		}
-		if (collected > 0) {
-			writes.executeWithoutResult(status -> {
-				repo.setLastSyncedAt(LocalDateTime.now());
-				repo.setConsecutiveFailures(0);
-				repos.save(repo);
-			});
-		} else {
-			writes.executeWithoutResult(status -> {
-				repo.setLastSyncedAt(LocalDateTime.now());
-				repo.setConsecutiveFailures(0);
-				repos.save(repo);
-			});
+		if (page > MAX_COMMIT_PAGES_PER_BRANCH) {
+			throw new IntegrationException(
+					IntegrationErrorCode.GITHUB_SYNC_INCOMPLETE,
+					HttpStatus.BAD_GATEWAY,
+					"GitHub commit pagination exceeded defensive guard for a branch.");
 		}
-		return collected;
+		return upserted;
+	}
+
+	/** Prefer default branch first so headRef metadata favors the stored default when SHAs overlap. */
+	static List<String> orderBranches(List<String> branches, GitRepo repo) {
+		if (branches == null || branches.isEmpty()) {
+			return List.of();
+		}
+		String defaults = repo.getDefaultBranch();
+		LinkedHashSet<String> ordered = new LinkedHashSet<>();
+		if (defaults != null && !defaults.isBlank()) {
+			for (String name : branches) {
+				if (defaults.equals(name)) {
+					ordered.add(name);
+					break;
+				}
+			}
+		}
+		ordered.addAll(branches);
+		return List.copyOf(ordered);
 	}
 
 	private void markRepoFailure(GitRepo repo) {
@@ -198,25 +254,16 @@ public class GitHubCommitSyncService {
 		return writes.execute(status -> syncJobs.save(job));
 	}
 
-	private SyncJobLog succeed(SyncJobLog job, int processed) {
-		return writes.execute(status -> {
-			job.setStatus(SyncJobStatus.SUCCEEDED);
-			job.setItemsProcessed(processed);
-			job.setItemsFailed(0);
-			job.setCompletedAt(LocalDateTime.now());
-			return syncJobs.save(job);
-		});
-	}
-
 	private SyncJobLog fail(SyncJobLog job, String category, String stage, int processed, int failed) {
 		return writes.execute(status -> {
-			job.setStatus(SyncJobStatus.FAILED);
-			job.setErrorCategory(category);
-			job.setFailureStage(stage);
-			job.setItemsProcessed(processed);
-			job.setItemsFailed(failed);
-			job.setCompletedAt(LocalDateTime.now());
-			return syncJobs.save(job);
+			SyncJobLog row = job.getId() == null ? job : syncJobs.findById(job.getId()).orElse(job);
+			row.setStatus(SyncJobStatus.FAILED);
+			row.setErrorCategory(category);
+			row.setFailureStage(stage);
+			row.setItemsProcessed(processed);
+			row.setItemsFailed(failed);
+			row.setCompletedAt(LocalDateTime.now());
+			return syncJobs.save(row);
 		});
 	}
 }
