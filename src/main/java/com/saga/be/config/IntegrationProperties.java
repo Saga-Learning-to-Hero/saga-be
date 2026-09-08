@@ -26,15 +26,12 @@ public class IntegrationProperties {
 	private Duration initialSyncFallback = Duration.ofDays(90);
 	/**
 	 * RUNNING sync jobs older than this no longer block manual/auto reclaim.
-	 * Default exceeds worst-case Jira backfill HTTP budget:
-	 * {@code ceil(jiraIssueBackfillLimit / jiraIssuePageSize) * RestClient readTimeout(20s)}
-	 * plus multi-repo GitHub pages and short DB upsert headroom (~30m).
+	 * Default exceeds worst-case full Jira/GitHub reconciliation HTTP budget
+	 * (many provider pages × RestClient readTimeout) plus short DB upsert headroom (~30m).
 	 */
 	private Duration syncJobStaleAfter = Duration.ofMinutes(30);
-	/** Max Jira issues fetched per search page during initial sync. */
+	/** Max Jira issues fetched per search page during initial sync (Jira caps at 100). */
 	private int jiraIssuePageSize = 50;
-	/** Soft cap on Jira issues imported during one initial sync. */
-	private int jiraIssueBackfillLimit = 500;
 	private final GitHub github = new GitHub();
 	private final Jira jira = new Jira();
 	private final WebAuthn webauthn = new WebAuthn();
@@ -141,14 +138,6 @@ public class IntegrationProperties {
 
 	public void setJiraIssuePageSize(int jiraIssuePageSize) {
 		this.jiraIssuePageSize = jiraIssuePageSize;
-	}
-
-	public int getJiraIssueBackfillLimit() {
-		return jiraIssueBackfillLimit;
-	}
-
-	public void setJiraIssueBackfillLimit(int jiraIssueBackfillLimit) {
-		this.jiraIssueBackfillLimit = jiraIssueBackfillLimit;
 	}
 
 	public Duration getSyncJobStaleAfter() {

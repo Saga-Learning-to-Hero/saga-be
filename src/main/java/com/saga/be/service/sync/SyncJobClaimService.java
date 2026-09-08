@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -45,7 +46,11 @@ public class SyncJobClaimService {
 			PlatformTransactionManager transactionManager) {
 		this.syncJobs = syncJobs;
 		this.properties = properties;
+		// REQUIRES_NEW: reclaim/claim must commit even when callers (e.g. manual sync enqueue)
+		// run inside an outer @Transactional(readOnly = true). Joining that TX left multi-day
+		// RUNNING rows unreclaimed and forever returned SKIPPED_ALREADY_RUNNING.
 		this.writes = new TransactionTemplate(transactionManager);
+		this.writes.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 	}
 
 	/**

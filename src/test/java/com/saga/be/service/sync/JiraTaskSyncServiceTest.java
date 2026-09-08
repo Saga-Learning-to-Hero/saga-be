@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -29,10 +30,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -63,12 +64,24 @@ class JiraTaskSyncServiceTest {
 	private UUID projectId;
 	private Project project;
 	private JiraIntegration integration;
+	private final AtomicInteger openTx = new AtomicInteger();
 
 	@BeforeEach
 	void setUp() {
 		properties = new IntegrationProperties();
-		when(transactionManager.getTransaction(any(TransactionDefinition.class)))
-				.thenAnswer(inv -> new SimpleTransactionStatus());
+		properties.setJiraIssuePageSize(50);
+		when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenAnswer(inv -> {
+			openTx.incrementAndGet();
+			return new SimpleTransactionStatus();
+		});
+		org.mockito.Mockito.lenient().doAnswer(inv -> {
+			openTx.decrementAndGet();
+			return null;
+		}).when(transactionManager).commit(any());
+		org.mockito.Mockito.lenient().doAnswer(inv -> {
+			openTx.decrementAndGet();
+			return null;
+		}).when(transactionManager).rollback(any());
 		service = new JiraTaskSyncService(
 				integrations, jira, projection, syncJobs, properties, credentials, claims, transactionManager);
 		projectId = UUID.randomUUID();
@@ -109,38 +122,113 @@ class JiraTaskSyncServiceTest {
 				.when(integrations.findByProject_Id(projectId))
 				.thenReturn(Optional.of(integration));
 		org.mockito.Mockito.lenient().when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		org.mockito.Mockito.lenient()
+				.when(projection.upsertBatch(eq(project), eq("SAGA"), any()))
+				.thenAnswer(inv -> {
+					assertThat(openTx.get()).as("upsert inside short JDBC TX").isPositive();
+					return ((List<?>) inv.getArgument(2)).size();
+				});
 	}
 
 	@Test
-	void backfillLimitBelowPageSize_requestsAndProjectsAtMostLimit() {
-		properties.setJiraIssuePageSize(50);
-		properties.setJiraIssueBackfillLimit(10);
-		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(0), eq(10)))
-				.thenReturn(new IssueSearchPage(issues(10, 0), 200, 0, 10));
-		when(projection.upsertBatch(eq(project), eq("SAGA"), any()))
-				.thenAnswer(inv -> ((List<?>) inv.getArgument(2)).size());
+	void moreThanFiveHundredIssues_allImported() {
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(0), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(50, 0), 520, 0, 50));
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(50), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(50, 50), 520, 50, 50));
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(100), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(50, 100), 520, 100, 50));
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(150), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(50, 150), 520, 150, 50));
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(200), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(50, 200), 520, 200, 50));
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(250), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(50, 250), 520, 250, 50));
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(300), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(50, 300), 520, 300, 50));
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(350), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(50, 350), 520, 350, 50));
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(400), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(50, 400), 520, 400, 50));
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(450), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(50, 450), 520, 450, 50));
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(500), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(20, 500), 520, 500, 50));
 
 		SyncJobLog job = service.initialSync(projectId, "token");
 
 		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
-		assertThat(job.getItemsProcessed()).isEqualTo(10);
-		verify(jira, times(1)).searchIssues(anyString(), anyString(), anyString(), anyInt(), anyInt());
-		verify(credentials, never()).forceRefresh(any(), any());
-		verify(credentials, never()).resolveAccessToken(any());
-		@SuppressWarnings("unchecked")
-		ArgumentCaptor<List<IssueSummary>> batch = ArgumentCaptor.forClass(List.class);
-		verify(projection).upsertBatch(eq(project), eq("SAGA"), batch.capture());
-		assertThat(batch.getValue()).hasSize(10);
+		assertThat(job.getItemsProcessed()).isEqualTo(520);
+		verify(jira, times(11)).searchIssues(anyString(), anyString(), anyString(), anyInt(), anyInt());
+		verify(projection, times(11)).upsertBatch(eq(project), eq("SAGA"), any());
+	}
+
+	@Test
+	void multiPageTraversal_continuesUntilExhausted() {
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(0), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(50, 0), 120, 0, 50));
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(50), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(50, 50), 120, 50, 50));
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(100), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(20, 100), 120, 100, 50));
+
+		SyncJobLog job = service.initialSync(projectId, "token");
+
+		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		assertThat(job.getItemsProcessed()).isEqualTo(120);
+		verify(jira, times(3)).searchIssues(anyString(), anyString(), anyString(), anyInt(), anyInt());
+	}
+
+	@Test
+	void rerunFullSync_idempotentUpserts() {
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(0), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(3, 0), 3, 0, 50));
+
+		assertThat(service.initialSync(projectId, "token").getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		assertThat(service.initialSync(projectId, "token").getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		verify(projection, times(2)).upsertBatch(eq(project), eq("SAGA"), any());
+	}
+
+	@Test
+	void providerFailureMidRun_failsPreservingPriorPages() {
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(0), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(50, 0), 200, 0, 50));
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(50), eq(50)))
+				.thenThrow(new IntegrationException(
+						IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.BAD_GATEWAY, "down"));
+
+		SyncJobLog job = service.initialSync(projectId, "token");
+
+		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.FAILED);
+		assertThat(job.getErrorCategory()).isEqualTo("JIRA_PROJECT_NOT_ACCESSIBLE");
+		verify(projection, times(1)).upsertBatch(eq(project), eq("SAGA"), any());
+	}
+
+	@Test
+	void upsertBatchOncePerPage_notPerIssue() {
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(0), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(50, 0), 50, 0, 50));
+
+		service.initialSync(projectId, "token");
+
+		verify(projection, times(1)).upsertBatch(eq(project), eq("SAGA"), any());
+	}
+
+	@Test
+	void providerHttpOutsideJdbcTx() {
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(0), eq(50))).thenAnswer(inv -> {
+			assertThat(openTx.get()).as("HTTP outside JDBC TX").isZero();
+			return new IssueSearchPage(issues(2, 0), 2, 0, 50);
+		});
+
+		assertThat(service.initialSync(projectId, "token").getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		verify(projection, atLeastOnce()).upsertBatch(eq(project), eq("SAGA"), any());
 	}
 
 	@Test
 	void validPreferredToken_doesNotRefresh() {
-		properties.setJiraIssuePageSize(50);
-		properties.setJiraIssueBackfillLimit(5);
-		when(jira.searchIssues(eq("good"), eq("cloud"), eq("SAGA"), eq(0), eq(5)))
-				.thenReturn(new IssueSearchPage(issues(5, 0), 5, 0, 5));
-		when(projection.upsertBatch(eq(project), eq("SAGA"), any()))
-				.thenAnswer(inv -> ((List<?>) inv.getArgument(2)).size());
+		when(jira.searchIssues(eq("good"), eq("cloud"), eq("SAGA"), eq(0), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(5, 0), 5, 0, 50));
 
 		SyncJobLog job = service.initialSync(projectId, "good");
 
@@ -151,31 +239,23 @@ class JiraTaskSyncServiceTest {
 
 	@Test
 	void unauthorized_refreshesOnce_thenRetrySucceeds() {
-		properties.setJiraIssuePageSize(50);
-		properties.setJiraIssueBackfillLimit(5);
-		when(jira.searchIssues(eq("stale"), eq("cloud"), eq("SAGA"), eq(0), eq(5)))
+		when(jira.searchIssues(eq("stale"), eq("cloud"), eq("SAGA"), eq(0), eq(50)))
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.JIRA_UNAUTHORIZED, HttpStatus.UNAUTHORIZED, "rejected"));
 		when(credentials.forceRefresh(projectId, "stale")).thenReturn("fresh");
-		when(jira.searchIssues(eq("fresh"), eq("cloud"), eq("SAGA"), eq(0), eq(5)))
-				.thenReturn(new IssueSearchPage(issues(5, 0), 5, 0, 5));
-		when(projection.upsertBatch(eq(project), eq("SAGA"), any()))
-				.thenAnswer(inv -> ((List<?>) inv.getArgument(2)).size());
+		when(jira.searchIssues(eq("fresh"), eq("cloud"), eq("SAGA"), eq(0), eq(50)))
+				.thenReturn(new IssueSearchPage(issues(5, 0), 5, 0, 50));
 
 		SyncJobLog job = service.initialSync(projectId, "stale");
 
 		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
 		assertThat(job.getItemsProcessed()).isEqualTo(5);
 		verify(credentials, times(1)).forceRefresh(projectId, "stale");
-		verify(jira, times(1)).searchIssues(eq("stale"), anyString(), anyString(), anyInt(), anyInt());
-		verify(jira, times(1)).searchIssues(eq("fresh"), anyString(), anyString(), anyInt(), anyInt());
 	}
 
 	@Test
 	void refreshRejected_failsSafelyWithoutLoop() {
-		properties.setJiraIssuePageSize(50);
-		properties.setJiraIssueBackfillLimit(5);
-		when(jira.searchIssues(eq("stale"), eq("cloud"), eq("SAGA"), eq(0), eq(5)))
+		when(jira.searchIssues(eq("stale"), eq("cloud"), eq("SAGA"), eq(0), eq(50)))
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.JIRA_UNAUTHORIZED, HttpStatus.UNAUTHORIZED, "rejected"));
 		when(credentials.forceRefresh(projectId, "stale"))
@@ -191,43 +271,24 @@ class JiraTaskSyncServiceTest {
 	}
 
 	@Test
-	void limit120_paginates50_50_20() {
-		properties.setJiraIssuePageSize(50);
-		properties.setJiraIssueBackfillLimit(120);
-		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(0), eq(50)))
-				.thenReturn(new IssueSearchPage(issues(50, 0), 500, 0, 50));
-		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(50), eq(50)))
-				.thenReturn(new IssueSearchPage(issues(50, 50), 500, 50, 50));
-		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(100), eq(20)))
-				.thenReturn(new IssueSearchPage(issues(20, 100), 500, 100, 20));
-		when(projection.upsertBatch(eq(project), eq("SAGA"), any()))
-				.thenAnswer(inv -> ((List<?>) inv.getArgument(2)).size());
+	void paginationGuard_failsNotFakeSuccess() {
+		int previous = JiraTaskSyncService.maxIssuePages;
+		JiraTaskSyncService.maxIssuePages = 3;
+		try {
+			properties.setJiraIssuePageSize(50);
+			when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), anyInt(), eq(50))).thenAnswer(inv -> {
+				int start = inv.getArgument(3);
+				return new IssueSearchPage(issues(50, start), 10_000, start, 50);
+			});
 
-		SyncJobLog job = service.initialSync(projectId, "token");
+			SyncJobLog job = service.initialSync(projectId, "token");
 
-		assertThat(job.getItemsProcessed()).isEqualTo(120);
-		verify(jira).searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(0), eq(50));
-		verify(jira).searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(50), eq(50));
-		verify(jira).searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(100), eq(20));
-		verify(jira, times(3)).searchIssues(anyString(), anyString(), anyString(), anyInt(), anyInt());
-	}
-
-	@Test
-	void fewerIssuesThanLimit_stopsWithoutExtraRequests() {
-		properties.setJiraIssuePageSize(50);
-		properties.setJiraIssueBackfillLimit(500);
-		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(0), eq(50)))
-				.thenReturn(new IssueSearchPage(issues(50, 0), 63, 0, 50));
-		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq(50), eq(50)))
-				.thenReturn(new IssueSearchPage(issues(13, 50), 63, 50, 50));
-		when(projection.upsertBatch(eq(project), eq("SAGA"), any()))
-				.thenAnswer(inv -> ((List<?>) inv.getArgument(2)).size());
-
-		SyncJobLog job = service.initialSync(projectId, "token");
-
-		assertThat(job.getItemsProcessed()).isEqualTo(63);
-		verify(jira, times(2)).searchIssues(anyString(), anyString(), anyString(), anyInt(), anyInt());
-		verify(jira, never()).searchIssues(anyString(), anyString(), anyString(), eq(100), anyInt());
+			assertThat(job.getStatus()).isEqualTo(SyncJobStatus.FAILED);
+			assertThat(job.getErrorCategory()).isEqualTo("JIRA_SYNC_INCOMPLETE");
+			verify(projection, times(3)).upsertBatch(eq(project), eq("SAGA"), any());
+		} finally {
+			JiraTaskSyncService.maxIssuePages = previous;
+		}
 	}
 
 	private SyncJobLog runningJob() {

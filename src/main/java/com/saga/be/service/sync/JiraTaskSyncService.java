@@ -15,19 +15,33 @@ import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.SyncJobLogRepository;
 import com.saga.be.service.projection.JiraTaskProjectionService;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+/**
+ * Complete Jira issue reconciliation for the selected ACTIVE project.
+ * Pages until the provider returns a short/empty page or startAt reaches total.
+ * No product backfill cap — SUCCESS only after complete traversal.
+ */
 @Service
 @Profile("!test")
 public class JiraTaskSyncService {
+
+	/**
+	 * Defensive only against malformed infinite pagination — not a product data ceiling.
+	 * Default page size 50 → 10_000 pages ≈ 500_000 issues before FAIL.
+	 */
+	static final int MAX_ISSUE_PAGES = 10_000;
+
+	/** Overridable in tests only; production always uses {@link #MAX_ISSUE_PAGES}. */
+	static int maxIssuePages = MAX_ISSUE_PAGES;
 
 	private static final Logger log = LoggerFactory.getLogger(JiraTaskSyncService.class);
 
@@ -86,45 +100,48 @@ public class JiraTaskSyncService {
 			String accessToken = preferredAccess != null && !preferredAccess.isBlank()
 					? preferredAccess
 					: credentials.resolveAccessToken(projectId);
-			int pageSize = Math.max(1, properties.getJiraIssuePageSize());
-			int limit = Math.max(1, properties.getJiraIssueBackfillLimit());
+			int pageSize = Math.max(1, Math.min(properties.getJiraIssuePageSize(), 100));
 			int startAt = 0;
 			int processed = 0;
 			boolean refreshedForUnauthorized = false;
-			while (processed < limit) {
-				int remaining = limit - processed;
-				int requestSize = Math.min(pageSize, remaining);
+			int pagesFetched = 0;
+			boolean exhausted = false;
+			while (pagesFetched < maxIssuePages) {
 				IssueSearchPage page;
 				try {
 					page = jira.searchIssues(
-							accessToken, integration.getCloudId(), integration.getProjectKey(), startAt, requestSize);
+							accessToken, integration.getCloudId(), integration.getProjectKey(), startAt, pageSize);
 				} catch (IntegrationException ex) {
 					if (ex.getCode() == IntegrationErrorCode.JIRA_UNAUTHORIZED && !refreshedForUnauthorized) {
 						String rejected = accessToken;
 						accessToken = credentials.forceRefresh(projectId, rejected);
 						refreshedForUnauthorized = true;
 						page = jira.searchIssues(
-								accessToken, integration.getCloudId(), integration.getProjectKey(), startAt, requestSize);
+								accessToken, integration.getCloudId(), integration.getProjectKey(), startAt, pageSize);
 					} else {
 						throw ex;
 					}
 				}
+				pagesFetched++;
 				List<IssueSummary> issues = page.issues() == null ? List.of() : page.issues();
 				if (issues.isEmpty()) {
+					exhausted = true;
 					break;
 				}
-				int take = Math.min(remaining, issues.size());
-				List<IssueSummary> batch = new ArrayList<>(issues.subList(0, take));
-				int upserted = writes.execute(status ->
-						projection.upsertBatch(integration.getProject(), integration.getProjectKey(), batch));
-				processed += upserted;
+				Integer upserted = writes.execute(status ->
+						projection.upsertBatch(integration.getProject(), integration.getProjectKey(), issues));
+				processed += upserted == null ? 0 : upserted;
 				startAt += issues.size();
-				if (processed >= limit) {
+				if (startAt >= page.total() || issues.size() < pageSize) {
+					exhausted = true;
 					break;
 				}
-				if (startAt >= page.total() || issues.size() < requestSize) {
-					break;
-				}
+			}
+			if (!exhausted) {
+				throw new IntegrationException(
+						IntegrationErrorCode.JIRA_SYNC_INCOMPLETE,
+						HttpStatus.BAD_GATEWAY,
+						"Jira issue pagination exceeded defensive guard.");
 			}
 			writes.executeWithoutResult(status -> {
 				JiraIntegration row = integrations.findByProject_Id(projectId).orElse(null);

@@ -48,8 +48,8 @@ public class ProjectManualSyncService {
 
 	/**
 	 * Recovery enqueue only — no provider HTTP on the request thread.
+	 * Not read-only: SyncJobClaimService must be able to fail stale RUNNING rows before reserve.
 	 */
-	@Transactional(readOnly = true)
 	public ProjectSyncEnqueueResponse enqueue(UUID userId, UUID projectId) {
 		authorization.requireStudentLeader(userId, projectId);
 		String jiraState = enqueueJira(projectId);
