@@ -23,12 +23,24 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 	@Query(
 			"""
 			select t from Task t
+			left join fetch t.sprint
 			left join fetch t.assigneeStudent
 			where t.project.id = :projectId
 			  and t.deletedAt is null
 			order by coalesce(t.externalUpdatedAt, t.updatedAt) desc
 			""")
 	List<Task> findActiveFetchedByProject_Id(@Param("projectId") UUID projectId);
+
+	@Query(
+			"""
+			select t from Task t
+			join fetch t.project p
+			join fetch p.course c
+			left join fetch c.instructor ins
+			left join fetch ins.userAccount
+			where t.id = :id and t.deletedAt is null
+			""")
+	Optional<Task> findActiveFetchedById(@Param("id") UUID id);
 
 	Optional<Task> findByIdAndProject_IdAndDeletedAtIsNull(UUID id, UUID projectId);
 

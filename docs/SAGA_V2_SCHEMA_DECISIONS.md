@@ -58,7 +58,8 @@ These tables **must not exist** in V2. They were not created. This is not DROP T
 | `risk_alert` | Superseded by `business_warning`. |
 | `document` | Not an active SoT entity for V2. |
 | `task_weight_config` | Dead / replaced by course and project-group weights. |
-| `task_web_link` | Explicitly out of target. Related columns not ported onto `task`. |
+| `task_web_link` | Explicitly out of **V1** target. Restored in Flyway **V9** as student-submitted DOCUMENT/RESEARCH evidence URLs (`url` + `url_hash`). |
+| `task_file` | Student-uploaded documents/images. Flyway **V10**. Bytes on disk, not MySQL BLOB. **V11** adds `source` (`SAGA`/`JIRA`) + `external_id` so Jira attachments are stored in the same table without wiping student uploads. |
 | Mongo `system_audit_log` | Mongo is not baseline (DEC-013). |
 | `student_uuid_binary_*` | Technical backup tables. |
 | Cognito `cognito_sub` and similar | Auth V2 is provider-neutral (DEC-012). |
@@ -167,6 +168,8 @@ Consistent `CHAR(36)` + Hibernate `preferred_uuid_jdbc_type=CHAR`, matching the 
 | --- | --- | --- |
 | Most business FKs | RESTRICT | Do not cascade-delete courses, users, or projects accidentally |
 | `task_attachment` → task | CASCADE | Attachment is owned evidence of the task |
+| `task_web_link` → task | CASCADE | Student-submitted URL is owned evidence of the task |
+| `task_file` → task | CASCADE | Student-uploaded file metadata is owned evidence of the task |
 | GitHub children → `git_repo` | CASCADE | Issue/PR/commit are owned sync rows of the repo |
 | `pr_review` → PR | CASCADE | Review is owned by the PR |
 | `comment` → issue/PR/task | CASCADE | Comment is owned evidence of the target |

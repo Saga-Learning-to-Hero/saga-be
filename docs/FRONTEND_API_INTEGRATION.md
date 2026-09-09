@@ -2,7 +2,7 @@
 
 File này là **contract tích hợp Backend ↔ Frontend có hiệu lực** khi public API đã được implement.
 
-> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim) đã chốt. Lecturer Team Management V1 (assigned courses, ACTIVE roster, team XLSX preview/confirm, student my-team) đã chốt. Student My Courses V1 (`GET /api/student/courses`) đã chốt. Team Leader Project Setup V1 (project-type catalog, student team project create/read, then existing GitHub/Jira project integrations) đã chốt. Graph/SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
+> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim) đã chốt. Lecturer Team Management V1 (assigned courses, ACTIVE roster, team XLSX preview/confirm, student my-team) đã chốt. Student My Courses V1 (`GET /api/student/courses`) đã chốt. Team Leader Project Setup V1 (project-type catalog, student team project create/read, then existing GitHub/Jira project integrations) đã chốt. Team Contribution Evaluation V1 (DEC-092 formula on V2 schema) đã chốt. Graph/SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
 
 ---
 
@@ -508,6 +508,21 @@ Breaking change phải được nêu rõ.
 | PUT | `/api/lecturer/courses/{courseId}/teams/{teamId}/leader` | Session + CSRF | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerTeamController` |
 | PATCH | `/api/lecturer/courses/{courseId}/team-members/{teamMemberId}/team` | Session + CSRF | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerTeamController` |
 | GET | `/api/student/courses/{courseId}/team` | Session | STUDENT | Lecturer Team V1 | `StudentCourseTeamController` |
+| GET | `/api/teams/{teamId}/contribution-evaluation` | Session | ADMIN; LECTURER assigned; STUDENT LEADER of that team | Contribution V1 | `TeamContributionController` |
+| POST | `/api/teams/{teamId}/contribution-override` | Session + CSRF | ADMIN; LECTURER assigned | Contribution V1 | `TeamContributionController` |
+| GET | `/api/lecturer/courses/{courseId}/contribution-slice-weights` | Session | LECTURER (assigned) or ADMIN | Contribution V1 | `LecturerContributionWeightController` |
+| PUT | `/api/lecturer/courses/{courseId}/contribution-slice-weights` | Session + CSRF | LECTURER (assigned) or ADMIN | Contribution V1 | `LecturerContributionWeightController` |
+| PUT | `/api/lecturer/courses/{courseId}/contribution-config-mode` | Session + CSRF | LECTURER (assigned) or ADMIN | Contribution V1 | `LecturerContributionWeightController` |
+| GET | `/api/lecturer/courses/{courseId}/contribution-team-weights` | Session | LECTURER (assigned) or ADMIN | Contribution V1 | `LecturerContributionWeightController` |
+| GET | `/api/projects/{projectId}/group-weights` | Session | LECTURER (assigned) or ADMIN | Contribution V1 | `ProjectGroupWeightController` |
+| PUT | `/api/projects/{projectId}/group-weights` | Session + CSRF | LECTURER (assigned) or ADMIN | Contribution V1 | `ProjectGroupWeightController` |
+| GET | `/api/tasks/{taskId}/web-links` | Session | Team member | Task evidence V1 | `TaskEvidenceController` |
+| POST | `/api/tasks/{taskId}/web-links` | Session + CSRF | Team member | Task evidence V1 | `TaskEvidenceController` |
+| DELETE | `/api/tasks/{taskId}/web-links/{linkId}` | Session + CSRF | Team member | Task evidence V1 | `TaskEvidenceController` |
+| GET | `/api/tasks/{taskId}/files` | Session | Team member; course lecturer; ADMIN | Task evidence V1 | `TaskEvidenceController` |
+| POST | `/api/tasks/{taskId}/files` | Session + CSRF | Team member | Task evidence V1 | `TaskEvidenceController` |
+| GET | `/api/tasks/{taskId}/files/{fileId}` | Session | Team member; course lecturer; ADMIN | Task evidence V1 | `TaskEvidenceController` |
+| DELETE | `/api/tasks/{taskId}/files/{fileId}` | Session + CSRF | Team member | Task evidence V1 | `TaskEvidenceController` |
 
 ---
 
@@ -1041,3 +1056,81 @@ login
 → GitHub/Jira project integration APIs when projectId exists
 ```
 
+---
+
+## 18. Team contribution evaluation V1
+
+Công thức DEC-092 đã chốt trong `docs/CONTRIBUTION_CALCULATION_SPEC.md`. V2 map:
+
+| Cũ | V2 |
+| --- | --- |
+| `/api/v1/...` | `/api/...` |
+| `JSESSIONID` | `SAGA_SESSION` |
+| mode `TEAM` | `ContributionConfigMode.PROJECT_GROUP` |
+| `policy_override_request` APPROVED | `contribution_override` ghi ngay |
+| DOCUMENT/RESEARCH: attachment **hoặc** web link **hoặc** file SAGA | `task_attachment` **hoặc** `task_web_link` (V9) **hoặc** `task_file` (V10) |
+
+`GET /api/teams/{teamId}/contribution-evaluation` tính live, không ghi `assessment_run`. Cookie session, không CSRF. Không Bearer.
+
+Quyền đọc: ADMIN mọi team; LECTURER đúng course instructor; STUDENT chỉ `RoleInTeam.LEADER` của đúng team. MEMBER/MENTOR → `403 CONTRIBUTION_FORBIDDEN`. Team chưa có project hoặc chưa có member → `members = []`.
+
+Mode `PROJECT_GROUP` mà team thiếu `project_group_weight_config` → `409 TEAM_WEIGHT_CONFIG_INCOMPLETE`.
+
+Không nhân thêm `peerReviewScore` lên `finalContributionPercentage`. `% cuối` đã gồm peer rồi chuẩn hóa team = 100.
+
+Course weights (0–100, tổng 100 ± 0.01):
+
+```text
+GET  /api/lecturer/courses/{courseId}/contribution-slice-weights
+PUT  /api/lecturer/courses/{courseId}/contribution-slice-weights
+PUT  /api/lecturer/courses/{courseId}/contribution-config-mode   body { "mode": "COURSE" | "PROJECT_GROUP" }
+GET  /api/lecturer/courses/{courseId}/contribution-team-weights
+```
+
+Chuyển `PROJECT_GROUP` chỉ khi mọi team **đã có project** đều có group weights; thiếu → `409 TEAM_MODE_CONFIGURATION_INCOMPLETE`.
+
+Project-group weights (0–1, tổng 1.0):
+
+```text
+GET /api/projects/{projectId}/group-weights
+PUT /api/projects/{projectId}/group-weights
+```
+
+Override giảng viên:
+
+```text
+POST /api/teams/{teamId}/contribution-override
+{ "studentProfileId": "...", "percentage": 40, "reason": "..." }
+```
+
+Member fields: `sliceScore`, `sliceContributionPercentage` (trước peer), `finalContributionPercentage` (sau peer), `peerReviewScore` (P 0–1, chỉ hiển thị), radar `code/test/document/researchContributionPercentage`, `sprintBreakdowns[]` cùng cặp slice/%.
+
+Task được tính: `DONE` + có sprint + đúng một nhãn `saga:code|test|document|research`. DOCUMENT/RESEARCH cần ≥1 `task_attachment` **hoặc** ≥1 `task_web_link` **hoặc** ≥1 `task_file`. Số file/link không tăng điểm. Commit không cộng điểm. `storyPoint` null → 1.
+
+Gắn URL (team member, CSRF trên write):
+
+```text
+GET    /api/tasks/{taskId}/web-links
+POST   /api/tasks/{taskId}/web-links
+DELETE /api/tasks/{taskId}/web-links/{linkId}
+```
+
+```json
+POST /api/tasks/{taskId}/web-links
+{ "url": "https://docs.google.com/document/d/...", "title": "Spec báo cáo" }
+```
+
+`url` phải `http://` hoặc `https://`. Trùng URL trên cùng task → `409 TASK_WEB_LINK_DUPLICATE`. Không phải member → `403 INTEGRATION_FORBIDDEN`. Response có `source`: `SAGA` hoặc `JIRA`.
+
+Nộp file tài liệu/ảnh trên SAGA (không lưu BLOB MySQL; disk `data/task-files`). Multipart field `file`. CSRF trên write. Tối đa 10MB / file, 20 file / task. Trùng nội dung trên cùng task → `409 TASK_FILE_DUPLICATE`. Loại cho phép: pdf, png, jpg, jpeg, gif, webp, txt, csv, md, doc, docx, xls, xlsx, ppt, pptx.
+
+```text
+GET    /api/tasks/{taskId}/files
+POST   /api/tasks/{taskId}/files
+GET    /api/tasks/{taskId}/files/{fileId}
+DELETE /api/tasks/{taskId}/files/{fileId}
+```
+
+List/download: team member, giảng viên đúng course, ADMIN. Upload/xóa: team member. `GET .../files/{fileId}` trả bytes với `Content-Disposition: attachment`. Row `source` = `SAGA` (nộp trên SAGA) hoặc `JIRA` (sync từ issue). Xóa row `JIRA` → `409 TASK_EVIDENCE_JIRA_IMMUTABLE`.
+
+Jira Cloud: webhook issue + job INITIAL sau khi connect team Jira. Attachment được tải bytes vào `task_file`; remote/web link vào `task_web_link`. Snapshot Jira không xóa link/file `SAGA`. `task_attachment` vẫn nhận metadata Jira (điểm DOCUMENT/RESEARCH).

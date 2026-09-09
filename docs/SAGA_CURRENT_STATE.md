@@ -12,7 +12,7 @@ Không lấy kế hoạch kiến trúc tương lai làm bằng chứng rằng fe
 
 **Phase: Auth V1.1 + Integration/Identity/Audit/Attribution Foundation V1 + Subject/Syllabus Academic Foundation V1 + Academic Runtime V1 + Email Delivery V1 + Admin Course Roster V1**
 
-Architecture skeleton đã có. Flyway V1–V6 immutable. Auth V1 complete. Integration V1 foundation is implemented. Admin Subject + versioned syllabus catalog is implemented. Admin Semester / Academic Class / Course runtime is implemented. Generic email outbox delivery (SMTP worker) is implemented. Admin Course Roster V1 (template → preview → confirm + invitation claim) is implemented in code. **V7 invitation-identity SQL is written but not applied to shared DEV in this task.** Team/Graph **chưa** shipped. Course/Task/Assessment scoring **chưa** shipped.
+Architecture skeleton đã có. Flyway V1–V6 immutable. Auth V1 complete. Integration V1 foundation is implemented. Admin Subject + versioned syllabus catalog is implemented. Admin Semester / Academic Class / Course runtime is implemented. Generic email outbox delivery (SMTP worker) is implemented. Admin Course Roster V1 (template → preview → confirm + invitation claim) is implemented in code. **V7 invitation-identity SQL is written but not applied to shared DEV in this task.** Team/Graph **chưa** shipped. Contribution evaluation V1 **đã** ship (live formula; no `assessment_run` snapshot yet). Course/Task sync scoring extras remain open.
 
 ---
 
@@ -182,7 +182,7 @@ Cụ thể, các phần sau **CHƯA TRIỂN KHAI**:
 - Neo4j schema / graph projection of academic structure;
 - student roster import / Excel; Team / TeamMember; graph projection of academic runtime;
 - invitation/enrollment email flows (generic outbox exists; those products do not);
-- assessment algorithm / contributionScore weights;
+- assessment algorithm / contributionScore weights (engine **IMPLEMENTED** live-evaluate; snapshot `assessment_run` not written yet);
 - SSE endpoint;
 - live paginated GitHub/Jira history sync against production credentials.
 
@@ -247,7 +247,7 @@ SAGA V2 MySQL schema + Auth V1 identity columns + V4 integration + V5 academic s
 - Argon2id `PasswordEncoder` (DEC-017) used by local login / password setup / admin bootstrap
 - Chi tiết: `docs/SAGA_V2_ERD.md`, `docs/SAGA_V2_SCHEMA_DECISIONS.md`
 
-Business Course/Task/Assessment scoring services = **NOT IMPLEMENTED**. Team, Graph/Neo4j = **NOT IMPLEMENTED**. Semester/Class/Course admin runtime = **IMPLEMENTED**. Email outbox delivery foundation = **IMPLEMENTED**. Admin Course Roster V1 (code) = **IMPLEMENTED**; V7 must be applied to a database before the invitation path can persist.
+Contribution evaluation V1 = **IMPLEMENTED** (live DEC-092). `assessment_run` snapshot persistence = **NOT IMPLEMENTED**. Team, Graph/Neo4j = **NOT IMPLEMENTED**. Semester/Class/Course admin runtime = **IMPLEMENTED**. Email outbox delivery foundation = **IMPLEMENTED**. Admin Course Roster V1 (code) = **IMPLEMENTED**; V7 must be applied to a database before the invitation path can persist.
 
 ### Graph schema
 
@@ -255,7 +255,7 @@ Node label, relationship type, uniqueness constraint, projection version, giới
 
 ### Assessment model
 
-Template assessment theo subject/course, trọng số, và công thức đóng góp **chưa chốt**.
+Công thức đóng góp DEC-092 **đã port** sang V2 (`SprintFirstContributionMixer`, `GET /api/teams/{teamId}/contribution-evaluation`). Trọng số COURSE vs PROJECT_GROUP. Snapshot `assessment_run` / `assessment_result` **chưa** được ghi khi evaluate.
 
 ### Public API contract
 
