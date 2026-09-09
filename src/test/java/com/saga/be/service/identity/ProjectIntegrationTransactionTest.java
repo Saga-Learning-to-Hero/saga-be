@@ -485,6 +485,7 @@ class ProjectIntegrationTransactionTest {
 					audit,
 					outbox,
 					Mockito.mock(com.saga.be.service.sync.IntegrationInitialSyncLauncher.class),
+					Mockito.mock(com.saga.be.service.identity.JiraTaskProjectionHardReset.class),
 					transactionManager);
 		}
 	}

@@ -37,6 +37,7 @@ import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
 import com.saga.be.integration.oauth.JiraOAuthCallbackSupport;
 import com.saga.be.integration.oauth.OAuthState;
 import com.saga.be.integration.oauth.OAuthStateService;
+import com.saga.be.integration.oauth.PendingJiraClaim;
 import com.saga.be.integration.oauth.PendingJiraConnect;
 import com.saga.be.integration.oauth.PendingJiraConnectStore;
 import com.saga.be.integration.oauth.Pkce;
@@ -59,10 +60,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
@@ -88,6 +92,7 @@ public class ProjectIntegrationService {
 	private final AuditService audit;
 	private final OutboxPublisher outbox;
 	private final IntegrationInitialSyncLauncher initialSyncLauncher;
+	private final JiraTaskProjectionHardReset taskProjectionReset;
 	private final TransactionTemplate writes;
 
 	public ProjectIntegrationService(
@@ -110,6 +115,7 @@ public class ProjectIntegrationService {
 			AuditService audit,
 			OutboxPublisher outbox,
 			IntegrationInitialSyncLauncher initialSyncLauncher,
+			JiraTaskProjectionHardReset taskProjectionReset,
 			PlatformTransactionManager transactionManager) {
 		this.users = users;
 		this.projects = projects;
@@ -130,6 +136,7 @@ public class ProjectIntegrationService {
 		this.audit = audit;
 		this.outbox = outbox;
 		this.initialSyncLauncher = initialSyncLauncher;
+		this.taskProjectionReset = taskProjectionReset;
 		this.writes = new TransactionTemplate(Objects.requireNonNull(transactionManager, "transactionManager"));
 	}
 
@@ -465,36 +472,24 @@ public class ProjectIntegrationService {
 						IntegrationErrorCode.JIRA_BOARD_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira board is not accessible.");
 			}
 		}
-		persistAtomically(() -> {
-			PendingJiraConnect consumed = pendingJira
-					.consume(userId, projectId)
-					.orElseThrow(() -> new IntegrationException(
-							IntegrationErrorCode.OAUTH_STATE_EXPIRED,
-							HttpStatus.BAD_REQUEST,
-							"Jira team authorization has expired. Start the connection again."));
-			persistJiraIntegration(userId, projectId, consumed, site, projectNode, selection.boardId());
-		});
+		// Consume pending only after source-replace gates inside the write transaction.
+		persistAtomically(() -> persistJiraIntegration(userId, projectId, site, projectNode, selection.boardId()));
 		triggerJiraInitialSync(projectId, pending.accessToken());
 	}
 
 	/**
 	 * Persists or reactivates the single {@code jira_integration} row for this SAGA project.
 	 * Soft-revoked rows are reused: {@code REVOKED -> ACTIVE} with refreshed credentials and selection.
+	 * Different Jira source (cloudId / jiraProjectId) hard-resets Task projection when safe; same
+	 * projectKey across sources and protected evidence block replacement without consuming pending OAuth.
 	 */
 	protected void persistJiraIntegration(
 			UUID userId,
 			UUID projectId,
-			PendingJiraConnect pending,
 			JiraOAuthClient.AccessibleResource site,
 			JiraOAuthClient.JiraProjectResponse projectNode,
 			String boardId) {
 		requireLeader(userId, projectId);
-		if (pending.refreshToken() != null && !encryptor.isReady()) {
-			throw new IntegrationException(
-					IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
-					HttpStatus.SERVICE_UNAVAILABLE,
-					"Integration token encryption key is not configured.");
-		}
 		Project project = requireFetchedProject(projectId);
 		UserAccount actor = users.findById(userId).orElseThrow();
 		JiraIntegration integration = jiraIntegrations.findByProject_Id(project.getId()).orElse(null);
@@ -506,61 +501,143 @@ public class ProjectIntegrationService {
 				integration.setConsecutiveFailures(0);
 			}
 		}
-		integration.setProject(project);
-		integration.setCloudId(site.id());
-		integration.setSiteUrl(site.url());
-		integration.setSiteName(site.name());
-		integration.setJiraProjectId(projectNode.id());
-		integration.setProjectKey(projectNode.key());
-		integration.setName(projectNode.name());
-		integration.setJiraBoardId(boardId);
-		integration.setGrantedScopes(pending.scope());
-		integration.setConnectedBy(actor);
-		// Explicit reactivation: soft-revoke retains the row; reconnect must flip status back to ACTIVE.
-		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
-		integration.setConsecutiveFailures(0);
-		integration.setLastErrorCode(null);
-		JiraIntegration saved = jiraIntegrations.save(integration);
-		if (pending.refreshToken() != null) {
-			saved.setEncryptedRefreshToken(
-					encryptor.encrypt(
-							pending.refreshToken(), TokenEncryptor.aad(saved.getId().toString(), "JIRA", userId.toString())));
-			jiraIntegrations.save(saved);
+
+		String oldCloudId = integration.getCloudId();
+		String oldJiraProjectId = integration.getJiraProjectId();
+		String oldProjectKey = integration.getProjectKey();
+		String newCloudId = site.id();
+		String newJiraProjectId = projectNode.id();
+		String newProjectKey = projectNode.key();
+		boolean hasExistingSource = oldCloudId != null && oldJiraProjectId != null;
+		boolean sameSource = hasExistingSource
+				&& Objects.equals(oldCloudId, newCloudId)
+				&& Objects.equals(oldJiraProjectId, newJiraProjectId);
+		boolean sourceReplacement = hasExistingSource && !sameSource;
+
+		if (sourceReplacement) {
+			if (oldProjectKey != null
+					&& newProjectKey != null
+					&& oldProjectKey.equalsIgnoreCase(newProjectKey)) {
+				throw new IntegrationException(
+						IntegrationErrorCode.JIRA_PROJECT_KEY_AMBIGUOUS,
+						HttpStatus.CONFLICT,
+						"Cannot switch to a different Jira site or project that reuses the same project key.");
+			}
+			if (taskProjectionReset.protectedEvidenceExists(projectId)) {
+				throw new IntegrationException(
+						IntegrationErrorCode.JIRA_SOURCE_REPLACE_BLOCKED_BY_EVIDENCE,
+						HttpStatus.CONFLICT,
+						"Cannot replace Jira source while work sessions or contribution confirmations exist for this project.");
+			}
+			try {
+				// Reset before consume so FK RESTRICT / concurrent evidence keeps the pending grant usable.
+				taskProjectionReset.hardDeleteAllTasksForProject(projectId);
+			} catch (DataIntegrityViolationException ex) {
+				throw new IntegrationException(
+						IntegrationErrorCode.JIRA_SOURCE_REPLACE_BLOCKED_BY_EVIDENCE,
+						HttpStatus.CONFLICT,
+						"Cannot replace Jira source while work sessions or contribution confirmations exist for this project.");
+			}
 		}
-		if (pending.accessToken() != null && encryptor.isReady()) {
-			saved.setEncryptedAccessToken(
-					encryptor.encrypt(
-							pending.accessToken(), TokenEncryptor.aad(saved.getId().toString(), "JIRA", userId.toString())));
-			saved.setTokenExpiresAt(LocalDateTime.now().plusMinutes(50));
-			jiraIntegrations.save(saved);
+
+		PendingJiraClaim claim = pendingJira
+				.claim(userId, projectId)
+				.orElseThrow(() -> new IntegrationException(
+						IntegrationErrorCode.OAUTH_STATE_EXPIRED,
+						HttpStatus.BAD_REQUEST,
+						"Jira team authorization has expired. Start the connection again."));
+		registerPendingClaimCompensation(claim);
+		PendingJiraConnect pending = claim.pending();
+		try {
+			if (pending.refreshToken() != null && !encryptor.isReady()) {
+				throw new IntegrationException(
+						IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
+						HttpStatus.SERVICE_UNAVAILABLE,
+						"Integration token encryption key is not configured.");
+			}
+
+			integration.setProject(project);
+			integration.setCloudId(newCloudId);
+			integration.setSiteUrl(site.url());
+			integration.setSiteName(site.name());
+			integration.setJiraProjectId(newJiraProjectId);
+			integration.setProjectKey(newProjectKey);
+			integration.setName(projectNode.name());
+			integration.setJiraBoardId(boardId);
+			integration.setGrantedScopes(pending.scope());
+			integration.setConnectedBy(actor);
+			// Explicit reactivation: soft-revoke retains the row; reconnect must flip status back to ACTIVE.
+			integration.setConnectionStatus(IntegrationStatus.ACTIVE);
+			integration.setConsecutiveFailures(0);
+			integration.setLastErrorCode(null);
+			JiraIntegration saved = jiraIntegrations.save(integration);
+			if (pending.refreshToken() != null) {
+				saved.setEncryptedRefreshToken(
+						encryptor.encrypt(
+								pending.refreshToken(), TokenEncryptor.aad(saved.getId().toString(), "JIRA", userId.toString())));
+				jiraIntegrations.save(saved);
+			}
+			if (pending.accessToken() != null && encryptor.isReady()) {
+				saved.setEncryptedAccessToken(
+						encryptor.encrypt(
+								pending.accessToken(), TokenEncryptor.aad(saved.getId().toString(), "JIRA", userId.toString())));
+				saved.setTokenExpiresAt(LocalDateTime.now().plusMinutes(50));
+				jiraIntegrations.save(saved);
+			}
+			if (saved.getConnectionStatus() != IntegrationStatus.ACTIVE) {
+				throw new IntegrationException(
+						IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
+						HttpStatus.INTERNAL_SERVER_ERROR,
+						"Jira integration failed to activate.");
+			}
+			audit.record(
+					actor,
+					project,
+					teams.findByProject_Id(projectId).orElse(null),
+					"JIRA_INTEGRATION_CONNECTED",
+					"jira_integration",
+					saved.getId(),
+					Map.of(),
+					Map.of(
+							"cloudId",
+							site.id(),
+							"projectKey",
+							saved.getProjectKey() == null ? "" : saved.getProjectKey(),
+							"status",
+							IntegrationStatus.ACTIVE.name()),
+					Map.of(),
+					AuditSource.OAUTH,
+					null,
+					null,
+					null);
+			outbox.publish(
+					"jira_integration", saved.getId(), "JIRA_INTEGRATION_CONNECTED", Map.of("projectId", projectId.toString()));
+		} catch (RuntimeException ex) {
+			// When JDBC sync is inactive (e.g. unit tests), restore immediately. When active,
+			// afterCompletion(STATUS_ROLLED_BACK) also restores; restoreIfAbsent is idempotent NX.
+			if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+				pendingJira.restoreIfAbsent(claim);
+			}
+			throw ex;
 		}
-		if (saved.getConnectionStatus() != IntegrationStatus.ACTIVE) {
-			throw new IntegrationException(
-					IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
-					HttpStatus.INTERNAL_SERVER_ERROR,
-					"Jira integration failed to activate.");
+	}
+
+	/**
+	 * On JDBC rollback, restore the claimed pending grant only if still valid and no newer grant
+	 * replaced it. Successful commit leaves the claim consumed.
+	 */
+	private void registerPendingClaimCompensation(PendingJiraClaim claim) {
+		if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+			return;
 		}
-		audit.record(
-				actor,
-				project,
-				teams.findByProject_Id(projectId).orElse(null),
-				"JIRA_INTEGRATION_CONNECTED",
-				"jira_integration",
-				saved.getId(),
-				Map.of(),
-				Map.of(
-						"cloudId",
-						site.id(),
-						"projectKey",
-						saved.getProjectKey() == null ? "" : saved.getProjectKey(),
-						"status",
-						IntegrationStatus.ACTIVE.name()),
-				Map.of(),
-				AuditSource.OAUTH,
-				null,
-				null,
-				null);
-		outbox.publish("jira_integration", saved.getId(), "JIRA_INTEGRATION_CONNECTED", Map.of("projectId", projectId.toString()));
+		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+			@Override
+			public void afterCompletion(int status) {
+				if (status == STATUS_ROLLED_BACK) {
+					pendingJira.restoreIfAbsent(claim);
+				}
+			}
+		});
 	}
 
 	@Transactional

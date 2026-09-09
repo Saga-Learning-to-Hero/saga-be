@@ -27,11 +27,31 @@ public class InMemoryPendingJiraConnectStore implements PendingJiraConnectStore 
 
 	@Override
 	public Optional<PendingJiraConnect> consume(UUID userId, UUID projectId) {
+		return claim(userId, projectId).map(PendingJiraClaim::pending);
+	}
+
+	@Override
+	public Optional<PendingJiraClaim> claim(UUID userId, UUID projectId) {
 		Held held = values.remove(key(userId, projectId));
 		if (held == null || Instant.now().isAfter(held.expiresAt())) {
 			return Optional.empty();
 		}
-		return Optional.of(held.pending());
+		return Optional.of(new PendingJiraClaim(held.pending(), held.expiresAt(), null));
+	}
+
+	@Override
+	public boolean restoreIfAbsent(PendingJiraClaim claim) {
+		if (claim == null || claim.pending() == null || claim.expiresAt() == null) {
+			return false;
+		}
+		Instant now = Instant.now();
+		if (!now.isBefore(claim.expiresAt())) {
+			return false;
+		}
+		Held previous = values.putIfAbsent(
+				key(claim.pending().userId(), claim.pending().projectId()),
+				new Held(claim.pending(), claim.expiresAt()));
+		return previous == null;
 	}
 
 	private static String key(UUID userId, UUID projectId) {

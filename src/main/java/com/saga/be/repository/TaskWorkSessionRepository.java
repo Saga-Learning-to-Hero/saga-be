@@ -9,4 +9,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface TaskWorkSessionRepository extends JpaRepository<TaskWorkSession, UUID> {
 
 	List<TaskWorkSession> findByTask_IdAndUser_IdAndStatus(UUID taskId, UUID userId, WorkSessionStatus status);
+
+	boolean existsByProject_Id(UUID projectId);
+
+	boolean existsByTask_Project_Id(UUID projectId);
 }

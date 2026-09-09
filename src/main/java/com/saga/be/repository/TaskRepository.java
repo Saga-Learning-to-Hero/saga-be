@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -32,4 +33,12 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 	Optional<Task> findByIdAndProject_IdAndDeletedAtIsNull(UUID id, UUID projectId);
 
 	long countByProject_IdAndDeletedAtIsNull(UUID projectId);
+
+	@Modifying(clearAutomatically = true, flushAutomatically = true)
+	@Query("update Task t set t.blocksTask = null where t.project.id = :projectId")
+	int clearBlocksTaskReferencesByProjectId(@Param("projectId") UUID projectId);
+
+	@Modifying(clearAutomatically = true, flushAutomatically = true)
+	@Query("delete from Task t where t.project.id = :projectId")
+	int deleteByProject_Id(@Param("projectId") UUID projectId);
 }

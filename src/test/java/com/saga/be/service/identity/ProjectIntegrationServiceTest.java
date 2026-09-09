@@ -48,6 +48,7 @@ import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient;
 import com.saga.be.integration.oauth.OAuthState;
 import com.saga.be.integration.oauth.OAuthStateService;
+import com.saga.be.integration.oauth.PendingJiraClaim;
 import com.saga.be.integration.oauth.PendingJiraConnect;
 import com.saga.be.integration.oauth.PendingJiraConnectStore;
 import com.saga.be.messaging.OutboxPublisher;
@@ -61,6 +62,7 @@ import com.saga.be.repository.TeamByProjectRepository;
 import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.service.audit.AuditService;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -119,6 +121,8 @@ class ProjectIntegrationServiceTest {
 	private PlatformTransactionManager transactionManager;
 	@Mock
 	private com.saga.be.service.sync.IntegrationInitialSyncLauncher initialSyncLauncher;
+	@Mock
+	private JiraTaskProjectionHardReset taskProjectionReset;
 
 	@InjectMocks
 	private ProjectIntegrationService service;
@@ -136,6 +140,7 @@ class ProjectIntegrationServiceTest {
 	void setUp() {
 		lenient().when(transactionManager.getTransaction(any(TransactionDefinition.class)))
 				.thenReturn(new SimpleTransactionStatus());
+		lenient().when(taskProjectionReset.protectedEvidenceExists(any())).thenReturn(false);
 		student = account(AccountRole.STUDENT, "leader@gmail.com");
 		admin = account(AccountRole.ADMIN, "admin@saga.local");
 		course = new Course();
@@ -387,7 +392,6 @@ class ProjectIntegrationServiceTest {
 				"persistJiraIntegration",
 				UUID.class,
 				UUID.class,
-				PendingJiraConnect.class,
 				JiraOAuthClient.AccessibleResource.class,
 				JiraOAuthClient.JiraProjectResponse.class,
 				String.class);
@@ -483,7 +487,9 @@ class ProjectIntegrationServiceTest {
 		PendingJiraConnect pending = new PendingJiraConnect(
 				student.getId(), projectId, "jira-access", null, "read:jira-work", Instant.now());
 		when(pendingJira.get(student.getId(), projectId)).thenReturn(Optional.of(pending));
-		when(pendingJira.consume(student.getId(), projectId)).thenReturn(Optional.of(pending));
+		lenient()
+				.when(pendingJira.claim(student.getId(), projectId))
+				.thenReturn(Optional.of(new PendingJiraClaim(pending, Instant.now().plus(Duration.ofMinutes(10)), "opaque")));
 		when(jira.accessibleResources("jira-access"))
 				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
 						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "https://example.atlassian.net", "Saga")));
@@ -497,6 +503,7 @@ class ProjectIntegrationServiceTest {
 						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", null)));
 		assertEquals(IntegrationErrorCode.NOT_TEAM_LEADER, ex.getCode());
 		verify(jiraIntegrations, never()).save(any());
+		verify(pendingJira, never()).claim(any(), any());
 	}
 
 	@Test
@@ -665,9 +672,31 @@ class ProjectIntegrationServiceTest {
 		assertEquals("SAGA", saved.getProjectKey());
 		assertEquals("68", saved.getJiraBoardId());
 		assertNull(saved.getLastErrorCode());
+		verify(taskProjectionReset, never()).hardDeleteAllTasksForProject(any());
 		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(saved));
 		ProjectIntegrationsResponse summary = service.summary(student.getId(), projectId);
 		assertEquals("ACTIVE", summary.jira().status());
+	}
+
+	@Test
+	void boardOnlyChangeDoesNotWipeTasks() {
+		JiraIntegration existing = revokedReadyIntegration(
+				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68");
+		existing.setConnectionStatus(IntegrationStatus.ACTIVE);
+		stubJiraSelectionWithExisting(existing);
+		when(jira.getBoard("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "99"))
+				.thenReturn(new JiraOAuthClient.JiraBoardResponse("99", "Other board", "simple"));
+
+		service.saveJiraSelection(
+				student.getId(),
+				projectId,
+				new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "99"));
+
+		verify(taskProjectionReset, never()).hardDeleteAllTasksForProject(any());
+		ArgumentCaptor<JiraIntegration> captor = ArgumentCaptor.forClass(JiraIntegration.class);
+		verify(jiraIntegrations, atLeastOnce()).save(captor.capture());
+		assertEquals("99", captor.getValue().getJiraBoardId());
+		assertEquals(IntegrationStatus.ACTIVE, captor.getValue().getConnectionStatus());
 	}
 
 	@Test
@@ -684,6 +713,7 @@ class ProjectIntegrationServiceTest {
 				projectId,
 				new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001", "99"));
 
+		verify(taskProjectionReset).hardDeleteAllTasksForProject(projectId);
 		ArgumentCaptor<JiraIntegration> captor = ArgumentCaptor.forClass(JiraIntegration.class);
 		verify(jiraIntegrations, atLeastOnce()).save(captor.capture());
 		JiraIntegration saved = captor.getValue();
@@ -691,6 +721,176 @@ class ProjectIntegrationServiceTest {
 		assertEquals("20001", saved.getJiraProjectId());
 		assertEquals("OTHER", saved.getProjectKey());
 		assertEquals("99", saved.getJiraBoardId());
+		verify(initialSyncLauncher).enqueueJiraInitialSync(eq(projectId), eq("jira-access"));
+	}
+
+	@Test
+	void differentSourceSameProjectKeyIsRejectedWithoutMutation() {
+		stubJiraSelectionWithExisting(revokedReadyIntegration(
+				"cloud-a", "10067", "SAGA", "68"));
+		when(jira.accessibleResources("jira-access"))
+				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
+						"cloud-b", "https://other.atlassian.net", "Other")));
+		when(jira.getProject("jira-access", "cloud-b", "20001"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("20001", "saga", "Same key elsewhere"));
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.saveJiraSelection(
+						student.getId(), projectId, new SelectJiraIntegrationRequest("cloud-b", "20001", null)));
+		assertEquals(IntegrationErrorCode.JIRA_PROJECT_KEY_AMBIGUOUS, ex.getCode());
+		assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatus());
+		verify(pendingJira, never()).claim(any(), any());
+		verify(taskProjectionReset, never()).hardDeleteAllTasksForProject(any());
+		verify(jiraIntegrations, never()).save(any());
+		verify(initialSyncLauncher, never()).enqueueJiraInitialSync(any(), any());
+	}
+
+	@Test
+	void differentSourceWithContributionConfirmationEvidenceIsRejectedWithoutMutation() {
+		stubJiraSelectionWithExisting(revokedReadyIntegration(
+				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68"));
+		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("20001", "OTHER", "Other Project"));
+		when(taskProjectionReset.protectedEvidenceExists(projectId)).thenReturn(true);
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.saveJiraSelection(
+						student.getId(),
+						projectId,
+						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001", null)));
+		assertEquals(IntegrationErrorCode.JIRA_SOURCE_REPLACE_BLOCKED_BY_EVIDENCE, ex.getCode());
+		verify(pendingJira, never()).claim(any(), any());
+		verify(taskProjectionReset, never()).hardDeleteAllTasksForProject(any());
+		verify(jiraIntegrations, never()).save(any());
+	}
+
+	@Test
+	void differentSourceWithWorkSessionEvidenceIsRejectedWithoutMutation() {
+		stubJiraSelectionWithExisting(revokedReadyIntegration(
+				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68"));
+		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("20001", "OTHER", "Other Project"));
+		when(taskProjectionReset.protectedEvidenceExists(projectId)).thenReturn(true);
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.saveJiraSelection(
+						student.getId(),
+						projectId,
+						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001", null)));
+		assertEquals(IntegrationErrorCode.JIRA_SOURCE_REPLACE_BLOCKED_BY_EVIDENCE, ex.getCode());
+		assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatus());
+		verify(pendingJira, never()).claim(any(), any());
+		verify(taskProjectionReset, never()).hardDeleteAllTasksForProject(any());
+		verify(jiraIntegrations, never()).save(any());
+	}
+
+	@Test
+	void concurrentProtectedEvidenceDuringHardDeleteMapsToConflictAndSkipsClaim() {
+		stubJiraSelectionWithExisting(revokedReadyIntegration(
+				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68"));
+		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("20001", "OTHER", "Other Project"));
+		org.mockito.Mockito.doThrow(new org.springframework.dao.DataIntegrityViolationException("fk_work_session_task"))
+				.when(taskProjectionReset)
+				.hardDeleteAllTasksForProject(projectId);
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.saveJiraSelection(
+						student.getId(),
+						projectId,
+						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001", null)));
+		assertEquals(IntegrationErrorCode.JIRA_SOURCE_REPLACE_BLOCKED_BY_EVIDENCE, ex.getCode());
+		verify(pendingJira, never()).claim(any(), any());
+		verify(jiraIntegrations, never()).save(any());
+	}
+
+	@Test
+	void successfulReplaceThenSyncEnqueueFailureKeepsNewActiveSource() {
+		stubJiraSelectionWithExisting(revokedReadyIntegration(
+				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68"));
+		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("20001", "OTHER", "Other Project"));
+		org.mockito.Mockito.doThrow(new RuntimeException("sync broker down"))
+				.when(initialSyncLauncher)
+				.enqueueJiraInitialSync(eq(projectId), eq("jira-access"));
+
+		RuntimeException ex = assertThrows(
+				RuntimeException.class,
+				() -> service.saveJiraSelection(
+						student.getId(),
+						projectId,
+						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001", null)));
+		assertEquals("sync broker down", ex.getMessage());
+		verify(taskProjectionReset).hardDeleteAllTasksForProject(projectId);
+		ArgumentCaptor<JiraIntegration> captor = ArgumentCaptor.forClass(JiraIntegration.class);
+		verify(jiraIntegrations, atLeastOnce()).save(captor.capture());
+		assertEquals(IntegrationStatus.ACTIVE, captor.getValue().getConnectionStatus());
+		assertEquals("20001", captor.getValue().getJiraProjectId());
+		assertEquals("OTHER", captor.getValue().getProjectKey());
+		verify(pendingJira, never()).restoreIfAbsent(any());
+	}
+
+	@Test
+	void dbFailureDuringReplacementRestoresPendingClaim() {
+		stubJiraSelectionWithExisting(revokedReadyIntegration(
+				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68"));
+		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("20001", "OTHER", "Other Project"));
+		when(jiraIntegrations.save(any(JiraIntegration.class))).thenThrow(new RuntimeException("db write failed"));
+
+		RuntimeException ex = assertThrows(
+				RuntimeException.class,
+				() -> service.saveJiraSelection(
+						student.getId(),
+						projectId,
+						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001", null)));
+		assertEquals("db write failed", ex.getMessage());
+		verify(taskProjectionReset).hardDeleteAllTasksForProject(projectId);
+		verify(pendingJira).claim(student.getId(), projectId);
+		verify(pendingJira).restoreIfAbsent(any(PendingJiraClaim.class));
+		verify(initialSyncLauncher, never()).enqueueJiraInitialSync(any(), any());
+		verify(transactionManager).rollback(any());
+	}
+
+	@Test
+	void sameSourceDbFailureRestoresPendingClaimWithoutTaskWipe() {
+		stubJiraSelectionWithExisting(revokedReadyIntegration(
+				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68"));
+		when(jira.getBoard("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "68"))
+				.thenReturn(new JiraOAuthClient.JiraBoardResponse("68", "SAGA board", "simple"));
+		when(jiraIntegrations.save(any(JiraIntegration.class))).thenThrow(new RuntimeException("db write failed"));
+
+		assertThrows(
+				RuntimeException.class,
+				() -> service.saveJiraSelection(
+						student.getId(),
+						projectId,
+						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "68")));
+		verify(taskProjectionReset, never()).hardDeleteAllTasksForProject(any());
+		verify(pendingJira).claim(student.getId(), projectId);
+		verify(pendingJira).restoreIfAbsent(any(PendingJiraClaim.class));
+		verify(initialSyncLauncher, never()).enqueueJiraInitialSync(any(), any());
+	}
+
+	@Test
+	void successfulSameSourceCommitDoesNotRestorePending() {
+		stubJiraSelectionWithExisting(revokedReadyIntegration(
+				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68"));
+		when(jira.getBoard("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "68"))
+				.thenReturn(new JiraOAuthClient.JiraBoardResponse("68", "SAGA board", "simple"));
+
+		service.saveJiraSelection(
+				student.getId(),
+				projectId,
+				new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "68"));
+
+		verify(pendingJira).claim(student.getId(), projectId);
+		verify(pendingJira, never()).restoreIfAbsent(any());
+		verify(taskProjectionReset, never()).hardDeleteAllTasksForProject(any());
 	}
 
 	@Test
@@ -738,7 +938,7 @@ class ProjectIntegrationServiceTest {
 						projectId,
 						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "68")));
 		assertEquals(IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, ex.getCode());
-		verify(pendingJira, never()).consume(any(), any());
+		verify(pendingJira, never()).claim(any(), any());
 		verify(jiraIntegrations, never()).save(any());
 		assertEquals(IntegrationStatus.REVOKED, existing.getConnectionStatus());
 	}
@@ -789,7 +989,7 @@ class ProjectIntegrationServiceTest {
 						projectId,
 						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "68")));
 		assertEquals(IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, ex.getCode());
-		verify(pendingJira, never()).consume(any(), any());
+		verify(pendingJira, never()).claim(any(), any());
 	}
 
 	@Test
@@ -808,7 +1008,7 @@ class ProjectIntegrationServiceTest {
 						projectId,
 						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "68")));
 		assertEquals(IntegrationErrorCode.JIRA_BOARD_NOT_ACCESSIBLE, ex.getCode());
-		verify(pendingJira, never()).consume(any(), any());
+		verify(pendingJira, never()).claim(any(), any());
 	}
 
 	@Test
@@ -940,7 +1140,9 @@ class ProjectIntegrationServiceTest {
 		PendingJiraConnect pending = new PendingJiraConnect(
 				student.getId(), projectId, "jira-access", null, "read:jira-work", Instant.now());
 		when(pendingJira.get(student.getId(), projectId)).thenReturn(Optional.of(pending));
-		when(pendingJira.consume(student.getId(), projectId)).thenReturn(Optional.of(pending));
+		lenient()
+				.when(pendingJira.claim(student.getId(), projectId))
+				.thenReturn(Optional.of(new PendingJiraClaim(pending, Instant.now().plus(Duration.ofMinutes(10)), "opaque")));
 	}
 
 	private void stubJiraLeaderAndPendingPeekOnly() {
@@ -991,7 +1193,9 @@ class ProjectIntegrationServiceTest {
 		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
 		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(existing));
 		when(jiraIntegrations.lockById(existing.getId())).thenReturn(Optional.of(existing));
-		when(jiraIntegrations.save(any(JiraIntegration.class))).thenAnswer(invocation -> invocation.getArgument(0));
+		lenient()
+				.when(jiraIntegrations.save(any(JiraIntegration.class)))
+				.thenAnswer(invocation -> invocation.getArgument(0));
 		lenient().when(installations.findByProject_Id(projectId)).thenReturn(Optional.empty());
 		lenient().when(repos.findByProject_Id(projectId)).thenReturn(List.of());
 	}
