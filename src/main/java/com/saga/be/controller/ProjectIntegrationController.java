@@ -60,11 +60,33 @@ public class ProjectIntegrationController {
 	}
 
 	@PostMapping("/github/connect")
+	@Operation(
+			summary = "Start GitHub App connect/reconnect for the project. Team Leader only.",
+			description =
+					"""
+					Default: resolve historical provenance / discover existing installations via user OAuth.
+					Pass installationId to bind a chosen candidate (re-verified after OAuth).
+					Pass mode=install_new to open GitHub App /installations/new (another account/org) without
+					guessing among candidates — does not delete historical git_repo rows.
+					""")
 	public OAuthStartResponse githubConnect(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
-			@RequestParam(required = false) String returnPath) {
-		return integrations.startGithub(principal.getUserId(), projectId, returnPath);
+			@RequestParam(required = false) String returnPath,
+			@RequestParam(required = false) Long installationId,
+			@RequestParam(required = false) String mode) {
+		return integrations.startGithub(principal.getUserId(), projectId, returnPath, installationId, mode);
+	}
+
+	@GetMapping("/github/reconnect/candidates")
+	@Operation(
+			summary = "List GitHub installation candidates for reconnect selection. Team Leader only.",
+			description =
+					"Returns OAuth-verified eligible candidates when present; otherwise historical provenance hints. "
+							+ "Display fields only — no tokens.")
+	public List<com.saga.be.dto.integration.GithubReconnectCandidateResponse> githubReconnectCandidates(
+			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
+		return integrations.listGithubReconnectCandidates(principal.getUserId(), projectId);
 	}
 
 	@GetMapping("/github/setup/callback")

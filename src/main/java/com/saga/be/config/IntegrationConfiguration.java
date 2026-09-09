@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.saga.be.integration.crypto.TokenEncryptor;
+import com.saga.be.integration.oauth.GithubReconnectCandidateStore;
+import com.saga.be.integration.oauth.InMemoryGithubReconnectCandidateStore;
 import com.saga.be.integration.oauth.InMemoryOAuthStateStore;
 import com.saga.be.integration.oauth.InMemoryPendingJiraConnectStore;
 import com.saga.be.integration.oauth.OAuthStateService;
@@ -57,6 +59,12 @@ public class IntegrationConfiguration {
 	}
 
 	@Bean
+	@ConditionalOnMissingBean(GithubReconnectCandidateStore.class)
+	public GithubReconnectCandidateStore inMemoryGithubReconnectCandidateStore() {
+		return new InMemoryGithubReconnectCandidateStore();
+	}
+
+	@Bean
 	@Primary
 	@ConditionalOnBean(StringRedisTemplate.class)
 	public OAuthStateStore redisOAuthStateStore(
@@ -70,6 +78,14 @@ public class IntegrationConfiguration {
 	public PendingJiraConnectStore redisPendingJiraConnectStore(
 			StringRedisTemplate redis, TokenEncryptor encryptor, ObjectMapper mapper, IntegrationProperties properties) {
 		return new RedisPendingJiraConnectStore(redis, encryptor, mapper, properties.getOauthStateTtl());
+	}
+
+	@Bean
+	@Primary
+	@ConditionalOnBean(StringRedisTemplate.class)
+	public GithubReconnectCandidateStore redisGithubReconnectCandidateStore(
+			StringRedisTemplate redis, ObjectMapper mapper, IntegrationProperties properties) {
+		return new RedisGithubReconnectCandidateStore(redis, mapper, properties.getOauthStateTtl());
 	}
 
 	@Bean

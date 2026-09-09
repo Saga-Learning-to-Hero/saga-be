@@ -536,6 +536,7 @@ class ProjectIntegrationTransactionTest {
 					syncJobs,
 					oauthStates,
 					pendingJira,
+					Mockito.mock(com.saga.be.integration.oauth.GithubReconnectCandidateStore.class),
 					properties,
 					github,
 					githubJwt,

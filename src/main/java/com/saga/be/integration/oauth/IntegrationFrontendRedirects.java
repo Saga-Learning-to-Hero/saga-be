@@ -51,6 +51,15 @@ public final class IntegrationFrontendRedirects {
 		return builder.build().toUriString();
 	}
 
+	/** Success/return path with an integration error code for controlled FE handling (e.g. installation picker). */
+	public static String successLocationWithCode(String successUrl, String returnPath, IntegrationErrorCode code) {
+		String base = successLocation(successUrl, returnPath);
+		if (base == null || base.isBlank() || code == null) {
+			return base;
+		}
+		return UriComponentsBuilder.fromUriString(base).replaceQueryParam("code", code.name()).build().toUriString();
+	}
+
 	public static ResponseEntity<Void> seeOther(String location) {
 		return ResponseEntity.status(HttpStatus.FOUND).header(HttpHeaders.LOCATION, location).build();
 	}

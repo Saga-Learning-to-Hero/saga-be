@@ -1,6 +1,7 @@
 package com.saga.be.service.identity;
 
 import com.saga.be.config.IntegrationProperties;
+import com.saga.be.dto.integration.GithubReconnectCandidateResponse;
 import com.saga.be.dto.integration.OAuthStartResponse;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse;
 import com.saga.be.dto.integration.SelectGitHubRepositoryRequest;
@@ -33,6 +34,7 @@ import com.saga.be.integration.crypto.TokenEncryptor;
 import com.saga.be.integration.github.GitHubAppJwtService;
 import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient;
+import com.saga.be.integration.oauth.GithubReconnectCandidateStore;
 import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
 import com.saga.be.integration.oauth.JiraOAuthCallbackSupport;
 import com.saga.be.integration.oauth.OAuthState;
@@ -53,6 +55,7 @@ import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.service.audit.AuditService;
 import com.saga.be.service.sync.IntegrationInitialSyncLauncher;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.HashSet;
@@ -87,6 +90,7 @@ public class ProjectIntegrationService {
 	private final SyncJobLogRepository syncJobs;
 	private final OAuthStateService oauthStates;
 	private final PendingJiraConnectStore pendingJira;
+	private final GithubReconnectCandidateStore reconnectCandidates;
 	private final IntegrationProperties properties;
 	private final GitHubOAuthClient github;
 	private final GitHubAppJwtService githubJwt;
@@ -110,6 +114,7 @@ public class ProjectIntegrationService {
 			SyncJobLogRepository syncJobs,
 			OAuthStateService oauthStates,
 			PendingJiraConnectStore pendingJira,
+			GithubReconnectCandidateStore reconnectCandidates,
 			IntegrationProperties properties,
 			GitHubOAuthClient github,
 			GitHubAppJwtService githubJwt,
@@ -131,6 +136,7 @@ public class ProjectIntegrationService {
 		this.syncJobs = syncJobs;
 		this.oauthStates = oauthStates;
 		this.pendingJira = pendingJira;
+		this.reconnectCandidates = reconnectCandidates;
 		this.properties = properties;
 		this.github = github;
 		this.githubJwt = githubJwt;
@@ -176,30 +182,67 @@ public class ProjectIntegrationService {
 
 	@Transactional(readOnly = true)
 	public OAuthStartResponse startGithub(UUID userId, UUID projectId, String returnPath) {
+		return startGithub(userId, projectId, returnPath, null, null);
+	}
+
+	@Transactional(readOnly = true)
+	public OAuthStartResponse startGithub(UUID userId, UUID projectId, String returnPath, Long selectedInstallationId) {
+		return startGithub(userId, projectId, returnPath, selectedInstallationId, null);
+	}
+
+	@Transactional(readOnly = true)
+	public OAuthStartResponse startGithub(
+			UUID userId, UUID projectId, String returnPath, Long selectedInstallationId, String mode) {
 		requireLeader(userId, projectId);
 		String verifier = Pkce.newVerifier();
 		Team team = requireTeamForProject(projectId);
 		String safeReturn = safeReturnPath(returnPath);
-		Optional<Long> reconnectCandidate = recoverGithubReconnectCandidate(projectId);
-		if (reconnectCandidate.isPresent()) {
-			Long installationId = reconnectCandidate.get();
-			assertInstallationAvailableForProject(installationId, projectId);
-			OAuthState state = oauthStates.start(
-					userId,
-					OAuthFlowType.GITHUB_TEAM_RECONNECT,
-					safeReturn,
-					projectId,
-					team.getId(),
-					verifier,
-					installationId);
-			String oauthCallback =
-					callback(properties.getGithub().getOauthCallbackUrl(), "/api/integrations/github/oauth/callback");
-			return new OAuthStartResponse(
-					github.authorizationUrl(state.state(), Pkce.challengeS256(verifier), oauthCallback), state.state());
+		if (isInstallNewMode(mode)) {
+			return startGithubInstallVerify(userId, projectId, team.getId(), safeReturn, verifier);
 		}
-		OAuthState state = oauthStates.start(
-				userId, OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY, safeReturn, projectId, team.getId(), verifier);
-		return new OAuthStartResponse(github.installationUrl(state.state()), state.state());
+		Set<Long> historical = recoverGithubReconnectCandidates(projectId);
+		if (selectedInstallationId != null) {
+			if (!historical.isEmpty() && !historical.contains(selectedInstallationId)) {
+				throw new IntegrationException(
+						IntegrationErrorCode.GITHUB_INSTALLATION_INVALID,
+						HttpStatus.BAD_REQUEST,
+						"Selected installation is not part of this project's GitHub provenance.");
+			}
+			assertInstallationAvailableForProject(selectedInstallationId, projectId);
+			return startGithubReconnectOAuth(userId, projectId, team.getId(), safeReturn, verifier, selectedInstallationId);
+		}
+		if (historical.size() == 1) {
+			Long installationId = historical.iterator().next();
+			assertInstallationAvailableForProject(installationId, projectId);
+			return startGithubReconnectOAuth(userId, projectId, team.getId(), safeReturn, verifier, installationId);
+		}
+		if (historical.size() > 1) {
+			// Ambiguous historical provenance: FE must pick a candidate or use mode=install_new — never guess, no OAuth loop.
+			throw new IntegrationException(
+					IntegrationErrorCode.GITHUB_INSTALLATION_SELECTION_REQUIRED,
+					HttpStatus.CONFLICT,
+					"Multiple historical GitHub App installations exist; Team Leader must choose one or install on another account.");
+		}
+		// Zero provenance: discover existing App installations via user OAuth (avoid stuck Configure page).
+		return startGithubReconnectOAuth(userId, projectId, team.getId(), safeReturn, verifier, null);
+	}
+
+	@Transactional(readOnly = true)
+	public List<GithubReconnectCandidateResponse> listGithubReconnectCandidates(UUID userId, UUID projectId) {
+		requireLeader(userId, projectId);
+		List<GithubReconnectCandidateResponse> pending = reconnectCandidates.find(userId, projectId);
+		if (!pending.isEmpty()) {
+			return pending;
+		}
+		List<GithubReconnectCandidateResponse> out = new java.util.ArrayList<>();
+		for (Long installationId : recoverGithubReconnectCandidates(projectId)) {
+			GithubInstallation row = installations.findByInstallationId(installationId).orElse(null);
+			out.add(new GithubReconnectCandidateResponse(
+					installationId,
+					row == null ? null : row.getAccountLogin(),
+					row == null ? null : row.getAccountType()));
+		}
+		return out;
 	}
 
 	public String completeGithubInstallation(UUID userId, String rawState, Long installationId, String userCode) {
@@ -223,7 +266,8 @@ public class ProjectIntegrationService {
 
 	/**
 	 * Completes existing-installation reconnect after GitHub user OAuth (same callback URL as personal link).
-	 * Installation id is taken from trusted OAuth state (server-recovered), never from a client query param.
+	 * Installation id comes from OAuth state when known, otherwise from historical provenance filtered by
+	 * /user/installations — never from an unverified client query param alone.
 	 */
 	public String completeGithubReconnect(UUID userId, String code, OAuthState state) {
 		if (state.flowType() != OAuthFlowType.GITHUB_TEAM_RECONNECT) {
@@ -245,11 +289,64 @@ public class ProjectIntegrationService {
 				code,
 				state.pkceVerifier(),
 				callback(properties.getGithub().getOauthCallbackUrl(), "/api/integrations/github/oauth/callback"));
-		Long installationId = resolveReconnectInstallationId(state, userToken);
+		ReconnectResolution resolution = resolveReconnectInstallationId(state, userToken);
+		if (resolution.outcome() == ReconnectOutcome.INSTALL) {
+			reconnectCandidates.clear(userId, state.projectId());
+			String installVerifier = Pkce.newVerifier();
+			Team team = requireTeamForProject(state.projectId());
+			OAuthState installState = oauthStates.start(
+					userId,
+					OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY,
+					state.frontendReturnPath(),
+					state.projectId(),
+					team.getId(),
+					installVerifier);
+			return github.installationUrl(installState.state());
+		}
+		if (resolution.outcome() == ReconnectOutcome.SELECT) {
+			List<GithubReconnectCandidateResponse> choices = resolution.candidates() == null
+					? List.of()
+					: resolution.candidates();
+			reconnectCandidates.save(userId, state.projectId(), choices, properties.getOauthStateTtl());
+			return IntegrationFrontendRedirects.successLocationWithCode(
+					properties.getSuccessUrl(),
+					state.frontendReturnPath(),
+					IntegrationErrorCode.GITHUB_INSTALLATION_SELECTION_REQUIRED);
+		}
+		Long installationId = resolution.installationId();
 		GitHubOAuthClient.GitHubInstallationResponse installation = verifyAppInstallation(installationId);
 		requireUserInstallationMembership(userToken, installationId);
 		persistAtomically(() -> persistVerifiedInstallation(userId, state.projectId(), installationId, installation));
+		reconnectCandidates.clear(userId, state.projectId());
 		return redirect(state.frontendReturnPath());
+	}
+
+	private OAuthStartResponse startGithubInstallVerify(
+			UUID userId, UUID projectId, UUID teamId, String safeReturn, String verifier) {
+		OAuthState state = oauthStates.start(
+				userId, OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY, safeReturn, projectId, teamId, verifier);
+		return new OAuthStartResponse(github.installationUrl(state.state()), state.state());
+	}
+
+	private OAuthStartResponse startGithubReconnectOAuth(
+			UUID userId,
+			UUID projectId,
+			UUID teamId,
+			String safeReturn,
+			String verifier,
+			Long installationId) {
+		OAuthState state = oauthStates.start(
+				userId,
+				OAuthFlowType.GITHUB_TEAM_RECONNECT,
+				safeReturn,
+				projectId,
+				teamId,
+				verifier,
+				installationId);
+		String oauthCallback =
+				callback(properties.getGithub().getOauthCallbackUrl(), "/api/integrations/github/oauth/callback");
+		return new OAuthStartResponse(
+				github.authorizationUrl(state.state(), Pkce.challengeS256(verifier), oauthCallback), state.state());
 	}
 
 	protected void persistVerifiedInstallation(
@@ -301,58 +398,67 @@ public class ProjectIntegrationService {
 	}
 
 	/**
-	 * Recovers a single prior installation id from project-bound git_repo rows.
+	 * Recovers distinct prior installation ids from project-bound git_repo rows.
 	 * Empty when no repo provenance exists — callers must not invent a SUSPENDED installation.
+	 * Multiple ids are ambiguous hints, not a terminal conflict.
 	 */
-	Optional<Long> recoverGithubReconnectCandidate(UUID projectId) {
+	Set<Long> recoverGithubReconnectCandidates(UUID projectId) {
 		List<GitRepo> projectRepos = repos.findByProject_IdWithInstallation(projectId);
-		Set<Long> installationIds = new HashSet<>();
+		Set<Long> installationIds = new java.util.LinkedHashSet<>();
 		for (GitRepo repo : projectRepos) {
 			if (repo.getInstallation() == null || repo.getInstallation().getInstallationId() == null) {
 				continue;
 			}
 			installationIds.add(repo.getInstallation().getInstallationId());
 		}
-		if (installationIds.isEmpty()) {
+		return installationIds;
+	}
+
+	/** @deprecated use {@link #recoverGithubReconnectCandidates(UUID)}; retained for single-candidate callers/tests. */
+	Optional<Long> recoverGithubReconnectCandidate(UUID projectId) {
+		Set<Long> ids = recoverGithubReconnectCandidates(projectId);
+		if (ids.isEmpty()) {
 			return Optional.empty();
 		}
-		if (installationIds.size() > 1) {
-			throw new IntegrationException(
-					IntegrationErrorCode.GITHUB_INSTALLATION_INVALID,
-					HttpStatus.CONFLICT,
-					"Conflicting GitHub installation provenance for this project.");
+		if (ids.size() > 1) {
+			return Optional.empty();
 		}
-		return Optional.of(installationIds.iterator().next());
+		return Optional.of(ids.iterator().next());
 	}
 
-	private Long resolveReconnectInstallationId(OAuthState state, String userToken) {
+	private ReconnectResolution resolveReconnectInstallationId(OAuthState state, String userToken) {
+		Set<Long> historical = recoverGithubReconnectCandidates(state.projectId());
 		if (state.githubInstallationId() != null) {
-			return state.githubInstallationId();
+			Long installationId = state.githubInstallationId();
+			if (!historical.isEmpty() && !historical.contains(installationId)) {
+				throw new IntegrationException(
+						IntegrationErrorCode.GITHUB_INSTALLATION_INVALID,
+						HttpStatus.BAD_REQUEST,
+						"Selected installation is not part of this project's GitHub provenance.");
+			}
+			assertInstallationAvailableForProject(installationId, state.projectId());
+			return ReconnectResolution.bind(installationId);
 		}
-		// No server-side repo provenance: bind only via verified user installation list (never guess SUSPENDED).
-		List<Long> eligible = eligibleUserInstallations(userToken, state.projectId());
+		List<GithubReconnectCandidateResponse> eligible = eligibleUserInstallations(userToken, state.projectId());
+		if (!historical.isEmpty()) {
+			eligible = eligible.stream().filter(c -> historical.contains(c.installationId())).toList();
+		}
 		if (eligible.isEmpty()) {
-			throw new IntegrationException(
-					IntegrationErrorCode.GITHUB_INSTALLATION_INVALID,
-					HttpStatus.BAD_REQUEST,
-					"No eligible GitHub App installation is available to reconnect.");
+			return ReconnectResolution.install();
 		}
 		if (eligible.size() > 1) {
-			throw new IntegrationException(
-					IntegrationErrorCode.GITHUB_INSTALLATION_INVALID,
-					HttpStatus.CONFLICT,
-					"Multiple GitHub App installations are available; cannot choose without repository provenance.");
+			return ReconnectResolution.select(eligible);
 		}
-		return eligible.getFirst();
+		return ReconnectResolution.bind(eligible.getFirst().installationId());
 	}
 
-	private List<Long> eligibleUserInstallations(String userToken, UUID projectId) {
+	private List<GithubReconnectCandidateResponse> eligibleUserInstallations(String userToken, UUID projectId) {
 		GitHubOAuthClient.GitHubUserInstallationsResponse userInstalls = github.listUserInstallations(userToken);
 		if (userInstalls == null || userInstalls.installations() == null) {
 			return List.of();
 		}
 		String configuredAppId = properties.getGithub().getAppId();
-		List<Long> eligible = new java.util.ArrayList<>();
+		List<GithubReconnectCandidateResponse> eligible = new java.util.ArrayList<>();
 		for (GitHubOAuthClient.GitHubInstallationIdResponse node : userInstalls.installations()) {
 			if (node == null || node.id() == null) {
 				continue;
@@ -375,9 +481,44 @@ public class ProjectIntegrationService {
 					&& !existing.get().getProject().getId().equals(projectId)) {
 				continue;
 			}
-			eligible.add(node.id());
+			String login = verified.account() == null ? null : verified.account().login();
+			String type = verified.account() == null ? null : verified.account().type();
+			if ((login == null || login.isBlank()) && existing.isPresent()) {
+				login = existing.get().getAccountLogin();
+				type = existing.get().getAccountType();
+			}
+			eligible.add(new GithubReconnectCandidateResponse(node.id(), login, type));
 		}
 		return eligible;
+	}
+
+	private static boolean isInstallNewMode(String mode) {
+		if (mode == null || mode.isBlank()) {
+			return false;
+		}
+		String normalized = mode.trim().toLowerCase().replace('-', '_');
+		return "install_new".equals(normalized) || "installnew".equals(normalized);
+	}
+
+	private enum ReconnectOutcome {
+		BIND,
+		SELECT,
+		INSTALL
+	}
+
+	private record ReconnectResolution(
+			ReconnectOutcome outcome, Long installationId, List<GithubReconnectCandidateResponse> candidates) {
+		static ReconnectResolution bind(Long installationId) {
+			return new ReconnectResolution(ReconnectOutcome.BIND, installationId, List.of());
+		}
+
+		static ReconnectResolution select(List<GithubReconnectCandidateResponse> candidates) {
+			return new ReconnectResolution(ReconnectOutcome.SELECT, null, candidates);
+		}
+
+		static ReconnectResolution install() {
+			return new ReconnectResolution(ReconnectOutcome.INSTALL, null, List.of());
+		}
 	}
 
 	private GitHubOAuthClient.GitHubInstallationResponse verifyAppInstallation(Long installationId) {
