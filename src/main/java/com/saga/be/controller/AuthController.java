@@ -43,6 +43,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.logout.CookieClearingLogoutHandler;
 import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
 import org.springframework.security.web.context.SecurityContextRepository;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -59,6 +60,7 @@ public class AuthController {
 	private final PasswordSetupService passwordSetupService;
 	private final StudentRegistrationService studentRegistrationService;
 	private final SecurityContextRepository securityContextRepository;
+	private final CookieCsrfTokenRepository csrfTokenRepository;
 	private final ObjectProvider<InvitationClaimService> invitationClaims;
 
 	public AuthController(
@@ -66,11 +68,13 @@ public class AuthController {
 			PasswordSetupService passwordSetupService,
 			StudentRegistrationService studentRegistrationService,
 			SecurityContextRepository securityContextRepository,
+			CookieCsrfTokenRepository csrfTokenRepository,
 			ObjectProvider<InvitationClaimService> invitationClaims) {
 		this.localAuthService = localAuthService;
 		this.passwordSetupService = passwordSetupService;
 		this.studentRegistrationService = studentRegistrationService;
 		this.securityContextRepository = securityContextRepository;
+		this.csrfTokenRepository = csrfTokenRepository;
 		this.invitationClaims = invitationClaims;
 	}
 
@@ -299,7 +303,8 @@ public class AuthController {
 	@PostMapping("/logout")
 	@Operation(
 			summary = "End session",
-			description = "Invalidates the server session and clears cookies `SAGA_SESSION` and `XSRF-TOKEN`. CSRF required.")
+			description =
+					"Invalidates the server session, clears cookie `SAGA_SESSION`, and rotates cookie `XSRF-TOKEN` to a fresh anonymous CSRF token so the next POST (e.g. login) can succeed without an extra GET /csrf. CSRF required.")
 	@ApiResponse(responseCode = "204", description = "Session invalidated")
 	@ApiResponse(
 			responseCode = "403",
@@ -317,8 +322,11 @@ public class AuthController {
 		logoutHandler.setInvalidateHttpSession(true);
 		logoutHandler.setClearAuthentication(true);
 		logoutHandler.logout(request, response, authentication);
-		new CookieClearingLogoutHandler("SAGA_SESSION", "XSRF-TOKEN").logout(request, response, authentication);
+		// Clear session cookie only. XSRF is rotated below so Swagger/browser keep a usable token.
+		new CookieClearingLogoutHandler("SAGA_SESSION").logout(request, response, authentication);
 		SecurityContextHolder.clearContext();
+		CsrfToken fresh = csrfTokenRepository.generateToken(request);
+		csrfTokenRepository.saveToken(fresh, request, response);
 		return ResponseEntity.noContent().build();
 	}
 

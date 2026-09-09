@@ -62,22 +62,27 @@ public class SecurityConfig {
 	}
 
 	@Bean
-	public SecurityFilterChain securityFilterChain(
-			HttpSecurity http,
-			AuthProperties properties,
-			SecurityContextRepository securityContextRepository,
-			ObjectProvider<GoogleAccountService> googleAccounts,
-			ObjectProvider<ClientRegistrationRepository> clientRegistrations)
-			throws Exception {
+	public CookieCsrfTokenRepository cookieCsrfTokenRepository(AuthProperties properties) {
 		CookieCsrfTokenRepository csrfRepo = CookieCsrfTokenRepository.withHttpOnlyFalse();
 		csrfRepo.setCookieName("XSRF-TOKEN");
 		csrfRepo.setHeaderName("X-XSRF-TOKEN");
 		csrfRepo.setCookieCustomizer(builder -> builder
 				.secure(properties.getCookie().isSecure())
 				.sameSite(properties.getCookie().getSameSite()));
+		return csrfRepo;
+	}
 
+	@Bean
+	public SecurityFilterChain securityFilterChain(
+			HttpSecurity http,
+			AuthProperties properties,
+			SecurityContextRepository securityContextRepository,
+			CookieCsrfTokenRepository cookieCsrfTokenRepository,
+			ObjectProvider<GoogleAccountService> googleAccounts,
+			ObjectProvider<ClientRegistrationRepository> clientRegistrations)
+			throws Exception {
 		http.cors(Customizer.withDefaults())
-				.csrf(csrf -> csrf.csrfTokenRepository(csrfRepo)
+				.csrf(csrf -> csrf.csrfTokenRepository(cookieCsrfTokenRepository)
 						.csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler())
 						.ignoringRequestMatchers("/login/oauth2/**", "/oauth2/**", "/api/webhooks/github", "/api/webhooks/jira"))
 				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
@@ -129,6 +134,13 @@ public class SecurityConfig {
 									&& principal.isPasswordSetupRequired()) {
 								PasswordSetupAuthorizationManager.writePasswordSetupRequired(response);
 								return;
+							}
+							if (isCsrfFailure(denied)) {
+								log.info(
+										"csrf rejected path={} method={} reason={}",
+										request.getRequestURI(),
+										request.getMethod(),
+										denied.getClass().getSimpleName());
 							}
 							writeForbidden(response);
 						}))
@@ -246,5 +258,17 @@ public class SecurityConfig {
 		response.setCharacterEncoding(StandardCharsets.UTF_8.name());
 		response.setContentType(MediaType.APPLICATION_JSON_VALUE);
 		response.getWriter().write("{\"code\":\"ACCESS_DENIED\",\"message\":\"Access denied.\"}");
+	}
+
+	private static boolean isCsrfFailure(Exception denied) {
+		Throwable cursor = denied;
+		while (cursor != null) {
+			String name = cursor.getClass().getName();
+			if (name.endsWith("MissingCsrfTokenException") || name.endsWith("InvalidCsrfTokenException")) {
+				return true;
+			}
+			cursor = cursor.getCause();
+		}
+		return false;
 	}
 }
