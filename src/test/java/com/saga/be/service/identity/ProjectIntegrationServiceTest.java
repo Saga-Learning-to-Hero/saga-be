@@ -141,6 +141,10 @@ class ProjectIntegrationServiceTest {
 		lenient().when(transactionManager.getTransaction(any(TransactionDefinition.class)))
 				.thenReturn(new SimpleTransactionStatus());
 		lenient().when(taskProjectionReset.protectedEvidenceExists(any())).thenReturn(false);
+		lenient().when(repos.findByProject_IdWithInstallation(any())).thenReturn(List.of());
+		lenient()
+				.when(installations.findByInstallationIdForUpdate(any()))
+				.thenAnswer(invocation -> installations.findByInstallationId(invocation.getArgument(0)));
 		student = account(AccountRole.STUDENT, "leader@gmail.com");
 		admin = account(AccountRole.ADMIN, "admin@saga.local");
 		course = new Course();
@@ -1306,6 +1310,7 @@ class ProjectIntegrationServiceTest {
 		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
 		when(installations.findByProject_Id(projectId)).thenReturn(Optional.empty());
 		when(installations.findByInstallationId(158866076L)).thenReturn(Optional.empty());
+		when(installations.findByInstallationIdForUpdate(158866076L)).thenReturn(Optional.empty());
 		when(installations.save(any(GithubInstallation.class))).thenAnswer(invocation -> {
 			GithubInstallation saved = invocation.getArgument(0);
 			if (saved.getId() == null) {
@@ -1313,6 +1318,437 @@ class ProjectIntegrationServiceTest {
 			}
 			return saved;
 		});
+	}
+
+	@Test
+	void startGithubWithRepoProvenanceUsesUserOAuthReconnectNotInstallationsNew() {
+		GithubInstallation prior = suspendedInstallation(158866076L);
+		GitRepo revoked = revokedRepo(projectId, prior, 99L);
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		when(repos.findByProject_IdWithInstallation(projectId)).thenReturn(List.of(revoked));
+		when(installations.findByInstallationId(158866076L)).thenReturn(Optional.of(prior));
+		when(oauthStates.start(
+						eq(student.getId()),
+						eq(OAuthFlowType.GITHUB_TEAM_RECONNECT),
+						any(),
+						eq(projectId),
+						eq(team.getId()),
+						any(),
+						eq(158866076L)))
+				.thenReturn(new OAuthState(
+						"state",
+						student.getId(),
+						OAuthFlowType.GITHUB_TEAM_RECONNECT,
+						null,
+						projectId,
+						team.getId(),
+						"verifier",
+						Instant.now(),
+						158866076L));
+		IntegrationProperties.GitHub githubProps = new IntegrationProperties.GitHub();
+		githubProps.setOauthCallbackUrl("http://localhost/api/integrations/github/oauth/callback");
+		when(properties.getGithub()).thenReturn(githubProps);
+		when(github.authorizationUrl(any(), any(), any())).thenReturn("https://github.com/login/oauth/authorize?reconnect=1");
+
+		OAuthStartResponse start = service.startGithub(student.getId(), projectId, "/projects");
+
+		assertEquals("https://github.com/login/oauth/authorize?reconnect=1", start.authorizationUrl());
+		verify(github, never()).installationUrl(any());
+	}
+
+	@Test
+	void startGithubWithoutRepoProvenanceKeepsInstallationsNewAndDoesNotPickSuspended() {
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		when(repos.findByProject_IdWithInstallation(projectId)).thenReturn(List.of());
+		when(oauthStates.start(
+						eq(student.getId()),
+						eq(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY),
+						any(),
+						eq(projectId),
+						eq(team.getId()),
+						any()))
+				.thenReturn(state(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY));
+		when(github.installationUrl(any())).thenReturn("https://github.com/apps/saga/installations/new");
+
+		OAuthStartResponse start = service.startGithub(student.getId(), projectId, null);
+
+		assertEquals("https://github.com/apps/saga/installations/new", start.authorizationUrl());
+		verify(installations, never()).findByInstallationId(any());
+		verify(github, never()).authorizationUrl(any(), any(), any());
+	}
+
+	@Test
+	void recoverGithubReconnectCandidateFailsOnConflictingInstallationFks() {
+		GithubInstallation one = suspendedInstallation(111L);
+		GithubInstallation two = suspendedInstallation(222L);
+		when(repos.findByProject_IdWithInstallation(projectId))
+				.thenReturn(List.of(revokedRepo(projectId, one, 1L), revokedRepo(projectId, two, 2L)));
+		IntegrationException ex = assertThrows(
+				IntegrationException.class, () -> service.recoverGithubReconnectCandidate(projectId));
+		assertEquals(IntegrationErrorCode.GITHUB_INSTALLATION_INVALID, ex.getCode());
+	}
+
+	@Test
+	void disconnectGithubRevokesReposSuspendsInstallationKeepsInstallationId() {
+		Project project = new Project();
+		project.setId(projectId);
+		GithubInstallation installation = new GithubInstallation();
+		installation.setId(UUID.randomUUID());
+		installation.setInstallationId(158866076L);
+		installation.setProject(project);
+		installation.setInstallationStatus(GitHubInstallationStatus.ACTIVE);
+		GitRepo repo = revokedRepo(projectId, installation, 42L);
+		repo.setConnectionStatus(IntegrationStatus.ACTIVE);
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(repos.findByProject_Id(projectId)).thenReturn(List.of(repo));
+		when(installations.findByProject_Id(projectId)).thenReturn(Optional.of(installation));
+
+		service.disconnectGithub(student.getId(), projectId);
+
+		assertEquals(IntegrationStatus.REVOKED, repo.getConnectionStatus());
+		assertEquals(GitHubInstallationStatus.SUSPENDED, installation.getInstallationStatus());
+		assertNull(installation.getProject());
+		assertEquals(158866076L, installation.getInstallationId());
+		assertEquals(installation, repo.getInstallation());
+	}
+
+	@Test
+	void completeGithubReconnectRebindsActiveWithMembershipAndAppVerify() {
+		GithubInstallation prior = suspendedInstallation(158866076L);
+		OAuthState reconnectState = new OAuthState(
+				"state",
+				student.getId(),
+				OAuthFlowType.GITHUB_TEAM_RECONNECT,
+				null,
+				projectId,
+				team.getId(),
+				"verifier",
+				Instant.now(),
+				158866076L);
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 158866076L))
+				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
+						158866076L,
+						123456L,
+						new GitHubOAuthClient.GitHubAccountResponse("Saga-Learning-to-Hero", "Organization"),
+						"https://github.com/settings/installations/158866076",
+						"selected"));
+		IntegrationProperties.GitHub githubProps = new IntegrationProperties.GitHub();
+		githubProps.setAppId("123456");
+		githubProps.setOauthCallbackUrl("http://localhost/api/integrations/github/oauth/callback");
+		when(properties.getGithub()).thenReturn(githubProps);
+		when(properties.getSuccessUrl()).thenReturn("http://localhost:3000/integrations/success");
+		when(github.exchangeUserToken(eq("code"), eq("verifier"), any())).thenReturn("user-token");
+		when(github.listUserInstallations("user-token"))
+				.thenReturn(new GitHubOAuthClient.GitHubUserInstallationsResponse(
+						List.of(new GitHubOAuthClient.GitHubInstallationIdResponse(158866076L))));
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(installations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		when(installations.findByInstallationIdForUpdate(158866076L)).thenReturn(Optional.of(prior));
+		when(installations.save(any(GithubInstallation.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+		String target = service.completeGithubReconnect(student.getId(), "code", reconnectState);
+
+		assertEquals("http://localhost:3000/integrations/success", target);
+		assertEquals(GitHubInstallationStatus.ACTIVE, prior.getInstallationStatus());
+		assertEquals(project, prior.getProject());
+		verify(github, never()).installationUrl(any());
+	}
+
+	@Test
+	void completeGithubReconnectRejectsWhenInstallationMissingAtProvider() {
+		OAuthState reconnectState = new OAuthState(
+				"state",
+				student.getId(),
+				OAuthFlowType.GITHUB_TEAM_RECONNECT,
+				null,
+				projectId,
+				team.getId(),
+				"verifier",
+				Instant.now(),
+				158866076L);
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		IntegrationProperties.GitHub githubProps = new IntegrationProperties.GitHub();
+		githubProps.setOauthCallbackUrl("http://localhost/callback");
+		when(properties.getGithub()).thenReturn(githubProps);
+		when(github.exchangeUserToken(eq("code"), eq("verifier"), any())).thenReturn("user-token");
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 158866076L)).thenReturn(null);
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.completeGithubReconnect(student.getId(), "code", reconnectState));
+		assertEquals(IntegrationErrorCode.GITHUB_INSTALLATION_INVALID, ex.getCode());
+		verify(installations, never()).save(any());
+	}
+
+	@Test
+	void completeGithubReconnectRejectsWhenUserLacksInstallationMembership() {
+		OAuthState reconnectState = new OAuthState(
+				"state",
+				student.getId(),
+				OAuthFlowType.GITHUB_TEAM_RECONNECT,
+				null,
+				projectId,
+				team.getId(),
+				"verifier",
+				Instant.now(),
+				158866076L);
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		IntegrationProperties.GitHub githubProps = new IntegrationProperties.GitHub();
+		githubProps.setAppId("123456");
+		githubProps.setOauthCallbackUrl("http://localhost/callback");
+		when(properties.getGithub()).thenReturn(githubProps);
+		when(github.exchangeUserToken(eq("code"), eq("verifier"), any())).thenReturn("user-token");
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 158866076L))
+				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
+						158866076L, 123456L, null, null, "selected"));
+		when(github.listUserInstallations("user-token"))
+				.thenReturn(new GitHubOAuthClient.GitHubUserInstallationsResponse(
+						List.of(new GitHubOAuthClient.GitHubInstallationIdResponse(999L))));
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.completeGithubReconnect(student.getId(), "code", reconnectState));
+		assertEquals(IntegrationErrorCode.GITHUB_INSTALLATION_NOT_AUTHORIZED, ex.getCode());
+		verify(installations, never()).save(any());
+	}
+
+	@Test
+	void completeGithubReconnectRejectsInstallationBoundToAnotherProject() {
+		UUID otherProjectId = UUID.randomUUID();
+		Project other = new Project();
+		other.setId(otherProjectId);
+		GithubInstallation boundElsewhere = suspendedInstallation(158866076L);
+		boundElsewhere.setProject(other);
+		boundElsewhere.setInstallationStatus(GitHubInstallationStatus.ACTIVE);
+		OAuthState reconnectState = new OAuthState(
+				"state",
+				student.getId(),
+				OAuthFlowType.GITHUB_TEAM_RECONNECT,
+				null,
+				projectId,
+				team.getId(),
+				"verifier",
+				Instant.now(),
+				158866076L);
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		IntegrationProperties.GitHub githubProps = new IntegrationProperties.GitHub();
+		githubProps.setAppId("123456");
+		githubProps.setOauthCallbackUrl("http://localhost/callback");
+		when(properties.getGithub()).thenReturn(githubProps);
+		when(github.exchangeUserToken(eq("code"), eq("verifier"), any())).thenReturn("user-token");
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 158866076L))
+				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
+						158866076L, 123456L, null, null, "selected"));
+		when(github.listUserInstallations("user-token"))
+				.thenReturn(new GitHubOAuthClient.GitHubUserInstallationsResponse(
+						List.of(new GitHubOAuthClient.GitHubInstallationIdResponse(158866076L))));
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(installations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		when(installations.findByInstallationIdForUpdate(158866076L)).thenReturn(Optional.of(boundElsewhere));
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.completeGithubReconnect(student.getId(), "code", reconnectState));
+		assertEquals(IntegrationErrorCode.GITHUB_INSTALLATION_IN_USE, ex.getCode());
+		verify(installations, never()).save(any());
+	}
+
+	@Test
+	void startGithubRejectsReconnectCandidateAlreadyBoundToAnotherProject() {
+		UUID otherProjectId = UUID.randomUUID();
+		Project other = new Project();
+		other.setId(otherProjectId);
+		GithubInstallation boundElsewhere = suspendedInstallation(158866076L);
+		boundElsewhere.setProject(other);
+		boundElsewhere.setInstallationStatus(GitHubInstallationStatus.ACTIVE);
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		when(repos.findByProject_IdWithInstallation(projectId))
+				.thenReturn(List.of(revokedRepo(projectId, boundElsewhere, 1L)));
+		when(installations.findByInstallationId(158866076L)).thenReturn(Optional.of(boundElsewhere));
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class, () -> service.startGithub(student.getId(), projectId, null));
+		assertEquals(IntegrationErrorCode.GITHUB_INSTALLATION_IN_USE, ex.getCode());
+		verify(oauthStates, never()).start(any(), any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void completeGithubReconnectWithoutStateInstallationUsesVerifiedUserListNotSuspendedGuess() {
+		OAuthState reconnectState = new OAuthState(
+				"state",
+				student.getId(),
+				OAuthFlowType.GITHUB_TEAM_RECONNECT,
+				null,
+				projectId,
+				team.getId(),
+				"verifier",
+				Instant.now(),
+				null);
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		IntegrationProperties.GitHub githubProps = new IntegrationProperties.GitHub();
+		githubProps.setAppId("123456");
+		githubProps.setOauthCallbackUrl("http://localhost/callback");
+		when(properties.getGithub()).thenReturn(githubProps);
+		when(properties.getSuccessUrl()).thenReturn("http://localhost:3000/integrations/success");
+		when(github.exchangeUserToken(eq("code"), eq("verifier"), any())).thenReturn("user-token");
+		when(github.listUserInstallations("user-token"))
+				.thenReturn(new GitHubOAuthClient.GitHubUserInstallationsResponse(
+						List.of(new GitHubOAuthClient.GitHubInstallationIdResponse(158866076L))));
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 158866076L))
+				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
+						158866076L, 123456L, null, null, "selected"));
+		when(installations.findByInstallationId(158866076L)).thenReturn(Optional.empty());
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(installations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		when(installations.findByInstallationIdForUpdate(158866076L)).thenReturn(Optional.empty());
+		when(installations.save(any(GithubInstallation.class))).thenAnswer(invocation -> {
+			GithubInstallation saved = invocation.getArgument(0);
+			saved.setId(UUID.randomUUID());
+			return saved;
+		});
+
+		String target = service.completeGithubReconnect(student.getId(), "code", reconnectState);
+
+		assertEquals("http://localhost:3000/integrations/success", target);
+		verify(installations, never()).findByProject_Id(isNull());
+		ArgumentCaptor<GithubInstallation> captor = ArgumentCaptor.forClass(GithubInstallation.class);
+		verify(installations).save(captor.capture());
+		assertEquals(158866076L, captor.getValue().getInstallationId());
+	}
+
+	@Test
+	void completeGithubReconnectIgnoresClientSpoofedInstallationByUsingStateOnly() {
+		// State carries 158866076; membership/App checks apply to that id only (not a client query param).
+		OAuthState reconnectState = new OAuthState(
+				"state",
+				student.getId(),
+				OAuthFlowType.GITHUB_TEAM_RECONNECT,
+				null,
+				projectId,
+				team.getId(),
+				"verifier",
+				Instant.now(),
+				158866076L);
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		IntegrationProperties.GitHub githubProps = new IntegrationProperties.GitHub();
+		githubProps.setAppId("123456");
+		githubProps.setOauthCallbackUrl("http://localhost/callback");
+		when(properties.getGithub()).thenReturn(githubProps);
+		when(properties.getSuccessUrl()).thenReturn("http://localhost:3000/integrations/success");
+		when(github.exchangeUserToken(eq("code"), eq("verifier"), any())).thenReturn("user-token");
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 158866076L))
+				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
+						158866076L, 123456L, null, null, "selected"));
+		when(github.listUserInstallations("user-token"))
+				.thenReturn(new GitHubOAuthClient.GitHubUserInstallationsResponse(
+						List.of(new GitHubOAuthClient.GitHubInstallationIdResponse(158866076L))));
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(installations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		when(installations.findByInstallationIdForUpdate(158866076L)).thenReturn(Optional.empty());
+		when(installations.save(any(GithubInstallation.class))).thenAnswer(invocation -> {
+			GithubInstallation saved = invocation.getArgument(0);
+			saved.setId(UUID.randomUUID());
+			return saved;
+		});
+
+		service.completeGithubReconnect(student.getId(), "code", reconnectState);
+
+		verify(github).getInstallation("app-jwt", 158866076L);
+		verify(github, never()).getInstallation(eq("app-jwt"), eq(999999L));
+		verify(github).listUserInstallations("user-token");
+	}
+
+	@Test
+	void selectGithubReposReusesExistingRepoRowOnReconnect() {
+		GithubInstallation installation = new GithubInstallation();
+		installation.setId(UUID.randomUUID());
+		installation.setInstallationId(158866076L);
+		installation.setInstallationStatus(GitHubInstallationStatus.ACTIVE);
+		GitRepo existing = revokedRepo(projectId, installation, 1_338_790_015L);
+		existing.setId(UUID.randomUUID());
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		when(installations.findByProject_Id(projectId)).thenReturn(Optional.of(installation));
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.createInstallationToken("app-jwt", 158866076L)).thenReturn("inst-token");
+		when(github.listInstallationRepos("inst-token")).thenReturn(null);
+		when(github.parseRepos(null)).thenReturn(List.of(repo(1_338_790_015L, "saga-fe")));
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(repos.findByProviderAndRepositoryId(GitProvider.GITHUB, 1_338_790_015L)).thenReturn(Optional.of(existing));
+		when(repos.save(any(GitRepo.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+		service.selectGithubRepos(
+				student.getId(),
+				projectId,
+				List.of(new SelectGitHubRepositoryRequest(1_338_790_015L, RepositoryRole.FRONTEND)));
+
+		ArgumentCaptor<GitRepo> captor = ArgumentCaptor.forClass(GitRepo.class);
+		verify(repos).save(captor.capture());
+		assertEquals(existing.getId(), captor.getValue().getId());
+		assertEquals(IntegrationStatus.ACTIVE, captor.getValue().getConnectionStatus());
+		assertEquals(1_338_790_015L, captor.getValue().getRepositoryId());
+	}
+
+	private GithubInstallation suspendedInstallation(long installationId) {
+		GithubInstallation installation = new GithubInstallation();
+		installation.setId(UUID.randomUUID());
+		installation.setInstallationId(installationId);
+		installation.setInstallationStatus(GitHubInstallationStatus.SUSPENDED);
+		installation.setProject(null);
+		return installation;
+	}
+
+	private GitRepo revokedRepo(UUID projectId, GithubInstallation installation, long repositoryId) {
+		Project project = new Project();
+		project.setId(projectId);
+		GitRepo repo = new GitRepo();
+		repo.setId(UUID.randomUUID());
+		repo.setProject(project);
+		repo.setInstallation(installation);
+		repo.setProvider(GitProvider.GITHUB);
+		repo.setRepositoryId(repositoryId);
+		repo.setConnectionStatus(IntegrationStatus.REVOKED);
+		repo.setConsecutiveFailures(0);
+		return repo;
 	}
 
 	private static UserAccount account(AccountRole role, String email) {

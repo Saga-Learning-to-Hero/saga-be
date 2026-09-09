@@ -11,13 +11,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.saga.be.config.IntegrationProperties;
 import com.saga.be.entity.account.UserAccount;
+import com.saga.be.entity.enums.OAuthFlowType;
 import com.saga.be.exception.GlobalExceptionHandler;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
+import com.saga.be.integration.oauth.OAuthState;
+import com.saga.be.integration.oauth.OAuthStateService;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.identity.PersonalIntegrationService;
 import com.saga.be.service.identity.ProjectIntegrationService;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,6 +46,8 @@ class IntegrationCallbackRedirectWebTest {
 	@Mock
 	private PersonalIntegrationService personal;
 	@Mock
+	private OAuthStateService oauthStates;
+	@Mock
 	private UserAccountRepository users;
 
 	private IntegrationProperties properties;
@@ -61,7 +67,7 @@ class IntegrationCallbackRedirectWebTest {
 		actor.setId(userId);
 		callbacks = MockMvcBuilders.standaloneSetup(
 						new IntegrationCallbackController(projects, properties),
-						new PersonalIntegrationController(personal, users, properties),
+						new PersonalIntegrationController(personal, projects, oauthStates, users, properties),
 						new ProjectIntegrationController(projects, properties))
 				.setCustomArgumentResolvers(new PrincipalResolver(principal))
 				.build();
@@ -96,7 +102,17 @@ class IntegrationCallbackRedirectWebTest {
 	@Test
 	void personalGithubCallbackRedirectsKnownFailureToFrontend() throws Exception {
 		when(users.findById(principal.getUserId())).thenReturn(Optional.of(actor));
-		when(personal.completeGithub(eq(principal.getUserId()), eq("code"), eq("state"), eq(actor)))
+		OAuthState state = new OAuthState(
+				"state",
+				principal.getUserId(),
+				OAuthFlowType.GITHUB_USER_LINK,
+				null,
+				null,
+				null,
+				"verifier",
+				Instant.now());
+		when(oauthStates.consumeForUser("state", principal.getUserId())).thenReturn(state);
+		when(personal.completeGithub(eq(principal.getUserId()), eq("code"), eq(state), eq(actor)))
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.OAUTH_STATE_INVALID, HttpStatus.BAD_REQUEST, "oauth-code-must-not-leak"));
 		callbacks.perform(get("/api/integrations/github/oauth/callback").param("code", "code").param("state", "state"))

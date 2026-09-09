@@ -25,6 +25,17 @@ public class OAuthStateService {
 			UUID projectId,
 			UUID teamId,
 			String pkceVerifier) {
+		return start(sagaUserId, flowType, frontendReturnPath, projectId, teamId, pkceVerifier, null);
+	}
+
+	public OAuthState start(
+			UUID sagaUserId,
+			OAuthFlowType flowType,
+			String frontendReturnPath,
+			UUID projectId,
+			UUID teamId,
+			String pkceVerifier,
+			Long githubInstallationId) {
 		OAuthState state = new OAuthState(
 				Pkce.newState(),
 				sagaUserId,
@@ -33,7 +44,8 @@ public class OAuthStateService {
 				projectId,
 				teamId,
 				pkceVerifier,
-				Instant.now());
+				Instant.now(),
+				githubInstallationId);
 		store.save(state, ttl);
 		return state;
 	}

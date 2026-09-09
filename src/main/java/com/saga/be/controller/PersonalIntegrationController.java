@@ -5,15 +5,20 @@ import com.saga.be.dto.integration.MyIntegrationsResponse;
 import com.saga.be.dto.integration.OAuthStartResponse;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.exception.IntegrationException;
+import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
+import com.saga.be.integration.oauth.OAuthState;
+import com.saga.be.integration.oauth.OAuthStateService;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.identity.PersonalIntegrationService;
+import com.saga.be.service.identity.ProjectIntegrationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -32,12 +37,20 @@ import org.springframework.web.bind.annotation.RestController;
 public class PersonalIntegrationController {
 
 	private final PersonalIntegrationService integrations;
+	private final ProjectIntegrationService projects;
+	private final OAuthStateService oauthStates;
 	private final UserAccountRepository users;
 	private final IntegrationProperties properties;
 
 	public PersonalIntegrationController(
-			PersonalIntegrationService integrations, UserAccountRepository users, IntegrationProperties properties) {
+			PersonalIntegrationService integrations,
+			ProjectIntegrationService projects,
+			OAuthStateService oauthStates,
+			UserAccountRepository users,
+			IntegrationProperties properties) {
 		this.integrations = integrations;
+		this.projects = projects;
+		this.oauthStates = oauthStates;
 		this.users = users;
 		this.properties = properties;
 	}
@@ -61,8 +74,17 @@ public class PersonalIntegrationController {
 			@RequestParam String state) {
 		UserAccount actor = users.findById(principal.getUserId()).orElseThrow();
 		try {
-			return IntegrationFrontendRedirects.seeOther(
-					integrations.completeGithub(principal.getUserId(), code, state, actor));
+			OAuthState oauthState = oauthStates.consumeForUser(state, principal.getUserId());
+			String target =
+					switch (oauthState.flowType()) {
+						case GITHUB_USER_LINK -> integrations.completeGithub(principal.getUserId(), code, oauthState, actor);
+						case GITHUB_TEAM_RECONNECT -> projects.completeGithubReconnect(principal.getUserId(), code, oauthState);
+						default -> throw new IntegrationException(
+								IntegrationErrorCode.OAUTH_STATE_INVALID,
+								HttpStatus.BAD_REQUEST,
+								"OAuth state is invalid.");
+					};
+			return IntegrationFrontendRedirects.seeOther(target);
 		} catch (IntegrationException ex) {
 			return IntegrationFrontendRedirects.failure(properties.getFailureUrl(), ex);
 		}

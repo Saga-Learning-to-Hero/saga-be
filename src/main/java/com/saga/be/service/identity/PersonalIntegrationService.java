@@ -130,6 +130,15 @@ public class PersonalIntegrationService {
 	@Transactional
 	public String completeGithub(UUID userId, String code, String rawState, UserAccount actor) {
 		OAuthState state = oauthStates.consumeForUser(rawState, userId, OAuthFlowType.GITHUB_USER_LINK);
+		return completeGithub(userId, code, state, actor);
+	}
+
+	@Transactional
+	public String completeGithub(UUID userId, String code, OAuthState state, UserAccount actor) {
+		if (state.flowType() != OAuthFlowType.GITHUB_USER_LINK) {
+			throw new IntegrationException(
+					IntegrationErrorCode.OAUTH_STATE_INVALID, HttpStatus.BAD_REQUEST, "OAuth state is invalid.");
+		}
 		if (state.pkceVerifier() == null) {
 			throw new IntegrationException(
 					IntegrationErrorCode.OAUTH_STATE_INVALID, HttpStatus.BAD_REQUEST, "PKCE verifier is missing.");

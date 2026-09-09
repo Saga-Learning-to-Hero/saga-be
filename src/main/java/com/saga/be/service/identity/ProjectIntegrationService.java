@@ -55,9 +55,12 @@ import com.saga.be.service.audit.AuditService;
 import com.saga.be.service.sync.IntegrationInitialSyncLauncher;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -176,8 +179,26 @@ public class ProjectIntegrationService {
 		requireLeader(userId, projectId);
 		String verifier = Pkce.newVerifier();
 		Team team = requireTeamForProject(projectId);
+		String safeReturn = safeReturnPath(returnPath);
+		Optional<Long> reconnectCandidate = recoverGithubReconnectCandidate(projectId);
+		if (reconnectCandidate.isPresent()) {
+			Long installationId = reconnectCandidate.get();
+			assertInstallationAvailableForProject(installationId, projectId);
+			OAuthState state = oauthStates.start(
+					userId,
+					OAuthFlowType.GITHUB_TEAM_RECONNECT,
+					safeReturn,
+					projectId,
+					team.getId(),
+					verifier,
+					installationId);
+			String oauthCallback =
+					callback(properties.getGithub().getOauthCallbackUrl(), "/api/integrations/github/oauth/callback");
+			return new OAuthStartResponse(
+					github.authorizationUrl(state.state(), Pkce.challengeS256(verifier), oauthCallback), state.state());
+		}
 		OAuthState state = oauthStates.start(
-				userId, OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY, safeReturnPath(returnPath), projectId, team.getId(), verifier);
+				userId, OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY, safeReturn, projectId, team.getId(), verifier);
 		return new OAuthStartResponse(github.installationUrl(state.state()), state.state());
 	}
 
@@ -188,41 +209,45 @@ public class ProjectIntegrationService {
 			throw new IntegrationException(
 					IntegrationErrorCode.GITHUB_INSTALLATION_INVALID, HttpStatus.BAD_REQUEST, "installation_id is required.");
 		}
-		String jwt = githubJwt.createJwt();
-		GitHubOAuthClient.GitHubInstallationResponse installation = github.getInstallation(jwt, installationId);
-		if (installation == null || installation.id() == null) {
-			throw new IntegrationException(
-					IntegrationErrorCode.GITHUB_INSTALLATION_INVALID, HttpStatus.BAD_REQUEST, "GitHub installation could not be verified.");
-		}
-		if (properties.getGithub().getAppId() != null
-				&& !properties.getGithub().getAppId().isBlank()
-				&& installation.appId() != null
-				&& !String.valueOf(installation.appId()).equals(properties.getGithub().getAppId())) {
-			throw new IntegrationException(
-					IntegrationErrorCode.GITHUB_INSTALLATION_INVALID, HttpStatus.FORBIDDEN, "Installation does not belong to this GitHub App.");
-		}
+		GitHubOAuthClient.GitHubInstallationResponse installation = verifyAppInstallation(installationId);
 		if (userCode != null && !userCode.isBlank()) {
 			String userToken = github.exchangeUserToken(
 					userCode,
 					state.pkceVerifier(),
 					callback(properties.getGithub().getOauthCallbackUrl(), "/api/integrations/github/oauth/callback"));
-			GitHubOAuthClient.GitHubUserInstallationsResponse userInstalls = github.listUserInstallations(userToken);
-			boolean authorized = false;
-			if (userInstalls != null && userInstalls.installations() != null) {
-				for (GitHubOAuthClient.GitHubInstallationIdResponse node : userInstalls.installations()) {
-					if (node.id() != null && node.id() == installationId) {
-						authorized = true;
-						break;
-					}
-				}
-			}
-			if (!authorized) {
-				throw new IntegrationException(
-						IntegrationErrorCode.GITHUB_INSTALLATION_NOT_AUTHORIZED,
-						HttpStatus.FORBIDDEN,
-						"Current GitHub user is not authorized for this installation.");
-			}
+			requireUserInstallationMembership(userToken, installationId);
 		}
+		persistAtomically(() -> persistVerifiedInstallation(userId, state.projectId(), installationId, installation));
+		return redirect(state.frontendReturnPath());
+	}
+
+	/**
+	 * Completes existing-installation reconnect after GitHub user OAuth (same callback URL as personal link).
+	 * Installation id is taken from trusted OAuth state (server-recovered), never from a client query param.
+	 */
+	public String completeGithubReconnect(UUID userId, String code, OAuthState state) {
+		if (state.flowType() != OAuthFlowType.GITHUB_TEAM_RECONNECT) {
+			throw new IntegrationException(
+					IntegrationErrorCode.OAUTH_STATE_INVALID, HttpStatus.BAD_REQUEST, "OAuth state is invalid.");
+		}
+		requireLeader(userId, state.projectId());
+		if (code == null || code.isBlank()) {
+			throw new IntegrationException(
+					IntegrationErrorCode.GITHUB_INSTALLATION_NOT_AUTHORIZED,
+					HttpStatus.BAD_REQUEST,
+					"GitHub authorization code is required to reconnect.");
+		}
+		if (state.pkceVerifier() == null) {
+			throw new IntegrationException(
+					IntegrationErrorCode.OAUTH_STATE_INVALID, HttpStatus.BAD_REQUEST, "PKCE verifier is missing.");
+		}
+		String userToken = github.exchangeUserToken(
+				code,
+				state.pkceVerifier(),
+				callback(properties.getGithub().getOauthCallbackUrl(), "/api/integrations/github/oauth/callback"));
+		Long installationId = resolveReconnectInstallationId(state, userToken);
+		GitHubOAuthClient.GitHubInstallationResponse installation = verifyAppInstallation(installationId);
+		requireUserInstallationMembership(userToken, installationId);
 		persistAtomically(() -> persistVerifiedInstallation(userId, state.projectId(), installationId, installation));
 		return redirect(state.frontendReturnPath());
 	}
@@ -238,7 +263,10 @@ public class ProjectIntegrationService {
 				installations.save(existing);
 			}
 		});
-		GithubInstallation entity = installations.findByInstallationId(installationId).orElseGet(GithubInstallation::new);
+		GithubInstallation entity = installations
+				.findByInstallationIdForUpdate(installationId)
+				.orElseGet(GithubInstallation::new);
+		assertInstallationRowAvailableForProject(entity, projectId);
 		entity.setInstallationId(installationId);
 		entity.setAppId(installation.appId() == null ? 0L : installation.appId());
 		entity.setAccountLogin(installation.account() == null ? null : installation.account().login());
@@ -249,7 +277,12 @@ public class ProjectIntegrationService {
 		entity.setProject(project);
 		entity.setLastVerifiedAt(LocalDateTime.now());
 		entity.setConsecutiveFailures(0);
-		GithubInstallation saved = installations.save(entity);
+		GithubInstallation saved;
+		try {
+			saved = installations.save(entity);
+		} catch (DataIntegrityViolationException ex) {
+			throw installationInUse();
+		}
 		audit.record(
 				users.findById(userId).orElseThrow(),
 				project,
@@ -265,6 +298,143 @@ public class ProjectIntegrationService {
 				null,
 				null);
 		outbox.publish("github_installation", saved.getId(), "GITHUB_REPOSITORY_CONNECTED", Map.of("projectId", projectId.toString()));
+	}
+
+	/**
+	 * Recovers a single prior installation id from project-bound git_repo rows.
+	 * Empty when no repo provenance exists — callers must not invent a SUSPENDED installation.
+	 */
+	Optional<Long> recoverGithubReconnectCandidate(UUID projectId) {
+		List<GitRepo> projectRepos = repos.findByProject_IdWithInstallation(projectId);
+		Set<Long> installationIds = new HashSet<>();
+		for (GitRepo repo : projectRepos) {
+			if (repo.getInstallation() == null || repo.getInstallation().getInstallationId() == null) {
+				continue;
+			}
+			installationIds.add(repo.getInstallation().getInstallationId());
+		}
+		if (installationIds.isEmpty()) {
+			return Optional.empty();
+		}
+		if (installationIds.size() > 1) {
+			throw new IntegrationException(
+					IntegrationErrorCode.GITHUB_INSTALLATION_INVALID,
+					HttpStatus.CONFLICT,
+					"Conflicting GitHub installation provenance for this project.");
+		}
+		return Optional.of(installationIds.iterator().next());
+	}
+
+	private Long resolveReconnectInstallationId(OAuthState state, String userToken) {
+		if (state.githubInstallationId() != null) {
+			return state.githubInstallationId();
+		}
+		// No server-side repo provenance: bind only via verified user installation list (never guess SUSPENDED).
+		List<Long> eligible = eligibleUserInstallations(userToken, state.projectId());
+		if (eligible.isEmpty()) {
+			throw new IntegrationException(
+					IntegrationErrorCode.GITHUB_INSTALLATION_INVALID,
+					HttpStatus.BAD_REQUEST,
+					"No eligible GitHub App installation is available to reconnect.");
+		}
+		if (eligible.size() > 1) {
+			throw new IntegrationException(
+					IntegrationErrorCode.GITHUB_INSTALLATION_INVALID,
+					HttpStatus.CONFLICT,
+					"Multiple GitHub App installations are available; cannot choose without repository provenance.");
+		}
+		return eligible.getFirst();
+	}
+
+	private List<Long> eligibleUserInstallations(String userToken, UUID projectId) {
+		GitHubOAuthClient.GitHubUserInstallationsResponse userInstalls = github.listUserInstallations(userToken);
+		if (userInstalls == null || userInstalls.installations() == null) {
+			return List.of();
+		}
+		String configuredAppId = properties.getGithub().getAppId();
+		List<Long> eligible = new java.util.ArrayList<>();
+		for (GitHubOAuthClient.GitHubInstallationIdResponse node : userInstalls.installations()) {
+			if (node == null || node.id() == null) {
+				continue;
+			}
+			GitHubOAuthClient.GitHubInstallationResponse verified;
+			try {
+				verified = verifyAppInstallation(node.id());
+			} catch (IntegrationException ex) {
+				continue;
+			}
+			if (configuredAppId != null
+					&& !configuredAppId.isBlank()
+					&& verified.appId() != null
+					&& !String.valueOf(verified.appId()).equals(configuredAppId)) {
+				continue;
+			}
+			Optional<GithubInstallation> existing = installations.findByInstallationId(node.id());
+			if (existing.isPresent()
+					&& existing.get().getProject() != null
+					&& !existing.get().getProject().getId().equals(projectId)) {
+				continue;
+			}
+			eligible.add(node.id());
+		}
+		return eligible;
+	}
+
+	private GitHubOAuthClient.GitHubInstallationResponse verifyAppInstallation(Long installationId) {
+		String jwt = githubJwt.createJwt();
+		GitHubOAuthClient.GitHubInstallationResponse installation = github.getInstallation(jwt, installationId);
+		if (installation == null || installation.id() == null) {
+			throw new IntegrationException(
+					IntegrationErrorCode.GITHUB_INSTALLATION_INVALID,
+					HttpStatus.BAD_REQUEST,
+					"GitHub installation could not be verified.");
+		}
+		if (properties.getGithub().getAppId() != null
+				&& !properties.getGithub().getAppId().isBlank()
+				&& installation.appId() != null
+				&& !String.valueOf(installation.appId()).equals(properties.getGithub().getAppId())) {
+			throw new IntegrationException(
+					IntegrationErrorCode.GITHUB_INSTALLATION_INVALID,
+					HttpStatus.FORBIDDEN,
+					"Installation does not belong to this GitHub App.");
+		}
+		return installation;
+	}
+
+	private void requireUserInstallationMembership(String userToken, Long installationId) {
+		GitHubOAuthClient.GitHubUserInstallationsResponse userInstalls = github.listUserInstallations(userToken);
+		boolean authorized = false;
+		if (userInstalls != null && userInstalls.installations() != null) {
+			for (GitHubOAuthClient.GitHubInstallationIdResponse node : userInstalls.installations()) {
+				if (node.id() != null && node.id().equals(installationId)) {
+					authorized = true;
+					break;
+				}
+			}
+		}
+		if (!authorized) {
+			throw new IntegrationException(
+					IntegrationErrorCode.GITHUB_INSTALLATION_NOT_AUTHORIZED,
+					HttpStatus.FORBIDDEN,
+					"Current GitHub user is not authorized for this installation.");
+		}
+	}
+
+	private void assertInstallationAvailableForProject(Long installationId, UUID projectId) {
+		installations.findByInstallationId(installationId).ifPresent(existing -> assertInstallationRowAvailableForProject(existing, projectId));
+	}
+
+	private void assertInstallationRowAvailableForProject(GithubInstallation entity, UUID projectId) {
+		if (entity.getProject() != null && !entity.getProject().getId().equals(projectId)) {
+			throw installationInUse();
+		}
+	}
+
+	private static IntegrationException installationInUse() {
+		return new IntegrationException(
+				IntegrationErrorCode.GITHUB_INSTALLATION_IN_USE,
+				HttpStatus.CONFLICT,
+				"GitHub installation is already bound to another SAGA project.");
 	}
 
 	public List<GitHubOAuthClient.RepoSummary> listGithubRepos(UUID userId, UUID projectId) {

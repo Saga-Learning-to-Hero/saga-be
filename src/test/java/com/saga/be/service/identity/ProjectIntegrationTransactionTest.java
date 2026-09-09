@@ -352,6 +352,65 @@ class ProjectIntegrationTransactionTest {
 		});
 	}
 
+	@Test
+	void concurrentBindOfSameInstallationSecondWriterGetsConflict() {
+		stubGithubProviderSuccess();
+		String first = service.completeGithubInstallation(leader.getId(), "state", 158866076L, null);
+		assertEquals("http://localhost:3000/integrations/success", first);
+
+		UserAccount admin = tx.execute(status -> {
+			UserAccount account = new UserAccount();
+			account.setEmail("admin-" + UUID.randomUUID() + "@saga.local");
+			account.setFullName("Admin");
+			account.setAccountRole(AccountRole.ADMIN);
+			account.setAccountStatus(AccountStatus.ACTIVE);
+			return users.save(account);
+		});
+		Project otherProject = tx.execute(status -> {
+			Project p = new Project();
+			p.setName("Other");
+			p.setCourse(project.getCourse());
+			p.setCreatedBy(admin);
+			p = projects.save(p);
+			Team otherTeam = new Team();
+			otherTeam.setCourse(project.getCourse());
+			otherTeam.setProject(p);
+			otherTeam.setTeamNo(2);
+			otherTeam.setName("Beta");
+			teams.save(otherTeam);
+			return p;
+		});
+
+		when(oauthStates.consumeForUser(eq("state-b"), eq(admin.getId()), eq(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY)))
+				.thenReturn(new OAuthState(
+						"state-b",
+						admin.getId(),
+						OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY,
+						null,
+						otherProject.getId(),
+						null,
+						"verifier",
+						Instant.now()));
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 158866076L))
+				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
+						158866076L,
+						123456L,
+						new GitHubOAuthClient.GitHubAccountResponse("Saga-Learning-to-Hero", "Organization"),
+						"https://github.com/settings/installations/158866076",
+						"selected"));
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.completeGithubInstallation(admin.getId(), "state-b", 158866076L, null));
+		assertEquals(IntegrationErrorCode.GITHUB_INSTALLATION_IN_USE, ex.getCode());
+		tx.executeWithoutResult(status -> {
+			entityManager.clear();
+			GithubInstallation saved = installations.findByInstallationId(158866076L).orElseThrow();
+			assertEquals(project.getId(), saved.getProject().getId());
+		});
+	}
+
 	private void stubGithubProviderSuccess() {
 		when(oauthStates.consumeForUser(eq("state"), eq(leader.getId()), eq(OAuthFlowType.GITHUB_TEAM_INSTALL_VERIFY)))
 				.thenReturn(state());

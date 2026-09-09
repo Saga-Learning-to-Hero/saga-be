@@ -14,6 +14,14 @@ public interface GitRepoRepository extends JpaRepository<GitRepo, UUID> {
 
 	List<GitRepo> findByProject_Id(UUID projectId);
 
+	@Query(
+			"""
+			select r from GitRepo r
+			left join fetch r.installation
+			where r.project.id = :projectId
+			""")
+	List<GitRepo> findByProject_IdWithInstallation(@Param("projectId") UUID projectId);
+
 	Optional<GitRepo> findByProviderAndRepositoryId(GitProvider provider, Long repositoryId);
 
 	@Query(
