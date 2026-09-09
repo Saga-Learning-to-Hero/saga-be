@@ -443,8 +443,10 @@ public class ProjectIntegrationService {
 
 	public void saveJiraSelection(UUID userId, UUID projectId, SelectJiraIntegrationRequest selection) {
 		requireLeader(userId, projectId);
+		// Peek pending for provider validation so a failed site/project/board check does not burn the
+		// one-shot OAuth grant and leave a REVOKED row stuck without credentials.
 		PendingJiraConnect pending = pendingJira
-				.consume(userId, projectId)
+				.get(userId, projectId)
 				.orElseThrow(() -> new IntegrationException(
 						IntegrationErrorCode.OAUTH_STATE_EXPIRED,
 						HttpStatus.BAD_REQUEST,
@@ -463,10 +465,22 @@ public class ProjectIntegrationService {
 						IntegrationErrorCode.JIRA_BOARD_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira board is not accessible.");
 			}
 		}
-		persistAtomically(() -> persistJiraIntegration(userId, projectId, pending, site, projectNode, selection.boardId()));
+		persistAtomically(() -> {
+			PendingJiraConnect consumed = pendingJira
+					.consume(userId, projectId)
+					.orElseThrow(() -> new IntegrationException(
+							IntegrationErrorCode.OAUTH_STATE_EXPIRED,
+							HttpStatus.BAD_REQUEST,
+							"Jira team authorization has expired. Start the connection again."));
+			persistJiraIntegration(userId, projectId, consumed, site, projectNode, selection.boardId());
+		});
 		triggerJiraInitialSync(projectId, pending.accessToken());
 	}
 
+	/**
+	 * Persists or reactivates the single {@code jira_integration} row for this SAGA project.
+	 * Soft-revoked rows are reused: {@code REVOKED -> ACTIVE} with refreshed credentials and selection.
+	 */
 	protected void persistJiraIntegration(
 			UUID userId,
 			UUID projectId,
@@ -483,7 +497,15 @@ public class ProjectIntegrationService {
 		}
 		Project project = requireFetchedProject(projectId);
 		UserAccount actor = users.findById(userId).orElseThrow();
-		JiraIntegration integration = jiraIntegrations.findByProject_Id(project.getId()).orElseGet(JiraIntegration::new);
+		JiraIntegration integration = jiraIntegrations.findByProject_Id(project.getId()).orElse(null);
+		if (integration != null && integration.getId() != null) {
+			integration = jiraIntegrations.lockById(integration.getId()).orElse(integration);
+		} else {
+			integration = new JiraIntegration();
+			if (integration.getConsecutiveFailures() == null) {
+				integration.setConsecutiveFailures(0);
+			}
+		}
 		integration.setProject(project);
 		integration.setCloudId(site.id());
 		integration.setSiteUrl(site.url());
@@ -494,8 +516,10 @@ public class ProjectIntegrationService {
 		integration.setJiraBoardId(boardId);
 		integration.setGrantedScopes(pending.scope());
 		integration.setConnectedBy(actor);
+		// Explicit reactivation: soft-revoke retains the row; reconnect must flip status back to ACTIVE.
 		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
 		integration.setConsecutiveFailures(0);
+		integration.setLastErrorCode(null);
 		JiraIntegration saved = jiraIntegrations.save(integration);
 		if (pending.refreshToken() != null) {
 			saved.setEncryptedRefreshToken(
@@ -510,6 +534,12 @@ public class ProjectIntegrationService {
 			saved.setTokenExpiresAt(LocalDateTime.now().plusMinutes(50));
 			jiraIntegrations.save(saved);
 		}
+		if (saved.getConnectionStatus() != IntegrationStatus.ACTIVE) {
+			throw new IntegrationException(
+					IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
+					HttpStatus.INTERNAL_SERVER_ERROR,
+					"Jira integration failed to activate.");
+		}
 		audit.record(
 				actor,
 				project,
@@ -518,7 +548,13 @@ public class ProjectIntegrationService {
 				"jira_integration",
 				saved.getId(),
 				Map.of(),
-				Map.of("cloudId", site.id(), "projectKey", saved.getProjectKey()),
+				Map.of(
+						"cloudId",
+						site.id(),
+						"projectKey",
+						saved.getProjectKey() == null ? "" : saved.getProjectKey(),
+						"status",
+						IntegrationStatus.ACTIVE.name()),
 				Map.of(),
 				AuditSource.OAUTH,
 				null,
@@ -533,7 +569,11 @@ public class ProjectIntegrationService {
 		JiraIntegration integration = jiraIntegrations.findByProject_Id(projectId).orElseThrow(() -> new IntegrationException(
 				IntegrationErrorCode.INTEGRATION_REVOKED, HttpStatus.NOT_FOUND, "Jira is not connected."));
 		integration.setConnectionStatus(IntegrationStatus.REVOKED);
+		// Soft-revoke: retain cloud/project/board selection metadata for UX, but drop all credentials so
+		// revoked tokens cannot win over a later reconnect and sync cannot run until ACTIVE again.
 		integration.setEncryptedRefreshToken(null);
+		integration.setEncryptedAccessToken(null);
+		integration.setTokenExpiresAt(null);
 		jiraIntegrations.save(integration);
 		audit.record(
 				users.findById(userId).orElseThrow(),

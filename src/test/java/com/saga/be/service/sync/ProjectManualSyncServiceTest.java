@@ -90,6 +90,37 @@ class ProjectManualSyncServiceTest {
 	}
 
 	@Test
+	void admin_forbidden() {
+		UserAccount admin = account(AccountRole.ADMIN);
+		when(users.findById(userId)).thenReturn(Optional.of(admin));
+		assertThatThrownBy(() -> service.enqueue(userId, projectId))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
+	}
+
+	@Test
+	void member_forbidden() {
+		UserAccount student = account(AccountRole.STUDENT);
+		when(users.findById(userId)).thenReturn(Optional.of(student));
+		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.MEMBER));
+		assertThatThrownBy(() -> service.enqueue(userId, projectId))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
+	}
+
+	@Test
+	void lecturer_forbidden() {
+		UserAccount lecturer = account(AccountRole.LECTURER);
+		when(users.findById(userId)).thenReturn(Optional.of(lecturer));
+		assertThatThrownBy(() -> service.enqueue(userId, projectId))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
+	}
+
+	@Test
 	void refreshOnlyCredential_stillQueuesJira() {
 		stubLeader();
 		JiraIntegration jira = activeJira();
@@ -105,39 +136,6 @@ class ProjectManualSyncServiceTest {
 
 		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
 		verify(launcher).enqueueJiraInitialSync(projectId);
-	}
-
-	@Test
-	void member_forbidden() {
-		UserAccount student = account(AccountRole.STUDENT);
-		when(users.findById(userId)).thenReturn(Optional.of(student));
-		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.MEMBER));
-		assertThatThrownBy(() -> service.enqueue(userId, projectId))
-				.isInstanceOf(IntegrationException.class)
-				.extracting(ex -> ((IntegrationException) ex).getCode())
-				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
-		verify(launcher, never()).enqueueGithubInitialSync(any());
-		verify(launcher, never()).enqueueJiraInitialSync(any());
-	}
-
-	@Test
-	void lecturer_forbidden() {
-		UserAccount lecturer = account(AccountRole.LECTURER);
-		when(users.findById(userId)).thenReturn(Optional.of(lecturer));
-		assertThatThrownBy(() -> service.enqueue(userId, projectId))
-				.isInstanceOf(IntegrationException.class)
-				.extracting(ex -> ((IntegrationException) ex).getCode())
-				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
-	}
-
-	@Test
-	void admin_forbidden() {
-		UserAccount admin = account(AccountRole.ADMIN);
-		when(users.findById(userId)).thenReturn(Optional.of(admin));
-		assertThatThrownBy(() -> service.enqueue(userId, projectId))
-				.isInstanceOf(IntegrationException.class)
-				.extracting(ex -> ((IntegrationException) ex).getCode())
-				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
 	}
 
 	@Test
@@ -170,6 +168,37 @@ class ProjectManualSyncServiceTest {
 
 		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.SKIPPED_ALREADY_RUNNING);
 		verify(launcher, never()).enqueueJiraInitialSync(any());
+	}
+
+	@Test
+	void leader_skipsJiraWhenRevoked() {
+		stubLeader();
+		JiraIntegration jira = activeJira();
+		jira.setConnectionStatus(IntegrationStatus.REVOKED);
+		when(jiraIntegrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(jira));
+		when(repos.findByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE)).thenReturn(List.of());
+		when(repos.findByProject_Id(projectId)).thenReturn(List.of());
+
+		ProjectSyncEnqueueResponse response = service.enqueue(userId, projectId);
+
+		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.SKIPPED_NOT_ACTIVE);
+		verify(launcher, never()).enqueueJiraInitialSync(any());
+	}
+
+	@Test
+	void leader_enqueuesJiraAfterReconnectActive() {
+		stubLeader();
+		JiraIntegration jira = activeJira();
+		when(jiraIntegrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(jira));
+		when(credentials.hasRefreshOrAccessCredential(projectId)).thenReturn(true);
+		when(claims.tryReserveEnqueue("JIRA", projectId)).thenReturn(true);
+		when(repos.findByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE)).thenReturn(List.of());
+		when(repos.findByProject_Id(projectId)).thenReturn(List.of());
+
+		ProjectSyncEnqueueResponse response = service.enqueue(userId, projectId);
+
+		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
+		verify(launcher).enqueueJiraInitialSync(projectId);
 	}
 
 	private void stubLeader() {

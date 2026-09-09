@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -28,6 +29,7 @@ import com.saga.be.entity.enums.AccountStatus;
 import com.saga.be.entity.enums.EnrollmentStatus;
 import com.saga.be.entity.enums.GitHubInstallationStatus;
 import com.saga.be.entity.enums.GitProvider;
+import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.OAuthFlowType;
 import com.saga.be.entity.enums.RepositoryRole;
 import com.saga.be.entity.enums.RoleInTeam;
@@ -478,9 +480,10 @@ class ProjectIntegrationServiceTest {
 		when(members.findFetchedByTeam_Id(team.getId()))
 				.thenReturn(List.of(leaderMember))
 				.thenReturn(List.of(memberRow));
-		when(pendingJira.consume(student.getId(), projectId))
-				.thenReturn(Optional.of(new PendingJiraConnect(
-						student.getId(), projectId, "jira-access", null, "read:jira-work", Instant.now())));
+		PendingJiraConnect pending = new PendingJiraConnect(
+				student.getId(), projectId, "jira-access", null, "read:jira-work", Instant.now());
+		when(pendingJira.get(student.getId(), projectId)).thenReturn(Optional.of(pending));
+		when(pendingJira.consume(student.getId(), projectId)).thenReturn(Optional.of(pending));
 		when(jira.accessibleResources("jira-access"))
 				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
 						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "https://example.atlassian.net", "Saga")));
@@ -613,7 +616,150 @@ class ProjectIntegrationServiceTest {
 		assertEquals("10067", captor.getValue().getJiraProjectId());
 		assertEquals("SAGA", captor.getValue().getProjectKey());
 		assertEquals("68", captor.getValue().getJiraBoardId());
+		assertEquals(IntegrationStatus.ACTIVE, captor.getValue().getConnectionStatus());
 		verify(initialSyncLauncher).enqueueJiraInitialSync(eq(projectId), eq("jira-access"));
+	}
+
+	@Test
+	void disconnectJiraSoftRevokesAndClearsCredentialsButKeepsSelection() {
+		stubLeaderOnly();
+		JiraIntegration existing = revokedReadyIntegration("cloud", "10067", "SAGA", "68");
+		existing.setConnectionStatus(IntegrationStatus.ACTIVE);
+		existing.setEncryptedAccessToken("enc-access");
+		existing.setEncryptedRefreshToken("enc-refresh");
+		existing.setTokenExpiresAt(java.time.LocalDateTime.now().plusHours(1));
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(existing));
+		when(jiraIntegrations.save(any(JiraIntegration.class))).thenAnswer(invocation -> invocation.getArgument(0));
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+
+		service.disconnectJira(student.getId(), projectId);
+
+		assertEquals(IntegrationStatus.REVOKED, existing.getConnectionStatus());
+		assertNull(existing.getEncryptedAccessToken());
+		assertNull(existing.getEncryptedRefreshToken());
+		assertNull(existing.getTokenExpiresAt());
+		assertEquals("cloud", existing.getCloudId());
+		assertEquals("SAGA", existing.getProjectKey());
+		assertEquals("68", existing.getJiraBoardId());
+	}
+
+	@Test
+	void revokedJiraReconnectSameSelectionBecomesActive() {
+		stubJiraSelectionWithExisting(revokedReadyIntegration(
+				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68"));
+		when(jira.getBoard("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "68"))
+				.thenReturn(new JiraOAuthClient.JiraBoardResponse("68", "SAGA board", "simple"));
+
+		service.saveJiraSelection(
+				student.getId(),
+				projectId,
+				new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "68"));
+
+		ArgumentCaptor<JiraIntegration> captor = ArgumentCaptor.forClass(JiraIntegration.class);
+		verify(jiraIntegrations, atLeastOnce()).save(captor.capture());
+		JiraIntegration saved = captor.getValue();
+		assertEquals(IntegrationStatus.ACTIVE, saved.getConnectionStatus());
+		assertEquals("10067", saved.getJiraProjectId());
+		assertEquals("SAGA", saved.getProjectKey());
+		assertEquals("68", saved.getJiraBoardId());
+		assertNull(saved.getLastErrorCode());
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(saved));
+		ProjectIntegrationsResponse summary = service.summary(student.getId(), projectId);
+		assertEquals("ACTIVE", summary.jira().status());
+	}
+
+	@Test
+	void revokedJiraReconnectDifferentSelectionBecomesActive() {
+		stubJiraSelectionWithExisting(revokedReadyIntegration(
+				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68"));
+		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("20001", "OTHER", "Other Project"));
+		when(jira.getBoard("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "99"))
+				.thenReturn(new JiraOAuthClient.JiraBoardResponse("99", "Other board", "simple"));
+
+		service.saveJiraSelection(
+				student.getId(),
+				projectId,
+				new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001", "99"));
+
+		ArgumentCaptor<JiraIntegration> captor = ArgumentCaptor.forClass(JiraIntegration.class);
+		verify(jiraIntegrations, atLeastOnce()).save(captor.capture());
+		JiraIntegration saved = captor.getValue();
+		assertEquals(IntegrationStatus.ACTIVE, saved.getConnectionStatus());
+		assertEquals("20001", saved.getJiraProjectId());
+		assertEquals("OTHER", saved.getProjectKey());
+		assertEquals("99", saved.getJiraBoardId());
+	}
+
+	@Test
+	void revokedJiraRemainsRevokedWhenReconnectOAuthCancelled() {
+		JiraIntegration existing = revokedReadyIntegration("cloud", "10067", "SAGA", "68");
+		when(oauthStates.consumeForUser(eq("state"), eq(student.getId()), eq(OAuthFlowType.JIRA_TEAM_CONNECT)))
+				.thenReturn(stateWithReturn(OAuthFlowType.JIRA_TEAM_CONNECT, "/projects/123/integrations"));
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.completeJiraTeamCallback(student.getId(), null, "state", "access_denied"));
+		assertEquals(IntegrationErrorCode.JIRA_OAUTH_CANCELLED, ex.getCode());
+		verify(jira, never()).exchange(any(), any(), any());
+		verify(jiraIntegrations, never()).save(any());
+		assertEquals(IntegrationStatus.REVOKED, existing.getConnectionStatus());
+	}
+
+	@Test
+	void activeJiraRemainsActiveWhenReauthCancelled() {
+		JiraIntegration existing = revokedReadyIntegration("cloud", "10067", "SAGA", "68");
+		existing.setConnectionStatus(IntegrationStatus.ACTIVE);
+		when(oauthStates.consumeForUser(eq("state"), eq(student.getId()), eq(OAuthFlowType.JIRA_TEAM_CONNECT)))
+				.thenReturn(stateWithReturn(OAuthFlowType.JIRA_TEAM_CONNECT, null));
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.completeJiraTeamCallback(student.getId(), null, "state", "access_denied"));
+		assertEquals(IntegrationErrorCode.JIRA_OAUTH_CANCELLED, ex.getCode());
+		verify(jiraIntegrations, never()).save(any());
+		assertEquals(IntegrationStatus.ACTIVE, existing.getConnectionStatus());
+	}
+
+	@Test
+	void failedSelectionDoesNotConsumePendingOrActivateRevokedRow() {
+		JiraIntegration existing = revokedReadyIntegration(
+				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68");
+		stubJiraLeaderAndPendingPeekOnly();
+		when(jira.accessibleResources("jira-access"))
+				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
+						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "https://example.atlassian.net", "Saga")));
+		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067")).thenReturn(null);
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.saveJiraSelection(
+						student.getId(),
+						projectId,
+						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "68")));
+		assertEquals(IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, ex.getCode());
+		verify(pendingJira, never()).consume(any(), any());
+		verify(jiraIntegrations, never()).save(any());
+		assertEquals(IntegrationStatus.REVOKED, existing.getConnectionStatus());
+	}
+
+	@Test
+	void reconnectDoesNotCreateDuplicateJiraIntegrationForSameProject() {
+		JiraIntegration existing = revokedReadyIntegration(
+				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68");
+		stubJiraSelectionWithExisting(existing);
+		when(jira.getBoard("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "68"))
+				.thenReturn(new JiraOAuthClient.JiraBoardResponse("68", "SAGA board", "simple"));
+
+		service.saveJiraSelection(
+				student.getId(),
+				projectId,
+				new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "68"));
+
+		ArgumentCaptor<JiraIntegration> captor = ArgumentCaptor.forClass(JiraIntegration.class);
+		verify(jiraIntegrations, atLeastOnce()).save(captor.capture());
+		assertEquals(existing.getId(), captor.getValue().getId());
+		assertEquals(IntegrationStatus.ACTIVE, captor.getValue().getConnectionStatus());
 	}
 
 	@Test
@@ -631,7 +777,7 @@ class ProjectIntegrationServiceTest {
 
 	@Test
 	void saveJiraSelectionRejectsInaccessibleProject() {
-		stubJiraLeaderAndPending();
+		stubJiraLeaderAndPendingPeekOnly();
 		when(jira.accessibleResources("jira-access"))
 				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
 						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "https://example.atlassian.net", "Saga")));
@@ -643,11 +789,12 @@ class ProjectIntegrationServiceTest {
 						projectId,
 						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "68")));
 		assertEquals(IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, ex.getCode());
+		verify(pendingJira, never()).consume(any(), any());
 	}
 
 	@Test
 	void saveJiraSelectionRejectsInaccessibleBoard() {
-		stubJiraLeaderAndPending();
+		stubJiraLeaderAndPendingPeekOnly();
 		when(jira.accessibleResources("jira-access"))
 				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
 						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "https://example.atlassian.net", "Saga")));
@@ -661,6 +808,7 @@ class ProjectIntegrationServiceTest {
 						projectId,
 						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "68")));
 		assertEquals(IntegrationErrorCode.JIRA_BOARD_NOT_ACCESSIBLE, ex.getCode());
+		verify(pendingJira, never()).consume(any(), any());
 	}
 
 	@Test
@@ -789,9 +937,25 @@ class ProjectIntegrationServiceTest {
 		when(users.findById(student.getId())).thenReturn(Optional.of(student));
 		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
 		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
-		when(pendingJira.consume(student.getId(), projectId))
-				.thenReturn(Optional.of(new PendingJiraConnect(
-						student.getId(), projectId, "jira-access", null, "read:jira-work", Instant.now())));
+		PendingJiraConnect pending = new PendingJiraConnect(
+				student.getId(), projectId, "jira-access", null, "read:jira-work", Instant.now());
+		when(pendingJira.get(student.getId(), projectId)).thenReturn(Optional.of(pending));
+		when(pendingJira.consume(student.getId(), projectId)).thenReturn(Optional.of(pending));
+	}
+
+	private void stubJiraLeaderAndPendingPeekOnly() {
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		PendingJiraConnect pending = new PendingJiraConnect(
+				student.getId(), projectId, "jira-access", null, "read:jira-work", Instant.now());
+		when(pendingJira.get(student.getId(), projectId)).thenReturn(Optional.of(pending));
+	}
+
+	private void stubLeaderOnly() {
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
 	}
 
 	private void stubJiraSelection() {
@@ -812,6 +976,45 @@ class ProjectIntegrationServiceTest {
 			}
 			return saved;
 		});
+	}
+
+	private void stubJiraSelectionWithExisting(JiraIntegration existing) {
+		stubJiraLeaderAndPending();
+		when(jira.accessibleResources("jira-access"))
+				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
+						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "https://example.atlassian.net", "Saga")));
+		lenient()
+				.when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("10067", "SAGA", "Saga Learning to Hero"));
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(existing));
+		when(jiraIntegrations.lockById(existing.getId())).thenReturn(Optional.of(existing));
+		when(jiraIntegrations.save(any(JiraIntegration.class))).thenAnswer(invocation -> invocation.getArgument(0));
+		lenient().when(installations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		lenient().when(repos.findByProject_Id(projectId)).thenReturn(List.of());
+	}
+
+	private JiraIntegration revokedReadyIntegration(
+			String cloudId, String jiraProjectId, String projectKey, String boardId) {
+		JiraIntegration existing = new JiraIntegration();
+		existing.setId(UUID.randomUUID());
+		existing.setCloudId(cloudId);
+		existing.setSiteName("Saga");
+		existing.setJiraProjectId(jiraProjectId);
+		existing.setProjectKey(projectKey);
+		existing.setJiraBoardId(boardId);
+		existing.setConnectionStatus(IntegrationStatus.REVOKED);
+		existing.setEncryptedAccessToken("stale-access");
+		existing.setEncryptedRefreshToken(null);
+		existing.setConsecutiveFailures(2);
+		existing.setLastErrorCode("JIRA_SYNC_FAILED");
+		existing.setVersion(3L);
+		Project project = new Project();
+		project.setId(projectId);
+		existing.setProject(project);
+		return existing;
 	}
 
 	private void stubSelectGithubRepos(GitHubOAuthClient.RepoSummary... accessible) {
