@@ -1024,6 +1024,164 @@ class ProjectIntegrationServiceTest {
 	}
 
 	@Test
+	void saveJiraSelectionAllowsSameProjectKeyOnDifferentCloud() {
+		stubJiraLeaderAndPending();
+		when(jira.accessibleResources("jira-access"))
+				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
+						"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "https://other.atlassian.net", "Other")));
+		when(jira.getProject("jira-access", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "20002"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("20002", "SAGA", "Other site SAGA"));
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		when(jiraIntegrations.findByCloudIdAndJiraProjectId(
+						"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "20002"))
+				.thenReturn(Optional.empty());
+		when(jiraIntegrations.save(any(JiraIntegration.class))).thenAnswer(invocation -> {
+			JiraIntegration saved = invocation.getArgument(0);
+			if (saved.getId() == null) {
+				saved.setId(UUID.randomUUID());
+			}
+			return saved;
+		});
+
+		assertDoesNotThrow(() -> service.saveJiraSelection(
+				student.getId(),
+				projectId,
+				new SelectJiraIntegrationRequest("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "20002", null)));
+
+		ArgumentCaptor<JiraIntegration> captor = ArgumentCaptor.forClass(JiraIntegration.class);
+		verify(jiraIntegrations, atLeastOnce()).save(captor.capture());
+		assertEquals("SAGA", captor.getValue().getProjectKey());
+		assertEquals("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", captor.getValue().getCloudId());
+		verify(pendingJira).claim(student.getId(), projectId);
+	}
+
+	@Test
+	void saveJiraSelectionRejectsCloudProjectAlreadyBoundToAnotherSagaProject() {
+		stubJiraLeaderAndPending();
+		when(jira.accessibleResources("jira-access"))
+				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
+						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "https://example.atlassian.net", "Saga")));
+		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("10067", "SAGA", "Saga Learning to Hero"));
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		UUID otherProjectId = UUID.randomUUID();
+		Project other = new Project();
+		other.setId(otherProjectId);
+		JiraIntegration ownedElsewhere = new JiraIntegration();
+		ownedElsewhere.setId(UUID.randomUUID());
+		ownedElsewhere.setProject(other);
+		ownedElsewhere.setCloudId("aeb21465-f2da-4923-b356-f6f1cfa4fd13");
+		ownedElsewhere.setJiraProjectId("10067");
+		ownedElsewhere.setProjectKey("SAGA");
+		ownedElsewhere.setConnectionStatus(IntegrationStatus.ACTIVE);
+		when(jiraIntegrations.findByCloudIdAndJiraProjectId(
+						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
+				.thenReturn(Optional.of(ownedElsewhere));
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.saveJiraSelection(
+						student.getId(),
+						projectId,
+						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", null)));
+
+		assertEquals(IntegrationErrorCode.JIRA_PROJECT_IN_USE, ex.getCode());
+		assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatus());
+		assertEquals("Jira project này đang được liên kết với một dự án SAGA khác.", ex.getMessage());
+		verify(pendingJira, never()).claim(any(), any());
+		verify(jiraIntegrations, never()).save(any());
+		verify(taskProjectionReset, never()).hardDeleteAllTasksForProject(any());
+	}
+
+	@Test
+	void saveJiraSelectionMapsConcurrentUkJiraCloudProjectToConflict() {
+		stubJiraSelection();
+		when(jiraIntegrations.findByCloudIdAndJiraProjectId(
+						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
+				.thenReturn(Optional.empty());
+		when(jiraIntegrations.save(any(JiraIntegration.class)))
+				.thenThrow(new org.springframework.dao.DataIntegrityViolationException(
+						"Duplicate entry for key 'uk_jira_cloud_project'"));
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.saveJiraSelection(
+						student.getId(),
+						projectId,
+						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", null)));
+
+		assertEquals(IntegrationErrorCode.JIRA_PROJECT_IN_USE, ex.getCode());
+		assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatus());
+		verify(pendingJira).claim(student.getId(), projectId);
+		verify(pendingJira).restoreIfAbsent(any());
+		verify(taskProjectionReset, never()).hardDeleteAllTasksForProject(any());
+	}
+
+	@Test
+	void saveJiraSelectionAllowsSameSagaProjectToReconnectSameJiraSource() {
+		JiraIntegration existing = revokedReadyIntegration(
+				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68");
+		existing.setConnectionStatus(IntegrationStatus.ACTIVE);
+		stubJiraSelectionWithExisting(existing);
+		when(jira.getBoard("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "68"))
+				.thenReturn(new JiraOAuthClient.JiraBoardResponse("68", "SAGA board", "simple"));
+
+		assertDoesNotThrow(() -> service.saveJiraSelection(
+				student.getId(),
+				projectId,
+				new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "68")));
+
+		verify(jiraIntegrations, atLeastOnce()).save(any(JiraIntegration.class));
+		verify(taskProjectionReset, never()).hardDeleteAllTasksForProject(any());
+	}
+
+	@Test
+	void saveJiraSelectionConflictDoesNotMutateTasksOrExistingOwner() {
+		stubJiraLeaderAndPending();
+		when(jira.accessibleResources("jira-access"))
+				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
+						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "https://example.atlassian.net", "Saga")));
+		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("10067", "SAGA", "Saga Learning to Hero"));
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		UUID otherProjectId = UUID.randomUUID();
+		Project other = new Project();
+		other.setId(otherProjectId);
+		JiraIntegration ownedElsewhere = new JiraIntegration();
+		ownedElsewhere.setId(UUID.randomUUID());
+		ownedElsewhere.setProject(other);
+		ownedElsewhere.setCloudId("aeb21465-f2da-4923-b356-f6f1cfa4fd13");
+		ownedElsewhere.setJiraProjectId("10067");
+		ownedElsewhere.setProjectKey("SAGA");
+		ownedElsewhere.setConnectionStatus(IntegrationStatus.ACTIVE);
+		when(jiraIntegrations.findByCloudIdAndJiraProjectId(
+						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
+				.thenReturn(Optional.of(ownedElsewhere));
+
+		assertThrows(
+				IntegrationException.class,
+				() -> service.saveJiraSelection(
+						student.getId(),
+						projectId,
+						new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", null)));
+
+		assertEquals(other, ownedElsewhere.getProject());
+		assertEquals(IntegrationStatus.ACTIVE, ownedElsewhere.getConnectionStatus());
+		verify(jiraIntegrations, never()).save(ownedElsewhere);
+		verify(taskProjectionReset, never()).hardDeleteAllTasksForProject(any());
+		verify(pendingJira, never()).claim(any(), any());
+	}
+
+	@Test
 	void saveJiraSelectionRejectsInaccessibleProject() {
 		stubJiraLeaderAndPendingPeekOnly();
 		when(jira.accessibleResources("jira-access"))
@@ -1219,7 +1377,10 @@ class ProjectIntegrationServiceTest {
 		project.setId(projectId);
 		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
 		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.empty());
-		when(jiraIntegrations.save(any(JiraIntegration.class))).thenAnswer(invocation -> {
+		lenient()
+				.when(jiraIntegrations.findByCloudIdAndJiraProjectId(any(), any()))
+				.thenReturn(Optional.empty());
+		lenient().when(jiraIntegrations.save(any(JiraIntegration.class))).thenAnswer(invocation -> {
 			JiraIntegration saved = invocation.getArgument(0);
 			if (saved.getId() == null) {
 				saved.setId(UUID.randomUUID());
@@ -1241,6 +1402,13 @@ class ProjectIntegrationServiceTest {
 		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
 		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(existing));
 		when(jiraIntegrations.lockById(existing.getId())).thenReturn(Optional.of(existing));
+		lenient()
+				.when(jiraIntegrations.findByCloudIdAndJiraProjectId(any(), any()))
+				.thenReturn(Optional.empty());
+		lenient()
+				.when(jiraIntegrations.findByCloudIdAndJiraProjectId(
+						eq(existing.getCloudId()), eq(existing.getJiraProjectId())))
+				.thenReturn(Optional.of(existing));
 		lenient()
 				.when(jiraIntegrations.save(any(JiraIntegration.class)))
 				.thenAnswer(invocation -> invocation.getArgument(0));

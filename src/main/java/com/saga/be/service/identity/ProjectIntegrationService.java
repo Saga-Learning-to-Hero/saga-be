@@ -60,6 +60,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -825,6 +826,10 @@ public class ProjectIntegrationService {
 				&& Objects.equals(oldJiraProjectId, newJiraProjectId);
 		boolean sourceReplacement = hasExistingSource && !sameSource;
 
+		// Ownership is cloudId + jiraProjectId (not projectKey). Reject before claim so a conflict
+		// does not burn the pending OAuth grant or mutate this project's integration/tasks.
+		assertJiraProviderProjectAvailableForSagaProject(newCloudId, newJiraProjectId, projectId);
+
 		if (sourceReplacement) {
 			if (oldProjectKey != null
 					&& newProjectKey != null
@@ -881,7 +886,12 @@ public class ProjectIntegrationService {
 			integration.setConnectionStatus(IntegrationStatus.ACTIVE);
 			integration.setConsecutiveFailures(0);
 			integration.setLastErrorCode(null);
-			JiraIntegration saved = jiraIntegrations.save(integration);
+			JiraIntegration saved;
+			try {
+				saved = jiraIntegrations.save(integration);
+			} catch (DataIntegrityViolationException ex) {
+				throw mapJiraPersistenceConflict(ex);
+			}
 			if (pending.refreshToken() != null) {
 				saved.setEncryptedRefreshToken(
 						encryptor.encrypt(
@@ -931,6 +941,42 @@ public class ProjectIntegrationService {
 			}
 			throw ex;
 		}
+	}
+
+	/**
+	 * One Jira provider project ({@code cloudId} + {@code jiraProjectId}) may bind to at most one
+	 * SAGA project. Matching {@code projectKey} alone across different clouds is not a conflict.
+	 */
+	private void assertJiraProviderProjectAvailableForSagaProject(
+			String cloudId, String jiraProjectId, UUID sagaProjectId) {
+		if (cloudId == null || cloudId.isBlank() || jiraProjectId == null || jiraProjectId.isBlank()) {
+			return;
+		}
+		jiraIntegrations.findByCloudIdAndJiraProjectId(cloudId, jiraProjectId).ifPresent(existing -> {
+			if (existing.getProject() != null && !existing.getProject().getId().equals(sagaProjectId)) {
+				throw jiraProjectInUse();
+			}
+		});
+	}
+
+	private static IntegrationException mapJiraPersistenceConflict(DataIntegrityViolationException ex) {
+		if (isJiraCloudProjectUniqueViolation(ex)) {
+			return jiraProjectInUse();
+		}
+		throw ex;
+	}
+
+	private static boolean isJiraCloudProjectUniqueViolation(DataIntegrityViolationException ex) {
+		Throwable cause = ex.getMostSpecificCause();
+		String message = cause == null ? ex.getMessage() : cause.getMessage();
+		return message != null && message.toLowerCase(Locale.ROOT).contains("uk_jira_cloud_project");
+	}
+
+	private static IntegrationException jiraProjectInUse() {
+		return new IntegrationException(
+				IntegrationErrorCode.JIRA_PROJECT_IN_USE,
+				HttpStatus.CONFLICT,
+				"Jira project này đang được liên kết với một dự án SAGA khác.");
 	}
 
 	/**
