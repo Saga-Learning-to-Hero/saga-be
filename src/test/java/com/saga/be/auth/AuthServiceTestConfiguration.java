@@ -33,4 +33,10 @@ public class AuthServiceTestConfiguration {
 	PasswordResetService passwordResetService() {
 		return Mockito.mock(PasswordResetService.class);
 	}
+
+	@Bean
+	@Primary
+	UserProfileService userProfileService() {
+		return Mockito.mock(UserProfileService.class);
+	}
 }

@@ -21,6 +21,7 @@ import com.saga.be.dto.auth.ResetPasswordResponse;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.exception.AuthException;
 import com.saga.be.security.SagaUserPrincipal;
+import com.saga.be.security.SessionEstablisher;
 import com.saga.be.service.roster.InvitationClaimService;
 import com.saga.be.web.RequestTiming;
 import io.swagger.v3.oas.annotations.Operation;
@@ -34,7 +35,6 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
@@ -43,11 +43,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.logout.CookieClearingLogoutHandler;
 import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
-import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -65,7 +63,7 @@ public class AuthController {
 	private final PasswordSetupService passwordSetupService;
 	private final PasswordResetService passwordResetService;
 	private final StudentRegistrationService studentRegistrationService;
-	private final SecurityContextRepository securityContextRepository;
+	private final SessionEstablisher sessionEstablisher;
 	private final CookieCsrfTokenRepository csrfTokenRepository;
 	private final ObjectProvider<InvitationClaimService> invitationClaims;
 
@@ -74,14 +72,14 @@ public class AuthController {
 			PasswordSetupService passwordSetupService,
 			PasswordResetService passwordResetService,
 			StudentRegistrationService studentRegistrationService,
-			SecurityContextRepository securityContextRepository,
+			SessionEstablisher sessionEstablisher,
 			CookieCsrfTokenRepository csrfTokenRepository,
 			ObjectProvider<InvitationClaimService> invitationClaims) {
 		this.localAuthService = localAuthService;
 		this.passwordSetupService = passwordSetupService;
 		this.passwordResetService = passwordResetService;
 		this.studentRegistrationService = studentRegistrationService;
-		this.securityContextRepository = securityContextRepository;
+		this.sessionEstablisher = sessionEstablisher;
 		this.csrfTokenRepository = csrfTokenRepository;
 		this.invitationClaims = invitationClaims;
 	}
@@ -185,7 +183,7 @@ public class AuthController {
 			@Parameter(hidden = true) HttpServletRequest httpRequest,
 			@Parameter(hidden = true) HttpServletResponse httpResponse) {
 		Authentication authentication = localAuthService.authenticate(request.identifier(), request.password());
-		establishSession(authentication, httpRequest, httpResponse);
+		sessionEstablisher.establish(authentication, httpRequest, httpResponse);
 		if (authentication.getPrincipal() instanceof SagaUserPrincipal principal) {
 			InvitationClaimService claims = invitationClaims.getIfAvailable();
 			if (claims != null) {
@@ -353,7 +351,7 @@ public class AuthController {
 		}
 		Authentication authentication =
 				passwordSetupService.setup(principal.getUserId(), request.newPassword(), request.confirmPassword());
-		establishSession(authentication, httpRequest, httpResponse);
+		sessionEstablisher.establish(authentication, httpRequest, httpResponse);
 		return AuthResponses.fromPrincipal((SagaUserPrincipal) authentication.getPrincipal());
 	}
 
@@ -385,19 +383,5 @@ public class AuthController {
 		CsrfToken fresh = csrfTokenRepository.generateToken(request);
 		csrfTokenRepository.saveToken(fresh, request, response);
 		return ResponseEntity.noContent().build();
-	}
-
-	private void establishSession(
-			Authentication authentication, HttpServletRequest request, HttpServletResponse response) {
-		HttpSession existing = request.getSession(false);
-		if (existing != null) {
-			request.changeSessionId();
-		} else {
-			request.getSession(true);
-		}
-		SecurityContext context = SecurityContextHolder.createEmptyContext();
-		context.setAuthentication(authentication);
-		SecurityContextHolder.setContext(context);
-		securityContextRepository.saveContext(context, request, response);
 	}
 }
