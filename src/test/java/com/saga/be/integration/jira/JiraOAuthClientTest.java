@@ -32,11 +32,45 @@ class JiraOAuthClientTest {
 	private MockRestServiceServer server;
 	private JiraOAuthClient client;
 
+	private IntegrationProperties properties;
+
 	@BeforeEach
 	void setUp() {
 		RestClient.Builder builder = RestClient.builder();
 		server = MockRestServiceServer.bindTo(builder).build();
-		client = new JiraOAuthClient(builder.build(), new IntegrationProperties());
+		properties = new IntegrationProperties();
+		properties.getJira().setClientId("jira-client");
+		client = new JiraOAuthClient(builder.build(), properties);
+	}
+
+	@Test
+	void teamAuthorizationUrl_requestsEstimationAndBoardAdminScopes() {
+		String url = client.authorizationUrl("state-1", "challenge-1", "https://app.example/callback", true);
+		assertTrue(url.contains("scope="));
+		assertTrue(url.contains(urlEncode("read:issue:jira-software")));
+		assertTrue(url.contains(urlEncode("write:issue:jira-software")));
+		assertTrue(url.contains(urlEncode("read:board-scope.admin:jira-software")));
+		assertTrue(url.contains(urlEncode("read:issue-details:jira")));
+		assertTrue(url.contains(urlEncode("offline_access")));
+		assertEquals(
+				List.of(
+						"read:me",
+						"read:jira-user",
+						"read:jira-work",
+						"write:jira-work",
+						"read:project:jira",
+						"read:issue-details:jira",
+						"read:jql:jira",
+						"read:board-scope:jira-software",
+						"write:board-scope:jira-software",
+						"read:board-scope.admin:jira-software",
+						"read:sprint:jira-software",
+						"write:sprint:jira-software",
+						"read:issue:jira-software",
+						"write:issue:jira-software",
+						"manage:jira-webhook",
+						"offline_access"),
+				properties.getJira().teamScopes());
 	}
 
 	@Test
@@ -177,5 +211,9 @@ class JiraOAuthClientTest {
 		String source = Files.readString(Path.of("src/main/java/com/saga/be/integration/jira/JiraOAuthClient.java"));
 		assertFalse(source.contains("com.fasterxml.jackson.databind.JsonNode"));
 		assertFalse(source.contains("body(JsonNode.class)"));
+	}
+
+	private static String urlEncode(String value) {
+		return java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8);
 	}
 }

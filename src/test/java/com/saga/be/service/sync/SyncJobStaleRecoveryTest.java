@@ -156,7 +156,15 @@ class SyncJobStaleRecoveryTest {
 	void workerException_marksFailedViaServiceFinally() {
 		SyncJobClaimService mockClaims = org.mockito.Mockito.mock(SyncJobClaimService.class);
 		JiraTaskSyncService service = new JiraTaskSyncService(
-				jiraIntegrations, jira, projection, syncJobs, properties, credentials, mockClaims, transactionManager);
+				jiraIntegrations,
+				jira,
+				projection,
+				syncJobs,
+				properties,
+				credentials,
+				mockClaims,
+				transactionManager,
+				new com.saga.be.realtime.ProjectRealtimePublisher(event -> {}));
 		SyncJobLog running = runningJob(LocalDateTime.now());
 		running.setId(UUID.randomUUID());
 		when(mockClaims.tryClaim("JIRA", projectId, SyncJobType.INITIAL)).thenReturn(Optional.of(running));

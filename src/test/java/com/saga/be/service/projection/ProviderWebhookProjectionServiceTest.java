@@ -40,13 +40,15 @@ class ProviderWebhookProjectionServiceTest {
 	private JiraTaskProjectionService tasks;
 	@Mock
 	private WebhookReceiptRepository receiptRepository;
+	@Mock
+	private com.saga.be.realtime.ProjectRealtimePublisher realtime;
 
 	private ProviderWebhookProjectionService service;
 
 	@BeforeEach
 	void setUp() {
 		service = new ProviderWebhookProjectionService(
-				new ObjectMapper(), repos, jiraIntegrations, commits, tasks, receiptRepository);
+				new ObjectMapper(), repos, jiraIntegrations, commits, tasks, receiptRepository, realtime);
 	}
 
 	@Test
@@ -61,6 +63,8 @@ class ProviderWebhookProjectionServiceTest {
 		when(repos.findFetchedActiveByProviderAndRepositoryId(GitProvider.GITHUB, 55L, IntegrationStatus.ACTIVE))
 				.thenReturn(List.of(repo));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(commits.upsertBatchDetailed(eq(repo), any()))
+				.thenReturn(new GitCommitProjectionService.UpsertOutcome(1, 1));
 
 		String payload =
 				"""
@@ -69,10 +73,12 @@ class ProviderWebhookProjectionServiceTest {
 		service.projectGithub(receipt, "push", payload);
 
 		ArgumentCaptor<List<GitCommitProjectionService.CommitDraft>> captor = ArgumentCaptor.forClass(List.class);
-		verify(commits).upsertBatch(eq(repo), captor.capture());
+		verify(commits).upsertBatchDetailed(eq(repo), captor.capture());
 		assertThat(captor.getValue()).hasSize(1);
 		assertThat(captor.getValue().getFirst().sha()).isEqualTo("deadbeef");
 		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.PROCESSED);
+		verify(realtime).publish(com.saga.be.realtime.ProjectRealtimeEventType.COMMITS_CHANGED, project.getId());
+		verify(realtime).publish(com.saga.be.realtime.ProjectRealtimeEventType.TASK_LINKS_CHANGED, project.getId());
 	}
 
 	@Test
@@ -88,7 +94,7 @@ class ProviderWebhookProjectionServiceTest {
 				""";
 		service.projectGithub(receipt, "push", payload);
 
-		verify(commits, org.mockito.Mockito.never()).upsertBatch(any(), any());
+		verify(commits, org.mockito.Mockito.never()).upsertBatchDetailed(any(), any());
 		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.PROCESSED);
 	}
 
@@ -104,6 +110,7 @@ class ProviderWebhookProjectionServiceTest {
 		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
 				.thenReturn(List.of(integration));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
 
 		String payload =
 				"""
@@ -112,6 +119,49 @@ class ProviderWebhookProjectionServiceTest {
 		service.projectJira(receipt, payload);
 
 		verify(tasks).upsertBatch(eq(project), eq("SAGA"), any());
+		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.PROCESSED);
+		verify(realtime)
+				.publish(com.saga.be.realtime.ProjectRealtimeEventType.TASKS_CHANGED, project.getId(), "200");
+	}
+
+	@Test
+	void jiraSprintCreated_projectsWhenBoardMatches() {
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setJiraBoardId("68");
+		when(jiraIntegrations.findFetchedActiveByBoardId(IntegrationStatus.ACTIVE, "68"))
+				.thenReturn(List.of(integration));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		String payload =
+				"""
+				{"webhookEvent":"sprint_created","sprint":{"id":31,"name":"Sprint 1","state":"future","originBoardId":68,"goal":"Ship"}}
+				""";
+		service.projectJira(receipt, payload);
+
+		verify(tasks).upsertSprint(eq(integration), eq("31"), eq("Sprint 1"), eq("future"), any(), any(), eq("Ship"), any());
+		verify(realtime)
+				.publish(com.saga.be.realtime.ProjectRealtimeEventType.SPRINTS_CHANGED, project.getId(), "31");
+	}
+
+	@Test
+	void jiraSprint_unrelatedBoardIgnored() {
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		when(jiraIntegrations.findFetchedActiveByBoardId(IntegrationStatus.ACTIVE, "999"))
+				.thenReturn(List.of());
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		String payload =
+				"""
+				{"webhookEvent":"sprint_updated","sprint":{"id":31,"name":"Other","originBoardId":999}}
+				""";
+		service.projectJira(receipt, payload);
+
+		verify(tasks, org.mockito.Mockito.never())
+				.upsertSprint(any(), any(), any(), any(), any(), any(), any(), any());
 		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.PROCESSED);
 	}
 

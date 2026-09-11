@@ -5,6 +5,7 @@ import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.github.GitHubWebhookSignature;
 import com.saga.be.config.IntegrationProperties;
+import com.saga.be.integration.jira.JiraWebhookSignature;
 import com.saga.be.integration.webhook.WebhookReceiptService;
 import com.saga.be.repository.WebhookReceiptRepository;
 import com.saga.be.service.attribution.AttributionWarningService;
@@ -85,16 +86,20 @@ public class ProviderWebhookController {
 	@PostMapping("/jira")
 	public ResponseEntity<Void> jira(
 			@RequestHeader(value = "X-Atlassian-Webhook-Identifier", required = false) String delivery,
-			@RequestHeader(value = "X-Hub-Signature-256", required = false) String signature,
+			@RequestHeader(value = "X-Hub-Signature", required = false) String signature,
 			HttpServletRequest request)
 			throws IOException {
 		byte[] body = request.getInputStream().readAllBytes();
-		if (properties.getJira().getClientSecret() != null
-				&& !properties.getJira().getClientSecret().isBlank()
-				&& signature != null
-				&& !GitHubWebhookSignature.matches(body, properties.getJira().getClientSecret(), signature)) {
+		String webhookSecret = properties.getJira().getWebhookSecret();
+		// Dedicated Jira webhook secret only — never the Atlassian OAuth client secret.
+		// Jira Cloud sends X-Hub-Signature (not X-Hub-Signature-256).
+		if (!JiraWebhookSignature.accepts(body, webhookSecret, signature)) {
+			warnings.securityFailure(
+					"jira-sig:" + (delivery == null ? "none" : delivery), "Invalid Jira webhook signature.");
 			throw new IntegrationException(
-					IntegrationErrorCode.WEBHOOK_SIGNATURE_INVALID, HttpStatus.UNAUTHORIZED, "Invalid webhook signature.");
+					IntegrationErrorCode.WEBHOOK_SIGNATURE_INVALID,
+					HttpStatus.UNAUTHORIZED,
+					"Invalid webhook signature.");
 		}
 		String payload = new String(body, StandardCharsets.UTF_8);
 		String deliveryId = delivery == null ? java.util.UUID.nameUUIDFromBytes(body).toString() : delivery;

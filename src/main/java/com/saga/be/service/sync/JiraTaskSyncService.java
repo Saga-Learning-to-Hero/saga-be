@@ -15,6 +15,8 @@ import com.saga.be.integration.jira.JiraOAuthClient.JiraProjectResponse;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.SyncJobLogRepository;
 import com.saga.be.service.projection.JiraTaskProjectionService;
+import com.saga.be.realtime.ProjectRealtimeEventType;
+import com.saga.be.realtime.ProjectRealtimePublisher;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -54,6 +56,7 @@ public class JiraTaskSyncService {
 	private final JiraIntegrationCredentialService credentials;
 	private final SyncJobClaimService claims;
 	private final TransactionTemplate writes;
+	private final ProjectRealtimePublisher realtime;
 
 	public JiraTaskSyncService(
 			JiraIntegrationRepository integrations,
@@ -63,7 +66,8 @@ public class JiraTaskSyncService {
 			IntegrationProperties properties,
 			JiraIntegrationCredentialService credentials,
 			SyncJobClaimService claims,
-			PlatformTransactionManager transactionManager) {
+			PlatformTransactionManager transactionManager,
+			ProjectRealtimePublisher realtime) {
 		this.integrations = integrations;
 		this.jira = jira;
 		this.projection = projection;
@@ -72,6 +76,7 @@ public class JiraTaskSyncService {
 		this.credentials = credentials;
 		this.claims = claims;
 		this.writes = new TransactionTemplate(transactionManager);
+		this.realtime = realtime;
 	}
 
 	/** Resolve credentials from DB (refresh if needed). */
@@ -153,6 +158,7 @@ public class JiraTaskSyncService {
 						HttpStatus.BAD_GATEWAY,
 						"Jira issue pagination exceeded defensive guard.");
 			}
+			final int processedCount = processed;
 			writes.executeWithoutResult(status -> {
 				JiraIntegration row = integrations.findByProject_Id(projectId).orElse(null);
 				if (row != null) {
@@ -161,6 +167,12 @@ public class JiraTaskSyncService {
 					row.setConsecutiveFailures(0);
 					row.setLastErrorCode(null);
 					integrations.save(row);
+				}
+				realtime.publish(ProjectRealtimeEventType.SYNC_STATUS_CHANGED, projectId);
+				if (processedCount > 0) {
+					realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, projectId);
+					realtime.publish(ProjectRealtimeEventType.SPRINTS_CHANGED, projectId);
+					realtime.publish(ProjectRealtimeEventType.TASK_LINKS_CHANGED, projectId);
 				}
 			});
 			finalized = true;

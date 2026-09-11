@@ -50,6 +50,8 @@ class ProjectProjectionReadServiceTest {
 	@Mock
 	private TaskGitCommitLinkRepository links;
 	@Mock
+	private com.saga.be.repository.SprintRepository sprints;
+	@Mock
 	private UserAccountRepository users;
 	@Mock
 	private TeamMemberRepository members;
@@ -64,7 +66,7 @@ class ProjectProjectionReadServiceTest {
 	@BeforeEach
 	void setUp() {
 		authorization = new ProjectDataAuthorization(users, members, projects);
-		service = new ProjectProjectionReadService(tasks, commits, links, authorization);
+		service = new ProjectProjectionReadService(tasks, commits, links, sprints, authorization);
 		projectId = UUID.randomUUID();
 		userId = UUID.randomUUID();
 	}
@@ -187,6 +189,80 @@ class ProjectProjectionReadServiceTest {
 		assertThat(result).hasSize(1);
 		assertThat(result.getFirst().sha()).isEqualTo("abc");
 		verify(links, times(1)).findFetchedCommitsByProjectAndTask(projectId, taskId);
+	}
+
+	@Test
+	void listTasks_exposesAssigneePriorityStoryPointSprintAndNullsSafely() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = new Task();
+		task.setId(UUID.randomUUID());
+		task.setExternalId("10001");
+		task.setExternalKey("SAGA-1");
+		task.setTitle("Login");
+		task.setDescription("desc");
+		task.setStatus(TaskStatus.TODO);
+		task.setIssueTypeName("Story");
+		task.setAssigneeExternalId("jira-account-1");
+		task.setPriority(com.saga.be.entity.enums.Priority.HIGH);
+		task.setStoryPoint(5);
+		com.saga.be.entity.jira.Sprint sprint = new com.saga.be.entity.jira.Sprint();
+		sprint.setId(UUID.randomUUID());
+		sprint.setExternalSprintId("31");
+		sprint.setName("Sprint 1");
+		sprint.setState("active");
+		task.setSprint(sprint);
+		com.saga.be.entity.account.StudentProfile profile = new com.saga.be.entity.account.StudentProfile();
+		profile.setId(UUID.randomUUID());
+		UserAccount assigneeUser = account(AccountRole.STUDENT);
+		assigneeUser.setFullName("Leader One");
+		profile.setUserAccount(assigneeUser);
+		task.setAssigneeStudent(profile);
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(task));
+		when(links.countLinksByProjectGrouped(projectId))
+				.thenReturn(List.<Object[]>of(new Object[] {task.getId(), 3L}));
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.assigneeExternalId()).isEqualTo("jira-account-1");
+		assertThat(response.assigneeDisplayName()).isEqualTo("Leader One");
+		assertThat(response.assigneeStudentId()).isEqualTo(profile.getId());
+		assertThat(response.priority()).isEqualTo("HIGH");
+		assertThat(response.storyPoint()).isEqualTo(5);
+		assertThat(response.sprint().externalSprintId()).isEqualTo("31");
+		assertThat(response.sprint().name()).isEqualTo("Sprint 1");
+		assertThat(response.linkedCommitCount()).isEqualTo(3L);
+		assertThat(response.description()).isEqualTo("desc");
+	}
+
+	@Test
+	void listTasks_nullAssigneePriorityStorySprint_areNull() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = new Task();
+		task.setId(UUID.randomUUID());
+		task.setExternalKey("SAGA-2");
+		task.setTitle("Empty");
+		task.setStatus(TaskStatus.TODO);
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(task));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.assigneeExternalId()).isNull();
+		assertThat(response.assigneeDisplayName()).isNull();
+		assertThat(response.priority()).isNull();
+		assertThat(response.storyPoint()).isNull();
+		assertThat(response.sprint()).isNull();
+	}
+
+	@Test
+	void getTask_requiresSameProject() {
+		stubStudent(RoleInTeam.MEMBER);
+		UUID taskId = UUID.randomUUID();
+		when(tasks.findActiveFetchedByIdAndProject_Id(taskId, projectId)).thenReturn(Optional.empty());
+		assertThatThrownBy(() -> service.getTask(userId, projectId, taskId))
+				.isInstanceOf(AcademicException.class)
+				.extracting(ex -> ((AcademicException) ex).getCode())
+				.isEqualTo(AcademicErrorCode.PROJECT_NOT_FOUND);
 	}
 
 	private void stubStudent(RoleInTeam ignored) {

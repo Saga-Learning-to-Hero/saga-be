@@ -9,13 +9,19 @@ import com.saga.be.entity.integration.WebhookReceipt;
 import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
 import com.saga.be.integration.webhook.WebhookReceiptService;
+import com.saga.be.realtime.ProjectRealtimeEventType;
+import com.saga.be.realtime.ProjectRealtimePublisher;
 import com.saga.be.repository.GitRepoRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.WebhookReceiptRepository;
 import com.saga.be.service.projection.GitCommitProjectionService.CommitDraft;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
@@ -38,6 +44,7 @@ public class ProviderWebhookProjectionService {
 	private final JiraTaskProjectionService tasks;
 	private final WebhookReceiptService receipts;
 	private final WebhookReceiptRepository receiptRepository;
+	private final ProjectRealtimePublisher realtime;
 
 	public ProviderWebhookProjectionService(
 			ObjectMapper mapper,
@@ -45,13 +52,15 @@ public class ProviderWebhookProjectionService {
 			JiraIntegrationRepository jiraIntegrations,
 			GitCommitProjectionService commits,
 			JiraTaskProjectionService tasks,
-			WebhookReceiptRepository receiptRepository) {
+			WebhookReceiptRepository receiptRepository,
+			ProjectRealtimePublisher realtime) {
 		this.mapper = mapper;
 		this.repos = repos;
 		this.jiraIntegrations = jiraIntegrations;
 		this.commits = commits;
 		this.tasks = tasks;
 		this.receiptRepository = receiptRepository;
+		this.realtime = realtime;
 		this.receipts = new WebhookReceiptService(new WebhookReceiptService.Store() {
 			@Override
 			public java.util.Optional<WebhookReceipt> find(
@@ -105,8 +114,22 @@ public class ProviderWebhookProjectionService {
 						login,
 						headRef));
 			}
+			Set<UUID> commitChanged = new HashSet<>();
+			Set<UUID> linkChanged = new HashSet<>();
 			for (GitRepo repo : matches) {
-				commits.upsertBatch(repo, drafts);
+				GitCommitProjectionService.UpsertOutcome outcome = commits.upsertBatchDetailed(repo, drafts);
+				if (outcome.commitsTouched() > 0) {
+					commitChanged.add(repo.getProject().getId());
+				}
+				if (outcome.linksCreated() > 0) {
+					linkChanged.add(repo.getProject().getId());
+				}
+			}
+			for (UUID projectId : commitChanged) {
+				realtime.publish(ProjectRealtimeEventType.COMMITS_CHANGED, projectId);
+			}
+			for (UUID projectId : linkChanged) {
+				realtime.publish(ProjectRealtimeEventType.TASK_LINKS_CHANGED, projectId);
 			}
 			receipts.markProcessed(receipt, LocalDateTime.now());
 		} catch (Exception ex) {
@@ -122,6 +145,10 @@ public class ProviderWebhookProjectionService {
 		try {
 			JsonNode root = mapper.readTree(payloadJson);
 			String webhookEvent = text(root, "webhookEvent");
+			if (webhookEvent != null && webhookEvent.toLowerCase(Locale.ROOT).startsWith("sprint_")) {
+				projectJiraSprint(receipt, root, webhookEvent);
+				return;
+			}
 			JsonNode issue = root.path("issue");
 			if (issue.isMissingNode() || issue.isNull()) {
 				receipts.markProcessed(receipt, LocalDateTime.now());
@@ -142,17 +169,28 @@ public class ProviderWebhookProjectionService {
 				receipts.markProcessed(receipt, LocalDateTime.now());
 				return;
 			}
-			if (webhookEvent != null && webhookEvent.toLowerCase().contains("deleted")) {
+			if (webhookEvent != null && webhookEvent.toLowerCase(Locale.ROOT).contains("deleted")) {
 				LocalDateTime now = LocalDateTime.now();
 				for (JiraIntegration integration : matches) {
 					tasks.softDelete(integration.getProject(), externalId, now);
+					realtime.publish(
+							ProjectRealtimeEventType.TASKS_CHANGED,
+							integration.getProject().getId(),
+							externalId);
 				}
 				receipts.markProcessed(receipt, LocalDateTime.now());
 				return;
 			}
 			IssueSummary summary = toSummary(externalId, key, fields);
 			for (JiraIntegration integration : matches) {
-				tasks.upsertBatch(integration.getProject(), integration.getProjectKey(), List.of(summary));
+				int applied =
+						tasks.upsertBatch(integration.getProject(), integration.getProjectKey(), List.of(summary));
+				if (applied > 0) {
+					realtime.publish(
+							ProjectRealtimeEventType.TASKS_CHANGED,
+							integration.getProject().getId(),
+							externalId);
+				}
 			}
 			receipts.markProcessed(receipt, LocalDateTime.now());
 		} catch (Exception ex) {
@@ -163,11 +201,93 @@ public class ProviderWebhookProjectionService {
 		}
 	}
 
+	private void projectJiraSprint(WebhookReceipt receipt, JsonNode root, String webhookEvent) {
+		JsonNode sprint = root.path("sprint");
+		if (sprint.isMissingNode() || sprint.isNull()) {
+			receipts.markProcessed(receipt, LocalDateTime.now());
+			return;
+		}
+		String sprintId = text(sprint, "id");
+		if (sprintId == null) {
+			receipts.markFailed(receipt, "JIRA_SPRINT_INCOMPLETE");
+			return;
+		}
+		String boardId = text(sprint, "originBoardId");
+		if (boardId == null && sprint.has("originBoardId") && sprint.get("originBoardId").canConvertToLong()) {
+			boardId = String.valueOf(sprint.get("originBoardId").asLong());
+		}
+		if (boardId == null || boardId.isBlank()) {
+			receipts.markProcessed(receipt, LocalDateTime.now());
+			return;
+		}
+		String cloudId = text(root, "cloudId");
+		if (cloudId == null) {
+			cloudId = text(root.path("matchedWebhookIds"), "cloudId");
+		}
+		List<JiraIntegration> matches;
+		if (cloudId != null && !cloudId.isBlank()) {
+			matches = jiraIntegrations.findFetchedActiveByCloudAndBoard(IntegrationStatus.ACTIVE, cloudId, boardId);
+		} else {
+			matches = jiraIntegrations.findFetchedActiveByBoardId(IntegrationStatus.ACTIVE, boardId);
+		}
+		if (matches.isEmpty()) {
+			receipts.markProcessed(receipt, LocalDateTime.now());
+			return;
+		}
+		boolean deleted = webhookEvent.toLowerCase(Locale.ROOT).contains("deleted");
+		LocalDateTime now = LocalDateTime.now();
+		for (JiraIntegration integration : matches) {
+			if (deleted) {
+				tasks.softDeleteSprint(integration, sprintId, now);
+				realtime.publish(
+						ProjectRealtimeEventType.SPRINTS_CHANGED,
+						integration.getProject().getId(),
+						sprintId);
+				realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, integration.getProject().getId());
+			} else {
+				tasks.upsertSprint(
+						integration,
+						sprintId,
+						text(sprint, "name"),
+						text(sprint, "state"),
+						ProjectionMappings.parseInstant(text(sprint, "startDate")),
+						ProjectionMappings.parseInstant(text(sprint, "endDate")),
+						text(sprint, "goal"),
+						ProjectionMappings.parseInstant(text(sprint, "completeDate")));
+				realtime.publish(
+						ProjectRealtimeEventType.SPRINTS_CHANGED,
+						integration.getProject().getId(),
+						sprintId);
+			}
+		}
+		receipts.markProcessed(receipt, LocalDateTime.now());
+	}
+
 	private static IssueSummary toSummary(String id, String key, JsonNode fields) {
 		JsonNode status = fields.path("status");
 		JsonNode category = status.path("statusCategory");
 		JsonNode type = fields.path("issuetype");
 		JsonNode assignee = fields.path("assignee");
+		JsonNode priority = fields.path("priority");
+		JsonNode sprintNode = fields.path("sprint");
+		String sprintId = null;
+		String sprintName = null;
+		String sprintState = null;
+		if (sprintNode.isArray() && !sprintNode.isEmpty()) {
+			JsonNode last = sprintNode.get(sprintNode.size() - 1);
+			sprintId = text(last, "id");
+			sprintName = text(last, "name");
+			sprintState = text(last, "state");
+		} else if (sprintNode.isObject()) {
+			sprintId = text(sprintNode, "id");
+			sprintName = text(sprintNode, "name");
+			sprintState = text(sprintNode, "state");
+		}
+		String description = null;
+		JsonNode descriptionNode = fields.get("description");
+		if (descriptionNode != null && descriptionNode.isTextual()) {
+			description = descriptionNode.asText(null);
+		}
 		return new IssueSummary(
 				id,
 				key,
@@ -176,7 +296,16 @@ public class ProviderWebhookProjectionService {
 				text(status, "name"),
 				text(category, "key"),
 				text(type, "name"),
+				text(type, "id"),
 				text(assignee, "accountId"),
+				text(assignee, "displayName"),
+				text(priority, "id"),
+				text(priority, "name"),
+				null,
+				description,
+				sprintId,
+				sprintName,
+				sprintState,
 				text(fields, "created"),
 				text(fields, "updated"));
 	}

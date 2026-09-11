@@ -85,7 +85,15 @@ class JiraTaskSyncServiceTest {
 			return null;
 		}).when(transactionManager).rollback(any());
 		service = new JiraTaskSyncService(
-				integrations, jira, projection, syncJobs, properties, credentials, claims, transactionManager);
+				integrations,
+				jira,
+				projection,
+				syncJobs,
+				properties,
+				credentials,
+				claims,
+				transactionManager,
+				new com.saga.be.realtime.ProjectRealtimePublisher(event -> {}));
 		projectId = UUID.randomUUID();
 		project = new Project();
 		project.setId(projectId);
@@ -315,7 +323,25 @@ class JiraTaskSyncServiceTest {
 		for (int i = 0; i < count; i++) {
 			int n = startId + i;
 			list.add(new IssueSummary(
-					String.valueOf(n), "SAGA-" + n, "T" + n, "1", "To Do", "new", "Task", null, null, null));
+					String.valueOf(n),
+					"SAGA-" + n,
+					"T" + n,
+					"1",
+					"To Do",
+					"new",
+					"Task",
+					"10001",
+					null,
+					null,
+					null,
+					null,
+					null,
+					null,
+					null,
+					null,
+					null,
+					null,
+					null));
 		}
 		return list;
 	}

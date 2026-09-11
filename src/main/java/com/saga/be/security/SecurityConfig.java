@@ -171,7 +171,7 @@ public class SecurityConfig {
 		config.setAllowedOrigins(properties.getFrontendOrigins());
 		config.setAllowCredentials(true);
 		config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-		config.setAllowedHeaders(List.of("Content-Type", "X-XSRF-TOKEN", "X-Requested-With"));
+		config.setAllowedHeaders(List.of("Content-Type", "Accept", "Cache-Control", "X-XSRF-TOKEN", "X-Requested-With"));
 		config.setExposedHeaders(List.of("X-XSRF-TOKEN"));
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
 		source.registerCorsConfiguration("/**", config);

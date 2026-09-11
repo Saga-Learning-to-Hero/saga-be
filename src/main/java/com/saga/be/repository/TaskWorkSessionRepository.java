@@ -13,4 +13,6 @@ public interface TaskWorkSessionRepository extends JpaRepository<TaskWorkSession
 	boolean existsByProject_Id(UUID projectId);
 
 	boolean existsByTask_Project_Id(UUID projectId);
+
+	boolean existsByTask_Id(UUID taskId);
 }

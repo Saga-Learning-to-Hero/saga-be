@@ -265,17 +265,32 @@ public class IntegrationProperties {
 		private String oauthCallbackUrl = "";
 		private String teamOauthCallbackUrl = "";
 		private String webhookUrl = "";
+		/**
+		 * Dedicated high-entropy secret for manual Jira admin webhooks ({@code X-Hub-Signature}).
+		 * Must match the Secret configured on the Jira webhook. Never the OAuth client secret.
+		 */
+		private String webhookSecret = "";
 		private List<String> scopes = new ArrayList<>(List.of(
 				"read:me",
 				"read:jira-user",
 				"read:jira-work",
+				"write:jira-work",
 				"read:project:jira",
 				"read:issue-details:jira",
 				"read:jql:jira",
 				"read:board-scope:jira-software",
+				"write:board-scope:jira-software",
+				"read:board-scope.admin:jira-software",
 				"read:sprint:jira-software",
+				"write:sprint:jira-software",
+				"read:issue:jira-software",
+				"write:issue:jira-software",
 				"manage:jira-webhook",
 				"offline_access"));
+		/** Optional explicit custom field id (e.g. customfield_10016). Resolved via metadata when blank. */
+		private String storyPointsFieldId = "";
+		/** Optional explicit sprint custom field id. Resolved via metadata when blank. */
+		private String sprintFieldId = "";
 
 		public boolean isConfigured() {
 			return enabled
@@ -341,12 +356,36 @@ public class IntegrationProperties {
 			this.webhookUrl = webhookUrl;
 		}
 
+		public String getWebhookSecret() {
+			return webhookSecret;
+		}
+
+		public void setWebhookSecret(String webhookSecret) {
+			this.webhookSecret = webhookSecret;
+		}
+
 		public List<String> getScopes() {
 			return scopes;
 		}
 
 		public void setScopes(List<String> scopes) {
 			this.scopes = scopes;
+		}
+
+		public String getStoryPointsFieldId() {
+			return storyPointsFieldId;
+		}
+
+		public void setStoryPointsFieldId(String storyPointsFieldId) {
+			this.storyPointsFieldId = storyPointsFieldId;
+		}
+
+		public String getSprintFieldId() {
+			return sprintFieldId;
+		}
+
+		public void setSprintFieldId(String sprintFieldId) {
+			this.sprintFieldId = sprintFieldId;
 		}
 	}
 

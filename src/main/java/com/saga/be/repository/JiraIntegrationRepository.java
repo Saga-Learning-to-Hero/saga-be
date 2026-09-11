@@ -59,4 +59,27 @@ public interface JiraIntegrationRepository extends JpaRepository<JiraIntegration
 			@Param("status") IntegrationStatus status,
 			@Param("jiraProjectId") String jiraProjectId,
 			@Param("projectKey") String projectKey);
+
+	@Query(
+			"""
+			select j from JiraIntegration j
+			join fetch j.project
+			where j.connectionStatus = :status
+			  and j.jiraBoardId = :boardId
+			""")
+	List<JiraIntegration> findFetchedActiveByBoardId(
+			@Param("status") IntegrationStatus status, @Param("boardId") String boardId);
+
+	@Query(
+			"""
+			select j from JiraIntegration j
+			join fetch j.project
+			where j.connectionStatus = :status
+			  and j.cloudId = :cloudId
+			  and j.jiraBoardId = :boardId
+			""")
+	List<JiraIntegration> findFetchedActiveByCloudAndBoard(
+			@Param("status") IntegrationStatus status,
+			@Param("cloudId") String cloudId,
+			@Param("boardId") String boardId);
 }

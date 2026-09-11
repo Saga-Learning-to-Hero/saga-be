@@ -144,8 +144,13 @@ class ProjectCommitListQueryCountTest {
 	void setUp() {
 		tx = new TransactionTemplate(transactionManager);
 		ProjectDataAuthorization authorization = new ProjectDataAuthorization(users, members, projects);
-		readService = new ProjectProjectionReadService(tasks, commits, links, authorization);
+		readService = new ProjectProjectionReadService(
+				tasks, commits, links, sprintRepository(), authorization);
 		tx.executeWithoutResult(status -> seedGraph());
+	}
+
+	private com.saga.be.repository.SprintRepository sprintRepository() {
+		return org.mockito.Mockito.mock(com.saga.be.repository.SprintRepository.class);
 	}
 
 	@Test

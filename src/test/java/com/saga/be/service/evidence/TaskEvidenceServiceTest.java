@@ -63,7 +63,15 @@ class TaskEvidenceServiceTest {
 		IntegrationProperties properties = new IntegrationProperties();
 		properties.setReauthWindow(Duration.ofMinutes(10));
 		service = new TaskEvidenceService(
-				tasks, sessions, confirmations, teams, members, users, passwordEncoder, properties);
+				tasks,
+				sessions,
+				confirmations,
+				teams,
+				members,
+				users,
+				passwordEncoder,
+				properties,
+				new com.saga.be.realtime.ProjectRealtimePublisher(event -> {}));
 		student = new UserAccount();
 		student.setId(UUID.randomUUID());
 		student.setAccountRole(AccountRole.STUDENT);

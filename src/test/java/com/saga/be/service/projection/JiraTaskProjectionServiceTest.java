@@ -13,11 +13,14 @@ import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
 import com.saga.be.repository.IdentityMapRepository;
+import com.saga.be.repository.JiraIntegrationRepository;
+import com.saga.be.repository.SprintRepository;
 import com.saga.be.repository.StudentProfileRepository;
 import com.saga.be.repository.TaskRepository;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,15 +41,20 @@ class JiraTaskProjectionServiceTest {
 	private StudentProfileRepository students;
 	@Mock
 	private CommitTaskAutoLinkService autoLink;
+	@Mock
+	private JiraIntegrationRepository jiraIntegrations;
+	@Mock
+	private SprintRepository sprints;
 
 	private JiraTaskProjectionService service;
 	private Project project;
 
 	@BeforeEach
 	void setUp() {
-		service = new JiraTaskProjectionService(tasks, identities, students, autoLink);
+		service = new JiraTaskProjectionService(tasks, identities, students, autoLink, jiraIntegrations, sprints);
 		project = new Project();
 		project.setId(UUID.randomUUID());
+		org.mockito.Mockito.lenient().when(jiraIntegrations.findByProject_Id(project.getId())).thenReturn(Optional.empty());
 	}
 
 	@Test
@@ -201,7 +209,61 @@ class JiraTaskProjectionServiceTest {
 		assertThat(JiraTaskProjectionService.shouldApply(newer, LocalDateTime.of(2026, 1, 2, 10, 6))).isTrue();
 	}
 
+	@Test
+	void upsertBatch_persistsPriorityStoryPointAndSprintRelation() {
+		com.saga.be.entity.jira.JiraIntegration integration = new com.saga.be.entity.jira.JiraIntegration();
+		integration.setId(UUID.randomUUID());
+		integration.setConnectionStatus(com.saga.be.entity.enums.IntegrationStatus.ACTIVE);
+		when(jiraIntegrations.findByProject_Id(project.getId())).thenReturn(Optional.of(integration));
+		when(sprints.findByJiraIntegration_IdAndExternalSprintIdIn(eq(integration.getId()), any()))
+				.thenReturn(List.of());
+		when(sprints.findByJiraIntegration_IdAndExternalSprintId(integration.getId(), "31")).thenReturn(Optional.empty());
+		when(sprints.save(any())).thenAnswer(inv -> {
+			com.saga.be.entity.jira.Sprint sprint = inv.getArgument(0);
+			if (sprint.getId() == null) {
+				sprint.setId(UUID.randomUUID());
+			}
+			return sprint;
+		});
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of());
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary issue = new IssueSummary(
+				"10001",
+				"SAGA-1",
+				"Login",
+				"1",
+				"To Do",
+				"new",
+				"Story",
+				"10001",
+				"acc-1",
+				"Alice",
+				"2",
+				"High",
+				8,
+				"body",
+				"31",
+				"Sprint 1",
+				"active",
+				null,
+				"2026-01-02T10:00:00Z");
+		assertThat(service.upsertBatch(project, "SAGA", List.of(issue))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		Task saved = captor.getValue().getFirst();
+		assertThat(saved.getPriority()).isEqualTo(com.saga.be.entity.enums.Priority.HIGH);
+		assertThat(saved.getStoryPoint()).isEqualTo(8);
+		assertThat(saved.getDescription()).isEqualTo("body");
+		assertThat(saved.getSprint()).isNotNull();
+		assertThat(saved.getSprint().getExternalSprintId()).isEqualTo("31");
+	}
+
 	private static IssueSummary issue(String id, String key, String summary, String updated) {
-		return new IssueSummary(id, key, summary, "1", "To Do", "new", "Task", null, null, updated);
+		return new IssueSummary(
+				id, key, summary, "1", "To Do", "new", "Task", "10001", null, null, null, null, null, null, null, null,
+				null, null, updated);
 	}
 }

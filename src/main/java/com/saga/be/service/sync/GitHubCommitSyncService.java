@@ -18,6 +18,8 @@ import com.saga.be.repository.SyncJobLogRepository;
 import com.saga.be.service.projection.GitCommitProjectionService;
 import com.saga.be.service.projection.GitCommitProjectionService.CommitDraft;
 import com.saga.be.service.projection.ProjectionMappings;
+import com.saga.be.realtime.ProjectRealtimeEventType;
+import com.saga.be.realtime.ProjectRealtimePublisher;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -61,6 +63,7 @@ public class GitHubCommitSyncService {
 	private final SyncJobLogRepository syncJobs;
 	private final SyncJobClaimService claims;
 	private final TransactionTemplate writes;
+	private final ProjectRealtimePublisher realtime;
 
 	public GitHubCommitSyncService(
 			GitRepoRepository repos,
@@ -70,7 +73,8 @@ public class GitHubCommitSyncService {
 			GitCommitProjectionService projection,
 			SyncJobLogRepository syncJobs,
 			SyncJobClaimService claims,
-			PlatformTransactionManager transactionManager) {
+			PlatformTransactionManager transactionManager,
+			ProjectRealtimePublisher realtime) {
 		this.repos = repos;
 		this.installations = installations;
 		this.github = github;
@@ -79,6 +83,7 @@ public class GitHubCommitSyncService {
 		this.syncJobs = syncJobs;
 		this.claims = claims;
 		this.writes = new TransactionTemplate(transactionManager);
+		this.realtime = realtime;
 	}
 
 	/**
@@ -131,6 +136,14 @@ public class GitHubCommitSyncService {
 				finalized = true;
 				return fail(job, "GITHUB_REPO_SYNC_PARTIAL_OR_FAILED", "provider", processed, repoFailures);
 			}
+			final int processedCount = processed;
+			writes.executeWithoutResult(status -> {
+				realtime.publish(ProjectRealtimeEventType.SYNC_STATUS_CHANGED, projectId);
+				if (processedCount > 0) {
+					realtime.publish(ProjectRealtimeEventType.COMMITS_CHANGED, projectId);
+					realtime.publish(ProjectRealtimeEventType.TASK_LINKS_CHANGED, projectId);
+				}
+			});
 			finalized = true;
 			return claims.markSucceeded(job, processed);
 		} catch (IntegrationException ex) {

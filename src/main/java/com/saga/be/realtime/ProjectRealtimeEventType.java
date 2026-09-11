@@ -1,0 +1,11 @@
+package com.saga.be.realtime;
+
+public enum ProjectRealtimeEventType {
+	READY,
+	TASKS_CHANGED,
+	SPRINTS_CHANGED,
+	COMMITS_CHANGED,
+	TASK_LINKS_CHANGED,
+	TASK_EVIDENCE_CHANGED,
+	SYNC_STATUS_CHANGED
+}

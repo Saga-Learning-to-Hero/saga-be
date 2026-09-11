@@ -58,14 +58,19 @@ public class GitCommitProjectionService {
 
 	@Transactional
 	public int upsertBatch(GitRepo repo, List<CommitDraft> drafts) {
+		return upsertBatchDetailed(repo, drafts).commitsTouched();
+	}
+
+	@Transactional
+	public UpsertOutcome upsertBatchDetailed(GitRepo repo, List<CommitDraft> drafts) {
 		if (repo == null || repo.getId() == null || drafts == null || drafts.isEmpty()) {
-			return 0;
+			return UpsertOutcome.EMPTY;
 		}
 		List<CommitDraft> valid = drafts.stream()
 				.filter(item -> item != null && item.sha() != null && !item.sha().isBlank())
 				.toList();
 		if (valid.isEmpty()) {
-			return 0;
+			return UpsertOutcome.EMPTY;
 		}
 		Set<String> shas = valid.stream().map(CommitDraft::sha).collect(Collectors.toCollection(HashSet::new));
 		Map<String, GitCommit> existing = commits.findByRepo_IdAndShaHashIn(repo.getId(), shas).stream()
@@ -117,8 +122,12 @@ public class GitCommitProjectionService {
 				.findByProject_Id(repo.getProject().getId())
 				.map(row -> row.getProjectKey())
 				.orElse(null);
-		autoLink.linkCommits(repo.getProject().getId(), projectKey, persisted);
-		return persisted.size();
+		int links = autoLink.linkCommits(repo.getProject().getId(), projectKey, persisted);
+		return new UpsertOutcome(persisted.size(), links);
+	}
+
+	public record UpsertOutcome(int commitsTouched, int linksCreated) {
+		static final UpsertOutcome EMPTY = new UpsertOutcome(0, 0);
 	}
 
 	private Map<String, StudentProfile> resolveAuthors(List<CommitDraft> drafts) {

@@ -87,7 +87,15 @@ class GitHubCommitSyncServiceTest {
 			return null;
 		}).when(transactionManager).rollback(any());
 		service = new GitHubCommitSyncService(
-				repos, installations, github, githubJwt, projection, syncJobs, claims, transactionManager);
+				repos,
+				installations,
+				github,
+				githubJwt,
+				projection,
+				syncJobs,
+				claims,
+				transactionManager,
+				new com.saga.be.realtime.ProjectRealtimePublisher(event -> {}));
 		projectId = UUID.randomUUID();
 		project = new Project();
 		project.setId(projectId);

@@ -12,4 +12,6 @@ public interface ContributionConfirmationRepository extends JpaRepository<Contri
 	boolean existsByProject_Id(UUID projectId);
 
 	boolean existsByTask_Project_Id(UUID projectId);
+
+	boolean existsByTask_Id(UUID taskId);
 }

@@ -17,6 +17,8 @@ import com.saga.be.repository.TaskWorkSessionRepository;
 import com.saga.be.repository.TeamByProjectRepository;
 import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.repository.UserAccountRepository;
+import com.saga.be.realtime.ProjectRealtimeEventType;
+import com.saga.be.realtime.ProjectRealtimePublisher;
 import com.saga.be.service.confirmation.EvidenceHasher;
 import com.saga.be.service.identity.TeamAuthorization;
 import java.time.Instant;
@@ -40,6 +42,7 @@ public class TaskEvidenceService {
 	private final TeamMemberRepository members;
 	private final UserAccountRepository users;
 	private final StepUpAuthenticationService stepUp;
+	private final ProjectRealtimePublisher realtime;
 
 	public TaskEvidenceService(
 			TaskRepository tasks,
@@ -49,13 +52,15 @@ public class TaskEvidenceService {
 			TeamMemberRepository members,
 			UserAccountRepository users,
 			PasswordEncoder passwordEncoder,
-			IntegrationProperties properties) {
+			IntegrationProperties properties,
+			ProjectRealtimePublisher realtime) {
 		this.tasks = tasks;
 		this.sessions = sessions;
 		this.confirmations = confirmations;
 		this.teams = teams;
 		this.members = members;
 		this.users = users;
+		this.realtime = realtime;
 		this.stepUp = new StepUpAuthenticationService(
 				users::findById, passwordEncoder, properties.getReauthWindow(), properties.getReauthMaxFailures());
 	}
@@ -71,7 +76,10 @@ public class TaskEvidenceService {
 		teams.findByProject_Id(task.getProject().getId()).ifPresent(session::setTeam);
 		session.setStartedAt(LocalDateTime.now());
 		session.setStatus(WorkSessionStatus.OPEN);
-		return sessions.save(session);
+		TaskWorkSession saved = sessions.save(session);
+		realtime.publish(
+				ProjectRealtimeEventType.TASK_EVIDENCE_CHANGED, task.getProject().getId(), taskId.toString());
+		return saved;
 	}
 
 	@Transactional
@@ -83,7 +91,12 @@ public class TaskEvidenceService {
 		}
 		session.setEndedAt(LocalDateTime.now());
 		session.setStatus(WorkSessionStatus.STOPPED);
-		return sessions.save(session);
+		TaskWorkSession saved = sessions.save(session);
+		realtime.publish(
+				ProjectRealtimeEventType.TASK_EVIDENCE_CHANGED,
+				session.getProject().getId(),
+				taskId.toString());
+		return saved;
 	}
 
 	@Transactional
@@ -102,7 +115,10 @@ public class TaskEvidenceService {
 		row.setConfirmationMethod(ConfirmationMethod.PASSWORD_STEP_UP);
 		row.setEvidenceSnapshotJson(snapshot);
 		row.setEvidenceHash(EvidenceHasher.sha256(snapshot));
-		return confirmations.save(row);
+		ContributionConfirmation saved = confirmations.save(row);
+		realtime.publish(
+				ProjectRealtimeEventType.TASK_EVIDENCE_CHANGED, task.getProject().getId(), taskId.toString());
+		return saved;
 	}
 
 	private void requireMember(UUID userId, UUID projectId) {

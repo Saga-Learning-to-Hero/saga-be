@@ -7,6 +7,7 @@ import com.saga.be.config.IntegrationProperties;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -180,7 +181,7 @@ public class JiraOAuthClient {
 			int safeMax = Math.max(1, Math.min(maxResults, 100));
 			String jql = "project = \"" + projectKey.replace("\"", "") + "\" ORDER BY updated DESC";
 			String fields =
-					"summary,status,issuetype,assignee,updated,created,description,priority,resolution";
+					"summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint";
 			IssueSearchJqlResponse node = restClient
 					.get()
 					.uri(builder -> {
@@ -314,6 +315,8 @@ public class JiraOAuthClient {
 		IssueStatusCategory category = status == null ? null : status.statusCategory();
 		IssueType type = fields == null ? null : fields.issuetype();
 		IssueAssignee assignee = fields == null ? null : fields.assignee();
+		IssuePriority priority = fields == null ? null : fields.priority();
+		SprintRef sprint = firstSprint(fields == null ? null : fields.sprint());
 		return new IssueSummary(
 				item.id(),
 				item.key(),
@@ -322,9 +325,105 @@ public class JiraOAuthClient {
 				status == null ? null : status.name(),
 				category == null ? null : category.key(),
 				type == null ? null : type.name(),
+				type == null ? null : type.id(),
 				assignee == null ? null : assignee.accountId(),
+				assignee == null ? null : assignee.displayName(),
+				priority == null ? null : priority.id(),
+				priority == null ? null : priority.name(),
+				null,
+				descriptionText(fields == null ? null : fields.description()),
+				sprint == null ? null : sprint.id(),
+				sprint == null ? null : sprint.name(),
+				sprint == null ? null : sprint.state(),
 				fields == null ? null : fields.created(),
 				fields == null ? null : fields.updated());
+	}
+
+	static IssueSummary withStoryPoints(IssueSummary summary, Integer storyPoints) {
+		if (summary == null) {
+			return null;
+		}
+		return new IssueSummary(
+				summary.id(),
+				summary.key(),
+				summary.summary(),
+				summary.statusId(),
+				summary.statusName(),
+				summary.statusCategory(),
+				summary.issueTypeName(),
+				summary.issueTypeId(),
+				summary.assigneeAccountId(),
+				summary.assigneeDisplayName(),
+				summary.priorityId(),
+				summary.priorityName(),
+				storyPoints,
+				summary.description(),
+				summary.sprintExternalId(),
+				summary.sprintName(),
+				summary.sprintState(),
+				summary.created(),
+				summary.updated());
+	}
+
+	private static SprintRef firstSprint(List<SprintRef> sprints) {
+		if (sprints == null || sprints.isEmpty()) {
+			return null;
+		}
+		for (int i = sprints.size() - 1; i >= 0; i--) {
+			SprintRef sprint = sprints.get(i);
+			if (sprint != null && sprint.id() != null && !sprint.id().isBlank()) {
+				return sprint;
+			}
+		}
+		return null;
+	}
+
+	private static String descriptionText(Object node) {
+		if (node == null) {
+			return null;
+		}
+		if (node instanceof String text) {
+			return text.isBlank() ? null : text;
+		}
+		if (node instanceof Map<?, ?> map) {
+			StringBuilder out = new StringBuilder();
+			appendAdfObject(map, out);
+			String text = out.toString().trim();
+			return text.isEmpty() ? null : text;
+		}
+		return null;
+	}
+
+	private static void appendAdfObject(Object node, StringBuilder out) {
+		if (node == null) {
+			return;
+		}
+		if (node instanceof String text) {
+			if (!out.isEmpty()) {
+				out.append(' ');
+			}
+			out.append(text);
+			return;
+		}
+		if (node instanceof Map<?, ?> map) {
+			Object text = map.get("text");
+			if (text instanceof String value && !value.isBlank()) {
+				if (!out.isEmpty()) {
+					out.append(' ');
+				}
+				out.append(value);
+			}
+			Object content = map.get("content");
+			if (content instanceof List<?> list) {
+				for (Object child : list) {
+					appendAdfObject(child, out);
+				}
+			}
+		} else if (node instanceof List<?> list) {
+			for (Object child : list) {
+				appendAdfObject(child, out);
+			}
+		}
 	}
 
 	private TokenResponse postToken(String json) {
@@ -413,9 +512,10 @@ public class JiraOAuthClient {
 			IssueAssignee assignee,
 			String created,
 			String updated,
-			String description,
+			Object description,
 			IssuePriority priority,
-			IssueResolution resolution) {}
+			IssueResolution resolution,
+			List<SprintRef> sprint) {}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record IssueStatus(String id, String name, IssueStatusCategory statusCategory) {}
@@ -430,10 +530,13 @@ public class JiraOAuthClient {
 	public record IssueAssignee(String accountId, String displayName) {}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record IssuePriority(String name) {}
+	public record IssuePriority(String id, String name) {}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record IssueResolution(String name) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record SprintRef(String id, String name, String state) {}
 
 	public record IssueSummary(
 			String id,
@@ -443,7 +546,16 @@ public class JiraOAuthClient {
 			String statusName,
 			String statusCategory,
 			String issueTypeName,
+			String issueTypeId,
 			String assigneeAccountId,
+			String assigneeDisplayName,
+			String priorityId,
+			String priorityName,
+			Integer storyPoints,
+			String description,
+			String sprintExternalId,
+			String sprintName,
+			String sprintState,
 			String created,
 			String updated) {}
 
