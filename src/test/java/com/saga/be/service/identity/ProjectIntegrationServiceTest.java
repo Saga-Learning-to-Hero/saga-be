@@ -126,6 +126,8 @@ class ProjectIntegrationServiceTest {
 	private com.saga.be.service.sync.IntegrationInitialSyncLauncher initialSyncLauncher;
 	@Mock
 	private JiraTaskProjectionHardReset taskProjectionReset;
+	@Mock
+	private com.saga.be.service.jira.JiraDynamicWebhookService jiraWebhooks;
 
 	@InjectMocks
 	private ProjectIntegrationService service;
@@ -673,6 +675,7 @@ class ProjectIntegrationServiceTest {
 		assertEquals("68", captor.getValue().getJiraBoardId());
 		assertEquals(IntegrationStatus.ACTIVE, captor.getValue().getConnectionStatus());
 		verify(initialSyncLauncher).enqueueJiraInitialSync(eq(projectId), eq("jira-access"));
+		verify(jiraWebhooks).ensureRegistered(eq(projectId), eq("jira-access"));
 	}
 
 	@Test
@@ -683,6 +686,8 @@ class ProjectIntegrationServiceTest {
 		existing.setEncryptedAccessToken("enc-access");
 		existing.setEncryptedRefreshToken("enc-refresh");
 		existing.setTokenExpiresAt(java.time.LocalDateTime.now().plusHours(1));
+		existing.setWebhookId("42");
+		existing.setWebhookExpiresAt(java.time.LocalDateTime.now().plusDays(20));
 		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(existing));
 		when(jiraIntegrations.save(any(JiraIntegration.class))).thenAnswer(invocation -> invocation.getArgument(0));
 		Project project = new Project();
@@ -691,6 +696,7 @@ class ProjectIntegrationServiceTest {
 
 		service.disconnectJira(student.getId(), projectId);
 
+		verify(jiraWebhooks).unregisterIfPresent(existing, null);
 		assertEquals(IntegrationStatus.REVOKED, existing.getConnectionStatus());
 		assertNull(existing.getEncryptedAccessToken());
 		assertNull(existing.getEncryptedRefreshToken());

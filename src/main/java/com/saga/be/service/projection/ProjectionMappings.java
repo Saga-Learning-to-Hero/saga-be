@@ -87,14 +87,31 @@ public final class ProjectionMappings {
 		if (value == null || value.isBlank()) {
 			return null;
 		}
+		String normalized = normalizeJiraInstant(value.trim());
 		try {
-			return OffsetDateTime.parse(value).toLocalDateTime();
+			return OffsetDateTime.parse(normalized).toLocalDateTime();
 		} catch (Exception ignored) {
 			try {
-				return LocalDateTime.parse(value);
+				return LocalDateTime.parse(normalized);
 			} catch (Exception ignoredAgain) {
 				return null;
 			}
 		}
+	}
+
+	/** Jira often emits {@code +0000}; ISO-8601 OffsetDateTime expects {@code +00:00}. */
+	private static String normalizeJiraInstant(String value) {
+		if (value.length() >= 5) {
+			char sign = value.charAt(value.length() - 5);
+			if ((sign == '+' || sign == '-')
+					&& Character.isDigit(value.charAt(value.length() - 4))
+					&& Character.isDigit(value.charAt(value.length() - 3))
+					&& Character.isDigit(value.charAt(value.length() - 2))
+					&& Character.isDigit(value.charAt(value.length() - 1))
+					&& value.charAt(value.length() - 3) != ':') {
+				return value.substring(0, value.length() - 2) + ":" + value.substring(value.length() - 2);
+			}
+		}
+		return value;
 	}
 }

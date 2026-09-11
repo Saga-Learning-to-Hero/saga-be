@@ -546,6 +546,7 @@ class ProjectIntegrationTransactionTest {
 					outbox,
 					Mockito.mock(com.saga.be.service.sync.IntegrationInitialSyncLauncher.class),
 					Mockito.mock(com.saga.be.service.identity.JiraTaskProjectionHardReset.class),
+					Mockito.mock(com.saga.be.service.jira.JiraDynamicWebhookService.class),
 					transactionManager);
 		}
 	}

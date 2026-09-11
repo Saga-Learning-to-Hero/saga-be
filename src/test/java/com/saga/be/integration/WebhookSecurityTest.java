@@ -95,6 +95,13 @@ class WebhookSecurityTest {
 	}
 
 	@Test
+	void jiraAuthRequiresJwtOrManualHmacWhenClientSecretConfigured() {
+		byte[] body = "{\"webhookEvent\":\"jira:issue_updated\"}".getBytes(StandardCharsets.UTF_8);
+		assertFalse(com.saga.be.integration.jira.JiraWebhookAuth.accepts(
+				body, null, null, "oauth-client-secret", null));
+	}
+
+	@Test
 	void jiraWebhookSignatureValidatesAgainstDedicatedSecretNotOauthClientSecret() {
 		byte[] body = "{\"webhookEvent\":\"sprint_created\"}".getBytes(StandardCharsets.UTF_8);
 		String webhookSecret = "dedicated-jira-webhook-secret";

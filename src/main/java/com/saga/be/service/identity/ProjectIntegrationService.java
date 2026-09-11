@@ -54,6 +54,7 @@ import com.saga.be.repository.TeamByProjectRepository;
 import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.service.audit.AuditService;
+import com.saga.be.service.jira.JiraDynamicWebhookService;
 import com.saga.be.service.sync.IntegrationInitialSyncLauncher;
 import java.time.Duration;
 import java.time.Instant;
@@ -101,6 +102,7 @@ public class ProjectIntegrationService {
 	private final OutboxPublisher outbox;
 	private final IntegrationInitialSyncLauncher initialSyncLauncher;
 	private final JiraTaskProjectionHardReset taskProjectionReset;
+	private final JiraDynamicWebhookService jiraWebhooks;
 	private final TransactionTemplate writes;
 
 	public ProjectIntegrationService(
@@ -125,6 +127,7 @@ public class ProjectIntegrationService {
 			OutboxPublisher outbox,
 			IntegrationInitialSyncLauncher initialSyncLauncher,
 			JiraTaskProjectionHardReset taskProjectionReset,
+			JiraDynamicWebhookService jiraWebhooks,
 			PlatformTransactionManager transactionManager) {
 		this.users = users;
 		this.projects = projects;
@@ -147,6 +150,7 @@ public class ProjectIntegrationService {
 		this.outbox = outbox;
 		this.initialSyncLauncher = initialSyncLauncher;
 		this.taskProjectionReset = taskProjectionReset;
+		this.jiraWebhooks = jiraWebhooks;
 		this.writes = new TransactionTemplate(Objects.requireNonNull(transactionManager, "transactionManager"));
 	}
 
@@ -784,8 +788,21 @@ public class ProjectIntegrationService {
 						IntegrationErrorCode.JIRA_BOARD_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira board is not accessible.");
 			}
 		}
+		JiraIntegration existing = jiraIntegrations.findByProject_Id(projectId).orElse(null);
+		String priorCloudId = existing == null ? null : existing.getCloudId();
+		String priorWebhookId = existing == null ? null : existing.getWebhookId();
+		boolean priorSource = priorCloudId != null && existing.getJiraProjectId() != null;
+		boolean sameSource = priorSource
+				&& Objects.equals(priorCloudId, site.id())
+				&& Objects.equals(existing.getJiraProjectId(), projectNode.id());
+		boolean sourceReplacement = priorSource && !sameSource;
 		// Consume pending only after source-replace gates inside the write transaction.
 		persistAtomically(() -> persistJiraIntegration(userId, projectId, site, projectNode, selection.boardId()));
+		if (sourceReplacement && priorCloudId != null && priorWebhookId != null) {
+			jiraWebhooks.unregisterRemote(priorCloudId, priorWebhookId, pending.accessToken());
+		}
+		// Provider HTTP outside JDBC: register/reuse dynamic OAuth webhook for realtime delivery.
+		jiraWebhooks.ensureRegistered(projectId, pending.accessToken());
 		triggerJiraInitialSync(projectId, pending.accessToken());
 	}
 
@@ -1002,6 +1019,8 @@ public class ProjectIntegrationService {
 		requireLeader(userId, projectId);
 		JiraIntegration integration = jiraIntegrations.findByProject_Id(projectId).orElseThrow(() -> new IntegrationException(
 				IntegrationErrorCode.INTEGRATION_REVOKED, HttpStatus.NOT_FOUND, "Jira is not connected."));
+		// Delete remote dynamic webhook while credentials still work; ignore remote failures.
+		jiraWebhooks.unregisterIfPresent(integration, null);
 		integration.setConnectionStatus(IntegrationStatus.REVOKED);
 		// Soft-revoke: retain cloud/project/board selection metadata for UX, but drop all credentials so
 		// revoked tokens cannot win over a later reconnect and sync cannot run until ACTIVE again.

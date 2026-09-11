@@ -5,7 +5,7 @@ import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.github.GitHubWebhookSignature;
 import com.saga.be.config.IntegrationProperties;
-import com.saga.be.integration.jira.JiraWebhookSignature;
+import com.saga.be.integration.jira.JiraWebhookAuth;
 import com.saga.be.integration.webhook.WebhookReceiptService;
 import com.saga.be.repository.WebhookReceiptRepository;
 import com.saga.be.service.attribution.AttributionWarningService;
@@ -86,16 +86,21 @@ public class ProviderWebhookController {
 	@PostMapping("/jira")
 	public ResponseEntity<Void> jira(
 			@RequestHeader(value = "X-Atlassian-Webhook-Identifier", required = false) String delivery,
+			@RequestHeader(value = "Authorization", required = false) String authorization,
 			@RequestHeader(value = "X-Hub-Signature", required = false) String signature,
 			HttpServletRequest request)
 			throws IOException {
 		byte[] body = request.getInputStream().readAllBytes();
-		String webhookSecret = properties.getJira().getWebhookSecret();
-		// Dedicated Jira webhook secret only — never the Atlassian OAuth client secret.
-		// Jira Cloud sends X-Hub-Signature (not X-Hub-Signature-256).
-		if (!JiraWebhookSignature.accepts(body, webhookSecret, signature)) {
+		// OAuth dynamic webhooks: Authorization Bearer JWT (client secret).
+		// Optional manual admin fallback: X-Hub-Signature HMAC (SAGA_JIRA_WEBHOOK_SECRET).
+		if (!JiraWebhookAuth.accepts(
+				body,
+				authorization,
+				signature,
+				properties.getJira().getClientSecret(),
+				properties.getJira().getWebhookSecret())) {
 			warnings.securityFailure(
-					"jira-sig:" + (delivery == null ? "none" : delivery), "Invalid Jira webhook signature.");
+					"jira-sig:" + (delivery == null ? "none" : delivery), "Invalid Jira webhook authentication.");
 			throw new IntegrationException(
 					IntegrationErrorCode.WEBHOOK_SIGNATURE_INVALID,
 					HttpStatus.UNAUTHORIZED,
