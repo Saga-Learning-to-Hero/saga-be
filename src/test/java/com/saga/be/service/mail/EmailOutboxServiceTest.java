@@ -134,6 +134,71 @@ class EmailOutboxServiceTest {
 		store.findById(id).ifPresent(row -> row.setScheduledAt(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC)));
 	}
 
+	// ---------------------------------------------------- terminal-state payload redaction
+
+	@Test
+	void successfulSendRedactsPayloadJson() {
+		EmailOutboxRecord queued = service.enqueue(request("ok@example.com", "PASSWORD_RESET"));
+		String beforeSend = store.findById(queued.id()).orElseThrow().getPayloadJson();
+		assertTrue(beforeSend.contains("Body"), "payload must contain the real content before send");
+
+		EmailOutboxWorker worker = new EmailOutboxWorker(service, new RecordingSender(true));
+		assertEquals(1, worker.processBatch());
+
+		String afterSend = store.findById(queued.id()).orElseThrow().getPayloadJson();
+		assertEquals("{\"redacted\":true}", afterSend);
+	}
+
+	@Test
+	void transientFailureLeavesPayloadIntactSoTheNextRetryCanStillRenderAndSend() {
+		EmailOutboxRecord queued = service.enqueue(request("fail@example.com", "PASSWORD_RESET"));
+		EmailOutboxWorker worker = new EmailOutboxWorker(service, new RecordingSender(false));
+		worker.processBatch(); // attempt 1 of 3 (maxAttempts=3) — must stay PENDING, not FAILED
+
+		EmailOutboxRecord afterFirstFailure = service.get(queued.id());
+		assertEquals(EmailDeliveryStatus.PENDING, afterFirstFailure.deliveryStatus());
+		String payloadAfterTransientFailure = store.findById(queued.id()).orElseThrow().getPayloadJson();
+		assertTrue(
+				payloadAfterTransientFailure.contains("Body"),
+				"a retryable failure must not redact the payload the next attempt needs to render");
+		assertNotEquals("{\"redacted\":true}", payloadAfterTransientFailure);
+
+		// Prove the next retry can still render the untouched content.
+		var rendered = service.render(queued.id());
+		assertEquals("Hello", rendered.subject());
+		assertEquals("Body", rendered.textBody());
+	}
+
+	@Test
+	void finalFailureAfterRetryBudgetExhaustedRedactsPayload() {
+		EmailOutboxRecord queued = service.enqueue(request("fail@example.com", "PASSWORD_RESET"));
+		EmailOutboxWorker worker = new EmailOutboxWorker(service, new RecordingSender(false));
+		worker.processBatch(); // attempt 1/3
+		dueNow(queued.id());
+		worker.processBatch(); // attempt 2/3
+		dueNow(queued.id());
+		worker.processBatch(); // attempt 3/3 -> exhausts maxAttempts=3 -> terminal FAILED
+
+		EmailOutboxRecord terminal = service.get(queued.id());
+		assertEquals(EmailDeliveryStatus.FAILED, terminal.deliveryStatus());
+		assertEquals(3, terminal.attemptCount());
+		String payload = store.findById(queued.id()).orElseThrow().getPayloadJson();
+		assertEquals("{\"redacted\":true}", payload);
+	}
+
+	@Test
+	void passwordResetRedactionMatchesEveryOtherEmailTypeExactly() {
+		EmailOutboxRecord passwordReset = service.enqueue(request("student@example.com", "PASSWORD_RESET"));
+		EmailOutboxRecord courseInvite = service.enqueue(request("student2@example.com", "COURSE_INVITATION"));
+		EmailOutboxWorker worker = new EmailOutboxWorker(service, new RecordingSender(true));
+		worker.processBatch();
+
+		String resetPayload = store.findById(passwordReset.id()).orElseThrow().getPayloadJson();
+		String invitePayload = store.findById(courseInvite.id()).orElseThrow().getPayloadJson();
+		assertEquals("{\"redacted\":true}", resetPayload);
+		assertEquals(resetPayload, invitePayload, "redaction is generic — not special-cased per email type");
+	}
+
 	@Test
 	void disabledSenderLeavesRowPendingWithoutClaiming() {
 		EmailOutboxRecord queued = service.enqueue(request("later@example.com", "DEV_SMOKE"));

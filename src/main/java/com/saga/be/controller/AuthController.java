@@ -3,16 +3,21 @@ package com.saga.be.controller;
 import com.saga.be.auth.AuthErrorCode;
 import com.saga.be.auth.AuthResponses;
 import com.saga.be.auth.LocalAuthService;
+import com.saga.be.auth.PasswordResetService;
 import com.saga.be.auth.PasswordSetupService;
 import com.saga.be.auth.StudentRegistrationService;
 import com.saga.be.config.OpenApiConfig;
 import com.saga.be.dto.ApiErrorResponse;
 import com.saga.be.dto.auth.AuthMeResponse;
 import com.saga.be.dto.auth.CsrfTokenResponse;
+import com.saga.be.dto.auth.ForgotPasswordRequest;
+import com.saga.be.dto.auth.ForgotPasswordResponse;
 import com.saga.be.dto.auth.LoginRequest;
 import com.saga.be.dto.auth.PasswordSetupRequest;
 import com.saga.be.dto.auth.RegisterRequest;
 import com.saga.be.dto.auth.RegisterResponse;
+import com.saga.be.dto.auth.ResetPasswordRequest;
+import com.saga.be.dto.auth.ResetPasswordResponse;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.exception.AuthException;
 import com.saga.be.security.SagaUserPrincipal;
@@ -58,6 +63,7 @@ public class AuthController {
 
 	private final LocalAuthService localAuthService;
 	private final PasswordSetupService passwordSetupService;
+	private final PasswordResetService passwordResetService;
 	private final StudentRegistrationService studentRegistrationService;
 	private final SecurityContextRepository securityContextRepository;
 	private final CookieCsrfTokenRepository csrfTokenRepository;
@@ -66,12 +72,14 @@ public class AuthController {
 	public AuthController(
 			LocalAuthService localAuthService,
 			PasswordSetupService passwordSetupService,
+			PasswordResetService passwordResetService,
 			StudentRegistrationService studentRegistrationService,
 			SecurityContextRepository securityContextRepository,
 			CookieCsrfTokenRepository csrfTokenRepository,
 			ObjectProvider<InvitationClaimService> invitationClaims) {
 		this.localAuthService = localAuthService;
 		this.passwordSetupService = passwordSetupService;
+		this.passwordResetService = passwordResetService;
 		this.studentRegistrationService = studentRegistrationService;
 		this.securityContextRepository = securityContextRepository;
 		this.csrfTokenRepository = csrfTokenRepository;
@@ -256,6 +264,55 @@ public class AuthController {
 	})
 	public ResponseEntity<RegisterResponse> register(@Valid @RequestBody RegisterRequest request) {
 		return ResponseEntity.status(HttpStatus.CREATED).body(studentRegistrationService.register(request));
+	}
+
+	@PostMapping("/password/forgot")
+	@Operation(
+			summary = "Request a password reset link",
+			description =
+					"""
+					Public, CSRF-protected. Always returns the same generic response, whether or not the \
+					email is registered, Google-only, or already has a local password — this endpoint never \
+					reveals account existence. If the account exists, a one-time reset link is emailed via \
+					the transactional email outbox.
+					""")
+	@ApiResponse(responseCode = "200", description = "Generic acknowledgement (does not imply the account exists)")
+	public ForgotPasswordResponse forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+		passwordResetService.forgotPassword(request.email());
+		return ForgotPasswordResponse.generic();
+	}
+
+	@PostMapping("/password/reset")
+	@Operation(
+			summary = "Reset password using an emailed one-time token",
+			description =
+					"""
+					Public, CSRF-protected. Consumes the one-time token from the reset email and sets a new \
+					local password with the existing password policy/encoder. Works even for Google-linked \
+					accounts that have no local password yet — Google login remains available afterward.
+					""")
+	@ApiResponses({
+		@ApiResponse(responseCode = "200", description = "Password updated; token consumed"),
+		@ApiResponse(
+				responseCode = "400",
+				description = "Invalid, expired, or already-used token, or password policy violation",
+				content =
+						@Content(
+								schema = @Schema(implementation = ApiErrorResponse.class),
+								examples = {
+									@ExampleObject(
+											name = "PASSWORD_RESET_TOKEN_INVALID",
+											value =
+													"{\"code\":\"PASSWORD_RESET_TOKEN_INVALID\",\"message\":\"This password reset link is invalid or has already been used.\"}"),
+									@ExampleObject(
+											name = "PASSWORD_RESET_TOKEN_EXPIRED",
+											value =
+													"{\"code\":\"PASSWORD_RESET_TOKEN_EXPIRED\",\"message\":\"This password reset link has expired.\"}")
+								}))
+	})
+	public ResetPasswordResponse resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+		passwordResetService.resetPassword(request.token(), request.newPassword());
+		return ResetPasswordResponse.success();
 	}
 
 	@PostMapping("/password/setup")

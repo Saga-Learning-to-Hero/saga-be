@@ -1,5 +1,6 @@
 package com.saga.be.config;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -13,6 +14,8 @@ public class AuthProperties {
 	private final BootstrapAdmin bootstrapAdmin = new BootstrapAdmin();
 	private final BootstrapLecturer bootstrapLecturer = new BootstrapLecturer();
 	private final Password password = new Password();
+	private String passwordResetUrl = "http://localhost:3000/reset-password";
+	private Duration passwordResetTtl = Duration.ofMinutes(30);
 
 	public List<String> getFrontendOrigins() {
 		return frontendOrigins;
@@ -20,6 +23,22 @@ public class AuthProperties {
 
 	public void setFrontendOrigins(List<String> frontendOrigins) {
 		this.frontendOrigins = frontendOrigins;
+	}
+
+	public String getPasswordResetUrl() {
+		return passwordResetUrl;
+	}
+
+	public void setPasswordResetUrl(String passwordResetUrl) {
+		this.passwordResetUrl = passwordResetUrl;
+	}
+
+	public Duration getPasswordResetTtl() {
+		return passwordResetTtl;
+	}
+
+	public void setPasswordResetTtl(Duration passwordResetTtl) {
+		this.passwordResetTtl = passwordResetTtl;
 	}
 
 	public Cookie getCookie() {

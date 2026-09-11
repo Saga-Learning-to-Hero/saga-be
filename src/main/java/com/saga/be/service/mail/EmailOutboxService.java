@@ -103,12 +103,22 @@ public class EmailOutboxService {
 		return new EmailMessage(row.getRecipientEmail(), subject, textBody, htmlBody);
 	}
 
+	/**
+	 * Payload left in place after a terminal outcome (SENT, or FAILED with no retry left) is never
+	 * read again by this pipeline — {@link #render} only runs before delivery, and
+	 * {@link EmailOutboxRecord} never exposes it. Redacting it here closes the window where a
+	 * one-time secret embedded in an email body (e.g. a password-reset link) would otherwise sit
+	 * in {@code email_outbox.payload_json} indefinitely after delivery is done.
+	 */
+	private static final String REDACTED_PAYLOAD = "{\"redacted\":true}";
+
 	@Transactional
 	public void markSent(UUID id) {
 		store.findById(id).ifPresent(row -> {
 			row.setDeliveryStatus(EmailDeliveryStatus.SENT);
 			row.setSentAt(now());
 			row.setLastFailureCode(null);
+			row.setPayloadJson(REDACTED_PAYLOAD);
 			store.save(row);
 		});
 	}
@@ -121,6 +131,7 @@ public class EmailOutboxService {
 			row.setLastAttemptAt(now());
 			if (attempts >= properties.getMaxAttempts()) {
 				row.setDeliveryStatus(EmailDeliveryStatus.FAILED);
+				row.setPayloadJson(REDACTED_PAYLOAD);
 			} else {
 				row.setDeliveryStatus(EmailDeliveryStatus.PENDING);
 				long multiplier = 1L << Math.min(Math.max(attempts, 1) - 1, 6);

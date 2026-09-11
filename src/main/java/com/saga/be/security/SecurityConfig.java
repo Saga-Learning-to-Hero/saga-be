@@ -114,6 +114,8 @@ public class SecurityConfig {
 						.permitAll()
 						.requestMatchers("/api/auth/register")
 						.permitAll()
+						.requestMatchers("/api/auth/password/forgot", "/api/auth/password/reset")
+						.permitAll()
 						.requestMatchers("/api/auth/logout")
 						.permitAll()
 						.requestMatchers("/api/webhooks/github", "/api/webhooks/jira")

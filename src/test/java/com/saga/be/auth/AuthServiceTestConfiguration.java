@@ -27,4 +27,10 @@ public class AuthServiceTestConfiguration {
 	StudentRegistrationService studentRegistrationService() {
 		return Mockito.mock(StudentRegistrationService.class);
 	}
+
+	@Bean
+	@Primary
+	PasswordResetService passwordResetService() {
+		return Mockito.mock(PasswordResetService.class);
+	}
 }
