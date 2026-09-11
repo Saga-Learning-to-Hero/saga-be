@@ -14,8 +14,6 @@ public interface GithubInstallationRepository extends JpaRepository<GithubInstal
 	Optional<GithubInstallation> findByInstallationId(Long installationId);
 
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
-	@Query("select g from GithubInstallation g left join fetch g.project where g.installationId = :installationId")
+	@Query("select g from GithubInstallation g where g.installationId = :installationId")
 	Optional<GithubInstallation> findByInstallationIdForUpdate(@Param("installationId") Long installationId);
-
-	Optional<GithubInstallation> findByProject_Id(UUID projectId);
 }

@@ -16,6 +16,7 @@ import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.SyncJobStatus;
 import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.github.GithubInstallation;
+import com.saga.be.entity.github.GithubProjectInstallation;
 import com.saga.be.entity.integration.SyncJobLog;
 import com.saga.be.entity.project.Project;
 import com.saga.be.exception.IntegrationException;
@@ -24,7 +25,7 @@ import com.saga.be.integration.github.GitHubAppJwtService;
 import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.github.GitHubOAuthClient.CommitSummary;
 import com.saga.be.repository.GitRepoRepository;
-import com.saga.be.repository.GithubInstallationRepository;
+import com.saga.be.repository.GithubProjectInstallationRepository;
 import com.saga.be.repository.SyncJobLogRepository;
 import com.saga.be.service.projection.GitCommitProjectionService;
 import com.saga.be.service.projection.GitCommitProjectionService.CommitDraft;
@@ -52,7 +53,7 @@ class GitHubCommitSyncServiceTest {
 	@Mock
 	private GitRepoRepository repos;
 	@Mock
-	private GithubInstallationRepository installations;
+	private GithubProjectInstallationRepository projectInstallations;
 	@Mock
 	private GitHubOAuthClient github;
 	@Mock
@@ -88,7 +89,7 @@ class GitHubCommitSyncServiceTest {
 		}).when(transactionManager).rollback(any());
 		service = new GitHubCommitSyncService(
 				repos,
-				installations,
+				projectInstallations,
 				github,
 				githubJwt,
 				projection,
@@ -404,7 +405,10 @@ class GitHubCommitSyncServiceTest {
 		GithubInstallation installation = new GithubInstallation();
 		installation.setInstallationId(99L);
 		installation.setInstallationStatus(GitHubInstallationStatus.ACTIVE);
-		when(installations.findByProject_Id(projectId)).thenReturn(Optional.of(installation));
+		GithubProjectInstallation membership = new GithubProjectInstallation();
+		membership.setProject(project);
+		membership.setInstallation(installation);
+		when(projectInstallations.findByProject_IdWithInstallation(projectId)).thenReturn(List.of(membership));
 		when(repos.findFetchedByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE))
 				.thenReturn(active);
 		when(githubJwt.createJwt()).thenReturn("jwt");

@@ -41,6 +41,13 @@ public class GithubInstallation extends BaseEntity {
 	@JoinColumn(name = "installed_by_user_id", nullable = true)
 	private UserAccount installedBy;
 
+	/**
+	 * LEGACY/DEPRECATED (pre-V12): exclusive SAGA project owner column.
+	 * Authoritative membership is {@code github_project_installation}.
+	 * Do not write new ownership here; do not use for availability checks.
+	 * Retained for backfill provenance only; not dropped in V12.
+	 */
+	@Deprecated
 	@ManyToOne(fetch = FetchType.LAZY, optional = true)
 	@JoinColumn(name = "project_id", nullable = true)
 	private Project project;

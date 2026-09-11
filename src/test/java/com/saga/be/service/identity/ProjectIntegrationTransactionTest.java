@@ -30,6 +30,7 @@ import com.saga.be.entity.enums.OAuthFlowType;
 import com.saga.be.entity.enums.RoleInTeam;
 import com.saga.be.entity.enums.SubjectStatus;
 import com.saga.be.entity.github.GithubInstallation;
+import com.saga.be.entity.github.GithubProjectInstallation;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
 import com.saga.be.entity.project.TeamMember;
@@ -46,6 +47,7 @@ import com.saga.be.repository.AuditLogRepository;
 import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.CourseRepository;
 import com.saga.be.repository.GithubInstallationRepository;
+import com.saga.be.repository.GithubProjectInstallationRepository;
 import com.saga.be.repository.GitRepoRepository;
 import com.saga.be.repository.IdentityMapRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
@@ -158,6 +160,8 @@ class ProjectIntegrationTransactionTest {
 	@Autowired
 	private GithubInstallationRepository installations;
 	@Autowired
+	private GithubProjectInstallationRepository projectInstallations;
+	@Autowired
 	private AuditLogRepository audits;
 	@Autowired
 	private OAuthStateService oauthStates;
@@ -178,6 +182,7 @@ class ProjectIntegrationTransactionTest {
 		ToggleAuditService.fail.set(false);
 		Mockito.reset(oauthStates, github, githubJwt);
 		tx.executeWithoutResult(status -> {
+			projectInstallations.deleteAll();
 			installations.deleteAll();
 			audits.deleteAll();
 			members.deleteAll();
@@ -285,8 +290,11 @@ class ProjectIntegrationTransactionTest {
 		tx.executeWithoutResult(status -> {
 			entityManager.clear();
 			GithubInstallation saved = installations.findByInstallationId(158866076L).orElseThrow();
-			assertEquals(project.getId(), saved.getProject().getId());
 			assertEquals(GitHubInstallationStatus.ACTIVE, saved.getInstallationStatus());
+			List<GithubProjectInstallation> memberships =
+					projectInstallations.findByProject_IdWithInstallation(project.getId());
+			assertEquals(1, memberships.size());
+			assertEquals(saved.getId(), memberships.getFirst().getInstallation().getId());
 			List<AuditLog> logs = audits.findAll();
 			assertEquals(1, logs.size());
 			assertEquals("GITHUB_INSTALLATION_CONNECTED", logs.getFirst().getAction());
@@ -302,6 +310,7 @@ class ProjectIntegrationTransactionTest {
 		tx.executeWithoutResult(status -> {
 			entityManager.clear();
 			assertTrue(installations.findAll().isEmpty());
+			assertTrue(projectInstallations.findAll().isEmpty());
 			assertTrue(audits.findAll().isEmpty());
 		});
 	}
@@ -353,7 +362,7 @@ class ProjectIntegrationTransactionTest {
 	}
 
 	@Test
-	void concurrentBindOfSameInstallationSecondWriterGetsConflict() {
+	void concurrentBindOfSameInstallationCreatesSharedMemberships() {
 		stubGithubProviderSuccess();
 		String first = service.completeGithubInstallation(leader.getId(), "state", 158866076L, null);
 		assertEquals("http://localhost:3000/integrations/success", first);
@@ -400,14 +409,14 @@ class ProjectIntegrationTransactionTest {
 						"https://github.com/settings/installations/158866076",
 						"selected"));
 
-		IntegrationException ex = assertThrows(
-				IntegrationException.class,
-				() -> service.completeGithubInstallation(admin.getId(), "state-b", 158866076L, null));
-		assertEquals(IntegrationErrorCode.GITHUB_INSTALLATION_IN_USE, ex.getCode());
+		String second = service.completeGithubInstallation(admin.getId(), "state-b", 158866076L, null);
+		assertEquals("http://localhost:3000/integrations/success", second);
 		tx.executeWithoutResult(status -> {
 			entityManager.clear();
 			GithubInstallation saved = installations.findByInstallationId(158866076L).orElseThrow();
-			assertEquals(project.getId(), saved.getProject().getId());
+			assertEquals(2, projectInstallations.countByInstallation_Id(saved.getId()));
+			assertEquals(1, projectInstallations.findByProject_IdWithInstallation(project.getId()).size());
+			assertEquals(1, projectInstallations.findByProject_IdWithInstallation(otherProject.getId()).size());
 		});
 	}
 
@@ -511,6 +520,7 @@ class ProjectIntegrationTransactionTest {
 				TeamMemberRepository members,
 				IdentityMapRepository identities,
 				GithubInstallationRepository installations,
+				GithubProjectInstallationRepository projectInstallations,
 				GitRepoRepository repos,
 				JiraIntegrationRepository jiraIntegrations,
 				SyncJobLogRepository syncJobs,
@@ -531,6 +541,7 @@ class ProjectIntegrationTransactionTest {
 					members,
 					identities,
 					installations,
+					projectInstallations,
 					repos,
 					jiraIntegrations,
 					syncJobs,

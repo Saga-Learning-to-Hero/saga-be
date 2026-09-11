@@ -24,6 +24,7 @@ import com.saga.be.entity.enums.GitProvider;
 import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.github.GithubInstallation;
+import com.saga.be.entity.github.GithubProjectInstallation;
 import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
@@ -46,6 +47,7 @@ import com.saga.be.integration.oauth.Pkce;
 import com.saga.be.messaging.OutboxPublisher;
 import com.saga.be.repository.GitRepoRepository;
 import com.saga.be.repository.GithubInstallationRepository;
+import com.saga.be.repository.GithubProjectInstallationRepository;
 import com.saga.be.repository.IdentityMapRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.ProjectRepository;
@@ -87,6 +89,7 @@ public class ProjectIntegrationService {
 	private final TeamMemberRepository members;
 	private final IdentityMapRepository identities;
 	private final GithubInstallationRepository installations;
+	private final GithubProjectInstallationRepository projectInstallations;
 	private final GitRepoRepository repos;
 	private final JiraIntegrationRepository jiraIntegrations;
 	private final SyncJobLogRepository syncJobs;
@@ -112,6 +115,7 @@ public class ProjectIntegrationService {
 			TeamMemberRepository members,
 			IdentityMapRepository identities,
 			GithubInstallationRepository installations,
+			GithubProjectInstallationRepository projectInstallations,
 			GitRepoRepository repos,
 			JiraIntegrationRepository jiraIntegrations,
 			SyncJobLogRepository syncJobs,
@@ -135,6 +139,7 @@ public class ProjectIntegrationService {
 		this.members = members;
 		this.identities = identities;
 		this.installations = installations;
+		this.projectInstallations = projectInstallations;
 		this.repos = repos;
 		this.jiraIntegrations = jiraIntegrations;
 		this.syncJobs = syncJobs;
@@ -157,7 +162,7 @@ public class ProjectIntegrationService {
 	@Transactional(readOnly = true)
 	public ProjectIntegrationsResponse summary(UUID userId, UUID projectId) {
 		requireMember(userId, projectId);
-		GithubInstallation installation = installations.findByProject_Id(projectId).orElse(null);
+		GithubInstallation installation = requireCurrentGithubInstallation(projectId).orElse(null);
 		List<ConnectedRepo> connected = repos.findByProject_Id(projectId).stream()
 				.map(repo -> new ConnectedRepo(
 						repo.getId(),
@@ -213,12 +218,10 @@ public class ProjectIntegrationService {
 						HttpStatus.BAD_REQUEST,
 						"Selected installation is not part of this project's GitHub provenance.");
 			}
-			assertInstallationAvailableForProject(selectedInstallationId, projectId);
 			return startGithubReconnectOAuth(userId, projectId, team.getId(), safeReturn, verifier, selectedInstallationId);
 		}
 		if (historical.size() == 1) {
 			Long installationId = historical.iterator().next();
-			assertInstallationAvailableForProject(installationId, projectId);
 			return startGithubReconnectOAuth(userId, projectId, team.getId(), safeReturn, verifier, installationId);
 		}
 		if (historical.size() > 1) {
@@ -358,17 +361,17 @@ public class ProjectIntegrationService {
 			UUID userId, UUID projectId, Long installationId, GitHubOAuthClient.GitHubInstallationResponse installation) {
 		requireLeader(userId, projectId);
 		Project project = requireFetchedProject(projectId);
-		installations.findByProject_Id(projectId).ifPresent(existing -> {
-			if (!installationId.equals(existing.getInstallationId())) {
-				existing.setProject(null);
-				existing.setInstallationStatus(GitHubInstallationStatus.SUSPENDED);
-				installations.save(existing);
+		// Soft-replace this project's other memberships; never suspend a shared provider installation.
+		List<GithubProjectInstallation> priorMemberships = projectInstallations.findByProject_IdWithInstallation(projectId);
+		for (GithubProjectInstallation prior : priorMemberships) {
+			if (prior.getInstallation() != null
+					&& !installationId.equals(prior.getInstallation().getInstallationId())) {
+				projectInstallations.delete(prior);
 			}
-		});
+		}
 		GithubInstallation entity = installations
 				.findByInstallationIdForUpdate(installationId)
 				.orElseGet(GithubInstallation::new);
-		assertInstallationRowAvailableForProject(entity, projectId);
 		entity.setInstallationId(installationId);
 		entity.setAppId(installation.appId() == null ? 0L : installation.appId());
 		entity.setAccountLogin(installation.account() == null ? null : installation.account().login());
@@ -376,15 +379,11 @@ public class ProjectIntegrationService {
 		entity.setHtmlUrl(installation.htmlUrl());
 		entity.setInstallationStatus(GitHubInstallationStatus.ACTIVE);
 		entity.setInstalledBy(users.findById(userId).orElseThrow());
-		entity.setProject(project);
+		// Do not write legacy github_installation.project_id — membership table is authoritative.
 		entity.setLastVerifiedAt(LocalDateTime.now());
 		entity.setConsecutiveFailures(0);
-		GithubInstallation saved;
-		try {
-			saved = installations.save(entity);
-		} catch (DataIntegrityViolationException ex) {
-			throw installationInUse();
-		}
+		GithubInstallation saved = installations.save(entity);
+		ensureProjectInstallationMembership(project, saved);
 		audit.record(
 				users.findById(userId).orElseThrow(),
 				project,
@@ -403,13 +402,18 @@ public class ProjectIntegrationService {
 	}
 
 	/**
-	 * Recovers distinct prior installation ids from project-bound git_repo rows.
-	 * Empty when no repo provenance exists — callers must not invent a SUSPENDED installation.
+	 * Recovers distinct prior installation ids from membership first, then git_repo provenance.
+	 * Empty when neither source exists — callers must not invent a SUSPENDED installation.
 	 * Multiple ids are ambiguous hints, not a terminal conflict.
 	 */
 	Set<Long> recoverGithubReconnectCandidates(UUID projectId) {
-		List<GitRepo> projectRepos = repos.findByProject_IdWithInstallation(projectId);
 		Set<Long> installationIds = new java.util.LinkedHashSet<>();
+		for (GithubProjectInstallation membership : projectInstallations.findByProject_IdWithInstallation(projectId)) {
+			if (membership.getInstallation() != null && membership.getInstallation().getInstallationId() != null) {
+				installationIds.add(membership.getInstallation().getInstallationId());
+			}
+		}
+		List<GitRepo> projectRepos = repos.findByProject_IdWithInstallation(projectId);
 		for (GitRepo repo : projectRepos) {
 			if (repo.getInstallation() == null || repo.getInstallation().getInstallationId() == null) {
 				continue;
@@ -441,10 +445,9 @@ public class ProjectIntegrationService {
 						HttpStatus.BAD_REQUEST,
 						"Selected installation is not part of this project's GitHub provenance.");
 			}
-			assertInstallationAvailableForProject(installationId, state.projectId());
 			return ReconnectResolution.bind(installationId);
 		}
-		List<GithubReconnectCandidateResponse> eligible = eligibleUserInstallations(userToken, state.projectId());
+		List<GithubReconnectCandidateResponse> eligible = eligibleUserInstallations(userToken);
 		if (!historical.isEmpty()) {
 			eligible = eligible.stream().filter(c -> historical.contains(c.installationId())).toList();
 		}
@@ -457,7 +460,7 @@ public class ProjectIntegrationService {
 		return ReconnectResolution.bind(eligible.getFirst().installationId());
 	}
 
-	private List<GithubReconnectCandidateResponse> eligibleUserInstallations(String userToken, UUID projectId) {
+	private List<GithubReconnectCandidateResponse> eligibleUserInstallations(String userToken) {
 		GitHubOAuthClient.GitHubUserInstallationsResponse userInstalls = github.listUserInstallations(userToken);
 		if (userInstalls == null || userInstalls.installations() == null) {
 			return List.of();
@@ -481,11 +484,6 @@ public class ProjectIntegrationService {
 				continue;
 			}
 			Optional<GithubInstallation> existing = installations.findByInstallationId(node.id());
-			if (existing.isPresent()
-					&& existing.get().getProject() != null
-					&& !existing.get().getProject().getId().equals(projectId)) {
-				continue;
-			}
 			String login = verified.account() == null ? null : verified.account().login();
 			String type = verified.account() == null ? null : verified.account().type();
 			if ((login == null || login.isBlank()) && existing.isPresent()) {
@@ -566,39 +564,48 @@ public class ProjectIntegrationService {
 		}
 	}
 
-	private void assertInstallationAvailableForProject(Long installationId, UUID projectId) {
-		installations.findByInstallationId(installationId).ifPresent(existing -> assertInstallationRowAvailableForProject(existing, projectId));
-	}
-
-	private void assertInstallationRowAvailableForProject(GithubInstallation entity, UUID projectId) {
-		if (entity.getProject() != null && !entity.getProject().getId().equals(projectId)) {
-			throw installationInUse();
+	private void ensureProjectInstallationMembership(Project project, GithubInstallation installation) {
+		if (projectInstallations.existsByProject_IdAndInstallation_Id(project.getId(), installation.getId())) {
+			return;
+		}
+		GithubProjectInstallation membership = new GithubProjectInstallation();
+		membership.setProject(project);
+		membership.setInstallation(installation);
+		try {
+			projectInstallations.save(membership);
+		} catch (DataIntegrityViolationException ignored) {
+			// Concurrent insert of the same (project, installation) pair — idempotent success.
 		}
 	}
 
-	private static IntegrationException installationInUse() {
-		return new IntegrationException(
-				IntegrationErrorCode.GITHUB_INSTALLATION_IN_USE,
-				HttpStatus.CONFLICT,
-				"GitHub installation is already bound to another SAGA project.");
+	Optional<GithubInstallation> requireCurrentGithubInstallation(UUID projectId) {
+		List<GithubProjectInstallation> memberships = projectInstallations.findByProject_IdWithInstallation(projectId);
+		if (memberships.isEmpty()) {
+			return Optional.empty();
+		}
+		return Optional.ofNullable(memberships.getFirst().getInstallation());
 	}
 
-	public List<GitHubOAuthClient.RepoSummary> listGithubRepos(UUID userId, UUID projectId) {
-		requireLeader(userId, projectId);
-		GithubInstallation installation = installations.findByProject_Id(projectId).orElseThrow(() -> new IntegrationException(
+	private GithubInstallation requireActiveGithubInstallationForProject(UUID projectId) {
+		GithubInstallation installation = requireCurrentGithubInstallation(projectId).orElseThrow(() -> new IntegrationException(
 				IntegrationErrorCode.GITHUB_INSTALLATION_INVALID, HttpStatus.BAD_REQUEST, "No verified GitHub installation."));
 		if (installation.getInstallationStatus() != GitHubInstallationStatus.ACTIVE) {
 			throw new IntegrationException(
 					IntegrationErrorCode.INTEGRATION_REVOKED, HttpStatus.CONFLICT, "GitHub installation is not active.");
 		}
+		return installation;
+	}
+
+	public List<GitHubOAuthClient.RepoSummary> listGithubRepos(UUID userId, UUID projectId) {
+		requireLeader(userId, projectId);
+		GithubInstallation installation = requireActiveGithubInstallationForProject(projectId);
 		String token = github.createInstallationToken(githubJwt.createJwt(), installation.getInstallationId());
 		return github.parseRepos(github.listInstallationRepos(token));
 	}
 
 	public void selectGithubRepos(UUID userId, UUID projectId, List<SelectGitHubRepositoryRequest> selected) {
 		requireLeader(userId, projectId);
-		GithubInstallation installation = installations.findByProject_Id(projectId).orElseThrow(() -> new IntegrationException(
-				IntegrationErrorCode.GITHUB_INSTALLATION_INVALID, HttpStatus.BAD_REQUEST, "No verified GitHub installation."));
+		GithubInstallation installation = requireActiveGithubInstallationForProject(projectId);
 		String token = github.createInstallationToken(githubJwt.createJwt(), installation.getInstallationId());
 		List<GitHubOAuthClient.RepoSummary> accessible = github.parseRepos(github.listInstallationRepos(token));
 		persistAtomically(() -> persistSelectedRepos(userId, projectId, installation, selected, accessible));
@@ -623,7 +630,15 @@ public class ProjectIntegrationService {
 							IntegrationErrorCode.GITHUB_REPOSITORY_NOT_ACCESSIBLE,
 							HttpStatus.FORBIDDEN,
 							"Repository is not accessible to the installation."));
-			GitRepo repo = repos.findByProviderAndRepositoryId(GitProvider.GITHUB, repositoryId).orElseGet(GitRepo::new);
+			GitRepo repo = repos.findByProviderAndRepositoryId(GitProvider.GITHUB, repositoryId).orElse(null);
+			if (repo != null
+					&& repo.getProject() != null
+					&& !repo.getProject().getId().equals(projectId)) {
+				throw repositoryInUse();
+			}
+			if (repo == null) {
+				repo = new GitRepo();
+			}
 			repo.setProject(project);
 			repo.setInstallation(installation);
 			repo.setProvider(GitProvider.GITHUB);
@@ -638,7 +653,12 @@ public class ProjectIntegrationService {
 			if (item.role() != null) {
 				repo.setRepositoryRole(item.role());
 			}
-			GitRepo saved = repos.save(repo);
+			GitRepo saved;
+			try {
+				saved = repos.save(repo);
+			} catch (DataIntegrityViolationException ex) {
+				throw repositoryInUse();
+			}
 			audit.record(
 					actor,
 					project,
@@ -657,6 +677,13 @@ public class ProjectIntegrationService {
 		}
 	}
 
+	private static IntegrationException repositoryInUse() {
+		return new IntegrationException(
+				IntegrationErrorCode.GITHUB_REPOSITORY_IN_USE,
+				HttpStatus.CONFLICT,
+				"GitHub repository is already bound to another SAGA project.");
+	}
+
 	@Transactional
 	public void disconnectGithub(UUID userId, UUID projectId) {
 		requireLeader(userId, projectId);
@@ -665,11 +692,8 @@ public class ProjectIntegrationService {
 			repo.setConnectionStatus(IntegrationStatus.REVOKED);
 			repos.save(repo);
 		});
-		installations.findByProject_Id(projectId).ifPresent(installation -> {
-			installation.setInstallationStatus(GitHubInstallationStatus.SUSPENDED);
-			installation.setProject(null);
-			installations.save(installation);
-		});
+		// Remove only this project's memberships; leave shared installation ACTIVE for other projects.
+		projectInstallations.deleteByProject_Id(projectId);
 		audit.record(
 				users.findById(userId).orElseThrow(),
 				project,

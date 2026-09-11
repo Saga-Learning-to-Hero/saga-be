@@ -6,6 +6,7 @@ import com.saga.be.entity.enums.SyncJobStatus;
 import com.saga.be.entity.enums.SyncJobType;
 import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.github.GithubInstallation;
+import com.saga.be.entity.github.GithubProjectInstallation;
 import com.saga.be.entity.integration.SyncJobLog;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
@@ -13,7 +14,7 @@ import com.saga.be.integration.github.GitHubAppJwtService;
 import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.github.GitHubOAuthClient.CommitSummary;
 import com.saga.be.repository.GitRepoRepository;
-import com.saga.be.repository.GithubInstallationRepository;
+import com.saga.be.repository.GithubProjectInstallationRepository;
 import com.saga.be.repository.SyncJobLogRepository;
 import com.saga.be.service.projection.GitCommitProjectionService;
 import com.saga.be.service.projection.GitCommitProjectionService.CommitDraft;
@@ -56,7 +57,7 @@ public class GitHubCommitSyncService {
 	private static final Logger log = LoggerFactory.getLogger(GitHubCommitSyncService.class);
 
 	private final GitRepoRepository repos;
-	private final GithubInstallationRepository installations;
+	private final GithubProjectInstallationRepository projectInstallations;
 	private final GitHubOAuthClient github;
 	private final GitHubAppJwtService githubJwt;
 	private final GitCommitProjectionService projection;
@@ -67,7 +68,7 @@ public class GitHubCommitSyncService {
 
 	public GitHubCommitSyncService(
 			GitRepoRepository repos,
-			GithubInstallationRepository installations,
+			GithubProjectInstallationRepository projectInstallations,
 			GitHubOAuthClient github,
 			GitHubAppJwtService githubJwt,
 			GitCommitProjectionService projection,
@@ -76,7 +77,7 @@ public class GitHubCommitSyncService {
 			PlatformTransactionManager transactionManager,
 			ProjectRealtimePublisher realtime) {
 		this.repos = repos;
-		this.installations = installations;
+		this.projectInstallations = projectInstallations;
 		this.github = github;
 		this.githubJwt = githubJwt;
 		this.projection = projection;
@@ -97,7 +98,7 @@ public class GitHubCommitSyncService {
 		}
 		boolean finalized = false;
 		try {
-			GithubInstallation installation = installations.findByProject_Id(projectId).orElse(null);
+			GithubInstallation installation = currentInstallation(projectId);
 			if (installation == null || installation.getInstallationStatus() != GitHubInstallationStatus.ACTIVE) {
 				finalized = true;
 				return fail(job, "GITHUB_INSTALLATION_INACTIVE", "persist", 0, 0);
@@ -278,5 +279,13 @@ public class GitHubCommitSyncService {
 			row.setCompletedAt(LocalDateTime.now());
 			return syncJobs.save(row);
 		});
+	}
+
+	private GithubInstallation currentInstallation(UUID projectId) {
+		List<GithubProjectInstallation> memberships = projectInstallations.findByProject_IdWithInstallation(projectId);
+		if (memberships.isEmpty()) {
+			return null;
+		}
+		return memberships.getFirst().getInstallation();
 	}
 }
