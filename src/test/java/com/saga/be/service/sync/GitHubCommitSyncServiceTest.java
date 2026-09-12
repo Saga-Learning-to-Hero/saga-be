@@ -141,6 +141,38 @@ class GitHubCommitSyncServiceTest {
 	}
 
 	@Test
+	void claimCutoff_excludesPreClaimLocallyWithoutProviderSince() {
+		GitRepo repo = activeRepo("org", "a");
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100)))
+				.thenReturn(List.of(
+						new CommitSummary("pre", "old", "2025-12-01T00:00:00Z", null, null),
+						new CommitSummary("edge", "edge", "2026-01-01T00:00:00Z", null, null),
+						new CommitSummary("post", "new", "2026-06-01T12:00:00Z", null, null)));
+
+		SyncJobLog job = service.initialSync(projectId);
+
+		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		assertThat(job.getItemsProcessed()).isEqualTo(2);
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<CommitDraft>> drafts = ArgumentCaptor.forClass(List.class);
+		verify(projection).upsertBatch(eq(repo), drafts.capture());
+		assertThat(drafts.getValue()).extracting(CommitDraft::sha).containsExactly("edge", "post");
+		// Full pagination without provider-side since (GitHub "last updated" != SAGA committedAt).
+		verify(github).listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100));
+		verify(github, never())
+				.listCommits(
+						anyString(),
+						anyString(),
+						anyString(),
+						anyString(),
+						anyInt(),
+						anyInt(),
+						any());
+	}
+
+	@Test
 	void threeCommitPages_allImported() {
 		GitRepo repo = activeRepo("org", "a");
 		stubInstallationAndRepos(List.of(repo));
@@ -182,12 +214,12 @@ class GitHubCommitSyncServiceTest {
 		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main", "dev"));
 		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100)))
 				.thenReturn(List.of(
-						new CommitSummary("shared-1", "m", null, null, null),
-						new CommitSummary("main-only", "m", null, null, null)));
+						new CommitSummary("shared-1", "m", "2026-06-01T12:00:00Z", null, null),
+						new CommitSummary("main-only", "m", "2026-06-01T12:00:00Z", null, null)));
 		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("dev"), eq(1), eq(100)))
 				.thenReturn(List.of(
-						new CommitSummary("shared-1", "m", null, null, null),
-						new CommitSummary("dev-only", "m", null, null, null)));
+						new CommitSummary("shared-1", "m", "2026-06-01T12:00:00Z", null, null),
+						new CommitSummary("dev-only", "m", "2026-06-01T12:00:00Z", null, null)));
 
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<List<CommitDraft>> drafts = ArgumentCaptor.forClass(List.class);
@@ -214,11 +246,11 @@ class GitHubCommitSyncServiceTest {
 		stubInstallationAndRepos(List.of(repo));
 		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main", "dev", "feature/x"));
 		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100)))
-				.thenReturn(List.of(new CommitSummary("main-1", "SAGA-1", null, null, null)));
+				.thenReturn(List.of(new CommitSummary("main-1", "SAGA-1", "2026-06-01T12:00:00Z", null, null)));
 		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("dev"), eq(1), eq(100)))
-				.thenReturn(List.of(new CommitSummary("dev-1", "SAGA-2", null, null, null)));
+				.thenReturn(List.of(new CommitSummary("dev-1", "SAGA-2", "2026-06-01T12:00:00Z", null, null)));
 		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("feature/x"), eq(1), eq(100)))
-				.thenReturn(List.of(new CommitSummary("feat-1", "SAGA-3", null, null, null)));
+				.thenReturn(List.of(new CommitSummary("feat-1", "SAGA-3", "2026-06-01T12:00:00Z", null, null)));
 
 		SyncJobLog job = service.initialSync(projectId);
 
@@ -240,7 +272,7 @@ class GitHubCommitSyncServiceTest {
 		when(github.listBranches("tok", "org", "a")).thenReturn(concat(page1, List.of("last")));
 		for (String branch : concat(page1, List.of("last"))) {
 			when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq(branch), eq(1), eq(100)))
-					.thenReturn(List.of(new CommitSummary(branch + "-sha", "m", null, null, null)));
+					.thenReturn(List.of(new CommitSummary(branch + "-sha", "m", "2026-06-01T12:00:00Z", null, null)));
 		}
 
 		SyncJobLog job = service.initialSync(projectId);
@@ -346,7 +378,7 @@ class GitHubCommitSyncServiceTest {
 		stubInstallationAndRepos(List.of(repo));
 		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main"));
 		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100)))
-				.thenReturn(List.of(new CommitSummary("abc", "SAGA-9", null, null, null)));
+				.thenReturn(List.of(new CommitSummary("abc", "SAGA-9", "2026-06-01T12:00:00Z", null, null)));
 
 		assertThat(service.initialSync(projectId).getItemsProcessed()).isEqualTo(1);
 		assertThat(service.initialSync(projectId).getItemsProcessed()).isEqualTo(1);
@@ -359,7 +391,7 @@ class GitHubCommitSyncServiceTest {
 		stubInstallationAndRepos(List.of(repo));
 		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main"));
 		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100)))
-				.thenReturn(List.of(new CommitSummary("deadbeef", "SAGA-123 implement login", null, 1L, "alice")));
+				.thenReturn(List.of(new CommitSummary("deadbeef", "SAGA-123 implement login", "2026-06-01T12:00:00Z", 1L, "alice")));
 
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<List<CommitDraft>> drafts = ArgumentCaptor.forClass(List.class);
@@ -424,13 +456,15 @@ class GitHubCommitSyncServiceTest {
 		repo.setDefaultBranch("main");
 		repo.setConnectionStatus(IntegrationStatus.ACTIVE);
 		repo.setConsecutiveFailures(0);
+		// Claim start used as Option B cutoff; commits in fixtures use timestamps after this.
+		repo.setCreatedAt(java.time.LocalDateTime.of(2026, 1, 1, 0, 0));
 		return repo;
 	}
 
 	private static List<CommitSummary> summaries(int count, String prefix) {
 		List<CommitSummary> list = new ArrayList<>(count);
 		for (int i = 0; i < count; i++) {
-			list.add(new CommitSummary(prefix + i, "msg " + i, null, null, null));
+			list.add(new CommitSummary(prefix + i, "msg " + i, "2026-06-01T12:00:00Z", null, null));
 		}
 		return list;
 	}

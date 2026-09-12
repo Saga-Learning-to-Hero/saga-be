@@ -166,6 +166,25 @@ class GitHubOAuthClientTest {
 	}
 
 	@Test
+	void listCommits_includesSinceWhenProvided() {
+		server.expect(requestTo(
+						"https://api.github.com/repos/org/repo/commits?per_page=100&page=1&sha=main&since=2026-09-01T00%3A00%3A00Z"))
+				.andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+		assertEquals(
+				List.of(),
+				client.listCommits(
+						"tok",
+						"org",
+						"repo",
+						"main",
+						1,
+						100,
+						java.time.Instant.parse("2026-09-01T00:00:00Z")));
+		server.verify();
+	}
+
+	@Test
 	void listCommits_rateLimitMapsToTypedFailure() {
 		server.expect(requestTo("https://api.github.com/repos/org/repo/commits?per_page=100&page=1&sha=main"))
 				.andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(

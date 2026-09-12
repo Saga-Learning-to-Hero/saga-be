@@ -66,7 +66,9 @@ public class GitCommitProjectionService {
 		if (repo == null || repo.getId() == null || drafts == null || drafts.isEmpty()) {
 			return UpsertOutcome.EMPTY;
 		}
-		List<CommitDraft> valid = drafts.stream()
+		// Authoritative claim cutoff before persist / auto-link (sync + webhook).
+		List<CommitDraft> eligible = GitRepoCommitClaimCutoff.filterEligible(repo, drafts);
+		List<CommitDraft> valid = eligible.stream()
 				.filter(item -> item != null && item.sha() != null && !item.sha().isBlank())
 				.toList();
 		if (valid.isEmpty()) {

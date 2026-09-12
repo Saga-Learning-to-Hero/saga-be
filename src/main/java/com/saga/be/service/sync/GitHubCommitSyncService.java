@@ -18,6 +18,7 @@ import com.saga.be.repository.GithubProjectInstallationRepository;
 import com.saga.be.repository.SyncJobLogRepository;
 import com.saga.be.service.projection.GitCommitProjectionService;
 import com.saga.be.service.projection.GitCommitProjectionService.CommitDraft;
+import com.saga.be.service.projection.GitRepoCommitClaimCutoff;
 import com.saga.be.service.projection.ProjectionMappings;
 import com.saga.be.realtime.ProjectRealtimeEventType;
 import com.saga.be.realtime.ProjectRealtimePublisher;
@@ -40,6 +41,13 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Complete multi-branch GitHub commit reconciliation for ACTIVE selected repositories.
  * Canonical commit identity is (repo_id, sha_hash). {@code headRef} is best-effort metadata only
  * (single column; first-seen branch wins within a run).
+ *
+ * <p>Claim cutoff (Option B): list pages with full pagination, then upsert only commits with
+ * {@code committedAt >= gitRepo.createdAt}. Local {@link GitRepoCommitClaimCutoff} is authoritative.
+ * Provider {@code since} is intentionally not passed — GitHub's "last updated after" semantics are
+ * not proven equivalent to SAGA's canonical committedAt field. {@code createdAt} is the project's
+ * first claim and is preserved on same-project reconnect; A → B → A multi-tenure windows are
+ * deferred technical debt.
  */
 @Service
 @Profile("!test")
@@ -184,6 +192,8 @@ public class GitHubCommitSyncService {
 		int page = 1;
 		int upserted = 0;
 		while (page <= MAX_COMMIT_PAGES_PER_BRANCH) {
+			// Do not pass provider-side `since`: GitHub documents it as "last updated after", which
+			// is not proven equivalent to SAGA's canonical committedAt claim cutoff.
 			List<CommitSummary> providerPage = github.listCommits(
 					token, repo.getOwnerLogin(), repo.getName(), branch, page, GITHUB_COMMITS_PER_PAGE_MAX);
 			if (providerPage == null || providerPage.isEmpty()) {
@@ -197,13 +207,17 @@ public class GitHubCommitSyncService {
 				if (!seenShas.add(summary.sha())) {
 					continue; // already reconciled via another branch in this run
 				}
-				drafts.add(new CommitDraft(
+				CommitDraft draft = new CommitDraft(
 						summary.sha(),
 						summary.message(),
 						ProjectionMappings.parseInstant(summary.committedAt()),
 						summary.authorId() == null ? null : String.valueOf(summary.authorId()),
 						summary.authorLogin(),
-						branch));
+						branch);
+				if (!GitRepoCommitClaimCutoff.isEligible(draft, repo)) {
+					continue;
+				}
+				drafts.add(draft);
 			}
 			if (!drafts.isEmpty()) {
 				Integer applied = writes.execute(status -> projection.upsertBatch(repo, drafts));

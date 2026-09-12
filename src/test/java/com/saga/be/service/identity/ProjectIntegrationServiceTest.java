@@ -542,7 +542,7 @@ class ProjectIntegrationServiceTest {
 						projectId,
 						List.of(new SelectGitHubRepositoryRequest(1_338_790_015L, RepositoryRole.FRONTEND))));
 		assertEquals(IntegrationErrorCode.NOT_TEAM_LEADER, ex.getCode());
-		verify(repos, never()).save(any());
+		verify(repos, never()).saveAndFlush(any());
 	}
 
 	@Test
@@ -625,10 +625,64 @@ class ProjectIntegrationServiceTest {
 						new SelectGitHubRepositoryRequest(1_339_720_224L, RepositoryRole.BACKEND),
 						new SelectGitHubRepositoryRequest(99L, RepositoryRole.OTHER)));
 		ArgumentCaptor<GitRepo> captor = ArgumentCaptor.forClass(GitRepo.class);
-		verify(repos, times(3)).save(captor.capture());
+		verify(repos, times(3)).saveAndFlush(captor.capture());
 		assertEquals(RepositoryRole.FRONTEND, captor.getAllValues().get(0).getRepositoryRole());
 		assertEquals(RepositoryRole.BACKEND, captor.getAllValues().get(1).getRepositoryRole());
 		assertEquals(RepositoryRole.OTHER, captor.getAllValues().get(2).getRepositoryRole());
+	}
+
+	@Test
+	void selectGithubReposRevokesPreviouslyActiveRepositoryOmittedFromNewSelection() {
+		// Project has FE + BE both ACTIVE. The user re-saves the selection with only FE.
+		stubSelectGithubRepos(repo(1_338_790_015L, "saga-fe"), repo(1_339_720_224L, "saga-be"));
+		Project project = new Project();
+		project.setId(projectId);
+		GitRepo activeBackend = new GitRepo();
+		activeBackend.setId(UUID.randomUUID());
+		activeBackend.setProject(project);
+		activeBackend.setRepositoryId(1_339_720_224L);
+		activeBackend.setConnectionStatus(IntegrationStatus.ACTIVE);
+		when(repos.findFetchedByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE))
+				.thenReturn(List.of(activeBackend));
+
+		service.selectGithubRepos(
+				student.getId(),
+				projectId,
+				List.of(new SelectGitHubRepositoryRequest(1_338_790_015L, RepositoryRole.FRONTEND)));
+
+		ArgumentCaptor<GitRepo> savedCaptor = ArgumentCaptor.forClass(GitRepo.class);
+		verify(repos).saveAndFlush(savedCaptor.capture());
+		assertEquals(1_338_790_015L, savedCaptor.getValue().getRepositoryId());
+		assertEquals(IntegrationStatus.ACTIVE, savedCaptor.getValue().getConnectionStatus());
+		// BE was ACTIVE but omitted from the new selection -- it must be revoked, not left ACTIVE
+		// forever (which would otherwise permanently block any other project from ever claiming it).
+		verify(repos).save(activeBackend);
+		assertEquals(IntegrationStatus.REVOKED, activeBackend.getConnectionStatus());
+	}
+
+	@Test
+	void selectGithubReposKeepsRepositoryActiveWhenStillIncludedInNewSelection() {
+		stubSelectGithubRepos(repo(1_338_790_015L, "saga-fe"), repo(1_339_720_224L, "saga-be"));
+		Project project = new Project();
+		project.setId(projectId);
+		GitRepo activeFrontend = new GitRepo();
+		activeFrontend.setId(UUID.randomUUID());
+		activeFrontend.setProject(project);
+		activeFrontend.setRepositoryId(1_338_790_015L);
+		activeFrontend.setConnectionStatus(IntegrationStatus.ACTIVE);
+		when(repos.findFetchedByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE))
+				.thenReturn(List.of(activeFrontend));
+
+		service.selectGithubRepos(
+				student.getId(),
+				projectId,
+				List.of(
+						new SelectGitHubRepositoryRequest(1_338_790_015L, RepositoryRole.FRONTEND),
+						new SelectGitHubRepositoryRequest(1_339_720_224L, RepositoryRole.BACKEND)));
+
+		// FE is still selected -- never revoked, even though it appears in the currently-ACTIVE scan.
+		verify(repos, never()).save(activeFrontend);
+		assertEquals(IntegrationStatus.ACTIVE, activeFrontend.getConnectionStatus());
 	}
 
 	@Test
@@ -639,7 +693,7 @@ class ProjectIntegrationServiceTest {
 				projectId,
 				List.of(new SelectGitHubRepositoryRequest(1_338_790_015L, null)));
 		ArgumentCaptor<GitRepo> captor = ArgumentCaptor.forClass(GitRepo.class);
-		verify(repos).save(captor.capture());
+		verify(repos).saveAndFlush(captor.capture());
 		assertNull(captor.getValue().getRepositoryRole());
 	}
 
@@ -653,7 +707,7 @@ class ProjectIntegrationServiceTest {
 						projectId,
 						List.of(new SelectGitHubRepositoryRequest(404L, RepositoryRole.FRONTEND))));
 		assertEquals(IntegrationErrorCode.GITHUB_REPOSITORY_NOT_ACCESSIBLE, ex.getCode());
-		verify(repos, never()).save(any());
+		verify(repos, never()).saveAndFlush(any());
 	}
 
 	@Test
@@ -665,14 +719,14 @@ class ProjectIntegrationServiceTest {
 				List.of(
 						new SelectGitHubRepositoryRequest(1_338_790_015L, RepositoryRole.FRONTEND),
 						new SelectGitHubRepositoryRequest(1_339_720_224L, RepositoryRole.BACKEND)));
-		verify(repos, times(2)).save(any(GitRepo.class));
+		verify(repos, times(2)).saveAndFlush(any(GitRepo.class));
 	}
 
 	@Test
 	void selectGithubReposEmptyListStillStartsSyncWithoutSavingRepos() {
 		stubSelectGithubRepos(repo(1_338_790_015L, "saga-fe"));
 		service.selectGithubRepos(student.getId(), projectId, List.of());
-		verify(repos, never()).save(any());
+		verify(repos, never()).saveAndFlush(any());
 		verify(initialSyncLauncher).enqueueGithubInitialSync(projectId);
 		verify(initialSyncLauncher, never()).enqueueJiraInitialSync(any(), any());
 	}
@@ -1553,14 +1607,24 @@ class ProjectIntegrationServiceTest {
 		Project project = new Project();
 		project.setId(projectId);
 		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
-		lenient().when(repos.findByProviderAndRepositoryId(eq(GitProvider.GITHUB), any())).thenReturn(Optional.empty());
-		lenient().when(repos.save(any(GitRepo.class))).thenAnswer(invocation -> {
+		lenient()
+				.when(repos.findByProject_IdAndProviderAndRepositoryId(eq(projectId), eq(GitProvider.GITHUB), any()))
+				.thenReturn(Optional.empty());
+		lenient()
+				.when(repos.findByConnectionStatusAndProviderAndRepositoryId(
+						eq(IntegrationStatus.ACTIVE), eq(GitProvider.GITHUB), any()))
+				.thenReturn(Optional.empty());
+		lenient().when(repos.saveAndFlush(any(GitRepo.class))).thenAnswer(invocation -> {
 			GitRepo saved = invocation.getArgument(0);
 			if (saved.getId() == null) {
 				saved.setId(UUID.randomUUID());
 			}
 			return saved;
 		});
+		lenient().when(repos.save(any(GitRepo.class))).thenAnswer(invocation -> invocation.getArgument(0));
+		lenient()
+				.when(repos.findFetchedByProject_IdAndConnectionStatus(eq(projectId), eq(IntegrationStatus.ACTIVE)))
+				.thenReturn(List.of());
 	}
 
 	private static GitHubOAuthClient.RepoSummary repo(long id, String name) {
@@ -2028,6 +2092,7 @@ class ProjectIntegrationServiceTest {
 		assertEquals(IntegrationStatus.REVOKED, repoTwo.getConnectionStatus());
 		verify(repos, never()).delete(any());
 		verify(repos, never()).save(any());
+		verify(repos, never()).saveAndFlush(any());
 	}
 
 	@Test
@@ -2554,8 +2619,16 @@ class ProjectIntegrationServiceTest {
 		Project project = new Project();
 		project.setId(projectId);
 		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
-		when(repos.findByProviderAndRepositoryId(GitProvider.GITHUB, 1_338_790_015L)).thenReturn(Optional.of(existing));
-		when(repos.save(any(GitRepo.class))).thenAnswer(invocation -> invocation.getArgument(0));
+		when(repos.findByProject_IdAndProviderAndRepositoryId(projectId, GitProvider.GITHUB, 1_338_790_015L))
+				.thenReturn(Optional.of(existing));
+		// existing is REVOKED and no other project currently holds this repository ACTIVE --
+		// reactivation must be allowed. The availability check is called unconditionally (even for
+		// this project's own row) so a same-project reconnect can never bypass another project's
+		// current ACTIVE ownership -- see selectGithubReposBlocksSameProjectReconnectWhenAnotherProjectIsActive.
+		when(repos.findByConnectionStatusAndProviderAndRepositoryId(
+						IntegrationStatus.ACTIVE, GitProvider.GITHUB, 1_338_790_015L))
+				.thenReturn(Optional.empty());
+		when(repos.saveAndFlush(any(GitRepo.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		service.selectGithubRepos(
 				student.getId(),
@@ -2563,10 +2636,59 @@ class ProjectIntegrationServiceTest {
 				List.of(new SelectGitHubRepositoryRequest(1_338_790_015L, RepositoryRole.FRONTEND)));
 
 		ArgumentCaptor<GitRepo> captor = ArgumentCaptor.forClass(GitRepo.class);
-		verify(repos).save(captor.capture());
+		verify(repos).saveAndFlush(captor.capture());
 		assertEquals(existing.getId(), captor.getValue().getId());
 		assertEquals(IntegrationStatus.ACTIVE, captor.getValue().getConnectionStatus());
 		assertEquals(1_338_790_015L, captor.getValue().getRepositoryId());
+	}
+
+	@Test
+	void selectGithubReposBlocksSameProjectReconnectWhenAnotherProjectIsActive() {
+		// Project A previously owned repo R, disconnected (REVOKED). Project B then claimed R
+		// (ACTIVE). Project A now tries to reconnect and select R again: A's own historical row
+		// existing must NOT be silently reactivated -- another project currently holds R ACTIVE.
+		GithubInstallation installation = new GithubInstallation();
+		installation.setId(UUID.randomUUID());
+		installation.setInstallationId(158866076L);
+		installation.setInstallationStatus(GitHubInstallationStatus.ACTIVE);
+		GitRepo existing = revokedRepo(projectId, installation, 1_338_790_015L);
+		existing.setId(UUID.randomUUID());
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		when(projectInstallations.findByProject_IdWithInstallation(projectId))
+				.thenReturn(List.of(projectInstallation(projectId, installation)));
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.createInstallationToken("app-jwt", 158866076L)).thenReturn("inst-token");
+		when(github.listInstallationRepos("inst-token")).thenReturn(null);
+		when(github.parseRepos(null)).thenReturn(List.of(repo(1_338_790_015L, "saga-fe")));
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(repos.findByProject_IdAndProviderAndRepositoryId(projectId, GitProvider.GITHUB, 1_338_790_015L))
+				.thenReturn(Optional.of(existing));
+		UUID otherProjectId = UUID.randomUUID();
+		Project other = new Project();
+		other.setId(otherProjectId);
+		GitRepo activeElsewhere = new GitRepo();
+		activeElsewhere.setId(UUID.randomUUID());
+		activeElsewhere.setProject(other);
+		activeElsewhere.setRepositoryId(1_338_790_015L);
+		activeElsewhere.setConnectionStatus(IntegrationStatus.ACTIVE);
+		when(repos.findByConnectionStatusAndProviderAndRepositoryId(
+						IntegrationStatus.ACTIVE, GitProvider.GITHUB, 1_338_790_015L))
+				.thenReturn(Optional.of(activeElsewhere));
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.selectGithubRepos(
+						student.getId(),
+						projectId,
+						List.of(new SelectGitHubRepositoryRequest(1_338_790_015L, RepositoryRole.FRONTEND))));
+
+		assertEquals(IntegrationErrorCode.GITHUB_REPOSITORY_IN_USE, ex.getCode());
+		verify(repos, never()).saveAndFlush(any());
+		assertEquals(IntegrationStatus.REVOKED, existing.getConnectionStatus());
 	}
 
 	@Test
@@ -2600,7 +2722,9 @@ class ProjectIntegrationServiceTest {
 	}
 
 	@Test
-	void selectGithubReposRejectsRepositoryOwnedByAnotherProject() {
+	void selectGithubReposRejectsRepositoryActiveOnAnotherProject() {
+		// ownedElsewhere is ACTIVE: the same physical GitHub repository may be ACTIVE in at most
+		// one SAGA project at a time (V15), so this must still be rejected.
 		stubSelectGithubRepos(repo(1_338_790_015L, "saga-fe"));
 		UUID otherProjectId = UUID.randomUUID();
 		Project other = new Project();
@@ -2609,7 +2733,9 @@ class ProjectIntegrationServiceTest {
 		ownedElsewhere.setId(UUID.randomUUID());
 		ownedElsewhere.setProject(other);
 		ownedElsewhere.setRepositoryId(1_338_790_015L);
-		when(repos.findByProviderAndRepositoryId(GitProvider.GITHUB, 1_338_790_015L))
+		ownedElsewhere.setConnectionStatus(IntegrationStatus.ACTIVE);
+		when(repos.findByConnectionStatusAndProviderAndRepositoryId(
+						IntegrationStatus.ACTIVE, GitProvider.GITHUB, 1_338_790_015L))
 				.thenReturn(Optional.of(ownedElsewhere));
 
 		IntegrationException ex = assertThrows(
@@ -2620,7 +2746,89 @@ class ProjectIntegrationServiceTest {
 						List.of(new SelectGitHubRepositoryRequest(1_338_790_015L, RepositoryRole.FRONTEND))));
 
 		assertEquals(IntegrationErrorCode.GITHUB_REPOSITORY_IN_USE, ex.getCode());
-		verify(repos, never()).save(any());
+		assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatus());
+		verify(repos, never()).saveAndFlush(any());
+	}
+
+	@Test
+	void selectGithubReposAllowsRepositoryRevokedOnAnotherProject() {
+		// Project A connected repository R, then disconnected (REVOKED). Project B must now be
+		// able to select the same physical repository (V15 target invariant): a GitHub repository
+		// is only exclusive to whichever SAGA project has it ACTIVE, not forever.
+		stubSelectGithubRepos(repo(1_338_790_015L, "saga-fe"));
+		UUID otherProjectId = UUID.randomUUID();
+		Project other = new Project();
+		other.setId(otherProjectId);
+		GitRepo revokedElsewhere = new GitRepo();
+		revokedElsewhere.setId(UUID.randomUUID());
+		revokedElsewhere.setProject(other);
+		revokedElsewhere.setRepositoryId(1_338_790_015L);
+		revokedElsewhere.setConnectionStatus(IntegrationStatus.REVOKED);
+		revokedElsewhere.setSyncCursor(java.time.LocalDateTime.now());
+		// The ACTIVE-scoped availability lookup never sees revokedElsewhere at all -- it isn't
+		// ACTIVE -- which is exactly the V15 fix: REVOKED ownership elsewhere is invisible to it.
+		when(repos.findByConnectionStatusAndProviderAndRepositoryId(
+						IntegrationStatus.ACTIVE, GitProvider.GITHUB, 1_338_790_015L))
+				.thenReturn(Optional.empty());
+
+		assertDoesNotThrow(() -> service.selectGithubRepos(
+				student.getId(),
+				projectId,
+				List.of(new SelectGitHubRepositoryRequest(1_338_790_015L, RepositoryRole.FRONTEND))));
+
+		ArgumentCaptor<GitRepo> captor = ArgumentCaptor.forClass(GitRepo.class);
+		verify(repos, atLeastOnce()).saveAndFlush(captor.capture());
+		GitRepo savedForB = captor.getValue();
+		assertEquals(projectId, savedForB.getProject().getId());
+		assertNotEquals(revokedElsewhere.getId(), savedForB.getId());
+		assertEquals(IntegrationStatus.ACTIVE, savedForB.getConnectionStatus());
+		assertNull(savedForB.getSyncCursor());
+		// A's own row is a distinct, untouched entity -- never re-parented, never saved again here.
+		verify(repos, never()).saveAndFlush(revokedElsewhere);
+		verify(repos, never()).save(revokedElsewhere);
+		assertEquals(other, revokedElsewhere.getProject());
+		assertEquals(IntegrationStatus.REVOKED, revokedElsewhere.getConnectionStatus());
+	}
+
+	@Test
+	void selectGithubReposMapsConcurrentActiveRepositoryConflictToRepositoryInUse() {
+		stubSelectGithubRepos(repo(1_338_790_015L, "saga-fe"));
+		when(repos.findByConnectionStatusAndProviderAndRepositoryId(
+						IntegrationStatus.ACTIVE, GitProvider.GITHUB, 1_338_790_015L))
+				.thenReturn(Optional.empty());
+		when(repos.saveAndFlush(any(GitRepo.class)))
+				.thenThrow(new org.springframework.dao.DataIntegrityViolationException(
+						"Duplicate entry for key 'uk_git_repo_active_provider_repository'"));
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.selectGithubRepos(
+						student.getId(),
+						projectId,
+						List.of(new SelectGitHubRepositoryRequest(1_338_790_015L, RepositoryRole.FRONTEND))));
+
+		assertEquals(IntegrationErrorCode.GITHUB_REPOSITORY_IN_USE, ex.getCode());
+		assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatus());
+	}
+
+	@Test
+	void selectGithubReposDoesNotMislabelUnrelatedIntegrityViolation() {
+		stubSelectGithubRepos(repo(1_338_790_015L, "saga-fe"));
+		when(repos.findByConnectionStatusAndProviderAndRepositoryId(
+						IntegrationStatus.ACTIVE, GitProvider.GITHUB, 1_338_790_015L))
+				.thenReturn(Optional.empty());
+		when(repos.saveAndFlush(any(GitRepo.class)))
+				.thenThrow(new org.springframework.dao.DataIntegrityViolationException(
+						"Duplicate entry for key 'uk_git_repo_project_full_name'"));
+
+		org.springframework.dao.DataIntegrityViolationException ex = assertThrows(
+				org.springframework.dao.DataIntegrityViolationException.class,
+				() -> service.selectGithubRepos(
+						student.getId(),
+						projectId,
+						List.of(new SelectGitHubRepositoryRequest(1_338_790_015L, RepositoryRole.FRONTEND))));
+
+		assertTrue(ex.getMessage().contains("uk_git_repo_project_full_name"));
 	}
 
 	@Test

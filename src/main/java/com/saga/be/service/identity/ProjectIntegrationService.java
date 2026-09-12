@@ -20,8 +20,6 @@ import com.saga.be.entity.enums.GitProvider;
 import com.saga.be.entity.enums.IntegrationProvider;
 import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.OAuthFlowType;
-import com.saga.be.entity.enums.GitProvider;
-import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.github.GithubInstallation;
 import com.saga.be.entity.github.GithubProjectInstallation;
@@ -630,6 +628,10 @@ public class ProjectIntegrationService {
 		requireLeader(userId, projectId);
 		Project project = requireFetchedProject(projectId);
 		UserAccount actor = users.findById(userId).orElseThrow();
+		Set<Long> keepRepositoryIds = new HashSet<>();
+		for (SelectGitHubRepositoryRequest item : selected) {
+			keepRepositoryIds.add(item.repositoryId());
+		}
 		for (SelectGitHubRepositoryRequest item : selected) {
 			long repositoryId = item.repositoryId();
 			GitHubOAuthClient.RepoSummary match = accessible.stream()
@@ -639,12 +641,13 @@ public class ProjectIntegrationService {
 							IntegrationErrorCode.GITHUB_REPOSITORY_NOT_ACCESSIBLE,
 							HttpStatus.FORBIDDEN,
 							"Repository is not accessible to the installation."));
-			GitRepo repo = repos.findByProviderAndRepositoryId(GitProvider.GITHUB, repositoryId).orElse(null);
-			if (repo != null
-					&& repo.getProject() != null
-					&& !repo.getProject().getId().equals(projectId)) {
-				throw repositoryInUse();
-			}
+			GitRepo repo = repos.findByProject_IdAndProviderAndRepositoryId(projectId, GitProvider.GITHUB, repositoryId)
+					.orElse(null);
+			// Checked unconditionally -- even this project's OWN row may be REVOKED while another
+			// project currently holds this physical repository ACTIVE (e.g. A disconnected, B
+			// claimed it, A now tries to reconnect). When this project is itself the current ACTIVE
+			// owner, the lookup simply finds its own row and the equality check passes harmlessly.
+			assertGithubRepositoryAvailableForSagaProject(GitProvider.GITHUB, repositoryId, projectId);
 			if (repo == null) {
 				repo = new GitRepo();
 			}
@@ -664,9 +667,14 @@ public class ProjectIntegrationService {
 			}
 			GitRepo saved;
 			try {
-				saved = repos.save(repo);
+				// saveAndFlush, not save: JpaRepository.save() alone does not force the INSERT/UPDATE
+				// to execute immediately, so a genuine uk_git_repo_active_provider_repository
+				// violation could otherwise surface only at transaction commit -- after this
+				// try/catch has already exited -- turning a controlled 409 into an uncaught 500.
+				// Flushing here makes the DB check run synchronously, inside this catch.
+				saved = repos.saveAndFlush(repo);
 			} catch (DataIntegrityViolationException ex) {
-				throw repositoryInUse();
+				throw mapGithubRepositoryPersistenceConflict(ex);
 			}
 			audit.record(
 					actor,
@@ -684,6 +692,70 @@ public class ProjectIntegrationService {
 					null);
 			outbox.publish("git_repo", saved.getId(), "GITHUB_REPOSITORY_CONNECTED", Map.of("projectId", projectId.toString()));
 		}
+		revokeDeselectedGithubRepos(projectId, keepRepositoryIds, actor, project);
+	}
+
+	/**
+	 * A repository ACTIVE for this project but absent from the new selection is no longer
+	 * selected: release ACTIVE ownership (REVOKED) the same way {@link #disconnectGithub} already
+	 * does for a full disconnect -- history/commits stay attached to this project's row, but
+	 * webhook/sync (both ACTIVE-scoped) stop treating it as selected, and another SAGA project may
+	 * claim it once it is no longer ACTIVE anywhere.
+	 */
+	private void revokeDeselectedGithubRepos(UUID projectId, Set<Long> keepRepositoryIds, UserAccount actor, Project project) {
+		for (GitRepo repo : repos.findFetchedByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE)) {
+			if (repo.getRepositoryId() != null && keepRepositoryIds.contains(repo.getRepositoryId())) {
+				continue;
+			}
+			repo.setConnectionStatus(IntegrationStatus.REVOKED);
+			repos.save(repo);
+			audit.record(
+					actor,
+					project,
+					teams.findByProject_Id(projectId).orElse(null),
+					"GITHUB_REPOSITORY_DISCONNECTED",
+					"git_repo",
+					repo.getId(),
+					Map.of("status", "ACTIVE"),
+					Map.of("status", "REVOKED"),
+					Map.of(),
+					AuditSource.API,
+					null,
+					null,
+					null);
+			outbox.publish(
+					"git_repo", repo.getId(), "GITHUB_REPOSITORY_DISCONNECTED", Map.of("projectId", projectId.toString()));
+		}
+	}
+
+	/**
+	 * One physical GitHub repository ({@code provider} + {@code repositoryId}) may be ACTIVE in at
+	 * most one SAGA project at a time (V15). A REVOKED row owned by another SAGA project does not
+	 * block reuse -- that project's own {@code git_repo} row, and everything reachable only
+	 * through it (GitCommit history, task_git_commit_link, sync cursor), stays untouched under its
+	 * original owner; the connecting project always gets its own brand-new {@code git_repo} row
+	 * (see {@link #persistSelectedRepos}), never a re-parented one.
+	 */
+	private void assertGithubRepositoryAvailableForSagaProject(GitProvider provider, long repositoryId, UUID sagaProjectId) {
+		repos.findByConnectionStatusAndProviderAndRepositoryId(IntegrationStatus.ACTIVE, provider, repositoryId)
+				.ifPresent(existing -> {
+					if (existing.getProject() != null && !existing.getProject().getId().equals(sagaProjectId)) {
+						throw repositoryInUse();
+					}
+				});
+	}
+
+	private static IntegrationException mapGithubRepositoryPersistenceConflict(DataIntegrityViolationException ex) {
+		if (isGithubActiveRepositoryUniqueViolation(ex)) {
+			return repositoryInUse();
+		}
+		throw ex;
+	}
+
+	private static boolean isGithubActiveRepositoryUniqueViolation(DataIntegrityViolationException ex) {
+		Throwable cause = ex.getMostSpecificCause();
+		String message = cause == null ? ex.getMessage() : cause.getMessage();
+		return message != null && message.toLowerCase(Locale.ROOT).contains("uk_git_repo_active_provider_repository");
 	}
 
 	private static IntegrationException repositoryInUse() {

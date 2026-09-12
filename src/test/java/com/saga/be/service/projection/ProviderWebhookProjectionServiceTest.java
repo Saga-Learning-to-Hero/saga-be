@@ -60,6 +60,7 @@ class ProviderWebhookProjectionServiceTest {
 		repo.setId(UUID.randomUUID());
 		repo.setProject(project);
 		repo.setRepositoryId(55L);
+		repo.setCreatedAt(java.time.LocalDateTime.of(2025, 12, 1, 0, 0));
 		when(repos.findFetchedActiveByProviderAndRepositoryId(GitProvider.GITHUB, 55L, IntegrationStatus.ACTIVE))
 				.thenReturn(List.of(repo));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -76,9 +77,44 @@ class ProviderWebhookProjectionServiceTest {
 		verify(commits).upsertBatchDetailed(eq(repo), captor.capture());
 		assertThat(captor.getValue()).hasSize(1);
 		assertThat(captor.getValue().getFirst().sha()).isEqualTo("deadbeef");
+		assertThat(captor.getValue().getFirst().committedAt()).isEqualTo(java.time.LocalDateTime.of(2026, 1, 1, 0, 0));
 		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.PROCESSED);
 		verify(realtime).publish(com.saga.be.realtime.ProjectRealtimeEventType.COMMITS_CHANGED, project.getId());
 		verify(realtime).publish(com.saga.be.realtime.ProjectRealtimeEventType.TASK_LINKS_CHANGED, project.getId());
+	}
+
+	@Test
+	void githubPush_passesPreAndPostClaimDrafts_projectionEnforcesCutoff() {
+		// Webhook still forwards payload commits; GitCommitProjectionService applies Option B cutoff.
+		WebhookReceipt receipt = receipt(IntegrationProvider.GITHUB);
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		GitRepo repo = new GitRepo();
+		repo.setId(UUID.randomUUID());
+		repo.setProject(project);
+		repo.setRepositoryId(55L);
+		repo.setCreatedAt(java.time.LocalDateTime.of(2026, 9, 1, 0, 0));
+		when(repos.findFetchedActiveByProviderAndRepositoryId(GitProvider.GITHUB, 55L, IntegrationStatus.ACTIVE))
+				.thenReturn(List.of(repo));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(commits.upsertBatchDetailed(eq(repo), any()))
+				.thenReturn(new GitCommitProjectionService.UpsertOutcome(1, 0));
+
+		String payload =
+				"""
+				{"ref":"refs/heads/main","repository":{"id":55},"commits":[
+				  {"id":"old","message":"SAGA-1","timestamp":"2026-08-15T00:00:00Z","author":{"username":"alice"}},
+				  {"id":"new","message":"SAGA-2","timestamp":"2026-09-20T00:00:00Z","author":{"username":"alice"}}
+				]}
+				""";
+		service.projectGithub(receipt, "push", payload);
+
+		ArgumentCaptor<List<GitCommitProjectionService.CommitDraft>> captor = ArgumentCaptor.forClass(List.class);
+		verify(commits).upsertBatchDetailed(eq(repo), captor.capture());
+		assertThat(captor.getValue()).extracting(GitCommitProjectionService.CommitDraft::sha).containsExactly("old", "new");
+		assertThat(GitRepoCommitClaimCutoff.filterEligible(repo, captor.getValue()))
+				.extracting(GitCommitProjectionService.CommitDraft::sha)
+				.containsExactly("new");
 	}
 
 	@Test

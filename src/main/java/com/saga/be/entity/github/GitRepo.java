@@ -21,6 +21,21 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+/**
+ * Since V15, {@code (provider, repository_id)} uniqueness is enforced only while {@code
+ * connection_status = ACTIVE}, via the generated columns {@code active_provider}/{@code
+ * active_repository_id} and {@code uk_git_repo_active_provider_repository} -- a REVOKED row no
+ * longer permanently blocks another SAGA Project from later selecting the same physical GitHub
+ * repository. Those generated columns are DB-only (never written or read through JPA) so they
+ * are intentionally not mapped as entity fields. {@code uk_git_repo_project_provider_repository}
+ * (ordinary, mapped columns) separately guarantees one SAGA project can never hold two rows for
+ * the same physical repository, regardless of status.
+ *
+ * <p><strong>Claim cutoff (Option B):</strong> immutable {@code createdAt} is the project's first
+ * claim of this physical repository and is preserved on same-project reconnect. Commit projection
+ * (sync + webhook) only accepts commits with {@code committedAt >= createdAt}. Exact multi-tenure
+ * ownership intervals such as A → B → A are not modeled and remain deferred technical debt.
+ */
 @Getter
 @Setter
 @NoArgsConstructor
@@ -28,8 +43,10 @@ import lombok.Setter;
 @Table(
 	name = "git_repo",
 	uniqueConstraints = {
-		@UniqueConstraint(name = "uk_git_repo_provider_id", columnNames = {"provider", "repository_id"}),
-		@UniqueConstraint(name = "uk_git_repo_project_full_name", columnNames = {"project_id", "full_name"})
+		@UniqueConstraint(name = "uk_git_repo_project_full_name", columnNames = {"project_id", "full_name"}),
+		@UniqueConstraint(
+				name = "uk_git_repo_project_provider_repository",
+				columnNames = {"project_id", "provider", "repository_id"})
 	}
 )
 public class GitRepo extends BaseEntity {

@@ -236,29 +236,50 @@ public class GitHubOAuthClient {
 	/**
 	 * Newest commits first for owner/repo reachable from {@code sha} (branch or commit).
 	 * GitHub returns at most 100 commits per page. Caller paginates until a short/empty page.
+	 * Optional {@code since} is retained for future use but must not be treated as equivalent to
+	 * SAGA's claim cutoff ({@code committedAt >= gitRepo.createdAt}). GitHub documents {@code since}
+	 * as commits "last updated after" the timestamp. Callers that need Option B must enforce local
+	 * filtering and should not pass {@code repo.createdAt} as {@code since} unless provider
+	 * equivalence is proven.
 	 */
 	public List<CommitSummary> listCommits(
 			String installationToken, String owner, String repo, String sha, int page, int perPage) {
+		return listCommits(installationToken, owner, repo, sha, page, perPage, null);
+	}
+
+	public List<CommitSummary> listCommits(
+			String installationToken,
+			String owner,
+			String repo,
+			String sha,
+			int page,
+			int perPage,
+			java.time.Instant since) {
 		try {
 			int safePerPage = Math.max(1, Math.min(perPage, 100));
 			int safePage = Math.max(1, page);
-			String uri = "https://api.github.com/repos/{owner}/{repo}/commits?per_page={perPage}&page={page}"
-					+ (sha == null || sha.isBlank() ? "" : "&sha={sha}");
-			GitHubCommitApiResponse[] nodes = sha == null || sha.isBlank()
-					? restClient
-							.get()
-							.uri(uri, owner, repo, safePerPage, safePage)
-							.header("Authorization", "Bearer " + installationToken)
-							.header("Accept", "application/vnd.github+json")
-							.retrieve()
-							.body(GitHubCommitApiResponse[].class)
-					: restClient
-							.get()
-							.uri(uri, owner, repo, safePerPage, safePage, sha)
-							.header("Authorization", "Bearer " + installationToken)
-							.header("Accept", "application/vnd.github+json")
-							.retrieve()
-							.body(GitHubCommitApiResponse[].class);
+			StringBuilder uri = new StringBuilder(
+					"https://api.github.com/repos/{owner}/{repo}/commits?per_page={perPage}&page={page}");
+			java.util.List<Object> vars = new java.util.ArrayList<>();
+			vars.add(owner);
+			vars.add(repo);
+			vars.add(safePerPage);
+			vars.add(safePage);
+			if (sha != null && !sha.isBlank()) {
+				uri.append("&sha={sha}");
+				vars.add(sha);
+			}
+			if (since != null) {
+				uri.append("&since={since}");
+				vars.add(java.time.format.DateTimeFormatter.ISO_INSTANT.format(since));
+			}
+			GitHubCommitApiResponse[] nodes = restClient
+					.get()
+					.uri(uri.toString(), vars.toArray())
+					.header("Authorization", "Bearer " + installationToken)
+					.header("Accept", "application/vnd.github+json")
+					.retrieve()
+					.body(GitHubCommitApiResponse[].class);
 			if (nodes == null) {
 				return List.of();
 			}

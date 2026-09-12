@@ -66,11 +66,13 @@ class GitCommitProjectionAndLinkTest {
 		repo.setId(UUID.randomUUID());
 		repo.setProject(project);
 		repo.setFullName("org/saga");
+		repo.setCreatedAt(java.time.LocalDateTime.of(2026, 1, 1, 0, 0));
 	}
 
 	@Test
 	void upsert_thenWebhookSameSha_doesNotDuplicate() {
-		CommitDraft draft = new CommitDraft("abc123", "SAGA-1 fix", null, "99", "alice", "main");
+		CommitDraft draft = new CommitDraft(
+				"abc123", "SAGA-1 fix", java.time.LocalDateTime.of(2026, 6, 1, 12, 0), "99", "alice", "main");
 		when(commits.findByRepo_IdAndShaHashIn(eq(repo.getId()), any())).thenReturn(List.of());
 		when(identities.findFetchedByProviderAndExternalAccountIdInAndMappingStatusIn(any(), any(), any()))
 				.thenReturn(List.of());
@@ -209,7 +211,8 @@ class GitCommitProjectionAndLinkTest {
 		List<CommitDraft> ten = new ArrayList<>();
 		List<CommitDraft> hundred = new ArrayList<>();
 		for (int i = 0; i < 100; i++) {
-			CommitDraft draft = new CommitDraft("sha" + i, "msg", null, null, null, "main");
+			CommitDraft draft = new CommitDraft(
+					"sha" + i, "msg", java.time.LocalDateTime.of(2026, 6, 1, 12, 0), null, null, "main");
 			hundred.add(draft);
 			if (i < 10) {
 				ten.add(draft);
