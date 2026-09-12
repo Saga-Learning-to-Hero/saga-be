@@ -6,10 +6,13 @@ import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.academic.Course;
 import com.saga.be.entity.academic.CourseEnrollment;
 import com.saga.be.entity.enums.StudentInvitationStatus;
+import com.saga.be.entity.project.TeamMember;
 import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.CourseRepository;
 import com.saga.be.repository.StudentCourseInvitationRepository;
 import com.saga.be.repository.StudentProfileRepository;
+import com.saga.be.repository.TeamMemberRepository;
+import com.saga.be.repository.TeamRepository;
 import com.saga.be.repository.UserAccountRepository;
 import java.util.Collection;
 import java.util.List;
@@ -27,18 +30,24 @@ public class JpaCourseRosterStore implements CourseRosterStore {
 	private final StudentProfileRepository students;
 	private final CourseEnrollmentRepository enrollments;
 	private final StudentCourseInvitationRepository invitations;
+	private final TeamMemberRepository teamMembers;
+	private final TeamRepository teams;
 
 	public JpaCourseRosterStore(
 			CourseRepository courses,
 			UserAccountRepository users,
 			StudentProfileRepository students,
 			CourseEnrollmentRepository enrollments,
-			StudentCourseInvitationRepository invitations) {
+			StudentCourseInvitationRepository invitations,
+			TeamMemberRepository teamMembers,
+			TeamRepository teams) {
 		this.courses = courses;
 		this.users = users;
 		this.students = students;
 		this.enrollments = enrollments;
 		this.invitations = invitations;
+		this.teamMembers = teamMembers;
+		this.teams = teams;
 	}
 
 	@Override
@@ -106,6 +115,11 @@ public class JpaCourseRosterStore implements CourseRosterStore {
 	}
 
 	@Override
+	public Optional<CourseEnrollment> findEnrollmentById(UUID enrollmentId) {
+		return enrollments.findById(enrollmentId);
+	}
+
+	@Override
 	public Optional<StudentCourseInvitation> findInvitationByCourseAndEmail(UUID courseId, String email) {
 		return invitations.findByCourse_IdAndEmailIgnoreCase(courseId, email);
 	}
@@ -113,6 +127,27 @@ public class JpaCourseRosterStore implements CourseRosterStore {
 	@Override
 	public Optional<StudentCourseInvitation> findInvitationByCourseAndStudentCode(UUID courseId, String studentCode) {
 		return invitations.findByCourse_IdAndStudentCodeIgnoreCase(courseId, studentCode);
+	}
+
+	@Override
+	public Optional<StudentCourseInvitation> findInvitationById(UUID invitationId) {
+		return invitations.findById(invitationId);
+	}
+
+	@Override
+	public Optional<UUID> findTeamIdByEnrollment(UUID enrollmentId) {
+		return teamMembers.findTeamIdByCourseEnrollment(enrollmentId);
+	}
+
+	@Override
+	public Optional<TeamMember> lockTeamAndReloadMembership(UUID teamId, UUID enrollmentId) {
+		teams.findByIdForUpdate(teamId);
+		return teamMembers.findByCourseEnrollment_Id(enrollmentId);
+	}
+
+	@Override
+	public void deleteTeamMembership(TeamMember member) {
+		teamMembers.delete(member);
 	}
 
 	@Override

@@ -15,6 +15,14 @@ public interface TeamMemberRepository extends JpaRepository<TeamMember, UUID> {
 
 	Optional<TeamMember> findByCourseEnrollment_Id(UUID courseEnrollmentId);
 
+	/**
+	 * Scalar-only projection — does NOT hydrate a managed {@link TeamMember} entity into the
+	 * persistence context. Use this to discover which team to lock BEFORE the first (and only)
+	 * entity-hydrating read of the membership row; see {@code CourseRosterStore#findTeamIdByEnrollment}.
+	 */
+	@Query("SELECT m.team.id FROM TeamMember m WHERE m.courseEnrollment.id = :enrollmentId")
+	Optional<UUID> findTeamIdByCourseEnrollment(@Param("enrollmentId") UUID enrollmentId);
+
 	List<TeamMember> findByCourse_Id(UUID courseId);
 
 	@Query(

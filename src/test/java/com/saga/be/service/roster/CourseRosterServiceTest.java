@@ -2,6 +2,7 @@ package com.saga.be.service.roster;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -35,7 +36,10 @@ import com.saga.be.entity.enums.AccountRole;
 import com.saga.be.entity.enums.AccountStatus;
 import com.saga.be.entity.enums.AuditSource;
 import com.saga.be.entity.enums.EnrollmentStatus;
+import com.saga.be.entity.enums.RoleInTeam;
 import com.saga.be.entity.enums.RosterRowAction;
+import com.saga.be.entity.project.Team;
+import com.saga.be.entity.project.TeamMember;
 import com.saga.be.entity.enums.StudentInvitationStatus;
 import com.saga.be.entity.enums.StudentInvitationType;
 import com.saga.be.exception.AcademicErrorCode;
@@ -766,6 +770,181 @@ class CourseRosterServiceTest {
 		verify(emails, never()).enqueue(any());
 	}
 
+	@Test
+	void adminRemovesActiveStudentSuccessfully() {
+		CourseEnrollment enrollment = enrollExisting("a@gmail.com", "SE00000A", "A");
+		var response = service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq());
+		assertEquals("WITHDRAWN", response.enrollmentStatus());
+		assertEquals(EnrollmentStatus.WITHDRAWN, store.enrollments.get(enrollment.getId()).getEnrollmentStatus());
+		// Account/profile are untouched by removal — only the enrollment row's status changes.
+		assertEquals(1, store.students.size());
+		assertNotNull(store.users.get(enrollment.getStudentProfile().getUserAccount().getId()));
+	}
+
+	@Test
+	void removingAlreadyWithdrawnEnrollmentIsConflict() {
+		CourseEnrollment enrollment = enrollExisting("a@gmail.com", "SE00000A", "A");
+		service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq());
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq()));
+		assertEquals(AcademicErrorCode.ROSTER_STUDENT_ALREADY_REMOVED, ex.getCode());
+	}
+
+	@Test
+	void removingUnknownEnrollmentIsNotFound() {
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.removeEnrollment(course.getId(), UUID.randomUUID(), admin, auditReq()));
+		assertEquals(AcademicErrorCode.ROSTER_STUDENT_NOT_FOUND, ex.getCode());
+	}
+
+	@Test
+	void removingEnrollmentFromAnotherCourseIsNotFound() {
+		Course otherCourse = course("SE1706");
+		CourseEnrollment enrollment = enrollExisting("a@gmail.com", "SE00000A", "A");
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.removeEnrollment(otherCourse.getId(), enrollment.getId(), admin, auditReq()));
+		assertEquals(AcademicErrorCode.ROSTER_STUDENT_NOT_FOUND, ex.getCode());
+		assertEquals(
+				EnrollmentStatus.ACTIVE,
+				store.enrollments.get(enrollment.getId()).getEnrollmentStatus());
+	}
+
+	@Test
+	void removingNormalTeamMemberWithdrawsEnrollmentDeletesMembershipKeepsTeam() {
+		CourseEnrollment enrollment = enrollExisting("member@gmail.com", "SE00000M", "Member");
+		Team team = teamWith(enrollment, RoleInTeam.MEMBER);
+		var response = service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq());
+		assertEquals("WITHDRAWN", response.enrollmentStatus());
+		// The TeamMember row is deleted (nothing references team_member.id, so no evidence is
+		// lost) — this is what stops a later re-add from silently resurrecting old team
+		// membership, since TeamMember "active"-ness is derived purely from enrollment status.
+		// The Team row itself is untouched.
+		assertNull(store.teamMembersByEnrollment.get(enrollment.getId()));
+		assertNotNull(store.courses.get(course.getId()));
+		assertEquals("Team 1", team.getName());
+	}
+
+	@Test
+	void reAddingFormerTeamMemberDoesNotResurrectOldTeamMembership() {
+		CourseEnrollment enrollment = enrollExisting("member@gmail.com", "SE00000M", "Member");
+		teamWith(enrollment, RoleInTeam.MEMBER);
+		service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq());
+		service.addStudent(course.getId(), addRequest("Member", "SE00000M", "member@gmail.com"), admin, auditReq());
+		// Enrollment is reactivated (same row reused)...
+		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.get(enrollment.getId()).getEnrollmentStatus());
+		// ...but the old team membership is gone and stays gone: re-add does not put the student
+		// back on their old team.
+		assertNull(store.teamMembersByEnrollment.get(enrollment.getId()));
+	}
+
+	@Test
+	void removingActiveLeaderIsBlockedAndNothingChanges() {
+		CourseEnrollment enrollment = enrollExisting("leader@gmail.com", "SE00000L", "Leader");
+		teamWith(enrollment, RoleInTeam.LEADER);
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq()));
+		assertEquals(AcademicErrorCode.TEAM_LEADER_REMOVAL_REQUIRES_REASSIGNMENT, ex.getCode());
+		assertEquals(
+				EnrollmentStatus.ACTIVE,
+				store.enrollments.get(enrollment.getId()).getEnrollmentStatus());
+		// Blocked whole: the Leader's TeamMember row is NOT deleted either.
+		assertNotNull(store.teamMembersByEnrollment.get(enrollment.getId()));
+		assertEquals(RoleInTeam.LEADER, store.teamMembersByEnrollment.get(enrollment.getId()).getRoleInTeam());
+	}
+
+	@Test
+	void removingStudentFromCourseADoesNotAffectCourseB() {
+		StudentProfile profile = student("both@gmail.com", "SE0000AB", "Both");
+		CourseEnrollment enrollmentA = enrollForCourse(profile, course);
+		Course courseB = course("SE1706");
+		CourseEnrollment enrollmentB = enrollForCourse(profile, courseB);
+		service.removeEnrollment(course.getId(), enrollmentA.getId(), admin, auditReq());
+		assertEquals(EnrollmentStatus.WITHDRAWN, store.enrollments.get(enrollmentA.getId()).getEnrollmentStatus());
+		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.get(enrollmentB.getId()).getEnrollmentStatus());
+	}
+
+	@Test
+	void adminCancelsPendingInvitationSuccessfully() {
+		StudentCourseInvitation invitation = seedInvitation("new@gmail.com", "SE000099", StudentInvitationStatus.PENDING);
+		var response = service.cancelInvitation(course.getId(), invitation.getId(), admin, auditReq());
+		assertEquals("CANCELLED", response.invitationStatus());
+		assertEquals(
+				StudentInvitationStatus.CANCELLED,
+				store.invitations.get(invitation.getId()).getInvitationStatus());
+	}
+
+	@Test
+	void cancellingAlreadyCancelledInvitationIsConflict() {
+		StudentCourseInvitation invitation = seedInvitation("new@gmail.com", "SE000099", StudentInvitationStatus.PENDING);
+		service.cancelInvitation(course.getId(), invitation.getId(), admin, auditReq());
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.cancelInvitation(course.getId(), invitation.getId(), admin, auditReq()));
+		assertEquals(AcademicErrorCode.ROSTER_STUDENT_ALREADY_REMOVED, ex.getCode());
+	}
+
+	@Test
+	void cancelledInvitationDoesNotCountAsRosterEntry() {
+		StudentCourseInvitation invitation = seedInvitation("new@gmail.com", "SE000099", StudentInvitationStatus.PENDING);
+		service.cancelInvitation(course.getId(), invitation.getId(), admin, auditReq());
+		CourseRosterResponse roster = service.getRoster(course.getId());
+		assertEquals(0, roster.pendingInvitationCount());
+		assertTrue(roster.entries().isEmpty());
+	}
+
+	@Test
+	void laterSignupDoesNotConsumeCancelledInvitation() {
+		StudentCourseInvitation invitation = seedInvitation("new@gmail.com", "SE000099", StudentInvitationStatus.PENDING);
+		service.cancelInvitation(course.getId(), invitation.getId(), admin, auditReq());
+		// Simulate a later admin re-add for the same identity: classifyIdentity treats a
+		// CANCELLED (non-outstanding, non-CLAIMED) invitation as READY_INVITE, reusing this same
+		// row rather than requiring a duplicate — verified via addStudent below.
+		service.addStudent(course.getId(), addRequest("New Student", "SE000099", "new@gmail.com"), admin, auditReq());
+		assertEquals(1, store.invitations.size());
+		assertEquals(
+				StudentInvitationStatus.PENDING,
+				store.invitations.get(invitation.getId()).getInvitationStatus());
+	}
+
+	@Test
+	void reAddingWithdrawnStudentReactivatesSameEnrollmentRow() {
+		CourseEnrollment enrollment = enrollExisting("a@gmail.com", "SE00000A", "A");
+		service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq());
+		service.addStudent(course.getId(), addRequest("A", "SE00000A", "a@gmail.com"), admin, auditReq());
+		assertEquals(1, store.enrollments.size());
+		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.get(enrollment.getId()).getEnrollmentStatus());
+	}
+
+	private CourseEnrollment enrollForCourse(StudentProfile profile, Course targetCourse) {
+		CourseEnrollment enrollment = new CourseEnrollment();
+		enrollment.setStudentProfile(profile);
+		enrollment.setCourse(targetCourse);
+		enrollment.setEnrollmentStatus(EnrollmentStatus.ACTIVE);
+		enrollment.setEnrolledAt(LocalDateTime.now());
+		store.saveEnrollment(enrollment);
+		return enrollment;
+	}
+
+	private Team teamWith(CourseEnrollment enrollment, RoleInTeam role) {
+		Team team = new Team();
+		team.setId(UUID.randomUUID());
+		team.setCourse(course);
+		team.setTeamNo(1);
+		team.setName("Team 1");
+		TeamMember member = new TeamMember();
+		member.setId(UUID.randomUUID());
+		member.setTeam(team);
+		member.setCourse(course);
+		member.setCourseEnrollment(enrollment);
+		member.setRoleInTeam(role);
+		store.putTeamMember(member);
+		return team;
+	}
+
 	private AddRosterStudentRequest addRequest(String fullName, String studentCode, String email) {
 		return new AddRosterStudentRequest(fullName, studentCode, email, null);
 	}
@@ -944,6 +1123,11 @@ class CourseRosterServiceTest {
 		}
 
 		@Override
+		public java.util.Optional<CourseEnrollment> findEnrollmentById(UUID enrollmentId) {
+			return delegate.findEnrollmentById(enrollmentId);
+		}
+
+		@Override
 		public java.util.Optional<StudentCourseInvitation> findInvitationByCourseAndEmail(UUID courseId, String email) {
 			invitationByEmail++;
 			return delegate.findInvitationByCourseAndEmail(courseId, email);
@@ -954,6 +1138,11 @@ class CourseRosterServiceTest {
 				UUID courseId, String studentCode) {
 			invitationByCode++;
 			return delegate.findInvitationByCourseAndStudentCode(courseId, studentCode);
+		}
+
+		@Override
+		public java.util.Optional<StudentCourseInvitation> findInvitationById(UUID invitationId) {
+			return delegate.findInvitationById(invitationId);
 		}
 
 		@Override
@@ -975,6 +1164,22 @@ class CourseRosterServiceTest {
 		@Override
 		public StudentProfile saveStudent(StudentProfile profile) {
 			return delegate.saveStudent(profile);
+		}
+
+		@Override
+		public java.util.Optional<UUID> findTeamIdByEnrollment(UUID enrollmentId) {
+			return delegate.findTeamIdByEnrollment(enrollmentId);
+		}
+
+		@Override
+		public java.util.Optional<com.saga.be.entity.project.TeamMember> lockTeamAndReloadMembership(
+				UUID teamId, UUID enrollmentId) {
+			return delegate.lockTeamAndReloadMembership(teamId, enrollmentId);
+		}
+
+		@Override
+		public void deleteTeamMembership(com.saga.be.entity.project.TeamMember member) {
+			delegate.deleteTeamMembership(member);
 		}
 
 		@Override

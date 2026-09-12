@@ -20,9 +20,11 @@ import com.saga.be.entity.academic.CourseEnrollment;
 import com.saga.be.entity.enums.AccountRole;
 import com.saga.be.entity.enums.AuditSource;
 import com.saga.be.entity.enums.EnrollmentStatus;
+import com.saga.be.entity.enums.RoleInTeam;
 import com.saga.be.entity.enums.RosterRowAction;
 import com.saga.be.entity.enums.StudentInvitationStatus;
 import com.saga.be.entity.enums.StudentInvitationType;
+import com.saga.be.entity.project.TeamMember;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
@@ -39,6 +41,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -58,6 +61,8 @@ public class CourseRosterService {
 	public static final String COURSE_ENROLLMENT_CREATED = "COURSE_ENROLLMENT_CREATED";
 	public static final String COURSE_ENROLLMENT_REACTIVATED = "COURSE_ENROLLMENT_REACTIVATED";
 	public static final String COURSE_INVITATION_CREATED = "COURSE_INVITATION_CREATED";
+	public static final String COURSE_ROSTER_STUDENT_REMOVED = "COURSE_ROSTER_STUDENT_REMOVED";
+	public static final String COURSE_ROSTER_INVITATION_CANCELLED = "COURSE_ROSTER_INVITATION_CANCELLED";
 
 	private final CourseRosterStore store;
 	private final RosterPreviewStore previews;
@@ -271,6 +276,130 @@ public class CourseRosterService {
 		return new AddRosterStudentResponse(resultOf(row, applied), entryOf(row, lookups));
 	}
 
+	/**
+	 * ADMIN withdraws an ACTIVE {@link CourseEnrollment} from the roster. Never deletes the
+	 * enrollment row, the {@link UserAccount}, or {@link StudentProfile} — the student stays
+	 * globally valid and this action affects only this course. If the enrollment already has a
+	 * {@link TeamMember} row where {@code roleInTeam == LEADER}, the withdrawal is refused whole:
+	 * nothing is changed, and the caller must reassign the team's Leader first (see
+	 * {@code LecturerTeamService#replaceLeader}) then retry. A normal MEMBER/MENTOR's TeamMember
+	 * row is left untouched — its "active" status is derived solely from this enrollment's status
+	 * (see {@code TeamMemberRepository#existsActiveByProjectIdAndUserId}), so withdrawing the
+	 * enrollment alone is sufficient to revoke project access without deleting any history.
+	 */
+	public CourseRosterEntryResponse removeEnrollment(
+			UUID courseId, UUID enrollmentId, UserAccount admin, AuditRequest auditRequest) {
+		return writeAtomic(() -> applyRemoveEnrollment(requireCourse(courseId), enrollmentId, admin, auditRequest));
+	}
+
+	/**
+	 * ADMIN cancels a PENDING/SENT {@link StudentCourseInvitation} (a roster entry for a student
+	 * whose account does not exist yet). The row is kept (status becomes {@code CANCELLED}, never
+	 * deleted) so a later signup cannot silently claim it, and a later explicit
+	 * {@link #addStudent} for the same email/studentCode reuses and reactivates this same row back
+	 * to {@code PENDING} (unique constraints on {@code (course_id, email)} /
+	 * {@code (course_id, student_code)} already make a duplicate row impossible; {@link #inviteNew}
+	 * already reuses any non-outstanding, non-CLAIMED invitation it finds).
+	 */
+	public CourseRosterEntryResponse cancelInvitation(
+			UUID courseId, UUID invitationId, UserAccount admin, AuditRequest auditRequest) {
+		return writeAtomic(() -> applyCancelInvitation(requireCourse(courseId), invitationId, admin, auditRequest));
+	}
+
+	private CourseRosterEntryResponse applyRemoveEnrollment(
+			Course course, UUID enrollmentId, UserAccount admin, AuditRequest auditRequest) {
+		CourseEnrollment enrollment = store.findEnrollmentById(enrollmentId)
+				.filter(row -> row.getCourse() != null && row.getCourse().getId().equals(course.getId()))
+				.orElseThrow(() -> new AcademicException(
+						AcademicErrorCode.ROSTER_STUDENT_NOT_FOUND, HttpStatus.NOT_FOUND, "Roster enrollment was not found."));
+		if (enrollment.getEnrollmentStatus() != EnrollmentStatus.ACTIVE) {
+			throw new AcademicException(
+					AcademicErrorCode.ROSTER_STUDENT_ALREADY_REMOVED,
+					HttpStatus.CONFLICT,
+					"This student is already removed from the course roster.");
+		}
+		// Discover the team via a scalar id projection only — NOT by loading the TeamMember
+		// entity — so the actual membership row below is hydrated for the first time only after
+		// the Team lock is held. Loading it unlocked here first would poison this transaction's
+		// persistence context: Hibernate's identity map hands back that same (by-then-stale) Java
+		// object on the later "locked" re-read instead of re-fetching what a concurrent
+		// LecturerTeamService#replaceLeader/moveMember already committed for this team.
+		Optional<UUID> teamId = store.findTeamIdByEnrollment(enrollment.getId());
+		Optional<TeamMember> membership =
+				teamId.isPresent() ? store.lockTeamAndReloadMembership(teamId.get(), enrollment.getId()) : Optional.empty();
+		if (membership.isPresent() && membership.get().getRoleInTeam() == RoleInTeam.LEADER) {
+			throw new AcademicException(
+					AcademicErrorCode.TEAM_LEADER_REMOVAL_REQUIRES_REASSIGNMENT,
+					HttpStatus.CONFLICT,
+					"This student is the team Leader. Reassign the team's Leader before removing them from the course.");
+		}
+		EnrollmentStatus previousStatus = enrollment.getEnrollmentStatus();
+		Map<String, Object> before = new LinkedHashMap<>();
+		before.put("enrollmentStatus", previousStatus.name());
+		if (membership.isPresent()) {
+			TeamMember member = membership.get();
+			// Delete, don't just leave in place: this TeamMember's "active"-ness is derived
+			// solely from this same enrollment's status, and the enrollment row is REUSED (not
+			// recreated) on a later re-add, so a preserved row would silently look "active" again
+			// the moment the enrollment turns back ACTIVE. Safe with zero migration — nothing
+			// holds a foreign key to team_member.id (see CourseRosterStore#deleteTeamMembership);
+			// the (team, role) fact is preserved instead in this audit record's "before" payload.
+			before.put("teamId", member.getTeam() == null ? null : member.getTeam().getId());
+			before.put("teamMemberId", member.getId());
+			before.put("roleInTeam", member.getRoleInTeam() == null ? null : member.getRoleInTeam().name());
+			store.deleteTeamMembership(member);
+		}
+		enrollment.setEnrollmentStatus(EnrollmentStatus.WITHDRAWN);
+		store.saveEnrollment(enrollment);
+		audit.record(
+				admin,
+				null,
+				null,
+				COURSE_ROSTER_STUDENT_REMOVED,
+				"course_enrollment",
+				enrollment.getId(),
+				before,
+				Map.of("enrollmentStatus", EnrollmentStatus.WITHDRAWN.name()),
+				Map.of("courseId", course.getId()),
+				AuditSource.API,
+				auditRequest == null ? null : auditRequest.requestId(),
+				auditRequest == null ? null : auditRequest.ip(),
+				auditRequest == null ? null : auditRequest.userAgent());
+		return enrollmentEntry(enrollment);
+	}
+
+	private CourseRosterEntryResponse applyCancelInvitation(
+			Course course, UUID invitationId, UserAccount admin, AuditRequest auditRequest) {
+		StudentCourseInvitation invitation = store.findInvitationById(invitationId)
+				.filter(row -> row.getCourse() != null && row.getCourse().getId().equals(course.getId()))
+				.orElseThrow(() -> new AcademicException(
+						AcademicErrorCode.ROSTER_STUDENT_NOT_FOUND, HttpStatus.NOT_FOUND, "Roster invitation was not found."));
+		if (!isOutstandingInvitation(invitation.getInvitationStatus())) {
+			throw new AcademicException(
+					AcademicErrorCode.ROSTER_STUDENT_ALREADY_REMOVED,
+					HttpStatus.CONFLICT,
+					"This invitation is already removed from the course roster.");
+		}
+		StudentInvitationStatus previousStatus = invitation.getInvitationStatus();
+		invitation.setInvitationStatus(StudentInvitationStatus.CANCELLED);
+		store.saveInvitation(invitation);
+		audit.record(
+				admin,
+				null,
+				null,
+				COURSE_ROSTER_INVITATION_CANCELLED,
+				"student_course_invitation",
+				invitation.getId(),
+				Map.of("invitationStatus", previousStatus.name()),
+				Map.of("invitationStatus", StudentInvitationStatus.CANCELLED.name()),
+				Map.of("courseId", course.getId()),
+				AuditSource.API,
+				auditRequest == null ? null : auditRequest.requestId(),
+				auditRequest == null ? null : auditRequest.ip(),
+				auditRequest == null ? null : auditRequest.userAgent());
+		return invitationEntry(invitation);
+	}
+
 	@Transactional(readOnly = true)
 	public CourseRosterResponse getRoster(UUID courseId) {
 		Course course = requireCourse(courseId);
@@ -284,7 +413,11 @@ public class CourseRosterService {
 			}
 			entries.add(invitationEntry(invitation));
 		}
-		long enrolled = entries.stream().filter(row -> "ENROLLMENT".equals(row.kind())).count();
+		// WITHDRAWN/COMPLETED enrollment rows stay visible in `entries` for admin history (their
+		// enrollmentStatus is exposed explicitly), but must not inflate the ACTIVE headcount.
+		long enrolled = entries.stream()
+				.filter(row -> "ENROLLMENT".equals(row.kind()) && EnrollmentStatus.ACTIVE.name().equals(row.enrollmentStatus()))
+				.count();
 		long pending = entries.stream().filter(row -> "INVITATION".equals(row.kind())).count();
 		return new CourseRosterResponse(
 				course.getId(),

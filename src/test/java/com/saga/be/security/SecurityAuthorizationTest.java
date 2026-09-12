@@ -2,6 +2,7 @@ package com.saga.be.security;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -159,6 +160,40 @@ class SecurityAuthorizationTest {
 						.with(authentication(auth(AccountRole.STUDENT, "hash")))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"fullName\":\"A\",\"studentCode\":\"SE123456\",\"email\":\"a@gmail.com\"}"))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void studentAndLecturerCannotRemoveRosterEntries() throws Exception {
+		UUID courseId = UUID.fromString("00000000-0000-0000-0000-000000000099");
+		UUID enrollmentId = UUID.fromString("00000000-0000-0000-0000-0000000000e1");
+		UUID invitationId = UUID.fromString("00000000-0000-0000-0000-0000000000e2");
+		mockMvc.perform(delete("/api/admin/courses/" + courseId + "/roster/enrollments/" + enrollmentId)
+						.with(csrf())
+						.with(authentication(auth(AccountRole.STUDENT, "hash"))))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(delete("/api/admin/courses/" + courseId + "/roster/enrollments/" + enrollmentId)
+						.with(csrf())
+						.with(authentication(auth(AccountRole.LECTURER, "hash"))))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(delete("/api/admin/courses/" + courseId + "/roster/invitations/" + invitationId)
+						.with(csrf())
+						.with(authentication(auth(AccountRole.STUDENT, "hash"))))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(delete("/api/admin/courses/" + courseId + "/roster/invitations/" + invitationId)
+						.with(csrf())
+						.with(authentication(auth(AccountRole.LECTURER, "hash"))))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void unauthenticatedCannotRemoveRosterEntries() throws Exception {
+		UUID courseId = UUID.fromString("00000000-0000-0000-0000-000000000099");
+		UUID enrollmentId = UUID.fromString("00000000-0000-0000-0000-0000000000e1");
+		mockMvc.perform(delete("/api/admin/courses/" + courseId + "/roster/enrollments/" + enrollmentId)
+						.with(csrf()))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(delete("/api/admin/courses/" + courseId + "/roster/enrollments/" + enrollmentId))
 				.andExpect(status().isForbidden());
 	}
 

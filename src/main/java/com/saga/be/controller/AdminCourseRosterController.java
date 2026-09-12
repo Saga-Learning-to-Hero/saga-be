@@ -2,6 +2,7 @@ package com.saga.be.controller;
 
 import com.saga.be.dto.roster.AddRosterStudentRequest;
 import com.saga.be.dto.roster.AddRosterStudentResponse;
+import com.saga.be.dto.roster.CourseRosterEntryResponse;
 import com.saga.be.dto.roster.CourseRosterResponse;
 import com.saga.be.dto.roster.RosterConfirmRequest;
 import com.saga.be.dto.roster.RosterConfirmResponse;
@@ -27,6 +28,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -109,6 +111,47 @@ public class AdminCourseRosterController {
 			@Valid @RequestBody AddRosterStudentRequest request,
 			HttpServletRequest http) {
 		return roster.addStudent(courseId, request, actor(principal), audit(http));
+	}
+
+	@DeleteMapping("/enrollments/{enrollmentId}")
+	@ResponseStatus(HttpStatus.OK)
+	@Operation(
+			summary = "Remove an actively-enrolled student from the roster",
+			description =
+					"""
+					Withdraws the CourseEnrollment (status becomes WITHDRAWN). Never deletes the \
+					UserAccount, StudentProfile, or historical records. If the student is the \
+					ACTIVE Leader of a team in this course, this is refused with 409 \
+					TEAM_LEADER_REMOVAL_REQUIRES_REASSIGNMENT — reassign the team's Leader first, \
+					then retry. Repeating this call on an already-withdrawn enrollment returns 409 \
+					ROSTER_STUDENT_ALREADY_REMOVED.
+					""")
+	public CourseRosterEntryResponse removeEnrollment(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID courseId,
+			@PathVariable UUID enrollmentId,
+			HttpServletRequest http) {
+		return roster.removeEnrollment(courseId, enrollmentId, actor(principal), audit(http));
+	}
+
+	@DeleteMapping("/invitations/{invitationId}")
+	@ResponseStatus(HttpStatus.OK)
+	@Operation(
+			summary = "Cancel a pending roster invitation",
+			description =
+					"""
+					Cancels a PENDING/SENT StudentCourseInvitation (status becomes CANCELLED); the \
+					row is kept, not deleted, so a later signup cannot silently claim it. A later \
+					POST .../roster/students for the same email/studentCode reuses and reactivates \
+					this same row. Repeating this call on an already-cancelled/claimed invitation \
+					returns 409 ROSTER_STUDENT_ALREADY_REMOVED.
+					""")
+	public CourseRosterEntryResponse cancelInvitation(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID courseId,
+			@PathVariable UUID invitationId,
+			HttpServletRequest http) {
+		return roster.cancelInvitation(courseId, invitationId, actor(principal), audit(http));
 	}
 
 	private UserAccount actor(SagaUserPrincipal principal) {

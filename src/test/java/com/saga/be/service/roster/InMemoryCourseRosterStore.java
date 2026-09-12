@@ -6,6 +6,7 @@ import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.academic.Course;
 import com.saga.be.entity.academic.CourseEnrollment;
 import com.saga.be.entity.enums.StudentInvitationStatus;
+import com.saga.be.entity.project.TeamMember;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -21,6 +22,7 @@ final class InMemoryCourseRosterStore implements CourseRosterStore {
 	final Map<UUID, StudentProfile> students = new LinkedHashMap<>();
 	final Map<UUID, CourseEnrollment> enrollments = new LinkedHashMap<>();
 	final Map<UUID, StudentCourseInvitation> invitations = new LinkedHashMap<>();
+	final Map<UUID, TeamMember> teamMembersByEnrollment = new LinkedHashMap<>();
 
 	@Override
 	public Optional<Course> findCourse(UUID courseId) {
@@ -104,6 +106,11 @@ final class InMemoryCourseRosterStore implements CourseRosterStore {
 	}
 
 	@Override
+	public Optional<CourseEnrollment> findEnrollmentById(UUID enrollmentId) {
+		return Optional.ofNullable(enrollments.get(enrollmentId));
+	}
+
+	@Override
 	public Optional<StudentCourseInvitation> findInvitationByCourseAndEmail(UUID courseId, String email) {
 		if (email == null) {
 			return Optional.empty();
@@ -125,6 +132,11 @@ final class InMemoryCourseRosterStore implements CourseRosterStore {
 						&& courseId.equals(row.getCourse().getId())
 						&& studentCode.equalsIgnoreCase(row.getStudentCode()))
 				.findFirst();
+	}
+
+	@Override
+	public Optional<StudentCourseInvitation> findInvitationById(UUID invitationId) {
+		return Optional.ofNullable(invitations.get(invitationId));
 	}
 
 	@Override
@@ -162,6 +174,26 @@ final class InMemoryCourseRosterStore implements CourseRosterStore {
 		}
 		students.put(profile.getId(), profile);
 		return profile;
+	}
+
+	@Override
+	public Optional<UUID> findTeamIdByEnrollment(UUID enrollmentId) {
+		return Optional.ofNullable(teamMembersByEnrollment.get(enrollmentId)).map(m -> m.getTeam().getId());
+	}
+
+	@Override
+	public Optional<TeamMember> lockTeamAndReloadMembership(UUID teamId, UUID enrollmentId) {
+		// Single-threaded test double: no real lock and no ORM cache to go stale, just reads.
+		return Optional.ofNullable(teamMembersByEnrollment.get(enrollmentId));
+	}
+
+	@Override
+	public void deleteTeamMembership(TeamMember member) {
+		teamMembersByEnrollment.remove(member.getCourseEnrollment().getId());
+	}
+
+	void putTeamMember(TeamMember member) {
+		teamMembersByEnrollment.put(member.getCourseEnrollment().getId(), member);
 	}
 
 	@Override
