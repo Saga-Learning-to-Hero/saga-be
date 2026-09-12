@@ -25,6 +25,8 @@ public interface TeamRepository extends JpaRepository<Team, UUID> {
 
 	Optional<Team> findByCourse_IdAndTeamNo(UUID courseId, Integer teamNo);
 
+	Optional<Team> findByProject_Id(UUID projectId);
+
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("select t from Team t where t.id = :id")
 	Optional<Team> findByIdForUpdate(@Param("id") UUID id);

@@ -5,6 +5,8 @@ import com.saga.be.dto.project.CreateProjectTaskRequest;
 import com.saga.be.dto.project.PatchProjectSprintRequest;
 import com.saga.be.dto.project.PatchProjectTaskRequest;
 import com.saga.be.dto.project.ProjectCommitResponse;
+import com.saga.be.dto.project.ProjectMemberProgressResponse;
+import com.saga.be.dto.project.ProjectProgressResponse;
 import com.saga.be.dto.project.ProjectSprintResponse;
 import com.saga.be.dto.project.ProjectSyncEnqueueResponse;
 import com.saga.be.dto.project.ProjectSyncStatusResponse;
@@ -16,6 +18,7 @@ import com.saga.be.integration.jira.JiraIssueWriteClient.TransitionOption;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.projection.ProjectJiraSprintCommandService;
 import com.saga.be.service.projection.ProjectJiraTaskCommandService;
+import com.saga.be.service.projection.ProjectProgressService;
 import com.saga.be.service.projection.ProjectProjectionReadService;
 import com.saga.be.service.sync.ProjectManualSyncService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -49,16 +52,19 @@ public class ProjectProjectionController {
 	private final ProjectJiraTaskCommandService taskCommands;
 	private final ProjectJiraSprintCommandService sprintCommands;
 	private final ProjectManualSyncService manualSync;
+	private final ProjectProgressService progress;
 
 	public ProjectProjectionController(
 			ProjectProjectionReadService projections,
 			ProjectJiraTaskCommandService taskCommands,
 			ProjectJiraSprintCommandService sprintCommands,
-			ProjectManualSyncService manualSync) {
+			ProjectManualSyncService manualSync,
+			ProjectProgressService progress) {
 		this.projections = projections;
 		this.taskCommands = taskCommands;
 		this.sprintCommands = sprintCommands;
 		this.manualSync = manualSync;
+		this.progress = progress;
 	}
 
 	@GetMapping("/tasks")
@@ -217,5 +223,28 @@ public class ProjectProjectionController {
 	public List<ProjectSyncStatusResponse> syncStatus(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
 		return manualSync.latestStatus(principal.getUserId(), projectId);
+	}
+
+	@GetMapping("/progress")
+	@Operation(
+			summary = "Factual Task/Sprint/Commit/evidence progress dashboard for the project.",
+			description =
+					"""
+					Read-only aggregation of canonical DB projections — no live Jira/GitHub call, no
+					grading/contribution formula (see GET /api/teams/{teamId}/contribution-evaluation
+					for that). Same reader authorization as every other endpoint on this controller.
+					""")
+	public ProjectProgressResponse projectProgress(
+			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
+		return progress.getProjectProgress(principal.getUserId(), projectId);
+	}
+
+	@GetMapping("/progress/members/{studentId}")
+	@Operation(summary = "Factual per-member progress drill-down (assigned tasks, commit/evidence attribution).")
+	public ProjectMemberProgressResponse memberProgress(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@PathVariable UUID studentId) {
+		return progress.getMemberProgress(principal.getUserId(), projectId, studentId);
 	}
 }

@@ -23,4 +23,8 @@ public interface TaskFileRepository extends JpaRepository<TaskFile, UUID> {
 	long countByTask_Id(UUID taskId);
 
 	long countByTask_IdAndSource(UUID taskId, EvidenceSource source);
+
+	long countByTask_Project_Id(UUID projectId);
+
+	long countByTask_Project_IdAndCreatedBy_Id(UUID projectId, UUID userId);
 }

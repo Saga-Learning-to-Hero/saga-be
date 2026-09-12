@@ -2,10 +2,12 @@ package com.saga.be.controller;
 
 import com.saga.be.dto.academic.CourseResponse;
 import com.saga.be.dto.team.LecturerActiveRosterResponse;
+import com.saga.be.dto.team.LecturerCourseProgressResponse;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.lecturer.LecturerCourseService;
+import com.saga.be.service.lecturer.LecturerProgressService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -27,10 +29,13 @@ public class LecturerCourseController {
 
 	private final LecturerCourseService courses;
 	private final UserAccountRepository users;
+	private final LecturerProgressService progress;
 
-	public LecturerCourseController(LecturerCourseService courses, UserAccountRepository users) {
+	public LecturerCourseController(
+			LecturerCourseService courses, UserAccountRepository users, LecturerProgressService progress) {
 		this.courses = courses;
 		this.users = users;
+		this.progress = progress;
 	}
 
 	@GetMapping
@@ -51,6 +56,17 @@ public class LecturerCourseController {
 	public LecturerActiveRosterResponse roster(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID courseId) {
 		return courses.getActiveRoster(actor(principal), courseId);
+	}
+
+	@GetMapping("/{courseId}/progress")
+	@Operation(
+			summary = "Lightweight Task/Sprint/Commit progress summary per Team in this course, for dashboard cards.",
+			description =
+					"Bounded, constant-query-count aggregation — not per-team live provider calls. "
+							+ "Click a team's projectId into GET /api/projects/{projectId}/progress for full detail.")
+	public LecturerCourseProgressResponse progress(
+			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID courseId) {
+		return progress.getCourseProgress(actor(principal), courseId);
 	}
 
 	private UserAccount actor(SagaUserPrincipal principal) {

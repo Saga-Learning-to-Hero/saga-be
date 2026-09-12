@@ -61,6 +61,50 @@ public class ProjectDataAuthorization {
 		throw denied();
 	}
 
+	/**
+	 * Progress-dashboard authorization: assigned LECTURER, or the ACTIVE Team Leader of this
+	 * project. Deliberately narrower than {@link #requireReader} — which also allows an ordinary
+	 * ACTIVE MEMBER, correctly, since it guards the raw Task/Commit/Sprint lists a member should
+	 * see in full. The progress/analytics aggregation is a distinct, more sensitive product
+	 * surface where ordinary members must be denied, so this reuses the same underlying repository
+	 * checks ({@code existsAssignedToLecturerUser}, {@code findActiveRoleByProjectIdAndUserId})
+	 * {@link #requireReader}/{@link #requireStudentLeader} already rely on, recombined under a
+	 * policy neither of those two methods expresses on its own — {@code requireReader} is too
+	 * broad (allows MEMBER) and {@code requireStudentLeader} is too narrow (denies LECTURER
+	 * entirely). Neither existing method's behavior is changed by adding this one.
+	 */
+	public void requireLecturerOrTeamLeader(UUID userId, UUID projectId) {
+		UserAccount account = users.findById(userId).orElseThrow();
+		AccountRole role = account.getAccountRole();
+		if (role == AccountRole.LECTURER) {
+			if (!projects.existsAssignedToLecturerUser(projectId, userId)) {
+				throw new AcademicException(
+						AcademicErrorCode.LECTURER_COURSE_FORBIDDEN,
+						HttpStatus.FORBIDDEN,
+						"Lecturer is not assigned to this course.");
+			}
+			return;
+		}
+		if (role == AccountRole.STUDENT) {
+			RoleInTeam teamRole = members.findActiveRoleByProjectIdAndUserId(projectId, userId).orElse(null);
+			if (teamRole == null) {
+				throw new IntegrationException(
+						IntegrationErrorCode.INTEGRATION_FORBIDDEN,
+						HttpStatus.FORBIDDEN,
+						"Not a member of this team.");
+			}
+			if (teamRole != RoleInTeam.LEADER) {
+				throw new IntegrationException(
+						IntegrationErrorCode.NOT_TEAM_LEADER,
+						HttpStatus.FORBIDDEN,
+						"Only the Team Leader can view this project's progress dashboard.");
+			}
+			return;
+		}
+		// ADMIN and any other role: same denial as requireReader — preserve existing project policy.
+		throw denied();
+	}
+
 	public RoleInTeam requireStudentLeader(UUID userId, UUID projectId) {
 		UserAccount account = users.findById(userId).orElseThrow();
 		if (account.getAccountRole() != AccountRole.STUDENT) {

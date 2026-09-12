@@ -37,4 +37,16 @@ public interface SprintRepository extends JpaRepository<Sprint, UUID> {
 	Optional<Sprint> findActiveByIdAndProject_Id(@Param("sprintId") UUID sprintId, @Param("projectId") UUID projectId);
 
 	Optional<Sprint> findByIdAndJiraIntegration_Project_IdAndDeletedAtIsNull(UUID id, UUID projectId);
+
+	/** Progress dashboard (Lecturer course overview): all non-deleted sprints for several projects in one query. */
+	@Query(
+			"""
+			select s from Sprint s
+			join fetch s.jiraIntegration ji
+			join fetch ji.project p
+			where p.id in :projectIds
+			  and s.deletedAt is null
+			order by coalesce(s.startDate, s.createdAt) desc
+			""")
+	List<Sprint> findActiveByProjectIdIn(@Param("projectIds") Collection<UUID> projectIds);
 }
