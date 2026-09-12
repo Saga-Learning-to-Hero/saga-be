@@ -454,6 +454,15 @@ public class ProjectIntegrationService {
 		if (eligible.isEmpty()) {
 			return ReconnectResolution.install();
 		}
+		if (historical.isEmpty()) {
+			// FIRST-TIME project connection (no github_project_installation membership and no
+			// git_repo provenance ever recorded for this project): never silently auto-bind, even
+			// when the GitHub user's OAuth token reveals exactly one eligible installation. That
+			// one installation may be an unrelated shared/demo org the user merely has visibility
+			// into (e.g. via /user/installations), not necessarily the one they intend to use.
+			// Force an explicit Team Leader choice through the candidates endpoint instead.
+			return ReconnectResolution.select(eligible);
+		}
 		if (eligible.size() > 1) {
 			return ReconnectResolution.select(eligible);
 		}

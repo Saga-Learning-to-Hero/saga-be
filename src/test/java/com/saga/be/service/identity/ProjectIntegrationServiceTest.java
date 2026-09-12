@@ -1971,7 +1971,13 @@ class ProjectIntegrationServiceTest {
 	}
 
 	@Test
-	void completeGithubReconnectWithZeroProvenanceAndOneEligibleBindsWithoutUninstall() {
+	void completeGithubReconnectWithZeroProvenanceAndOneEligibleRequiresSelectionNotAutoBind() {
+		// FIRST-TIME project (no github_project_installation membership, no git_repo
+		// provenance): even though the GitHub user's OAuth token reveals exactly one eligible
+		// installation, the backend must NOT silently bind it — that installation may be an
+		// unrelated shared/demo org the user merely has visibility into. It must come back as
+		// GITHUB_INSTALLATION_SELECTION_REQUIRED with that one candidate for the Team Leader to
+		// explicitly confirm (or choose mode=install_new instead).
 		when(repos.findByProject_IdWithInstallation(projectId)).thenReturn(List.of());
 		OAuthState reconnectState = new OAuthState(
 				"state",
@@ -1983,6 +1989,109 @@ class ProjectIntegrationServiceTest {
 				"verifier",
 				Instant.now(),
 				null);
+		GithubInstallation free = suspendedInstallation(555L);
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		IntegrationProperties.GitHub githubProps = new IntegrationProperties.GitHub();
+		githubProps.setAppId("123456");
+		githubProps.setOauthCallbackUrl("http://localhost/callback");
+		when(properties.getGithub()).thenReturn(githubProps);
+		when(properties.getSuccessUrl()).thenReturn("http://localhost:3000/integrations/success");
+		when(github.exchangeUserToken(eq("code"), eq("verifier"), any())).thenReturn("user-token");
+		when(github.listUserInstallations("user-token"))
+				.thenReturn(new GitHubOAuthClient.GitHubUserInstallationsResponse(
+						List.of(new GitHubOAuthClient.GitHubInstallationIdResponse(555L))));
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 555L))
+				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
+						555L,
+						123456L,
+						new GitHubOAuthClient.GitHubAccountResponse("existing-org", "Organization"),
+						null,
+						"selected"));
+		when(installations.findByInstallationId(555L)).thenReturn(Optional.of(free));
+		when(projectInstallations.findByProject_IdWithInstallation(projectId)).thenReturn(List.of());
+
+		String target = service.completeGithubReconnect(student.getId(), "code", reconnectState);
+
+		assertTrue(target.contains("GITHUB_INSTALLATION_SELECTION_REQUIRED"));
+		assertTrue(target.startsWith("http://localhost:3000/integrations/success"));
+		verify(reconnectCandidates).save(eq(student.getId()), eq(projectId), any(), any());
+		verify(installations, never()).save(any());
+		verify(projectInstallations, never()).save(any());
+		verify(github, never()).installationUrl(any());
+	}
+
+	@Test
+	void completeGithubReconnectWithZeroProvenanceAndTwoEligibleRequiresSelection() {
+		// Same FIRST-TIME scenario as above but with two eligible installations — already
+		// required selection before this fix, must still require it after.
+		GithubInstallation one = suspendedInstallation(111L);
+		one.setAccountLogin("org-a");
+		one.setAccountType("Organization");
+		GithubInstallation two = suspendedInstallation(222L);
+		two.setAccountLogin("org-b");
+		two.setAccountType("Organization");
+		when(repos.findByProject_IdWithInstallation(projectId)).thenReturn(List.of());
+		OAuthState reconnectState = new OAuthState(
+				"state",
+				student.getId(),
+				OAuthFlowType.GITHUB_TEAM_RECONNECT,
+				null,
+				projectId,
+				team.getId(),
+				"verifier",
+				Instant.now(),
+				null);
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
+		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		IntegrationProperties.GitHub githubProps = new IntegrationProperties.GitHub();
+		githubProps.setAppId("123456");
+		githubProps.setOauthCallbackUrl("http://localhost/callback");
+		when(properties.getGithub()).thenReturn(githubProps);
+		when(properties.getSuccessUrl()).thenReturn("http://localhost:3000/integrations/success");
+		when(github.exchangeUserToken(eq("code"), eq("verifier"), any())).thenReturn("user-token");
+		when(github.listUserInstallations("user-token"))
+				.thenReturn(new GitHubOAuthClient.GitHubUserInstallationsResponse(List.of(
+						new GitHubOAuthClient.GitHubInstallationIdResponse(111L),
+						new GitHubOAuthClient.GitHubInstallationIdResponse(222L))));
+		when(githubJwt.createJwt()).thenReturn("app-jwt");
+		when(github.getInstallation("app-jwt", 111L))
+				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
+						111L, 123456L, new GitHubOAuthClient.GitHubAccountResponse("org-a", "Organization"), null, "selected"));
+		when(github.getInstallation("app-jwt", 222L))
+				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
+						222L, 123456L, new GitHubOAuthClient.GitHubAccountResponse("org-b", "Organization"), null, "selected"));
+		when(installations.findByInstallationId(111L)).thenReturn(Optional.of(one));
+		when(installations.findByInstallationId(222L)).thenReturn(Optional.of(two));
+		when(projectInstallations.findByProject_IdWithInstallation(projectId)).thenReturn(List.of());
+
+		String target = service.completeGithubReconnect(student.getId(), "code", reconnectState);
+
+		assertTrue(target.contains("GITHUB_INSTALLATION_SELECTION_REQUIRED"));
+		verify(reconnectCandidates).save(eq(student.getId()), eq(projectId), any(), any());
+		verify(installations, never()).save(any());
+	}
+
+	@Test
+	void completeGithubReconnectWithZeroProvenanceAndExplicitInstallationIdBindsAfterReverify() {
+		// FIRST-TIME project, but the Team Leader has ALREADY explicitly chosen the candidate
+		// (e.g. after seeing it from GET .../reconnect/candidates and calling
+		// connect?installationId=555) — the resulting OAuthState carries that installation id
+		// directly, so completeGithubReconnect must reverify and bind it, not ask again.
+		when(repos.findByProject_IdWithInstallation(projectId)).thenReturn(List.of());
+		OAuthState reconnectState = new OAuthState(
+				"state",
+				student.getId(),
+				OAuthFlowType.GITHUB_TEAM_RECONNECT,
+				null,
+				projectId,
+				team.getId(),
+				"verifier",
+				Instant.now(),
+				555L);
 		GithubInstallation free = suspendedInstallation(555L);
 		when(users.findById(student.getId())).thenReturn(Optional.of(student));
 		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
@@ -2260,7 +2369,11 @@ class ProjectIntegrationServiceTest {
 	}
 
 	@Test
-	void completeGithubReconnectWithoutStateInstallationUsesVerifiedUserListNotSuspendedGuess() {
+	void completeGithubReconnectWithoutStateInstallationAndZeroProvenanceRequiresSelection() {
+		// FIRST-TIME project, no state-bound installation id: even a single installation found
+		// via the verified /user/installations list must not be auto-bound (see the
+		// "ZeroProvenanceAndOneEligible" test above) — this exercises the same rule for an
+		// installation not yet known to our own `github_installation` table.
 		OAuthState reconnectState = new OAuthState(
 				"state",
 				student.getId(),
@@ -2288,25 +2401,14 @@ class ProjectIntegrationServiceTest {
 				.thenReturn(new GitHubOAuthClient.GitHubInstallationResponse(
 						158866076L, 123456L, null, null, "selected"));
 		when(installations.findByInstallationId(158866076L)).thenReturn(Optional.empty());
-		Project project = new Project();
-		project.setId(projectId);
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
 		when(projectInstallations.findByProject_IdWithInstallation(projectId)).thenReturn(List.of());
-		when(installations.findByInstallationIdForUpdate(158866076L)).thenReturn(Optional.empty());
-		when(installations.save(any(GithubInstallation.class))).thenAnswer(invocation -> {
-			GithubInstallation saved = invocation.getArgument(0);
-			saved.setId(UUID.randomUUID());
-			return saved;
-		});
 
 		String target = service.completeGithubReconnect(student.getId(), "code", reconnectState);
 
-		assertEquals("http://localhost:3000/integrations/success", target);
-		ArgumentCaptor<GithubInstallation> captor = ArgumentCaptor.forClass(GithubInstallation.class);
-		verify(installations).save(captor.capture());
-		assertEquals(158866076L, captor.getValue().getInstallationId());
-		assertNull(captor.getValue().getProject());
-		verify(projectInstallations).save(any(GithubProjectInstallation.class));
+		assertTrue(target.contains("GITHUB_INSTALLATION_SELECTION_REQUIRED"));
+		verify(reconnectCandidates).save(eq(student.getId()), eq(projectId), any(), any());
+		verify(installations, never()).save(any());
+		verify(projectInstallations, never()).save(any());
 	}
 
 	@Test
