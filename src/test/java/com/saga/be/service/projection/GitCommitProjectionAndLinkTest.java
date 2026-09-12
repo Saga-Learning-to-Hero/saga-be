@@ -15,6 +15,7 @@ import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.traceability.TaskGitCommitLink;
 import com.saga.be.repository.GitCommitRepository;
+import com.saga.be.repository.GitRepoRepository;
 import com.saga.be.repository.IdentityMapRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.StudentProfileRepository;
@@ -39,6 +40,8 @@ class GitCommitProjectionAndLinkTest {
 	@Mock
 	private GitCommitRepository commits;
 	@Mock
+	private GitRepoRepository gitRepos;
+	@Mock
 	private IdentityMapRepository identities;
 	@Mock
 	private StudentProfileRepository students;
@@ -59,7 +62,8 @@ class GitCommitProjectionAndLinkTest {
 	@BeforeEach
 	void setUp() {
 		autoLink = new CommitTaskAutoLinkService(tasks, links, candidates);
-		commitsService = new GitCommitProjectionService(commits, identities, students, jiraIntegrations, autoLink);
+		commitsService =
+				new GitCommitProjectionService(commits, gitRepos, identities, students, jiraIntegrations, autoLink);
 		project = new Project();
 		project.setId(UUID.randomUUID());
 		repo = new GitRepo();

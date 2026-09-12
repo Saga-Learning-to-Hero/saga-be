@@ -170,6 +170,7 @@ public class ProjectProjectionReadService {
 				commit.getMessage(),
 				commit.getAuthorExternalId(),
 				commit.getAuthorStudent() == null ? null : commit.getAuthorStudent().getId(),
+				commit.getHeadRef(),
 				commit.getCommittedAt(),
 				commit.getCreatedAt());
 	}

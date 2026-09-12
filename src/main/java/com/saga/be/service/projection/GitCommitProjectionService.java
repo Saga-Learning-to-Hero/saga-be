@@ -7,6 +7,7 @@ import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.integration.IdentityMap;
 import com.saga.be.repository.GitCommitRepository;
+import com.saga.be.repository.GitRepoRepository;
 import com.saga.be.repository.IdentityMapRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.StudentProfileRepository;
@@ -38,6 +39,7 @@ public class GitCommitProjectionService {
 			List.of(IdentityMappingStatus.ACTIVE, IdentityMappingStatus.VERIFIED, IdentityMappingStatus.PENDING);
 
 	private final GitCommitRepository commits;
+	private final GitRepoRepository gitRepos;
 	private final IdentityMapRepository identities;
 	private final StudentProfileRepository students;
 	private final JiraIntegrationRepository jiraIntegrations;
@@ -45,11 +47,13 @@ public class GitCommitProjectionService {
 
 	public GitCommitProjectionService(
 			GitCommitRepository commits,
+			GitRepoRepository gitRepos,
 			IdentityMapRepository identities,
 			StudentProfileRepository students,
 			JiraIntegrationRepository jiraIntegrations,
 			CommitTaskAutoLinkService autoLink) {
 		this.commits = commits;
+		this.gitRepos = gitRepos;
 		this.identities = identities;
 		this.students = students;
 		this.jiraIntegrations = jiraIntegrations;
@@ -66,8 +70,21 @@ public class GitCommitProjectionService {
 		if (repo == null || repo.getId() == null || drafts == null || drafts.isEmpty()) {
 			return UpsertOutcome.EMPTY;
 		}
-		// Authoritative claim cutoff before persist / auto-link (sync + webhook).
-		List<CommitDraft> eligible = GitRepoCommitClaimCutoff.filterEligible(repo, drafts);
+		// Authoritative claim cutoff before persist / auto-link (sync + webhook). Computed fresh
+		// every call (never cached) so a later manual/recovery sync or webhook still applies the
+		// correct rule: cutoff only when some OTHER SAGA project's row for this exact physical
+		// repository was created STRICTLY BEFORE this row (repo.getCreatedAt()) -- not merely
+		// "has ever existed". "Ever existed" would wrongly re-impose a cutoff on a first-ever
+		// owner (A) whose original row is reused on reconnect after a LATER project (B) claims
+		// the same repository (A -> B -> A): A's own createdAt never changes, so ordering by
+		// createdAt correctly keeps A cutoff-free forever while B stays cutoff-protected forever.
+		boolean cutoffApplies = repo.getRepositoryId() != null
+				&& repo.getProvider() != null
+				&& repo.getProject() != null
+				&& repo.getCreatedAt() != null
+				&& gitRepos.existsByProviderAndRepositoryIdAndProject_IdNotAndCreatedAtLessThan(
+						repo.getProvider(), repo.getRepositoryId(), repo.getProject().getId(), repo.getCreatedAt());
+		List<CommitDraft> eligible = GitRepoCommitClaimCutoff.filterEligible(repo, drafts, cutoffApplies);
 		List<CommitDraft> valid = eligible.stream()
 				.filter(item -> item != null && item.sha() != null && !item.sha().isBlank())
 				.toList();

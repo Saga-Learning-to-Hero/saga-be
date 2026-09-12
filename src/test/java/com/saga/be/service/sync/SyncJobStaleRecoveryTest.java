@@ -22,6 +22,7 @@ import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.project.Project;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
+import com.saga.be.integration.jira.JiraIssueWriteClient;
 import com.saga.be.integration.jira.JiraOAuthClient;
 import com.saga.be.repository.GitRepoRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
@@ -70,6 +71,8 @@ class SyncJobStaleRecoveryTest {
 	private JiraIntegrationCredentialService credentials;
 	@Mock
 	private JiraOAuthClient jira;
+	@Mock
+	private JiraIssueWriteClient jiraFields;
 	@Mock
 	private JiraTaskProjectionService projection;
 
@@ -158,6 +161,7 @@ class SyncJobStaleRecoveryTest {
 		JiraTaskSyncService service = new JiraTaskSyncService(
 				jiraIntegrations,
 				jira,
+				jiraFields,
 				projection,
 				syncJobs,
 				properties,
@@ -182,7 +186,9 @@ class SyncJobStaleRecoveryTest {
 						any(),
 						any(),
 						org.mockito.ArgumentMatchers.nullable(String.class),
-						org.mockito.ArgumentMatchers.anyInt()))
+						org.mockito.ArgumentMatchers.anyInt(),
+						org.mockito.ArgumentMatchers.nullable(String.class),
+						org.mockito.ArgumentMatchers.nullable(String.class)))
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.BAD_GATEWAY, "down"));
 		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));

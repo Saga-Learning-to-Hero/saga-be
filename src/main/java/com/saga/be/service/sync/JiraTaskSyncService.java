@@ -8,6 +8,7 @@ import com.saga.be.entity.integration.SyncJobLog;
 import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
+import com.saga.be.integration.jira.JiraIssueWriteClient;
 import com.saga.be.integration.jira.JiraOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSearchPage;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
@@ -50,6 +51,7 @@ public class JiraTaskSyncService {
 
 	private final JiraIntegrationRepository integrations;
 	private final JiraOAuthClient jira;
+	private final JiraIssueWriteClient jiraFields;
 	private final JiraTaskProjectionService projection;
 	private final SyncJobLogRepository syncJobs;
 	private final IntegrationProperties properties;
@@ -61,6 +63,7 @@ public class JiraTaskSyncService {
 	public JiraTaskSyncService(
 			JiraIntegrationRepository integrations,
 			JiraOAuthClient jira,
+			JiraIssueWriteClient jiraFields,
 			JiraTaskProjectionService projection,
 			SyncJobLogRepository syncJobs,
 			IntegrationProperties properties,
@@ -70,6 +73,7 @@ public class JiraTaskSyncService {
 			ProjectRealtimePublisher realtime) {
 		this.integrations = integrations;
 		this.jira = jira;
+		this.jiraFields = jiraFields;
 		this.projection = projection;
 		this.syncJobs = syncJobs;
 		this.properties = properties;
@@ -107,6 +111,11 @@ public class JiraTaskSyncService {
 					? preferredAccess
 					: credentials.resolveAccessToken(projectId);
 			probeProjectAccess(accessToken, integration);
+			// Resolved once per sync/cloud (JiraIssueWriteClient caches per-cloudId across syncs
+			// too) and reused for every page -- never hardcoded, since these custom field IDs
+			// (e.g. customfield_10020) vary between Jira sites.
+			String storyPointsFieldId = jiraFields.resolveStoryPointsFieldId(accessToken, integration.getCloudId());
+			String sprintFieldId = jiraFields.resolveSprintFieldId(accessToken, integration.getCloudId());
 			int pageSize = Math.max(1, Math.min(properties.getJiraIssuePageSize(), 100));
 			String nextPageToken = null;
 			int processed = 0;
@@ -121,7 +130,9 @@ public class JiraTaskSyncService {
 							integration.getCloudId(),
 							integration.getProjectKey(),
 							nextPageToken,
-							pageSize);
+							pageSize,
+							storyPointsFieldId,
+							sprintFieldId);
 				} catch (IntegrationException ex) {
 					if (ex.getCode() == IntegrationErrorCode.JIRA_UNAUTHORIZED && !refreshedForUnauthorized) {
 						String rejected = accessToken;
@@ -132,7 +143,9 @@ public class JiraTaskSyncService {
 								integration.getCloudId(),
 								integration.getProjectKey(),
 								nextPageToken,
-								pageSize);
+								pageSize,
+								storyPointsFieldId,
+								sprintFieldId);
 					} else {
 						throw ex;
 					}

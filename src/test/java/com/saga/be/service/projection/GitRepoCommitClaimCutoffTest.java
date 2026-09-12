@@ -11,35 +11,39 @@ import org.junit.jupiter.api.Test;
 class GitRepoCommitClaimCutoffTest {
 
 	@Test
-	void preClaimCommitIsExcluded() {
+	void preClaimCommitIsExcludedWhenCutoffApplies() {
 		LocalDateTime claim = LocalDateTime.of(2026, 9, 1, 0, 0);
-		assertThat(GitRepoCommitClaimCutoff.isEligible(LocalDateTime.of(2026, 8, 15, 12, 0), claim)).isFalse();
+		assertThat(GitRepoCommitClaimCutoff.isEligible(LocalDateTime.of(2026, 8, 15, 12, 0), claim, true))
+				.isFalse();
 	}
 
 	@Test
-	void exactClaimInstantIsIncluded() {
+	void exactClaimInstantIsIncludedWhenCutoffApplies() {
 		LocalDateTime claim = LocalDateTime.of(2026, 9, 1, 0, 0);
-		assertThat(GitRepoCommitClaimCutoff.isEligible(claim, claim)).isTrue();
+		assertThat(GitRepoCommitClaimCutoff.isEligible(claim, claim, true)).isTrue();
 	}
 
 	@Test
-	void postClaimCommitIsIncluded() {
+	void postClaimCommitIsIncludedWhenCutoffApplies() {
 		LocalDateTime claim = LocalDateTime.of(2026, 9, 1, 0, 0);
-		assertThat(GitRepoCommitClaimCutoff.isEligible(LocalDateTime.of(2026, 9, 20, 0, 0), claim)).isTrue();
+		assertThat(GitRepoCommitClaimCutoff.isEligible(LocalDateTime.of(2026, 9, 20, 0, 0), claim, true))
+				.isTrue();
 	}
 
 	@Test
-	void missingCommittedAtIsExcluded() {
-		assertThat(GitRepoCommitClaimCutoff.isEligible(null, LocalDateTime.of(2026, 9, 1, 0, 0))).isFalse();
+	void missingCommittedAtIsExcludedWhenCutoffApplies() {
+		assertThat(GitRepoCommitClaimCutoff.isEligible(null, LocalDateTime.of(2026, 9, 1, 0, 0), true))
+				.isFalse();
 	}
 
 	@Test
-	void missingClaimStartIsExcluded() {
-		assertThat(GitRepoCommitClaimCutoff.isEligible(LocalDateTime.of(2026, 9, 20, 0, 0), null)).isFalse();
+	void missingClaimStartIsExcludedWhenCutoffApplies() {
+		assertThat(GitRepoCommitClaimCutoff.isEligible(LocalDateTime.of(2026, 9, 20, 0, 0), null, true))
+				.isFalse();
 	}
 
 	@Test
-	void filterEligibleDropsPreClaimOnly() {
+	void filterEligibleDropsPreClaimOnlyWhenCutoffApplies() {
 		GitRepo repo = new GitRepo();
 		repo.setCreatedAt(LocalDateTime.of(2026, 9, 1, 0, 0));
 		List<CommitDraft> drafts = List.of(
@@ -47,9 +51,44 @@ class GitRepoCommitClaimCutoffTest {
 				draft("edge", LocalDateTime.of(2026, 9, 1, 0, 0)),
 				draft("new", LocalDateTime.of(2026, 9, 2, 0, 0)),
 				draft("missing", null));
-		assertThat(GitRepoCommitClaimCutoff.filterEligible(repo, drafts))
+		assertThat(GitRepoCommitClaimCutoff.filterEligible(repo, drafts, true))
 				.extracting(CommitDraft::sha)
 				.containsExactly("edge", "new");
+	}
+
+	@Test
+	void preClaimCommitIsIncludedWhenCutoffDoesNotApply() {
+		// First-ever SAGA owner (or same-project reconnect): no other project's history to
+		// protect, so a commit predating the git_repo row's own createdAt is still eligible.
+		LocalDateTime claim = LocalDateTime.of(2026, 9, 1, 0, 0);
+		assertThat(GitRepoCommitClaimCutoff.isEligible(LocalDateTime.of(2020, 1, 1, 0, 0), claim, false))
+				.isTrue();
+	}
+
+	@Test
+	void missingCommittedAtIsIncludedWhenCutoffDoesNotApply() {
+		assertThat(GitRepoCommitClaimCutoff.isEligible(null, LocalDateTime.of(2026, 9, 1, 0, 0), false))
+				.isTrue();
+	}
+
+	@Test
+	void missingClaimStartIsIrrelevantWhenCutoffDoesNotApply() {
+		assertThat(GitRepoCommitClaimCutoff.isEligible(LocalDateTime.of(2026, 9, 20, 0, 0), null, false))
+				.isTrue();
+	}
+
+	@Test
+	void filterEligibleKeepsEverythingWhenCutoffDoesNotApply() {
+		GitRepo repo = new GitRepo();
+		repo.setCreatedAt(LocalDateTime.of(2026, 9, 1, 0, 0));
+		List<CommitDraft> drafts = List.of(
+				draft("ancient", LocalDateTime.of(2020, 1, 1, 0, 0)),
+				draft("edge", LocalDateTime.of(2026, 9, 1, 0, 0)),
+				draft("new", LocalDateTime.of(2026, 9, 2, 0, 0)),
+				draft("missing", null));
+		assertThat(GitRepoCommitClaimCutoff.filterEligible(repo, drafts, false))
+				.extracting(CommitDraft::sha)
+				.containsExactly("ancient", "edge", "new", "missing");
 	}
 
 	private static CommitDraft draft(String sha, LocalDateTime committedAt) {

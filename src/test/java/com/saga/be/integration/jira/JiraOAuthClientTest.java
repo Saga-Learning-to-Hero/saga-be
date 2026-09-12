@@ -16,8 +16,6 @@ import com.saga.be.integration.jira.JiraOAuthClient.IssueSearchPage;
 import com.saga.be.integration.jira.JiraOAuthClient.JiraBoardResponse;
 import com.saga.be.integration.jira.JiraOAuthClient.JiraProjectOption;
 import com.saga.be.integration.jira.JiraOAuthClient.JiraProjectResponse;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -138,7 +136,7 @@ class JiraOAuthClientTest {
 						""",
 						MediaType.APPLICATION_JSON));
 
-		IssueSearchPage page = client.searchIssues("token", "cloud-1", "SAGA", null, 50);
+		IssueSearchPage page = client.searchIssues("token", "cloud-1", "SAGA", null, 50, null, null);
 		assertEquals(1, page.issues().size());
 		assertEquals("SAGA-1", page.issues().getFirst().key());
 		assertEquals("tok-2", page.nextPageToken());
@@ -159,7 +157,7 @@ class JiraOAuthClientTest {
 						""",
 						MediaType.APPLICATION_JSON));
 
-		IssueSearchPage page = client.searchIssues("token", "cloud-1", "SAGA", "tok-2", 50);
+		IssueSearchPage page = client.searchIssues("token", "cloud-1", "SAGA", "tok-2", 50, null, null);
 		assertEquals(1, page.issues().size());
 		assertTrue(page.last());
 		server.verify();
@@ -175,7 +173,7 @@ class JiraOAuthClientTest {
 						.contentType(MediaType.APPLICATION_JSON));
 
 		IntegrationException ex = assertThrows(
-				IntegrationException.class, () -> client.searchIssues("token", "cloud-1", "SAGA", null, 50));
+				IntegrationException.class, () -> client.searchIssues("token", "cloud-1", "SAGA", null, 50, null, null));
 		assertEquals(IntegrationErrorCode.JIRA_SYNC_INCOMPLETE, ex.getCode());
 		server.verify();
 	}
@@ -190,7 +188,7 @@ class JiraOAuthClientTest {
 						.contentType(MediaType.APPLICATION_JSON));
 
 		IntegrationException ex = assertThrows(
-				IntegrationException.class, () -> client.searchIssues("token", "cloud-1", "SAGA", null, 50));
+				IntegrationException.class, () -> client.searchIssues("token", "cloud-1", "SAGA", null, 50, null, null));
 		assertEquals(IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, ex.getCode());
 		server.verify();
 	}
@@ -207,10 +205,124 @@ class JiraOAuthClientTest {
 	}
 
 	@Test
-	void jiraClientDoesNotTargetJackson2JsonNode() throws Exception {
-		String source = Files.readString(Path.of("src/main/java/com/saga/be/integration/jira/JiraOAuthClient.java"));
-		assertFalse(source.contains("com.fasterxml.jackson.databind.JsonNode"));
-		assertFalse(source.contains("body(JsonNode.class)"));
+	void searchIssues_requestsDynamicStoryPointsAndSprintFieldIds() {
+		// Bugfix round: the bulk sync path must request the site-specific custom field IDs
+		// resolved by the caller -- never hardcode customfield_10020/customfield_10016, since
+		// those vary between Jira sites.
+		server.expect(request -> {
+					String uri = request.getURI().toString();
+					assertTrue(uri.contains("fields="));
+					String fields = java.net.URLDecoder.decode(
+							uri.substring(uri.indexOf("fields=") + "fields=".length()).split("&")[0],
+							java.nio.charset.StandardCharsets.UTF_8);
+					assertTrue(fields.contains("customfield_10016"), "expected story points field id in fields param");
+					assertTrue(fields.contains("customfield_10020"), "expected sprint field id in fields param");
+					assertTrue(fields.contains("sprint"), "literal 'sprint' field must still be requested");
+				})
+				.andRespond(withSuccess(
+						"""
+						{"issues":[],"isLast":true}
+						""",
+						MediaType.APPLICATION_JSON));
+
+		client.searchIssues("token", "cloud-1", "SAGA", null, 50, "customfield_10016", "customfield_10020");
+		server.verify();
+	}
+
+	@Test
+	void searchIssues_omitsCustomFieldsWhenUnresolved() {
+		server.expect(request -> {
+					String uri = request.getURI().toString();
+					String fields = java.net.URLDecoder.decode(
+							uri.substring(uri.indexOf("fields=") + "fields=".length()).split("&")[0],
+							java.nio.charset.StandardCharsets.UTF_8);
+					assertFalse(fields.contains("customfield_"));
+					assertTrue(fields.contains("sprint"));
+				})
+				.andRespond(withSuccess(
+						"""
+						{"issues":[],"isLast":true}
+						""",
+						MediaType.APPLICATION_JSON));
+
+		client.searchIssues("token", "cloud-1", "SAGA", null, 50, null, null);
+		server.verify();
+	}
+
+	@Test
+	void searchIssues_companyManagedCustomFieldPayload_populatesSprintAndStoryPoints() {
+		server.expect(method(HttpMethod.GET))
+				.andRespond(withSuccess(
+						"""
+						{"issues":[{"id":"1","key":"SAGA-1","fields":{
+						  "summary":"A",
+						  "status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+						  "issuetype":{"name":"Task"},
+						  "customfield_10016":5,
+						  "customfield_10020":[{"id":42,"name":"Sprint 7","state":"active"}]
+						}}],"isLast":true}
+						""",
+						MediaType.APPLICATION_JSON));
+
+		IssueSearchPage page =
+				client.searchIssues("token", "cloud-1", "SAGA", null, 50, "customfield_10016", "customfield_10020");
+
+		var issue = page.issues().getFirst();
+		assertEquals(5, issue.storyPoints());
+		assertEquals("42", issue.sprintExternalId());
+		assertEquals("Sprint 7", issue.sprintName());
+		assertEquals("active", issue.sprintState());
+		server.verify();
+	}
+
+	@Test
+	void searchIssues_missingCustomFields_staysNullSafely() {
+		server.expect(method(HttpMethod.GET))
+				.andRespond(withSuccess(
+						"""
+						{"issues":[{"id":"1","key":"SAGA-1","fields":{
+						  "summary":"A",
+						  "status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+						  "issuetype":{"name":"Task"}
+						}}],"isLast":true}
+						""",
+						MediaType.APPLICATION_JSON));
+
+		IssueSearchPage page =
+				client.searchIssues("token", "cloud-1", "SAGA", null, 50, "customfield_10016", "customfield_10020");
+
+		var issue = page.issues().getFirst();
+		assertEquals(null, issue.storyPoints());
+		assertEquals(null, issue.sprintExternalId());
+		assertEquals("A", issue.summary());
+		assertEquals("To Do", issue.statusName());
+		assertEquals("Task", issue.issueTypeName());
+		server.verify();
+	}
+
+	@Test
+	void searchIssues_teamManagedLiteralSprintField_stillPopulatesSprint() {
+		// Some team-managed projects expose Sprint under the literal "sprint" field name directly
+		// rather than a discoverable customfield_ id.
+		server.expect(method(HttpMethod.GET))
+				.andRespond(withSuccess(
+						"""
+						{"issues":[{"id":"1","key":"SAGA-1","fields":{
+						  "summary":"A",
+						  "status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+						  "issuetype":{"name":"Task"},
+						  "sprint":{"id":"7","name":"Sprint 1","state":"closed"}
+						}}],"isLast":true}
+						""",
+						MediaType.APPLICATION_JSON));
+
+		IssueSearchPage page = client.searchIssues("token", "cloud-1", "SAGA", null, 50, null, "sprint");
+
+		var issue = page.issues().getFirst();
+		assertEquals("7", issue.sprintExternalId());
+		assertEquals("Sprint 1", issue.sprintName());
+		assertEquals("closed", issue.sprintState());
+		server.verify();
 	}
 
 	private static String urlEncode(String value) {

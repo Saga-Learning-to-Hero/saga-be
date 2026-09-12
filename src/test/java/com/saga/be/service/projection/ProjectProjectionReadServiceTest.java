@@ -183,12 +183,42 @@ class ProjectProjectionReadServiceTest {
 		commit.setShaHash("abc");
 		commit.setMessage("SAGA-1");
 		commit.setRepo(repo);
+		commit.setHeadRef("main");
 		when(links.findFetchedCommitsByProjectAndTask(projectId, taskId)).thenReturn(List.of(commit));
 
 		List<ProjectCommitResponse> result = service.listTaskCommits(userId, projectId, taskId);
 		assertThat(result).hasSize(1);
 		assertThat(result.getFirst().sha()).isEqualTo("abc");
+		assertThat(result.getFirst().headRef()).isEqualTo("main");
 		verify(links, times(1)).findFetchedCommitsByProjectAndTask(projectId, taskId);
+	}
+
+	@Test
+	void taskCommits_nullHeadRef_staysNullSafely() {
+		// BUG 2 fix: the commit API must expose stored headRef -- but a commit synced before
+		// headRef was populated, or lacking branch metadata, must not break the response.
+		stubStudent(RoleInTeam.MEMBER);
+		UUID taskId = UUID.randomUUID();
+		Task task = new Task();
+		task.setId(taskId);
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(taskId, projectId)).thenReturn(Optional.of(task));
+		GitRepo repo = new GitRepo();
+		repo.setId(UUID.randomUUID());
+		repo.setFullName("org/saga");
+		GitCommit commit = new GitCommit();
+		commit.setId(UUID.randomUUID());
+		commit.setShaHash("def");
+		commit.setMessage("SAGA-2");
+		commit.setRepo(repo);
+		commit.setHeadRef(null);
+		when(links.findFetchedCommitsByProjectAndTask(projectId, taskId)).thenReturn(List.of(commit));
+
+		List<ProjectCommitResponse> result = service.listTaskCommits(userId, projectId, taskId);
+		assertThat(result).hasSize(1);
+		assertThat(result.getFirst().headRef()).isNull();
+		assertThat(result.getFirst().sha()).isEqualTo("def");
+		assertThat(result.getFirst().repoId()).isEqualTo(repo.getId());
+		assertThat(result.getFirst().repositoryFullName()).isEqualTo("org/saga");
 	}
 
 	@Test

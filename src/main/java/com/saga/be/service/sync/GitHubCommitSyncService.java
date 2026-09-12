@@ -175,10 +175,24 @@ public class GitHubCommitSyncService {
 		if (branches.isEmpty() && repo.getDefaultBranch() != null && !repo.getDefaultBranch().isBlank()) {
 			branches = List.of(repo.getDefaultBranch());
 		}
+		// Computed once per repo per sync run (never cached) so a first-ever owner is not filtered
+		// merely because its git_repo row was created after GitHub history already existed. Cutoff
+		// applies only when some OTHER SAGA project's row for this same physical repository was
+		// created STRICTLY BEFORE this row -- "has ever existed" is the wrong question, since it
+		// would re-impose a cutoff on a first-ever owner's ORIGINAL row after a later project (B)
+		// claims the same repository (A -> B -> A). This is a cheap local pre-filter only --
+		// GitCommitProjectionService#upsertBatchDetailed recomputes and applies the same rule
+		// authoritatively before persist.
+		boolean cutoffApplies = repo.getRepositoryId() != null
+				&& repo.getProvider() != null
+				&& repo.getProject() != null
+				&& repo.getCreatedAt() != null
+				&& repos.existsByProviderAndRepositoryIdAndProject_IdNotAndCreatedAtLessThan(
+						repo.getProvider(), repo.getRepositoryId(), repo.getProject().getId(), repo.getCreatedAt());
 		Set<String> seenShas = new HashSet<>();
 		int uniqueUpserted = 0;
 		for (String branch : branches) {
-			uniqueUpserted += syncBranch(token, repo, branch, seenShas);
+			uniqueUpserted += syncBranch(token, repo, branch, seenShas, cutoffApplies);
 		}
 		writes.executeWithoutResult(status -> {
 			repo.setLastSyncedAt(LocalDateTime.now());
@@ -188,7 +202,7 @@ public class GitHubCommitSyncService {
 		return uniqueUpserted;
 	}
 
-	private int syncBranch(String token, GitRepo repo, String branch, Set<String> seenShas) {
+	private int syncBranch(String token, GitRepo repo, String branch, Set<String> seenShas, boolean cutoffApplies) {
 		int page = 1;
 		int upserted = 0;
 		while (page <= MAX_COMMIT_PAGES_PER_BRANCH) {
@@ -214,7 +228,7 @@ public class GitHubCommitSyncService {
 						summary.authorId() == null ? null : String.valueOf(summary.authorId()),
 						summary.authorLogin(),
 						branch);
-				if (!GitRepoCommitClaimCutoff.isEligible(draft, repo)) {
+				if (!GitRepoCommitClaimCutoff.isEligible(draft, repo, cutoffApplies)) {
 					continue;
 				}
 				drafts.add(draft);

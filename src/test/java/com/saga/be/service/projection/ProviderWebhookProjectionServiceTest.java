@@ -112,7 +112,7 @@ class ProviderWebhookProjectionServiceTest {
 		ArgumentCaptor<List<GitCommitProjectionService.CommitDraft>> captor = ArgumentCaptor.forClass(List.class);
 		verify(commits).upsertBatchDetailed(eq(repo), captor.capture());
 		assertThat(captor.getValue()).extracting(GitCommitProjectionService.CommitDraft::sha).containsExactly("old", "new");
-		assertThat(GitRepoCommitClaimCutoff.filterEligible(repo, captor.getValue()))
+		assertThat(GitRepoCommitClaimCutoff.filterEligible(repo, captor.getValue(), true))
 				.extracting(GitCommitProjectionService.CommitDraft::sha)
 				.containsExactly("new");
 	}

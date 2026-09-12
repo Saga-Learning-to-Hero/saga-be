@@ -143,6 +143,12 @@ class GitHubCommitSyncServiceTest {
 	@Test
 	void claimCutoff_excludesPreClaimLocallyWithoutProviderSince() {
 		GitRepo repo = activeRepo("org", "a");
+		// Simulates cross-project reuse: another SAGA project's row for this exact physical
+		// repository was created BEFORE this row, so the claim cutoff must protect that earlier
+		// project's history.
+		when(repos.existsByProviderAndRepositoryIdAndProject_IdNotAndCreatedAtLessThan(
+						repo.getProvider(), repo.getRepositoryId(), projectId, repo.getCreatedAt()))
+				.thenReturn(true);
 		stubInstallationAndRepos(List.of(repo));
 		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main"));
 		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100)))
@@ -170,6 +176,84 @@ class GitHubCommitSyncServiceTest {
 						anyInt(),
 						anyInt(),
 						any());
+	}
+
+	@Test
+	void firstEverOwner_importsExistingHistoryPredatingTheClaim() {
+		// No other SAGA project's row for this physical repository predates this one (the
+		// existsByProviderAndRepositoryIdAndProject_IdNotAndCreatedAtLessThan mock defaults to
+		// false), so the repository's full existing Git history -- including commits from before
+		// the git_repo row was even created -- must be imported, not dropped merely because SAGA
+		// was linked to an already-existing repository.
+		GitRepo repo = activeRepo("org", "a");
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100)))
+				.thenReturn(List.of(
+						new CommitSummary("ancient", "old", "2020-01-01T00:00:00Z", null, null),
+						new CommitSummary("post", "new", "2026-06-01T12:00:00Z", null, null)));
+
+		SyncJobLog job = service.initialSync(projectId);
+
+		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		assertThat(job.getItemsProcessed()).isEqualTo(2);
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<CommitDraft>> drafts = ArgumentCaptor.forClass(List.class);
+		verify(projection).upsertBatch(eq(repo), drafts.capture());
+		assertThat(drafts.getValue()).extracting(CommitDraft::sha).containsExactlyInAnyOrder("ancient", "post");
+	}
+
+	@Test
+	void firstOwnerReclaimedAfterLaterProject_keepsFirstOwnerSemantics_aThenBThenA() {
+		// A claims this physical repository first (repo.createdAt fixed at claim time). Project B
+		// later claims and disconnects the SAME physical repository, then A reconnects reusing its
+		// ORIGINAL row (createdAt unchanged). B's row existing somewhere in history must NOT make A
+		// start requiring a cutoff -- B's createdAt is not BEFORE A's, so the exists-check must
+		// answer false for A regardless of what happened to the repository afterward.
+		GitRepo repo = activeRepo("org", "a");
+		when(repos.existsByProviderAndRepositoryIdAndProject_IdNotAndCreatedAtLessThan(
+						repo.getProvider(), repo.getRepositoryId(), projectId, repo.getCreatedAt()))
+				.thenReturn(false);
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100)))
+				.thenReturn(List.of(new CommitSummary(
+						"predates-a-claim", "old", "2020-01-01T00:00:00Z", null, null)));
+
+		SyncJobLog job = service.initialSync(projectId);
+
+		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		assertThat(job.getItemsProcessed()).isEqualTo(1);
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<CommitDraft>> drafts = ArgumentCaptor.forClass(List.class);
+		verify(projection).upsertBatch(eq(repo), drafts.capture());
+		assertThat(drafts.getValue()).extracting(CommitDraft::sha).containsExactly("predates-a-claim");
+	}
+
+	@Test
+	void laterOwnerRemainsCutoffProtected_bAfterA() {
+		// B's row was created AFTER A's row for the same physical repository already existed. B
+		// must stay cutoff-protected against A's pre-existing history: a pre-claim commit is
+		// excluded, a post-claim commit is included.
+		GitRepo repo = activeRepo("org", "b");
+		when(repos.existsByProviderAndRepositoryIdAndProject_IdNotAndCreatedAtLessThan(
+						repo.getProvider(), repo.getRepositoryId(), projectId, repo.getCreatedAt()))
+				.thenReturn(true);
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "b")).thenReturn(List.of("main"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("b"), eq("main"), eq(1), eq(100)))
+				.thenReturn(List.of(
+						new CommitSummary("a-pre-claim", "A's old commit", "2025-06-01T00:00:00Z", null, null),
+						new CommitSummary("b-post-claim", "B's own commit", "2026-06-01T00:00:00Z", null, null)));
+
+		SyncJobLog job = service.initialSync(projectId);
+
+		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		assertThat(job.getItemsProcessed()).isEqualTo(1);
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<CommitDraft>> drafts = ArgumentCaptor.forClass(List.class);
+		verify(projection).upsertBatch(eq(repo), drafts.capture());
+		assertThat(drafts.getValue()).extracting(CommitDraft::sha).containsExactly("b-post-claim");
 	}
 
 	@Test
@@ -456,6 +540,8 @@ class GitHubCommitSyncServiceTest {
 		repo.setDefaultBranch("main");
 		repo.setConnectionStatus(IntegrationStatus.ACTIVE);
 		repo.setConsecutiveFailures(0);
+		repo.setProvider(com.saga.be.entity.enums.GitProvider.GITHUB);
+		repo.setRepositoryId((long) Math.abs((owner + "/" + name).hashCode()));
 		// Claim start used as Option B cutoff; commits in fixtures use timestamps after this.
 		repo.setCreatedAt(java.time.LocalDateTime.of(2026, 1, 1, 0, 0));
 		return repo;

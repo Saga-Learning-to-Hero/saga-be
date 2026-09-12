@@ -631,7 +631,12 @@ public class JiraIssueWriteClient {
 		}
 	}
 
-	private IssueSummary toSummary(JsonNode issue, String storyField, String sprintField) {
+	/**
+	 * Package-visible so {@link JiraOAuthClient#searchIssues} can reuse the exact same dynamic
+	 * story-points/sprint parsing for bulk sync as this class already uses for single-issue reads
+	 * ({@link #getIssue}) — one payload-shape audit, not two divergent implementations.
+	 */
+	static IssueSummary toSummary(JsonNode issue, String storyField, String sprintField) {
 		JsonNode fields = issue.path("fields");
 		JsonNode status = fields.path("status");
 		JsonNode category = status.path("statusCategory");

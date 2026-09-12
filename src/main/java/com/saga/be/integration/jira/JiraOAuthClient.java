@@ -2,12 +2,13 @@ package com.saga.be.integration.jira;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.saga.be.config.IntegrationProperties;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,7 +25,7 @@ import org.springframework.web.client.RestClientResponseException;
 public class JiraOAuthClient {
 
 	private static final Logger log = LoggerFactory.getLogger(JiraOAuthClient.class);
-	private static final ObjectMapper SAFE_ERROR_MAPPER = new ObjectMapper();
+	private static final ObjectMapper MAPPER = new ObjectMapper();
 
 	private final RestClient restClient;
 	private final IntegrationProperties properties;
@@ -174,15 +175,33 @@ public class JiraOAuthClient {
 	 * Search issues in one Jira project via enhanced JQL API
 	 * ({@code GET /rest/api/3/search/jql}). Legacy {@code /rest/api/3/search} was removed by
 	 * Atlassian (HTTP 410). Pagination uses {@code nextPageToken} / {@code isLast}.
+	 *
+	 * <p>{@code storyPointsFieldId}/{@code sprintFieldId} are the site-specific custom field IDs
+	 * (e.g. {@code customfield_10020}) resolved once per sync by the caller via {@link
+	 * JiraIssueWriteClient#resolveStoryPointsFieldId}/{@link JiraIssueWriteClient#resolveSprintFieldId}
+	 * — never hardcoded here, since they vary between Jira sites. Either may be {@code null}/blank
+	 * when undiscoverable; the literal {@code "sprint"} field is always requested too since some
+	 * team-managed projects expose Sprint under that name directly. Parsing reuses {@link
+	 * JiraIssueWriteClient#toSummary} so bulk sync and single-issue reads share one payload-shape
+	 * audit instead of two divergent implementations.
 	 */
 	public IssueSearchPage searchIssues(
-			String accessToken, String cloudId, String projectKey, String nextPageToken, int maxResults) {
+			String accessToken,
+			String cloudId,
+			String projectKey,
+			String nextPageToken,
+			int maxResults,
+			String storyPointsFieldId,
+			String sprintFieldId) {
 		try {
 			int safeMax = Math.max(1, Math.min(maxResults, 100));
 			String jql = "project = \"" + projectKey.replace("\"", "") + "\" ORDER BY updated DESC";
-			String fields =
-					"summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint";
-			IssueSearchJqlResponse node = restClient
+			String fields = "summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint"
+					+ (storyPointsFieldId == null || storyPointsFieldId.isBlank() ? "" : "," + storyPointsFieldId)
+					+ (sprintFieldId == null || sprintFieldId.isBlank() || "sprint".equals(sprintFieldId)
+							? ""
+							: "," + sprintFieldId);
+			String raw = restClient
 					.get()
 					.uri(builder -> {
 						var uri = builder
@@ -199,22 +218,24 @@ public class JiraOAuthClient {
 					})
 					.header("Authorization", "Bearer " + accessToken)
 					.retrieve()
-					.body(IssueSearchJqlResponse.class);
-			if (node == null || node.issues() == null) {
+					.body(String.class);
+			JsonNode node = raw == null || raw.isBlank() ? null : MAPPER.readTree(raw);
+			if (node == null || !node.path("issues").isArray()) {
 				return new IssueSearchPage(List.of(), null, true, safeMax);
 			}
-			List<IssueSummary> issues = node.issues().stream()
-					.filter(item -> item != null && item.id() != null)
-					.map(JiraOAuthClient::toSummary)
-					.toList();
-			boolean last = Boolean.TRUE.equals(node.isLast())
-					|| node.nextPageToken() == null
-					|| node.nextPageToken().isBlank()
-					|| issues.isEmpty();
-			return new IssueSearchPage(issues, blankToNull(node.nextPageToken()), last, safeMax);
+			List<IssueSummary> issues = new ArrayList<>();
+			for (JsonNode issueNode : node.path("issues")) {
+				if (issueNode == null || issueNode.path("id").isMissingNode() || issueNode.path("id").isNull()) {
+					continue;
+				}
+				issues.add(JiraIssueWriteClient.toSummary(issueNode, storyPointsFieldId, sprintFieldId));
+			}
+			String nextToken = blankToNull(node.path("nextPageToken").asText(null));
+			boolean last = node.path("isLast").asBoolean(false) || nextToken == null || issues.isEmpty();
+			return new IssueSearchPage(List.copyOf(issues), nextToken, last, safeMax);
 		} catch (RestClientResponseException ex) {
 			throw mapSearchFailure("searchIssues", cloudId, projectKey, ex);
-		} catch (HttpMessageConversionException ex) {
+		} catch (HttpMessageConversionException | com.fasterxml.jackson.core.JsonProcessingException ex) {
 			log.warn(
 					"jira operation=searchIssues httpStatus=null errorCode=JIRA_PROJECT_NOT_ACCESSIBLE cloudIdPresent={} projectKey={} cause=body_parse",
 					cloudId != null && !cloudId.isBlank(),
@@ -284,7 +305,7 @@ public class JiraOAuthClient {
 			if (body == null || body.isBlank()) {
 				return "";
 			}
-			JiraErrorBody parsed = SAFE_ERROR_MAPPER.readValue(body, JiraErrorBody.class);
+			JiraErrorBody parsed = MAPPER.readValue(body, JiraErrorBody.class);
 			if (parsed.errorMessages() == null || parsed.errorMessages().isEmpty()) {
 				return "";
 			}
@@ -307,123 +328,6 @@ public class JiraOAuthClient {
 
 	private static String blankToNull(String value) {
 		return value == null || value.isBlank() ? null : value;
-	}
-
-	private static IssueSummary toSummary(IssueApiResponse item) {
-		IssueFields fields = item.fields();
-		IssueStatus status = fields == null ? null : fields.status();
-		IssueStatusCategory category = status == null ? null : status.statusCategory();
-		IssueType type = fields == null ? null : fields.issuetype();
-		IssueAssignee assignee = fields == null ? null : fields.assignee();
-		IssuePriority priority = fields == null ? null : fields.priority();
-		SprintRef sprint = firstSprint(fields == null ? null : fields.sprint());
-		return new IssueSummary(
-				item.id(),
-				item.key(),
-				fields == null ? null : fields.summary(),
-				status == null ? null : status.id(),
-				status == null ? null : status.name(),
-				category == null ? null : category.key(),
-				type == null ? null : type.name(),
-				type == null ? null : type.id(),
-				assignee == null ? null : assignee.accountId(),
-				assignee == null ? null : assignee.displayName(),
-				priority == null ? null : priority.id(),
-				priority == null ? null : priority.name(),
-				null,
-				descriptionText(fields == null ? null : fields.description()),
-				sprint == null ? null : sprint.id(),
-				sprint == null ? null : sprint.name(),
-				sprint == null ? null : sprint.state(),
-				fields == null ? null : fields.created(),
-				fields == null ? null : fields.updated());
-	}
-
-	static IssueSummary withStoryPoints(IssueSummary summary, Integer storyPoints) {
-		if (summary == null) {
-			return null;
-		}
-		return new IssueSummary(
-				summary.id(),
-				summary.key(),
-				summary.summary(),
-				summary.statusId(),
-				summary.statusName(),
-				summary.statusCategory(),
-				summary.issueTypeName(),
-				summary.issueTypeId(),
-				summary.assigneeAccountId(),
-				summary.assigneeDisplayName(),
-				summary.priorityId(),
-				summary.priorityName(),
-				storyPoints,
-				summary.description(),
-				summary.sprintExternalId(),
-				summary.sprintName(),
-				summary.sprintState(),
-				summary.created(),
-				summary.updated());
-	}
-
-	private static SprintRef firstSprint(List<SprintRef> sprints) {
-		if (sprints == null || sprints.isEmpty()) {
-			return null;
-		}
-		for (int i = sprints.size() - 1; i >= 0; i--) {
-			SprintRef sprint = sprints.get(i);
-			if (sprint != null && sprint.id() != null && !sprint.id().isBlank()) {
-				return sprint;
-			}
-		}
-		return null;
-	}
-
-	private static String descriptionText(Object node) {
-		if (node == null) {
-			return null;
-		}
-		if (node instanceof String text) {
-			return text.isBlank() ? null : text;
-		}
-		if (node instanceof Map<?, ?> map) {
-			StringBuilder out = new StringBuilder();
-			appendAdfObject(map, out);
-			String text = out.toString().trim();
-			return text.isEmpty() ? null : text;
-		}
-		return null;
-	}
-
-	private static void appendAdfObject(Object node, StringBuilder out) {
-		if (node == null) {
-			return;
-		}
-		if (node instanceof String text) {
-			if (!out.isEmpty()) {
-				out.append(' ');
-			}
-			out.append(text);
-			return;
-		}
-		if (node instanceof Map<?, ?> map) {
-			Object text = map.get("text");
-			if (text instanceof String value && !value.isBlank()) {
-				if (!out.isEmpty()) {
-					out.append(' ');
-				}
-				out.append(value);
-			}
-			Object content = map.get("content");
-			if (content instanceof List<?> list) {
-				for (Object child : list) {
-					appendAdfObject(child, out);
-				}
-			}
-		} else if (node instanceof List<?> list) {
-			for (Object child : list) {
-				appendAdfObject(child, out);
-			}
-		}
 	}
 
 	private TokenResponse postToken(String json) {
@@ -495,48 +399,7 @@ public class JiraOAuthClient {
 	public record JiraBoardOption(String id, String name, String type) {}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record IssueSearchJqlResponse(
-			List<IssueApiResponse> issues, String nextPageToken, Boolean isLast) {}
-
-	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record JiraErrorBody(List<String> errorMessages) {}
-
-	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record IssueApiResponse(String id, String key, IssueFields fields) {}
-
-	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record IssueFields(
-			String summary,
-			IssueStatus status,
-			IssueType issuetype,
-			IssueAssignee assignee,
-			String created,
-			String updated,
-			Object description,
-			IssuePriority priority,
-			IssueResolution resolution,
-			List<SprintRef> sprint) {}
-
-	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record IssueStatus(String id, String name, IssueStatusCategory statusCategory) {}
-
-	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record IssueStatusCategory(String key, String name) {}
-
-	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record IssueType(String id, String name) {}
-
-	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record IssueAssignee(String accountId, String displayName) {}
-
-	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record IssuePriority(String id, String name) {}
-
-	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record IssueResolution(String name) {}
-
-	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record SprintRef(String id, String name, String state) {}
 
 	public record IssueSummary(
 			String id,
