@@ -20,16 +20,21 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+/**
+ * Since V14, {@code (cloud_id, jira_project_id)} uniqueness is enforced only while
+ * {@code connection_status = ACTIVE}, via the generated columns {@code active_cloud_id}/
+ * {@code active_jira_project_id} and {@code uk_jira_active_cloud_project} — a REVOKED row no
+ * longer permanently blocks another SAGA Project from later connecting the same Jira provider
+ * project. Those generated columns are DB-only (never written or read through JPA) so they are
+ * intentionally not mapped as entity fields.
+ */
 @Getter
 @Setter
 @NoArgsConstructor
 @Entity
 @Table(
 	name = "jira_integration",
-	uniqueConstraints = {
-		@UniqueConstraint(name = "uk_jira_integration_project", columnNames = {"project_id"}),
-		@UniqueConstraint(name = "uk_jira_cloud_project", columnNames = {"cloud_id", "jira_project_id"})
-	}
+	uniqueConstraints = {@UniqueConstraint(name = "uk_jira_integration_project", columnNames = {"project_id"})}
 )
 public class JiraIntegration extends BaseEntity {
 

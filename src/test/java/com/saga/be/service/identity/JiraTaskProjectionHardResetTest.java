@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.saga.be.repository.ContributionConfirmationRepository;
+import com.saga.be.repository.SprintRepository;
 import com.saga.be.repository.TaskRepository;
 import com.saga.be.repository.TaskWorkSessionRepository;
 import java.util.UUID;
@@ -25,6 +26,8 @@ class JiraTaskProjectionHardResetTest {
 	private TaskWorkSessionRepository workSessions;
 	@Mock
 	private ContributionConfirmationRepository confirmations;
+	@Mock
+	private SprintRepository sprints;
 
 	@InjectMocks
 	private JiraTaskProjectionHardReset reset;
@@ -66,5 +69,12 @@ class JiraTaskProjectionHardResetTest {
 		verify(confirmations, never()).deleteAll();
 		verify(workSessions, never()).delete(org.mockito.ArgumentMatchers.any());
 		verify(confirmations, never()).delete(org.mockito.ArgumentMatchers.any());
+	}
+
+	@Test
+	void hardDeleteAllSprintsForIntegrationDelegatesToSprintRepositoryByIntegrationId() {
+		UUID integrationId = UUID.randomUUID();
+		reset.hardDeleteAllSprintsForIntegration(integrationId);
+		verify(sprints).deleteByJiraIntegration_Id(integrationId);
 	}
 }

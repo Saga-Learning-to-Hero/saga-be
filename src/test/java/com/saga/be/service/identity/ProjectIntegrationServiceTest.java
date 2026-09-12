@@ -2,6 +2,7 @@ package com.saga.be.service.identity;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -772,8 +773,9 @@ class ProjectIntegrationServiceTest {
 
 	@Test
 	void revokedJiraReconnectDifferentSelectionBecomesActive() {
-		stubJiraSelectionWithExisting(revokedReadyIntegration(
-				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68"));
+		JiraIntegration existing = revokedReadyIntegration(
+				"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", "SAGA", "68");
+		stubJiraSelectionWithExisting(existing);
 		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001"))
 				.thenReturn(new JiraOAuthClient.JiraProjectResponse("20001", "OTHER", "Other Project"));
 		when(jira.getBoard("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "99"))
@@ -785,6 +787,10 @@ class ProjectIntegrationServiceTest {
 				new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "20001", "99"));
 
 		verify(taskProjectionReset).hardDeleteAllTasksForProject(projectId);
+		// Sprint is reached only via jira_integration_id, and this same row (existing.getId()) is
+		// reused across the source swap -- its old-source Sprints must be purged too, or they would
+		// survive misattributed to the new source (SAGA-side blocker fixed in this audit round).
+		verify(taskProjectionReset).hardDeleteAllSprintsForIntegration(existing.getId());
 		ArgumentCaptor<JiraIntegration> captor = ArgumentCaptor.forClass(JiraIntegration.class);
 		verify(jiraIntegrations, atLeastOnce()).save(captor.capture());
 		JiraIntegration saved = captor.getValue();
@@ -1058,8 +1064,8 @@ class ProjectIntegrationServiceTest {
 		project.setId(projectId);
 		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
 		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.empty());
-		when(jiraIntegrations.findByCloudIdAndJiraProjectId(
-						"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "20002"))
+		when(jiraIntegrations.findByConnectionStatusAndCloudIdAndJiraProjectId(
+						IntegrationStatus.ACTIVE, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "20002"))
 				.thenReturn(Optional.empty());
 		when(jiraIntegrations.save(any(JiraIntegration.class))).thenAnswer(invocation -> {
 			JiraIntegration saved = invocation.getArgument(0);
@@ -1083,6 +1089,8 @@ class ProjectIntegrationServiceTest {
 
 	@Test
 	void saveJiraSelectionRejectsCloudProjectAlreadyBoundToAnotherSagaProject() {
+		// ownedElsewhere is ACTIVE: the same Jira provider project may be ACTIVE in at most one
+		// SAGA project at a time (V14), so this must still be rejected.
 		stubJiraLeaderAndPending();
 		when(jira.accessibleResources("jira-access"))
 				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
@@ -1103,8 +1111,8 @@ class ProjectIntegrationServiceTest {
 		ownedElsewhere.setJiraProjectId("10067");
 		ownedElsewhere.setProjectKey("SAGA");
 		ownedElsewhere.setConnectionStatus(IntegrationStatus.ACTIVE);
-		when(jiraIntegrations.findByCloudIdAndJiraProjectId(
-						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
+		when(jiraIntegrations.findByConnectionStatusAndCloudIdAndJiraProjectId(
+						IntegrationStatus.ACTIVE, "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
 				.thenReturn(Optional.of(ownedElsewhere));
 
 		IntegrationException ex = assertThrows(
@@ -1123,14 +1131,74 @@ class ProjectIntegrationServiceTest {
 	}
 
 	@Test
+	void saveJiraSelectionAllowsCloudProjectRevokedByAnotherSagaProject() {
+		// Project A connected this Jira provider project, then disconnected (REVOKED). Project B
+		// must now be able to connect the same cloudId+jiraProjectId (V14 target invariant): the
+		// Jira project is only exclusive to whichever SAGA project has it ACTIVE, not forever.
+		stubJiraLeaderAndPending();
+		when(jira.accessibleResources("jira-access"))
+				.thenReturn(List.of(new JiraOAuthClient.AccessibleResource(
+						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "https://example.atlassian.net", "Saga")));
+		when(jira.getProject("jira-access", "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
+				.thenReturn(new JiraOAuthClient.JiraProjectResponse("10067", "SAGA", "Saga Learning to Hero"));
+		Project project = new Project();
+		project.setId(projectId);
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		UUID otherProjectId = UUID.randomUUID();
+		Project other = new Project();
+		other.setId(otherProjectId);
+		JiraIntegration revokedElsewhere = new JiraIntegration();
+		revokedElsewhere.setId(UUID.randomUUID());
+		revokedElsewhere.setProject(other);
+		revokedElsewhere.setCloudId("aeb21465-f2da-4923-b356-f6f1cfa4fd13");
+		revokedElsewhere.setJiraProjectId("10067");
+		revokedElsewhere.setProjectKey("SAGA");
+		revokedElsewhere.setConnectionStatus(IntegrationStatus.REVOKED);
+		revokedElsewhere.setWebhookId("999");
+		revokedElsewhere.setSyncCursor(java.time.LocalDateTime.now());
+		// The ACTIVE-scoped availability lookup never sees revokedElsewhere at all -- it isn't
+		// ACTIVE -- which is exactly the V14 fix: REVOKED ownership elsewhere is invisible to it.
+		when(jiraIntegrations.findByConnectionStatusAndCloudIdAndJiraProjectId(
+						IntegrationStatus.ACTIVE, "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
+				.thenReturn(Optional.empty());
+		when(jiraIntegrations.save(any(JiraIntegration.class))).thenAnswer(invocation -> {
+			JiraIntegration saved = invocation.getArgument(0);
+			if (saved.getId() == null) {
+				saved.setId(UUID.randomUUID());
+			}
+			return saved;
+		});
+
+		assertDoesNotThrow(() -> service.saveJiraSelection(
+				student.getId(),
+				projectId,
+				new SelectJiraIntegrationRequest("aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067", null)));
+
+		ArgumentCaptor<JiraIntegration> captor = ArgumentCaptor.forClass(JiraIntegration.class);
+		verify(jiraIntegrations, atLeastOnce()).save(captor.capture());
+		JiraIntegration savedForB = captor.getValue();
+		assertEquals(projectId, savedForB.getProject().getId());
+		assertNotEquals(revokedElsewhere.getId(), savedForB.getId());
+		assertEquals(IntegrationStatus.ACTIVE, savedForB.getConnectionStatus());
+		assertNull(savedForB.getWebhookId());
+		assertNull(savedForB.getSyncCursor());
+		// A's own row is a distinct, untouched entity -- never re-parented, never saved again here.
+		verify(jiraIntegrations, never()).save(revokedElsewhere);
+		assertEquals(other, revokedElsewhere.getProject());
+		assertEquals(IntegrationStatus.REVOKED, revokedElsewhere.getConnectionStatus());
+		assertEquals("999", revokedElsewhere.getWebhookId());
+	}
+
+	@Test
 	void saveJiraSelectionMapsConcurrentUkJiraCloudProjectToConflict() {
 		stubJiraSelection();
-		when(jiraIntegrations.findByCloudIdAndJiraProjectId(
-						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
+		when(jiraIntegrations.findByConnectionStatusAndCloudIdAndJiraProjectId(
+						IntegrationStatus.ACTIVE, "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
 				.thenReturn(Optional.empty());
 		when(jiraIntegrations.save(any(JiraIntegration.class)))
 				.thenThrow(new org.springframework.dao.DataIntegrityViolationException(
-						"Duplicate entry for key 'uk_jira_cloud_project'"));
+						"Duplicate entry for key 'uk_jira_active_cloud_project'"));
 
 		IntegrationException ex = assertThrows(
 				IntegrationException.class,
@@ -1162,6 +1230,8 @@ class ProjectIntegrationServiceTest {
 
 		verify(jiraIntegrations, atLeastOnce()).save(any(JiraIntegration.class));
 		verify(taskProjectionReset, never()).hardDeleteAllTasksForProject(any());
+		// Same source: this project's own Sprint history must be left completely alone.
+		verify(taskProjectionReset, never()).hardDeleteAllSprintsForIntegration(any());
 	}
 
 	@Test
@@ -1186,8 +1256,8 @@ class ProjectIntegrationServiceTest {
 		ownedElsewhere.setJiraProjectId("10067");
 		ownedElsewhere.setProjectKey("SAGA");
 		ownedElsewhere.setConnectionStatus(IntegrationStatus.ACTIVE);
-		when(jiraIntegrations.findByCloudIdAndJiraProjectId(
-						"aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
+		when(jiraIntegrations.findByConnectionStatusAndCloudIdAndJiraProjectId(
+						IntegrationStatus.ACTIVE, "aeb21465-f2da-4923-b356-f6f1cfa4fd13", "10067"))
 				.thenReturn(Optional.of(ownedElsewhere));
 
 		assertThrows(
@@ -1401,7 +1471,7 @@ class ProjectIntegrationServiceTest {
 		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
 		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.empty());
 		lenient()
-				.when(jiraIntegrations.findByCloudIdAndJiraProjectId(any(), any()))
+				.when(jiraIntegrations.findByConnectionStatusAndCloudIdAndJiraProjectId(any(), any(), any()))
 				.thenReturn(Optional.empty());
 		lenient().when(jiraIntegrations.save(any(JiraIntegration.class))).thenAnswer(invocation -> {
 			JiraIntegration saved = invocation.getArgument(0);
@@ -1426,12 +1496,18 @@ class ProjectIntegrationServiceTest {
 		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(existing));
 		when(jiraIntegrations.lockById(existing.getId())).thenReturn(Optional.of(existing));
 		lenient()
-				.when(jiraIntegrations.findByCloudIdAndJiraProjectId(any(), any()))
+				.when(jiraIntegrations.findByConnectionStatusAndCloudIdAndJiraProjectId(any(), any(), any()))
 				.thenReturn(Optional.empty());
-		lenient()
-				.when(jiraIntegrations.findByCloudIdAndJiraProjectId(
-						eq(existing.getCloudId()), eq(existing.getJiraProjectId())))
-				.thenReturn(Optional.of(existing));
+		// existing is this project's own row: the ACTIVE-scoped global lookup only "sees" it when
+		// it is actually ACTIVE (matching real DB semantics under V14) -- while REVOKED (the usual
+		// fixture state before a reconnect), it is invisible to the availability check, same as any
+		// other REVOKED row would be.
+		if (existing.getConnectionStatus() == IntegrationStatus.ACTIVE) {
+			lenient()
+					.when(jiraIntegrations.findByConnectionStatusAndCloudIdAndJiraProjectId(
+							eq(IntegrationStatus.ACTIVE), eq(existing.getCloudId()), eq(existing.getJiraProjectId())))
+					.thenReturn(Optional.of(existing));
+		}
 		lenient()
 				.when(jiraIntegrations.save(any(JiraIntegration.class)))
 				.thenAnswer(invocation -> invocation.getArgument(0));

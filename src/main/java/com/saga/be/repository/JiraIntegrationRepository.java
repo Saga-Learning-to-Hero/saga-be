@@ -16,7 +16,14 @@ public interface JiraIntegrationRepository extends JpaRepository<JiraIntegration
 
 	Optional<JiraIntegration> findByProject_Id(UUID projectId);
 
-	Optional<JiraIntegration> findByCloudIdAndJiraProjectId(String cloudId, String jiraProjectId);
+	/**
+	 * Since V14, {@code (cloud_id, jira_project_id)} is unique only among ACTIVE rows
+	 * ({@code uk_jira_active_cloud_project}) -- multiple REVOKED rows may legitimately share a
+	 * source. A lookup that ignores {@code connectionStatus} is no longer safely singular and
+	 * would risk {@code NonUniqueResultException}; always scope this by {@code connectionStatus}.
+	 */
+	Optional<JiraIntegration> findByConnectionStatusAndCloudIdAndJiraProjectId(
+			IntegrationStatus connectionStatus, String cloudId, String jiraProjectId);
 
 	@Query(
 			"""

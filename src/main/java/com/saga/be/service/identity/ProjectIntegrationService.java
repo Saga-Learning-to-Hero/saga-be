@@ -840,10 +840,16 @@ public class ProjectIntegrationService {
 	}
 
 	/**
-	 * Persists or reactivates the single {@code jira_integration} row for this SAGA project.
-	 * Soft-revoked rows are reused: {@code REVOKED -> ACTIVE} with refreshed credentials and selection.
-	 * Different Jira source (cloudId / jiraProjectId) hard-resets Task projection when safe; same
-	 * projectKey across sources and protected evidence block replacement without consuming pending OAuth.
+	 * Persists or reactivates the single {@code jira_integration} row for THIS SAGA project only
+	 * (looked up by {@code projectId}, never by provider identity) — soft-revoked rows are reused
+	 * in place: {@code REVOKED -> ACTIVE} with refreshed credentials and selection. Different Jira
+	 * source (cloudId / jiraProjectId) hard-resets Task projection when safe; same projectKey
+	 * across sources and protected evidence block replacement without consuming pending OAuth.
+	 * A Jira provider project previously connected — then disconnected — by a <em>different</em>
+	 * SAGA project is a distinct case: this project has no row of its own for it yet, so it falls
+	 * into the "no existing integration" branch below and gets a brand-new {@code JiraIntegration}
+	 * row (new id, its own webhook/sync-cursor lifecycle); the other project's REVOKED row is never
+	 * read, reused, or re-parented (see {@link #assertJiraProviderProjectAvailableForSagaProject}).
 	 */
 	protected void persistJiraIntegration(
 			UUID userId,
@@ -898,6 +904,10 @@ public class ProjectIntegrationService {
 			try {
 				// Reset before consume so FK RESTRICT / concurrent evidence keeps the pending grant usable.
 				taskProjectionReset.hardDeleteAllTasksForProject(projectId);
+				// Sprint is reached only via jira_integration_id (this row is reused, not re-created),
+				// so the old source's Sprints must be purged too or they'd survive misattributed to
+				// the new source (see JiraTaskProjectionHardReset#hardDeleteAllSprintsForIntegration).
+				taskProjectionReset.hardDeleteAllSprintsForIntegration(integration.getId());
 			} catch (DataIntegrityViolationException ex) {
 				throw new IntegrationException(
 						IntegrationErrorCode.JIRA_SOURCE_REPLACE_BLOCKED_BY_EVIDENCE,
@@ -994,19 +1004,30 @@ public class ProjectIntegrationService {
 	}
 
 	/**
-	 * One Jira provider project ({@code cloudId} + {@code jiraProjectId}) may bind to at most one
-	 * SAGA project. Matching {@code projectKey} alone across different clouds is not a conflict.
+	 * One Jira provider project ({@code cloudId} + {@code jiraProjectId}) may be ACTIVE in at
+	 * most one SAGA project at a time (V14). A REVOKED integration owned by another SAGA project
+	 * does not block reuse — that project's own {@code jira_integration} row, and everything
+	 * reachable only through it (Sprint history, webhook state, sync cursor), stays untouched
+	 * under its original owner; the connecting project always gets its own brand-new row (see
+	 * {@link #persistJiraIntegration}), never a re-parented one. Matching {@code projectKey}
+	 * alone across different clouds is not a conflict.
 	 */
 	private void assertJiraProviderProjectAvailableForSagaProject(
 			String cloudId, String jiraProjectId, UUID sagaProjectId) {
 		if (cloudId == null || cloudId.isBlank() || jiraProjectId == null || jiraProjectId.isBlank()) {
 			return;
 		}
-		jiraIntegrations.findByCloudIdAndJiraProjectId(cloudId, jiraProjectId).ifPresent(existing -> {
-			if (existing.getProject() != null && !existing.getProject().getId().equals(sagaProjectId)) {
-				throw jiraProjectInUse();
-			}
-		});
+		// Scoped to ACTIVE: only ACTIVE ownership is exclusive under V14. Multiple REVOKED rows may
+		// legitimately share this source, so a status-agnostic lookup here would not be safely
+		// singular (risking NonUniqueResultException) and would also resurrect the pre-V14 bug of
+		// treating historical REVOKED ownership as a permanent block.
+		jiraIntegrations
+				.findByConnectionStatusAndCloudIdAndJiraProjectId(IntegrationStatus.ACTIVE, cloudId, jiraProjectId)
+				.ifPresent(existing -> {
+					if (existing.getProject() != null && !existing.getProject().getId().equals(sagaProjectId)) {
+						throw jiraProjectInUse();
+					}
+				});
 	}
 
 	private static IntegrationException mapJiraPersistenceConflict(DataIntegrityViolationException ex) {
@@ -1019,7 +1040,7 @@ public class ProjectIntegrationService {
 	private static boolean isJiraCloudProjectUniqueViolation(DataIntegrityViolationException ex) {
 		Throwable cause = ex.getMostSpecificCause();
 		String message = cause == null ? ex.getMessage() : cause.getMessage();
-		return message != null && message.toLowerCase(Locale.ROOT).contains("uk_jira_cloud_project");
+		return message != null && message.toLowerCase(Locale.ROOT).contains("uk_jira_active_cloud_project");
 	}
 
 	private static IntegrationException jiraProjectInUse() {

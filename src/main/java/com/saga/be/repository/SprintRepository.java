@@ -13,6 +13,8 @@ public interface SprintRepository extends JpaRepository<Sprint, UUID> {
 
 	Optional<Sprint> findByJiraIntegration_IdAndExternalSprintId(UUID jiraIntegrationId, String externalSprintId);
 
+	long deleteByJiraIntegration_Id(UUID jiraIntegrationId);
+
 	List<Sprint> findByJiraIntegration_IdAndExternalSprintIdIn(
 			UUID jiraIntegrationId, Collection<String> externalSprintIds);
 
