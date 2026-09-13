@@ -57,6 +57,14 @@ public interface GitRepoRepository extends JpaRepository<GitRepo, UUID> {
 	List<GitRepo> findByProject_IdAndConnectionStatus(UUID projectId, IntegrationStatus status);
 
 	/**
+	 * Scopes a single repository lookup to both its owning project AND {@code connectionStatus} so
+	 * a REVOKED historical row (kept for audit/history under V15's relaxed cross-project cardinality)
+	 * can never be resolved as a project's CURRENT branch/commit source, and a repository belonging
+	 * to a different project is never returned either.
+	 */
+	Optional<GitRepo> findByIdAndProject_IdAndConnectionStatus(UUID id, UUID projectId, IntegrationStatus status);
+
+	/**
 	 * Whether some OTHER SAGA project's {@code git_repo} row for this exact physical repository was
 	 * created STRICTLY BEFORE {@code createdAt} -- regardless of that other row's current status
 	 * (ACTIVE or REVOKED). An EXISTS-style check, safe under V15's relaxed cardinality (unlike a

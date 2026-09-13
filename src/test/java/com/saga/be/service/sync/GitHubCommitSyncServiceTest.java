@@ -325,6 +325,40 @@ class GitHubCommitSyncServiceTest {
 	}
 
 	@Test
+	void sharedCommitAcrossBranches_headRefIsFirstProcessedBranch_otherBranchOccurrenceSilentlyDropped() {
+		// Audit proof: seenShas is a per-repo, per-run Set -- a sha already drafted for one branch
+		// is `continue`d (never drafted again) for any later branch in this run, so exactly one
+		// CommitDraft (and therefore one headRef value) exists for a sha shared by two branches.
+		// orderBranches() puts the repo's default branch first, so "main" wins here even though
+		// listBranches() returned "dev" before "main".
+		GitRepo repo = activeRepo("org", "a"); // activeRepo sets defaultBranch = "main"
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("dev", "main"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100)))
+				.thenReturn(List.of(new CommitSummary("shared-1", "m", "2026-06-01T12:00:00Z", null, null)));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("dev"), eq(1), eq(100)))
+				.thenReturn(List.of(new CommitSummary("shared-1", "m", "2026-06-01T12:00:00Z", null, null)));
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<CommitDraft>> drafts = ArgumentCaptor.forClass(List.class);
+		when(projection.upsertBatch(eq(repo), any())).thenReturn(1);
+
+		SyncJobLog job = service.initialSync(projectId);
+
+		assertThat(job.getItemsProcessed()).isEqualTo(1);
+		verify(projection, atLeastOnce()).upsertBatch(eq(repo), drafts.capture());
+		List<CommitDraft> allDrafted = drafts.getAllValues().stream().flatMap(List::stream).toList();
+		assertThat(allDrafted).hasSize(1);
+		assertThat(allDrafted.getFirst().sha()).isEqualTo("shared-1");
+		assertThat(allDrafted.getFirst().headRef())
+				.as("default branch is processed first by orderBranches(), so it wins headRef even"
+						+ " though the provider's branch list returned 'dev' before 'main'")
+				.isEqualTo("main");
+		// "dev" never appears as a headRef for this sha in this run -- its membership in dev is
+		// unobservable from persisted data once main has already claimed the sha.
+	}
+
+	@Test
 	void featureAndDevOnlyCommits_imported() {
 		GitRepo repo = activeRepo("org", "a");
 		stubInstallationAndRepos(List.of(repo));
@@ -336,6 +370,8 @@ class GitHubCommitSyncServiceTest {
 		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("feature/x"), eq(1), eq(100)))
 				.thenReturn(List.of(new CommitSummary("feat-1", "SAGA-3", "2026-06-01T12:00:00Z", null, null)));
 
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<CommitDraft>> drafts = ArgumentCaptor.forClass(List.class);
 		SyncJobLog job = service.initialSync(projectId);
 
 		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
@@ -343,6 +379,26 @@ class GitHubCommitSyncServiceTest {
 		verify(github).listCommits(eq("tok"), eq("org"), eq("a"), eq("feature/x"), eq(1), eq(100));
 		verify(github).listCommits(eq("tok"), eq("org"), eq("a"), eq("dev"), eq(1), eq(100));
 		verify(github).listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100));
+		// Audit proof (section 7): a commit unique to a non-default branch is NOT missing -- it is
+		// persisted and its headRef correctly identifies that exact branch, since its sha was never
+		// claimed by an earlier-processed branch in this run.
+		verify(projection, atLeastOnce()).upsertBatch(eq(repo), drafts.capture());
+		List<CommitDraft> allDrafted = drafts.getAllValues().stream().flatMap(List::stream).toList();
+		assertThat(allDrafted)
+				.filteredOn(d -> d.sha().equals("feat-1"))
+				.singleElement()
+				.extracting(CommitDraft::headRef)
+				.isEqualTo("feature/x");
+		assertThat(allDrafted)
+				.filteredOn(d -> d.sha().equals("dev-1"))
+				.singleElement()
+				.extracting(CommitDraft::headRef)
+				.isEqualTo("dev");
+		assertThat(allDrafted)
+				.filteredOn(d -> d.sha().equals("main-1"))
+				.singleElement()
+				.extracting(CommitDraft::headRef)
+				.isEqualTo("main");
 	}
 
 	@Test

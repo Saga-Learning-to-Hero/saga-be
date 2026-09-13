@@ -5,6 +5,7 @@ import com.saga.be.dto.project.CreateProjectTaskRequest;
 import com.saga.be.dto.project.PatchProjectSprintRequest;
 import com.saga.be.dto.project.PatchProjectTaskRequest;
 import com.saga.be.dto.project.ProjectCommitResponse;
+import com.saga.be.dto.project.ProjectGitBranchListResponse;
 import com.saga.be.dto.project.ProjectMemberProgressResponse;
 import com.saga.be.dto.project.ProjectProgressResponse;
 import com.saga.be.dto.project.ProjectSprintResponse;
@@ -16,6 +17,7 @@ import com.saga.be.dto.project.PutProjectTaskSprintRequest;
 import com.saga.be.dto.project.TransitionProjectTaskRequest;
 import com.saga.be.integration.jira.JiraIssueWriteClient.TransitionOption;
 import com.saga.be.security.SagaUserPrincipal;
+import com.saga.be.service.projection.ProjectGitBranchReadService;
 import com.saga.be.service.projection.ProjectJiraSprintCommandService;
 import com.saga.be.service.projection.ProjectJiraTaskCommandService;
 import com.saga.be.service.projection.ProjectProgressService;
@@ -53,18 +55,21 @@ public class ProjectProjectionController {
 	private final ProjectJiraSprintCommandService sprintCommands;
 	private final ProjectManualSyncService manualSync;
 	private final ProjectProgressService progress;
+	private final ProjectGitBranchReadService branches;
 
 	public ProjectProjectionController(
 			ProjectProjectionReadService projections,
 			ProjectJiraTaskCommandService taskCommands,
 			ProjectJiraSprintCommandService sprintCommands,
 			ProjectManualSyncService manualSync,
-			ProjectProgressService progress) {
+			ProjectProgressService progress,
+			ProjectGitBranchReadService branches) {
 		this.projections = projections;
 		this.taskCommands = taskCommands;
 		this.sprintCommands = sprintCommands;
 		this.manualSync = manualSync;
 		this.progress = progress;
+		this.branches = branches;
 	}
 
 	@GetMapping("/tasks")
@@ -209,6 +214,24 @@ public class ProjectProjectionController {
 	public List<ProjectCommitResponse> commits(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
 		return projections.listCommits(principal.getUserId(), projectId);
+	}
+
+	@GetMapping("/repos/{repoId}/branches")
+	@Operation(
+			summary = "Live GitHub branch inventory for one ACTIVE project repository.",
+			description =
+					"""
+					Authoritative source for the repository branch dropdown and current branch count --
+					fetched directly from GitHub (fully paginated), not derived from GitCommit.headRef.
+					headRef only records the single branch a commit was observed under during ingestion,
+					not complete branch membership, so commit-by-branch filtering via
+					commit.headRef == selectedBranch remains best-effort/observed-branch filtering only.
+					""")
+	public ProjectGitBranchListResponse repositoryBranches(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@PathVariable UUID repoId) {
+		return branches.listBranches(principal.getUserId(), projectId, repoId);
 	}
 
 	@PostMapping("/sync")
