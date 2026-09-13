@@ -261,6 +261,80 @@ class JiraTaskProjectionServiceTest {
 		assertThat(saved.getSprint().getExternalSprintId()).isEqualTo("31");
 	}
 
+	@Test
+	void upsertBatch_webhookPayloadOmittingFields_preservesExistingStoryPointAndSprint() {
+		// Regression: a full sync sets storyPoint=5 and Sprint X; a later partial webhook that
+		// never carries those custom fields (storyPointsProvided/sprintProvided=false) must leave
+		// both alone rather than nulling them out.
+		com.saga.be.entity.jira.JiraIntegration integration = new com.saga.be.entity.jira.JiraIntegration();
+		integration.setId(UUID.randomUUID());
+		integration.setConnectionStatus(com.saga.be.entity.enums.IntegrationStatus.ACTIVE);
+		when(jiraIntegrations.findByProject_Id(project.getId())).thenReturn(Optional.of(integration));
+
+		com.saga.be.entity.jira.Sprint sprintX = new com.saga.be.entity.jira.Sprint();
+		sprintX.setId(UUID.randomUUID());
+		sprintX.setExternalSprintId("31");
+
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10001");
+		existing.setExternalKey("SAGA-1");
+		existing.setProject(project);
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		existing.setStoryPoint(5);
+		existing.setSprint(sprintX);
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary webhookIssue = new IssueSummary(
+				"10001", "SAGA-1", "Login", "1", "In Progress", "indeterminate", "Story", "10001", "acc-1", "Alice",
+				"2", "High", null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false);
+		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookIssue))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		Task saved = captor.getValue().getFirst();
+		assertThat(saved.getStoryPoint()).isEqualTo(5);
+		assertThat(saved.getSprint()).isSameAs(sprintX);
+	}
+
+	@Test
+	void upsertBatch_authoritativeExplicitClear_nullsOutStoryPointAndSprint() {
+		// Contrast case: an authoritative (bulk/full sync or single-issue fetch) payload that
+		// genuinely reports storyPoint/sprint as absent DOES clear them -- distinguishing a real
+		// Jira-side clear from a webhook simply not carrying the field (tested above).
+		com.saga.be.entity.jira.JiraIntegration integration = new com.saga.be.entity.jira.JiraIntegration();
+		integration.setId(UUID.randomUUID());
+		integration.setConnectionStatus(com.saga.be.entity.enums.IntegrationStatus.ACTIVE);
+		when(jiraIntegrations.findByProject_Id(project.getId())).thenReturn(Optional.of(integration));
+
+		com.saga.be.entity.jira.Sprint sprintX = new com.saga.be.entity.jira.Sprint();
+		sprintX.setId(UUID.randomUUID());
+		sprintX.setExternalSprintId("31");
+
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10001");
+		existing.setExternalKey("SAGA-1");
+		existing.setProject(project);
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		existing.setStoryPoint(5);
+		existing.setSprint(sprintX);
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary authoritativeIssue = issue("10001", "SAGA-1", "Login", "2026-01-02T10:05:00Z");
+		assertThat(service.upsertBatch(project, "SAGA", List.of(authoritativeIssue))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		Task saved = captor.getValue().getFirst();
+		assertThat(saved.getStoryPoint()).isNull();
+		assertThat(saved.getSprint()).isNull();
+	}
+
 	private static IssueSummary issue(String id, String key, String summary, String updated) {
 		return new IssueSummary(
 				id, key, summary, "1", "To Do", "new", "Task", "10001", null, null, null, null, null, null, null, null,

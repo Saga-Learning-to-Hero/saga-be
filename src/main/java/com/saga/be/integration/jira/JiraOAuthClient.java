@@ -228,7 +228,7 @@ public class JiraOAuthClient {
 				if (issueNode == null || issueNode.path("id").isMissingNode() || issueNode.path("id").isNull()) {
 					continue;
 				}
-				issues.add(JiraIssueWriteClient.toSummary(issueNode, storyPointsFieldId, sprintFieldId));
+				issues.add(JiraIssueWriteClient.toSummary(issueNode, storyPointsFieldId, sprintFieldId, true));
 			}
 			String nextToken = blankToNull(node.path("nextPageToken").asText(null));
 			boolean last = node.path("isLast").asBoolean(false) || nextToken == null || issues.isEmpty();
@@ -401,6 +401,14 @@ public class JiraOAuthClient {
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record JiraErrorBody(List<String> errorMessages) {}
 
+	/**
+	 * {@code storyPointsProvided}/{@code sprintProvided} distinguish "Jira told us the true current
+	 * value (possibly null, meaning explicitly cleared)" from "this payload said nothing about this
+	 * field, leave whatever SAGA already has alone" — see {@link JiraIssueWriteClient#toSummary}.
+	 * The legacy 19-arg constructor defaults both to {@code true} (authoritative), matching every
+	 * existing caller (bulk sync, single-issue fetch, and all pre-existing tests) unchanged; only
+	 * the webhook path needs the distinction and uses the canonical 21-arg constructor explicitly.
+	 */
 	public record IssueSummary(
 			String id,
 			String key,
@@ -420,7 +428,37 @@ public class JiraOAuthClient {
 			String sprintName,
 			String sprintState,
 			String created,
-			String updated) {}
+			String updated,
+			boolean storyPointsProvided,
+			boolean sprintProvided) {
+
+		public IssueSummary(
+				String id,
+				String key,
+				String summary,
+				String statusId,
+				String statusName,
+				String statusCategory,
+				String issueTypeName,
+				String issueTypeId,
+				String assigneeAccountId,
+				String assigneeDisplayName,
+				String priorityId,
+				String priorityName,
+				Integer storyPoints,
+				String description,
+				String sprintExternalId,
+				String sprintName,
+				String sprintState,
+				String created,
+				String updated) {
+			this(
+					id, key, summary, statusId, statusName, statusCategory, issueTypeName, issueTypeId,
+					assigneeAccountId, assigneeDisplayName, priorityId, priorityName, storyPoints, description,
+					sprintExternalId, sprintName, sprintState, created, updated,
+					true, true);
+		}
+	}
 
 	public record IssueSearchPage(List<IssueSummary> issues, String nextPageToken, boolean last, int maxResults) {}
 }

@@ -212,13 +212,20 @@ public class JiraTaskProjectionService {
 			task.setAssigneeStudent(null);
 		}
 		task.setPriority(ProjectionMappings.priority(issue.priorityName()));
-		if (issue.storyPoints() != null) {
+		// storyPointsProvided/sprintProvided distinguish "Jira told us the true current value
+		// (possibly null -- explicitly cleared)" from "this payload said nothing about this field"
+		// (a partial webhook missing the dynamically-resolved custom field, or field discovery
+		// never resolved a field id at all) -- the latter must never overwrite existing data with
+		// null. Bulk/full sync and single-issue fetch always mark both as provided (authoritative).
+		if (issue.storyPointsProvided()) {
 			task.setStoryPoint(issue.storyPoints());
 		}
-		if (issue.sprintExternalId() == null || issue.sprintExternalId().isBlank()) {
-			task.setSprint(null);
-		} else {
-			task.setSprint(sprintByExternalId.get(issue.sprintExternalId()));
+		if (issue.sprintProvided()) {
+			if (issue.sprintExternalId() == null || issue.sprintExternalId().isBlank()) {
+				task.setSprint(null);
+			} else {
+				task.setSprint(sprintByExternalId.get(issue.sprintExternalId()));
+			}
 		}
 		task.setExternalUpdatedAt(incoming);
 		if (status == TaskStatus.DONE && task.getResolvedAt() == null) {

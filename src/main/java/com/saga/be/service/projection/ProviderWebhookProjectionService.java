@@ -7,6 +7,7 @@ import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.integration.WebhookReceipt;
 import com.saga.be.entity.jira.JiraIntegration;
+import com.saga.be.integration.jira.JiraIssueWriteClient;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
 import com.saga.be.integration.webhook.WebhookReceiptService;
 import com.saga.be.realtime.ProjectRealtimeEventType;
@@ -42,6 +43,7 @@ public class ProviderWebhookProjectionService {
 	private final JiraIntegrationRepository jiraIntegrations;
 	private final GitCommitProjectionService commits;
 	private final JiraTaskProjectionService tasks;
+	private final JiraIssueWriteClient jiraFields;
 	private final WebhookReceiptService receipts;
 	private final WebhookReceiptRepository receiptRepository;
 	private final ProjectRealtimePublisher realtime;
@@ -52,6 +54,7 @@ public class ProviderWebhookProjectionService {
 			JiraIntegrationRepository jiraIntegrations,
 			GitCommitProjectionService commits,
 			JiraTaskProjectionService tasks,
+			JiraIssueWriteClient jiraFields,
 			WebhookReceiptRepository receiptRepository,
 			ProjectRealtimePublisher realtime) {
 		this.mapper = mapper;
@@ -59,6 +62,7 @@ public class ProviderWebhookProjectionService {
 		this.jiraIntegrations = jiraIntegrations;
 		this.commits = commits;
 		this.tasks = tasks;
+		this.jiraFields = jiraFields;
 		this.receiptRepository = receiptRepository;
 		this.realtime = realtime;
 		this.receipts = new WebhookReceiptService(new WebhookReceiptService.Store() {
@@ -155,7 +159,6 @@ public class ProviderWebhookProjectionService {
 				return;
 			}
 			String externalId = text(issue, "id");
-			String key = text(issue, "key");
 			JsonNode fields = issue.path("fields");
 			String jiraProjectId = text(fields.path("project"), "id");
 			String projectKey = text(fields.path("project"), "key");
@@ -181,8 +184,14 @@ public class ProviderWebhookProjectionService {
 				receipts.markProcessed(receipt, LocalDateTime.now());
 				return;
 			}
-			IssueSummary summary = toSummary(externalId, key, fields);
 			for (JiraIntegration integration : matches) {
+				// Cache-peek only -- this handler must never trigger provider HTTP field
+				// discovery. Before any sync has warmed the cache for this cloud, both come back
+				// null and the shared toSummary(authoritative=false) below simply cannot mark
+				// those fields "provided", which correctly preserves whatever SAGA already has.
+				String storyField = jiraFields.peekCachedStoryPointsFieldId(integration.getCloudId());
+				String sprintField = jiraFields.peekCachedSprintFieldId(integration.getCloudId());
+				IssueSummary summary = JiraIssueWriteClient.toSummary(issue, storyField, sprintField, false);
 				int applied =
 						tasks.upsertBatch(integration.getProject(), integration.getProjectKey(), List.of(summary));
 				if (applied > 0) {
@@ -261,53 +270,6 @@ public class ProviderWebhookProjectionService {
 			}
 		}
 		receipts.markProcessed(receipt, LocalDateTime.now());
-	}
-
-	private static IssueSummary toSummary(String id, String key, JsonNode fields) {
-		JsonNode status = fields.path("status");
-		JsonNode category = status.path("statusCategory");
-		JsonNode type = fields.path("issuetype");
-		JsonNode assignee = fields.path("assignee");
-		JsonNode priority = fields.path("priority");
-		JsonNode sprintNode = fields.path("sprint");
-		String sprintId = null;
-		String sprintName = null;
-		String sprintState = null;
-		if (sprintNode.isArray() && !sprintNode.isEmpty()) {
-			JsonNode last = sprintNode.get(sprintNode.size() - 1);
-			sprintId = text(last, "id");
-			sprintName = text(last, "name");
-			sprintState = text(last, "state");
-		} else if (sprintNode.isObject()) {
-			sprintId = text(sprintNode, "id");
-			sprintName = text(sprintNode, "name");
-			sprintState = text(sprintNode, "state");
-		}
-		String description = null;
-		JsonNode descriptionNode = fields.get("description");
-		if (descriptionNode != null && descriptionNode.isTextual()) {
-			description = descriptionNode.asText(null);
-		}
-		return new IssueSummary(
-				id,
-				key,
-				text(fields, "summary"),
-				text(status, "id"),
-				text(status, "name"),
-				text(category, "key"),
-				text(type, "name"),
-				text(type, "id"),
-				text(assignee, "accountId"),
-				text(assignee, "displayName"),
-				text(priority, "id"),
-				text(priority, "name"),
-				null,
-				description,
-				sprintId,
-				sprintName,
-				sprintState,
-				text(fields, "created"),
-				text(fields, "updated"));
 	}
 
 	private static String text(JsonNode node, String field) {

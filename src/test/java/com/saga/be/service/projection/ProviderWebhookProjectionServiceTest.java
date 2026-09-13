@@ -15,6 +15,8 @@ import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.integration.WebhookReceipt;
 import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.project.Project;
+import com.saga.be.integration.jira.JiraIssueWriteClient;
+import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
 import com.saga.be.repository.GitRepoRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.WebhookReceiptRepository;
@@ -39,6 +41,8 @@ class ProviderWebhookProjectionServiceTest {
 	@Mock
 	private JiraTaskProjectionService tasks;
 	@Mock
+	private JiraIssueWriteClient jiraFields;
+	@Mock
 	private WebhookReceiptRepository receiptRepository;
 	@Mock
 	private com.saga.be.realtime.ProjectRealtimePublisher realtime;
@@ -48,7 +52,7 @@ class ProviderWebhookProjectionServiceTest {
 	@BeforeEach
 	void setUp() {
 		service = new ProviderWebhookProjectionService(
-				new ObjectMapper(), repos, jiraIntegrations, commits, tasks, receiptRepository, realtime);
+				new ObjectMapper(), repos, jiraIntegrations, commits, tasks, jiraFields, receiptRepository, realtime);
 	}
 
 	@Test
@@ -158,6 +162,103 @@ class ProviderWebhookProjectionServiceTest {
 		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.PROCESSED);
 		verify(realtime)
 				.publish(com.saga.be.realtime.ProjectRealtimeEventType.TASKS_CHANGED, project.getId(), "200");
+	}
+
+	@Test
+	void jiraIssueUpdated_payloadOmitsStoryPointAndSprint_marksBothNotProvided() {
+		// Regression: a partial webhook that never even resolved/carried the dynamic fields must
+		// not tell JiraTaskProjectionService to null out an already-known story point/sprint.
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setCloudId("cloud-1");
+		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
+				.thenReturn(List.of(integration));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn(null);
+		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn(null);
+
+		String payload =
+				"""
+				{"webhookEvent":"jira:issue_updated","issue":{"id":"200","key":"SAGA-9","fields":{"summary":"Auth","status":{"id":"3","name":"In Progress","statusCategory":{"key":"indeterminate"}},"issuetype":{"name":"Story"},"assignee":{"accountId":"acct-1"},"project":{"id":"10000","key":"SAGA"},"updated":"2026-01-02T00:00:00.000+0000"}}}
+				""";
+		service.projectJira(receipt, payload);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		IssueSummary summary = captor.getValue().getFirst();
+		assertThat(summary.storyPointsProvided()).isFalse();
+		assertThat(summary.sprintProvided()).isFalse();
+	}
+
+	@Test
+	void jiraIssueUpdated_payloadCarriesResolvedStoryPointField_marksProvidedWithValue() {
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setCloudId("cloud-1");
+		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
+				.thenReturn(List.of(integration));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn("customfield_777");
+		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn(null);
+
+		String payload =
+				"""
+				{"webhookEvent":"jira:issue_updated","issue":{"id":"200","key":"SAGA-9","fields":{"summary":"Auth","status":{"id":"3","name":"In Progress","statusCategory":{"key":"indeterminate"}},"issuetype":{"name":"Story"},"assignee":{"accountId":"acct-1"},"project":{"id":"10000","key":"SAGA"},"customfield_777":5,"updated":"2026-01-02T00:00:00.000+0000"}}}
+				""";
+		service.projectJira(receipt, payload);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		IssueSummary summary = captor.getValue().getFirst();
+		assertThat(summary.storyPointsProvided()).isTrue();
+		assertThat(summary.storyPoints()).isEqualTo(5);
+	}
+
+	@Test
+	void jiraIssueUpdated_payloadExplicitlyClearsSprint_marksProvidedWithNull() {
+		// Jira sent the "sprint" key with an empty array -- an EXPLICIT clear, distinct from the
+		// key being absent entirely (which must be preserved, see the "omits" test above).
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setCloudId("cloud-1");
+		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
+				.thenReturn(List.of(integration));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn(null);
+		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn(null);
+
+		String payload =
+				"""
+				{"webhookEvent":"jira:issue_updated","issue":{"id":"200","key":"SAGA-9","fields":{"summary":"Auth","status":{"id":"3","name":"In Progress","statusCategory":{"key":"indeterminate"}},"issuetype":{"name":"Story"},"assignee":{"accountId":"acct-1"},"project":{"id":"10000","key":"SAGA"},"sprint":[],"updated":"2026-01-02T00:00:00.000+0000"}}}
+				""";
+		service.projectJira(receipt, payload);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		IssueSummary summary = captor.getValue().getFirst();
+		assertThat(summary.sprintProvided()).isTrue();
+		assertThat(summary.sprintExternalId()).isNull();
 	}
 
 	@Test

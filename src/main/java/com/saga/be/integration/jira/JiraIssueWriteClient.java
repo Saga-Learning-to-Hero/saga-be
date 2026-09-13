@@ -13,7 +13,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -28,6 +31,25 @@ import org.springframework.web.client.RestClientResponseException;
 @Component
 @Profile("!test")
 public class JiraIssueWriteClient {
+
+	private static final Logger log = LoggerFactory.getLogger(JiraIssueWriteClient.class);
+
+	/**
+	 * Known Story Point field display names across Jira project types. Team-managed (next-gen)
+	 * projects expose "Story point estimate"; Company-managed (classic) projects typically expose
+	 * "Story Points". An exact (case-insensitive) name match is a far stronger signal than "name
+	 * contains 'story point'", which can false-positive on unrelated fields.
+	 */
+	private static final Set<String> STORY_POINT_EXACT_NAMES = Set.of("story points", "story point estimate");
+
+	/** Reinforces an exact-name match; alone (float-typed, non-matching name) it is NOT sufficient. */
+	private static final Set<String> STORY_POINT_SCHEMA_CUSTOM_TYPES = Set.of(
+			"com.atlassian.jira.plugin.system.customfieldtypes:float", "com.pyxis.greenhopper.jira:jsw-story-points");
+
+	private static final String SPRINT_EXACT_NAME = "sprint";
+
+	/** Company-managed Sprint field's schema custom type. Not assumed present on Team-managed. */
+	private static final String SPRINT_SCHEMA_CUSTOM_TYPE_FRAGMENT = "gh-sprint";
 
 	private final RestClient restClient;
 	private final IntegrationProperties properties;
@@ -63,7 +85,7 @@ public class JiraIssueWriteClient {
 			if (node == null || node.path("id").isMissingNode()) {
 				throw issueNotFound();
 			}
-			return toSummary(node, storyField, sprintField);
+			return toSummary(node, storyField, sprintField, true);
 		} catch (IntegrationException ex) {
 			throw ex;
 		} catch (RestClientResponseException ex) {
@@ -579,64 +601,192 @@ public class JiraIssueWriteClient {
 		}
 	}
 
+	/**
+	 * Resolution precedence (highest first): (1) {@code saga.integration.jira.story-points-field-id}
+	 * — an optional manual override for emergencies, never defaulted to a site-specific id; (2) a
+	 * per-cloud cached id from a prior discovery on this cloud; (3) fresh dynamic discovery via
+	 * {@link #discoverStoryPointsField}, cached for this cloud thereafter. No config is required for
+	 * normal operation — the override exists only as an escape hatch when discovery is verified
+	 * wrong for a given site.
+	 */
 	public String resolveStoryPointsFieldId(String accessToken, String cloudId) {
+		String configured = properties.getJira().getStoryPointsFieldId();
+		if (configured != null && !configured.isBlank()) {
+			log.info("jira field discovery cloudId={} concept=storyPoints result=CONFIG_OVERRIDE fieldId={}", cloudId, configured);
+			return configured;
+		}
+		return storyPointsFieldByCloud.computeIfAbsent(cloudId, id -> discoverStoryPointsField(accessToken, id));
+	}
+
+	/** Same precedence as {@link #resolveStoryPointsFieldId}, for {@code saga.integration.jira.sprint-field-id}. */
+	public String resolveSprintFieldId(String accessToken, String cloudId) {
+		String configured = properties.getJira().getSprintFieldId();
+		if (configured != null && !configured.isBlank()) {
+			log.info("jira field discovery cloudId={} concept=sprint result=CONFIG_OVERRIDE fieldId={}", cloudId, configured);
+			return configured;
+		}
+		return sprintFieldByCloud.computeIfAbsent(cloudId, id -> discoverSprintField(accessToken, id));
+	}
+
+	/**
+	 * Cache-only lookup — never makes a provider HTTP call. For callers on a payload-only hot path
+	 * (webhook projection) that must not perform provider HTTP: returns whatever a prior {@link
+	 * #resolveStoryPointsFieldId} call for this cloud already discovered, or {@code null} if this
+	 * cloud's field id has not been resolved yet (e.g. no sync has run since the app started).
+	 */
+	public String peekCachedStoryPointsFieldId(String cloudId) {
 		String configured = properties.getJira().getStoryPointsFieldId();
 		if (configured != null && !configured.isBlank()) {
 			return configured;
 		}
-		return storyPointsFieldByCloud.computeIfAbsent(cloudId, id -> discoverField(accessToken, id, true));
+		return storyPointsFieldByCloud.get(cloudId);
 	}
 
-	public String resolveSprintFieldId(String accessToken, String cloudId) {
+	/** Cache-only counterpart of {@link #peekCachedStoryPointsFieldId} for the Sprint field. */
+	public String peekCachedSprintFieldId(String cloudId) {
 		String configured = properties.getJira().getSprintFieldId();
 		if (configured != null && !configured.isBlank()) {
 			return configured;
 		}
-		return sprintFieldByCloud.computeIfAbsent(cloudId, id -> discoverField(accessToken, id, false));
+		return sprintFieldByCloud.get(cloudId);
 	}
 
-	private String discoverField(String accessToken, String cloudId, boolean storyPoints) {
+	private String discoverStoryPointsField(String accessToken, String cloudId) {
+		List<JsonNode> candidates = fetchFieldMetadata(accessToken, cloudId);
+		if (candidates == null) {
+			return "";
+		}
+		List<String> exactNameMatches = new ArrayList<>();
+		List<String> schemaOnlyMatches = new ArrayList<>();
+		for (JsonNode field : candidates) {
+			String id = text(field, "id");
+			String name = text(field, "name");
+			String custom = text(field.path("schema"), "custom");
+			if (id == null) {
+				continue;
+			}
+			String normalizedName = name == null ? "" : name.toLowerCase(Locale.ROOT).trim();
+			if (STORY_POINT_EXACT_NAMES.contains(normalizedName)) {
+				exactNameMatches.add(id);
+			} else if (custom != null
+					&& STORY_POINT_SCHEMA_CUSTOM_TYPES.contains(custom)
+					&& normalizedName.contains("story")) {
+				// Schema reinforces a fuzzy name match only -- schema type alone (e.g. any
+				// arbitrary "float" custom field) is never sufficient on its own.
+				schemaOnlyMatches.add(id);
+			}
+		}
+		return selectUnambiguous(cloudId, "storyPoints", candidates.size(), exactNameMatches, schemaOnlyMatches);
+	}
+
+	private String discoverSprintField(String accessToken, String cloudId) {
+		List<JsonNode> candidates = fetchFieldMetadata(accessToken, cloudId);
+		if (candidates == null) {
+			return "";
+		}
+		List<String> exactNameMatches = new ArrayList<>();
+		List<String> schemaOnlyMatches = new ArrayList<>();
+		for (JsonNode field : candidates) {
+			String id = text(field, "id");
+			String name = text(field, "name");
+			String custom = text(field.path("schema"), "custom");
+			if (id == null) {
+				continue;
+			}
+			if (name != null && SPRINT_EXACT_NAME.equalsIgnoreCase(name.trim())) {
+				// Exact name "Sprint" is trusted on its own -- Team-managed projects are not
+				// assumed to expose the same gh-sprint schema custom type as Company-managed.
+				exactNameMatches.add(id);
+			} else if (custom != null && custom.contains(SPRINT_SCHEMA_CUSTOM_TYPE_FRAGMENT)) {
+				schemaOnlyMatches.add(id);
+			}
+		}
+		return selectUnambiguous(cloudId, "sprint", candidates.size(), exactNameMatches, schemaOnlyMatches);
+	}
+
+	/**
+	 * Strongest-evidence-first, ambiguity-safe selection: prefer exact-name matches; only fall back
+	 * to schema-only matches when there is no exact-name match at all. Never silently picks an
+	 * arbitrary first result when more than one field qualifies at the SAME evidence tier --
+	 * returns a controlled discovery failure ({@code ""}) instead, logged for diagnosis.
+	 *
+	 * <p>Diagnostic logs intentionally include the Jira cloud id and field id/name counts (per the
+	 * "REAL JIRA DIAGNOSTIC SUPPORT" audit requirement) so discovery outcomes can be confirmed
+	 * against a real site -- but never an OAuth/refresh token or the full field-metadata payload.
+	 */
+	private static String selectUnambiguous(
+			String cloudId, String concept, int totalFieldCount, List<String> exactNameMatches, List<String> schemaOnlyMatches) {
+		List<String> winningTier = !exactNameMatches.isEmpty() ? exactNameMatches : schemaOnlyMatches;
+		String tierName = !exactNameMatches.isEmpty() ? "exact-name" : "schema-only";
+		if (winningTier.isEmpty()) {
+			log.info(
+					"jira field discovery cloudId={} concept={} result=NOT_FOUND totalFieldCount={}",
+					cloudId,
+					concept,
+					totalFieldCount);
+			return "";
+		}
+		if (winningTier.size() > 1) {
+			log.warn(
+					"jira field discovery cloudId={} concept={} result=AMBIGUOUS tier={} candidateCount={} totalFieldCount={}",
+					cloudId,
+					concept,
+					tierName,
+					winningTier.size(),
+					totalFieldCount);
+			return "";
+		}
+		String resolved = winningTier.getFirst();
+		log.info(
+				"jira field discovery cloudId={} concept={} result=RESOLVED tier={} fieldId={} totalFieldCount={}",
+				cloudId,
+				concept,
+				tierName,
+				resolved,
+				totalFieldCount);
+		return resolved;
+	}
+
+	private List<JsonNode> fetchFieldMetadata(String accessToken, String cloudId) {
 		try {
-			JsonNode fields = restClient
+			// Fetched as String and parsed manually (not .body(JsonNode.class)) -- a bare
+			// RestClient built without a Spring context does not reliably negotiate a JSON message
+			// converter for JsonNode, which surfaces as HttpMessageConversionException.
+			String raw = restClient
 					.get()
 					.uri("https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/field", cloudId)
 					.header("Authorization", "Bearer " + accessToken)
 					.retrieve()
-					.body(JsonNode.class);
+					.body(String.class);
+			JsonNode fields = raw == null || raw.isBlank() ? null : mapper.readTree(raw);
 			if (fields == null || !fields.isArray()) {
-				return "";
+				return List.of();
 			}
+			List<JsonNode> out = new ArrayList<>();
 			for (JsonNode field : fields) {
-				String id = text(field, "id");
-				String name = text(field, "name");
-				String custom = text(field.path("schema"), "custom");
-				if (id == null) {
-					continue;
-				}
-				if (storyPoints) {
-					if ((name != null && name.toLowerCase(Locale.ROOT).contains("story point"))
-							|| "com.atlassian.jira.plugin.system.customfieldtypes:float".equals(custom)) {
-						if (name != null && name.toLowerCase(Locale.ROOT).contains("story")) {
-							return id;
-						}
-					}
-				} else if ((name != null && "sprint".equalsIgnoreCase(name))
-						|| (custom != null && custom.contains("gh-sprint"))) {
-					return id;
-				}
+				out.add(field);
 			}
-			return "";
+			return out;
 		} catch (Exception ex) {
-			return "";
+			log.warn("jira field discovery cloudId={} result=FETCH_FAILED type={}", cloudId, ex.getClass().getSimpleName());
+			return null;
 		}
 	}
 
 	/**
-	 * Package-visible so {@link JiraOAuthClient#searchIssues} can reuse the exact same dynamic
-	 * story-points/sprint parsing for bulk sync as this class already uses for single-issue reads
-	 * ({@link #getIssue}) — one payload-shape audit, not two divergent implementations.
+	 * Shared story-points/sprint payload parsing for both bulk sync ({@link
+	 * JiraOAuthClient#searchIssues}), single-issue reads ({@link #getIssue}), and webhook
+	 * projection — one payload-shape audit, not three divergent implementations.
+	 *
+	 * <p>{@code authoritative} controls the resulting {@code storyPointsProvided}/{@code
+	 * sprintProvided} flags: a full/authoritative fetch (bulk sync, single-issue) explicitly
+	 * requested these fields from Jira, so whatever the payload says (including absence, meaning
+	 * cleared) is the true current value. A webhook does not control what Jira includes in its
+	 * payload, so for a non-authoritative call the flags instead reflect whether the payload
+	 * actually carried a value for the dynamically-resolved field — a payload that simply omits
+	 * the field must never be treated as "Jira cleared this field".
 	 */
-	static IssueSummary toSummary(JsonNode issue, String storyField, String sprintField) {
+	public static IssueSummary toSummary(JsonNode issue, String storyField, String sprintField, boolean authoritative) {
 		JsonNode fields = issue.path("fields");
 		JsonNode status = fields.path("status");
 		JsonNode category = status.path("statusCategory");
@@ -644,11 +794,19 @@ public class JiraIssueWriteClient {
 		JsonNode assignee = fields.path("assignee");
 		JsonNode priority = fields.path("priority");
 		Integer storyPoints = null;
-		if (storyField != null && !storyField.isBlank() && fields.has(storyField) && fields.get(storyField).canConvertToInt()) {
-			storyPoints = fields.get(storyField).asInt();
+		boolean storyPointsProvided = authoritative;
+		if (storyField != null && !storyField.isBlank() && fields.has(storyField)) {
+			storyPointsProvided = true;
+			if (fields.get(storyField).canConvertToInt()) {
+				storyPoints = fields.get(storyField).asInt();
+			}
 		}
 		JsonNode sprintNode = fields.path("sprint");
+		boolean sprintProvided = authoritative || fields.has("sprint");
 		if ((sprintNode.isMissingNode() || sprintNode.isNull()) && sprintField != null && !sprintField.isBlank()) {
+			if (fields.has(sprintField)) {
+				sprintProvided = true;
+			}
 			sprintNode = fields.path(sprintField);
 		}
 		String sprintId = null;
@@ -686,7 +844,9 @@ public class JiraIssueWriteClient {
 				sprintName,
 				sprintState,
 				text(fields, "created"),
-				text(fields, "updated"));
+				text(fields, "updated"),
+				storyPointsProvided,
+				sprintProvided);
 	}
 
 	private ObjectNode plainAdf(String text) {
