@@ -70,9 +70,14 @@ public class JiraDynamicWebhookService {
 		if (integration == null || integration.getConnectionStatus() != IntegrationStatus.ACTIVE) {
 			return;
 		}
-		String callback = requireCallbackUrl();
-		String jql = jqlForProject(integration.getProjectKey());
+		// Every step that can throw -- including config/validation, not just provider HTTP -- must
+		// be inside this try/catch. A validation failure (e.g. saga.integration.jira.webhook-url
+		// unset) escaping here previously left webhook_id/webhook_expires_at/last_error_code all
+		// NULL forever: not "failed and recorded," but silently never-attempted-looking, with no
+		// scheduled repair path ever able to find it (see JiraWebhookRefreshScheduler).
 		try {
+			String callback = requireCallbackUrl();
+			String jql = jqlForProject(integration.getProjectKey());
 			String access = preferredAccessToken != null && !preferredAccessToken.isBlank()
 					? preferredAccessToken
 					: tokens.accessToken(integration);

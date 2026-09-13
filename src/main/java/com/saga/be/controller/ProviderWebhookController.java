@@ -16,6 +16,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.concurrent.CompletableFuture;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -28,6 +30,8 @@ import org.springframework.web.bind.annotation.RestController;
 @Profile("!test")
 @RequestMapping("/api/webhooks")
 public class ProviderWebhookController {
+
+	private static final Logger log = LoggerFactory.getLogger(ProviderWebhookController.class);
 
 	private final IntegrationProperties properties;
 	private final WebhookReceiptService receipts;
@@ -99,6 +103,10 @@ public class ProviderWebhookController {
 				signature,
 				properties.getJira().getClientSecret(),
 				properties.getJira().getWebhookSecret())) {
+			log.warn(
+					"jira webhook ingress result=REJECTED reason=AUTH_INVALID deliveryPresent={} authorizationPresent={}",
+					delivery != null,
+					authorization != null);
 			warnings.securityFailure(
 					"jira-sig:" + (delivery == null ? "none" : delivery), "Invalid Jira webhook authentication.");
 			throw new IntegrationException(

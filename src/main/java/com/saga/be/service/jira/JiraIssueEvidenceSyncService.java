@@ -109,20 +109,21 @@ public class JiraIssueEvidenceSyncService {
 		}
 		String access = tokens.accessToken(integration);
 		int processed = 0;
-		int start = 0;
+		String nextPageToken = null;
 		while (true) {
-			List<JsonNode> page = jira.searchIssues(access, integration.getCloudId(), integration.getProjectKey(), start, 50);
-			if (page.isEmpty()) {
+			JiraCloudWorkClient.EvidenceSearchPage page =
+					jira.searchIssues(access, integration.getCloudId(), integration.getProjectKey(), nextPageToken, 50);
+			if (page.issues().isEmpty()) {
 				break;
 			}
-			for (JsonNode issue : page) {
+			for (JsonNode issue : page.issues()) {
 				syncFetchedIssue(integration, access, issue);
 				processed++;
 			}
-			start += page.size();
-			if (page.size() < 50) {
+			if (page.last() || page.nextPageToken() == null) {
 				break;
 			}
+			nextPageToken = page.nextPageToken();
 		}
 		return processed;
 	}

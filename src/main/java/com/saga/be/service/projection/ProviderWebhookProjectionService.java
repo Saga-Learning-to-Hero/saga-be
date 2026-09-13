@@ -166,29 +166,48 @@ public class ProviderWebhookProjectionService {
 		try {
 			JsonNode root = mapper.readTree(payloadJson);
 			String webhookEvent = text(root, "webhookEvent");
+			log.info("jira webhook ingress result=ACCEPTED event={}", webhookEvent);
 			if (webhookEvent != null && webhookEvent.toLowerCase(Locale.ROOT).startsWith("sprint_")) {
 				projectJiraSprint(receipt, root, webhookEvent);
 				return;
 			}
 			JsonNode issue = root.path("issue");
 			if (issue.isMissingNode() || issue.isNull()) {
+				log.info("jira webhook ingress event={} result=SKIPPED reason=NO_ISSUE_NODE", webhookEvent);
 				receipts.markProcessed(receipt, LocalDateTime.now());
 				return;
 			}
 			String externalId = text(issue, "id");
+			String issueKey = text(issue, "key");
 			JsonNode fields = issue.path("fields");
 			String jiraProjectId = text(fields.path("project"), "id");
 			String projectKey = text(fields.path("project"), "key");
 			if (externalId == null || jiraProjectId == null || projectKey == null) {
+				log.warn(
+						"jira webhook ingress event={} issueKey={} result=FAILED reason=JIRA_ISSUE_INCOMPLETE",
+						webhookEvent,
+						issueKey);
 				receipts.markFailed(receipt, "JIRA_ISSUE_INCOMPLETE");
 				return;
 			}
 			List<JiraIntegration> matches =
 					jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, jiraProjectId, projectKey);
 			if (matches.isEmpty()) {
+				log.info(
+						"jira webhook ingress event={} issueKey={} projectKey={} result=SKIPPED reason=NO_ACTIVE_INTEGRATION_MATCHED",
+						webhookEvent,
+						issueKey,
+						projectKey);
 				receipts.markProcessed(receipt, LocalDateTime.now());
 				return;
 			}
+			log.info(
+					"jira webhook ingress event={} issueKey={} projectKey={} result=ROUTED matchedIntegrationIds={} matchedProjectIds={}",
+					webhookEvent,
+					issueKey,
+					projectKey,
+					matches.stream().map(JiraIntegration::getId).toList(),
+					matches.stream().map(match -> match.getProject().getId()).toList());
 			if (webhookEvent != null && webhookEvent.toLowerCase(Locale.ROOT).contains("deleted")) {
 				LocalDateTime now = LocalDateTime.now();
 				writes.executeWithoutResult(status -> {

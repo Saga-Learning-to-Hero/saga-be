@@ -85,21 +85,37 @@ public class JiraCloudWorkClient {
 		}
 	}
 
-	public List<JsonNode> searchIssues(String accessToken, String cloudId, String projectKey, int startAt, int maxResults) {
+	/**
+	 * Evidence-extraction issue search (attachment/labels fields, not the canonical Task fields
+	 * {@link JiraOAuthClient#searchIssues} requests) via {@code GET .../rest/api/3/search/jql} --
+	 * the same enhanced JQL endpoint {@code JiraOAuthClient} already uses. The legacy {@code
+	 * /rest/api/3/search} endpoint this used to call was removed by Atlassian (HTTP 410); the
+	 * replacement endpoint paginates by opaque {@code nextPageToken} cursor, not a numeric offset,
+	 * so callers must carry {@link EvidenceSearchPage#nextPageToken()} forward instead of
+	 * incrementing a {@code startAt} counter. Task evidence semantics (which fields are requested,
+	 * what each issue is used for) are unchanged -- only the transport/pagination mechanism.
+	 */
+	public EvidenceSearchPage searchIssues(
+			String accessToken, String cloudId, String projectKey, String nextPageToken, int maxResults) {
 		String jql = "project = \"" + projectKey.replace("\"", "") + "\" ORDER BY updated DESC";
 		try {
+			int safeMax = Math.max(1, Math.min(maxResults, 100));
 			String body = restClient
 					.get()
-					.uri(uriBuilder -> uriBuilder
-							.scheme("https")
-							.host("api.atlassian.com")
-							.path("/ex/jira/{cloudId}/rest/api/3/search")
-							.queryParam("jql", jql)
-							.queryParam(
-									"fields", "attachment,summary,status,labels,issuetype,project,description")
-							.queryParam("startAt", startAt)
-							.queryParam("maxResults", maxResults)
-							.build(cloudId))
+					.uri(uriBuilder -> {
+						var uri = uriBuilder
+								.scheme("https")
+								.host("api.atlassian.com")
+								.path("/ex/jira/{cloudId}/rest/api/3/search/jql")
+								.queryParam("jql", jql)
+								.queryParam(
+										"fields", "attachment,summary,status,labels,issuetype,project,description")
+								.queryParam("maxResults", safeMax);
+						if (nextPageToken != null && !nextPageToken.isBlank()) {
+							uri = uri.queryParam("nextPageToken", nextPageToken);
+						}
+						return uri.build(cloudId);
+					})
 					.header("Authorization", "Bearer " + accessToken)
 					.accept(MediaType.APPLICATION_JSON)
 					.retrieve()
@@ -110,13 +126,18 @@ public class JiraCloudWorkClient {
 			if (issues.isArray()) {
 				issues.forEach(out::add);
 			}
-			return out;
+			JsonNode tokenNode = root.path("nextPageToken");
+			String token = tokenNode.isMissingNode() || tokenNode.isNull() ? null : tokenNode.asText(null);
+			boolean last = root.path("isLast").asBoolean(false) || token == null || out.isEmpty();
+			return new EvidenceSearchPage(out, token, last);
 		} catch (RestClientResponseException ex) {
 			throw unavailable("Jira issue search failed.");
 		} catch (Exception ex) {
 			throw unavailable("Jira issue search could not be read.");
 		}
 	}
+
+	public record EvidenceSearchPage(List<JsonNode> issues, String nextPageToken, boolean last) {}
 
 	private static IntegrationException unavailable(String message) {
 		return new IntegrationException(IntegrationErrorCode.INTEGRATION_UNAVAILABLE, HttpStatus.BAD_GATEWAY, message);

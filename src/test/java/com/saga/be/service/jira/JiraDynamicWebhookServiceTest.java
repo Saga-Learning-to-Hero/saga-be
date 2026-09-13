@@ -192,6 +192,41 @@ class JiraDynamicWebhookServiceTest {
 	}
 
 	@Test
+	void ensureRegistered_missingWebhookUrlConfig_persistsControlledFailure_notSilentNull() {
+		// Regression: requireCallbackUrl()/jqlForProject() used to run BEFORE the try/catch, so
+		// this exact failure escaped uncaught -- webhook_id/webhook_expires_at/last_error_code all
+		// stayed NULL forever, with no scheduled repair path able to find it (a NULL column never
+		// satisfies the refresh scheduler's "< threshold" comparison).
+		properties.getJira().setWebhookUrl("");
+		when(integrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(integrations.findById(integration.getId())).thenReturn(Optional.of(integration));
+		when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		service.ensureRegistered(projectId, "token");
+
+		assertThat(integration.getConnectionStatus()).isEqualTo(IntegrationStatus.ACTIVE);
+		assertThat(integration.getWebhookId()).isNull();
+		assertThat(integration.getWebhookExpiresAt()).isNull();
+		assertThat(integration.getLastErrorCode()).isEqualTo(IntegrationErrorCode.JIRA_WEBHOOK_REGISTER_FAILED.name());
+		verify(client, never()).listWebhooks(any(), any());
+		verify(client, never()).registerWebhook(any(), any(), any(), any(), anyList());
+	}
+
+	@Test
+	void ensureRegistered_blankProjectKey_persistsControlledFailure_notSilentNull() {
+		// Same failure-boundary bug, triggered via jqlForProject() instead of requireCallbackUrl().
+		integration.setProjectKey("");
+		when(integrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(integrations.findById(integration.getId())).thenReturn(Optional.of(integration));
+		when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		service.ensureRegistered(projectId, "token");
+
+		assertThat(integration.getWebhookId()).isNull();
+		assertThat(integration.getLastErrorCode()).isEqualTo(IntegrationErrorCode.JIRA_WEBHOOK_REGISTER_FAILED.name());
+	}
+
+	@Test
 	void jqlForProject_escapesKey() {
 		assertThat(JiraDynamicWebhookService.jqlForProject("SAGA")).isEqualTo("project = \"SAGA\"");
 	}

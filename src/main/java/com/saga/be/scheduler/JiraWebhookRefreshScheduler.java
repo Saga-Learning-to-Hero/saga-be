@@ -52,23 +52,54 @@ public class JiraWebhookRefreshScheduler {
 		List<JiraIntegration> due = new ArrayList<>(integrations.findByConnectionStatusAndWebhookExpiresAtBefore(
 				IntegrationStatus.ACTIVE, threshold));
 		due.addAll(integrations.findByConnectionStatusAndWebhookExpiresAtBefore(IntegrationStatus.CONNECTED, threshold));
+		// Repair candidates: ACTIVE integrations that never completed registration at all
+		// (webhook_id/webhook_expires_at still NULL) -- distinct from the expiry-based set above,
+		// since a NULL column never satisfies "< threshold" and would otherwise never be selected
+		// for repair. REVOKED integrations are excluded by construction (query is scoped to ACTIVE).
+		List<JiraIntegration> missing = integrations.findByConnectionStatusAndWebhookMissing(IntegrationStatus.ACTIVE);
+		for (JiraIntegration candidate : missing) {
+			boolean alreadyQueued = due.stream().anyMatch(existing -> existing.getId().equals(candidate.getId()));
+			if (!alreadyQueued) {
+				due.add(candidate);
+			}
+		}
 		for (JiraIntegration integration : due) {
 			SyncJobLog job = new SyncJobLog();
 			job.setTargetSystem("JIRA");
 			job.setTargetId(integration.getId());
 			job.setJobType(SyncJobType.WEBHOOK_REFRESH);
 			job.setStartedAt(LocalDateTime.now());
+			boolean missingWebhookId = integration.getWebhookId() == null || integration.getWebhookId().isBlank();
 			try {
-				// Provider HTTP outside JDBC; persist only after provider returns expirationDate.
-				webhooks.refreshDue(integration);
+				if (missingWebhookId) {
+					// ensureRegistered handles both "register fresh" and "reuse an existing matching
+					// webhook" without a second, duplicate provider call path -- but it swallows its
+					// own failures internally (persists lastErrorCode, never rethrows: see its
+					// javadoc/contract), so success here must be verified from persisted state
+					// afterward rather than assumed from "no exception was thrown".
+					webhooks.ensureRegistered(integration.getProject().getId(), null);
+					JiraIntegration after = integrations.findById(integration.getId()).orElse(integration);
+					if (after.getWebhookId() == null || after.getWebhookId().isBlank()) {
+						throw new IntegrationException(
+								IntegrationErrorCode.JIRA_WEBHOOK_REGISTER_FAILED,
+								org.springframework.http.HttpStatus.BAD_GATEWAY,
+								"Jira webhook registration did not produce a webhook id.");
+					}
+				} else {
+					// Provider HTTP outside JDBC; persist only after provider returns expirationDate.
+					webhooks.refreshDue(integration);
+				}
 				job.setStatus(SyncJobStatus.SUCCEEDED);
 				job.setCompletedAt(LocalDateTime.now());
 				job.setItemsProcessed(1);
 			} catch (RuntimeException ex) {
+				IntegrationErrorCode failureCode = missingWebhookId
+						? IntegrationErrorCode.JIRA_WEBHOOK_REGISTER_FAILED
+						: IntegrationErrorCode.JIRA_WEBHOOK_REFRESH_FAILED;
 				writes.executeWithoutResult(status -> {
 					JiraIntegration row = integrations.findById(integration.getId()).orElse(integration);
 					row.setConsecutiveFailures(row.getConsecutiveFailures() == null ? 1 : row.getConsecutiveFailures() + 1);
-					row.setLastErrorCode(IntegrationErrorCode.JIRA_WEBHOOK_REFRESH_FAILED.name());
+					row.setLastErrorCode(failureCode.name());
 					integrations.save(row);
 					if (row.getConsecutiveFailures() >= 3) {
 						warnings.securityFailure(
