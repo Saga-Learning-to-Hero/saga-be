@@ -2,6 +2,8 @@
 
 Ngày: 2026-08-15. Công thức tính không đổi (`docs/CONTRIBUTION_CALCULATION_SPEC.md`). Thay đổi này chỉ **trả thêm field** trên response evaluation.
 
+Playbook kéo API cho FE: `docs/FRONTEND_CONTRIBUTION_API.md`.
+
 ## 1. Endpoint
 
 `GET /api/teams/{teamId}/contribution-evaluation`
