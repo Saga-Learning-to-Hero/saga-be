@@ -335,6 +335,41 @@ class JiraTaskProjectionServiceTest {
 		assertThat(saved.getSprint()).isNull();
 	}
 
+	@Test
+	void issueUpdatedStatusChange_updatesTaskStatusAndJiraStatusFields() {
+		// Regression (webhook realtime audit): a status-only change delivered via issue_updated
+		// must update Task.status, Task.jiraStatusId, and Task.jiraStatusName -- status is a base
+		// Jira field (always present in the payload, never gated behind dynamic field discovery
+		// the way Story Points/Sprint are), so this must always apply, not just on full sync.
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10001");
+		existing.setExternalKey("SAGA-1");
+		existing.setProject(project);
+		existing.setTitle("Login");
+		existing.setStatus(com.saga.be.entity.enums.TaskStatus.TODO);
+		existing.setJiraStatusId("1");
+		existing.setJiraStatusName("To Do");
+		existing.setJiraStatusCategory("new");
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary statusChanged = new IssueSummary(
+				"10001", "SAGA-1", "Login", "3", "In Progress", "indeterminate", "Task", "10001", null, null, null,
+				null, null, null, null, null, null, null, "2026-01-02T10:05:00Z");
+		assertThat(service.upsertBatch(project, "SAGA", List.of(statusChanged))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		Task saved = captor.getValue().getFirst();
+		assertThat(saved.getStatus()).isEqualTo(com.saga.be.entity.enums.TaskStatus.IN_PROGRESS);
+		assertThat(saved.getJiraStatusId()).isEqualTo("3");
+		assertThat(saved.getJiraStatusName()).isEqualTo("In Progress");
+		assertThat(saved.getJiraStatusCategory()).isEqualTo("indeterminate");
+	}
+
 	private static IssueSummary issue(String id, String key, String summary, String updated) {
 		return new IssueSummary(
 				id, key, summary, "1", "To Do", "new", "Task", "10001", null, null, null, null, null, null, null, null,

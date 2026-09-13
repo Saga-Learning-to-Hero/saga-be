@@ -3,6 +3,7 @@ package com.saga.be.service.projection;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -17,6 +18,7 @@ import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.project.Project;
 import com.saga.be.integration.jira.JiraIssueWriteClient;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
+import com.saga.be.integration.jira.JiraTeamTokenService;
 import com.saga.be.repository.GitRepoRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.WebhookReceiptRepository;
@@ -28,6 +30,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 @ExtendWith(MockitoExtension.class)
 class ProviderWebhookProjectionServiceTest {
@@ -43,16 +48,42 @@ class ProviderWebhookProjectionServiceTest {
 	@Mock
 	private JiraIssueWriteClient jiraFields;
 	@Mock
+	private JiraTeamTokenService tokens;
+	@Mock
 	private WebhookReceiptRepository receiptRepository;
 	@Mock
 	private com.saga.be.realtime.ProjectRealtimePublisher realtime;
+	@Mock
+	private PlatformTransactionManager transactionManager;
 
 	private ProviderWebhookProjectionService service;
 
 	@BeforeEach
 	void setUp() {
+		org.mockito.Mockito.lenient()
+				.when(transactionManager.getTransaction(org.mockito.ArgumentMatchers.any(TransactionDefinition.class)))
+				.thenReturn(new SimpleTransactionStatus());
+		// Default: cache warm with no field resolved ("" -- discovery ran, found nothing), not
+		// null ("never tried") -- so tests that don't care about field-cache state stay on the
+		// fast payload-only path and never need to stub the provider-refresh fallback. Tests that
+		// specifically exercise the cold-cache path override this with null explicitly.
+		org.mockito.Mockito.lenient()
+				.when(jiraFields.peekCachedStoryPointsFieldId(org.mockito.ArgumentMatchers.any()))
+				.thenReturn("");
+		org.mockito.Mockito.lenient()
+				.when(jiraFields.peekCachedSprintFieldId(org.mockito.ArgumentMatchers.any()))
+				.thenReturn("");
 		service = new ProviderWebhookProjectionService(
-				new ObjectMapper(), repos, jiraIntegrations, commits, tasks, jiraFields, receiptRepository, realtime);
+				new ObjectMapper(),
+				repos,
+				jiraIntegrations,
+				commits,
+				tasks,
+				jiraFields,
+				tokens,
+				receiptRepository,
+				realtime,
+				transactionManager);
 	}
 
 	@Test
@@ -180,8 +211,10 @@ class ProviderWebhookProjectionServiceTest {
 				.thenReturn(List.of(integration));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
-		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn(null);
-		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn(null);
+		// Cache IS warm (discovery already ran and found nothing -- "" -- not "never tried"/null),
+		// so this stays on the fast payload-only path and never calls the provider.
+		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn("");
+		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn("");
 
 		String payload =
 				"""
@@ -195,6 +228,82 @@ class ProviderWebhookProjectionServiceTest {
 		IssueSummary summary = captor.getValue().getFirst();
 		assertThat(summary.storyPointsProvided()).isFalse();
 		assertThat(summary.sprintProvided()).isFalse();
+		verify(tokens, never()).accessToken(any());
+	}
+
+	@Test
+	void jiraIssueUpdated_coldCache_providerRefreshFails_preservesExistingRatherThanGuess() {
+		// Cache genuinely never resolved (peekCached* returns null, not "") on this process for
+		// this cloud -- e.g. right after connect/restart, before any sync has run. The handler
+		// attempts a targeted single-issue refresh; when that ALSO fails (token/rate-limit/etc.),
+		// it must fall back to the non-authoritative payload-derived summary rather than guess.
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setCloudId("cloud-1");
+		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
+				.thenReturn(List.of(integration));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn(null);
+		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn(null);
+		when(tokens.accessToken(integration)).thenThrow(new RuntimeException("token unavailable"));
+
+		String payload =
+				"""
+				{"webhookEvent":"jira:issue_updated","issue":{"id":"200","key":"SAGA-9","fields":{"summary":"Auth","status":{"id":"3","name":"In Progress","statusCategory":{"key":"indeterminate"}},"issuetype":{"name":"Story"},"assignee":{"accountId":"acct-1"},"project":{"id":"10000","key":"SAGA"},"updated":"2026-01-02T00:00:00.000+0000"}}}
+				""";
+		service.projectJira(receipt, payload);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		IssueSummary summary = captor.getValue().getFirst();
+		assertThat(summary.storyPointsProvided()).isFalse();
+		assertThat(summary.sprintProvided()).isFalse();
+	}
+
+	@Test
+	void jiraIssueUpdated_coldCache_providerRefreshSucceeds_usesAuthoritativeIssue() {
+		// Cache cold (right after connect/restart) but the targeted single-issue refresh succeeds:
+		// the fetched IssueSummary (authoritative) is used instead of the raw payload, and it also
+		// warms jiraFields' cache as a side effect (production behavior of getIssue -- not asserted
+		// here since jiraFields is a mock, only that the returned summary is what gets persisted).
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setCloudId("cloud-1");
+		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
+				.thenReturn(List.of(integration));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn(null);
+		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn("");
+		when(tokens.accessToken(integration)).thenReturn("token-1");
+		IssueSummary refreshed = new IssueSummary(
+				"200", "SAGA-9", "Auth", "3", "In Progress", "indeterminate", "Story", "10001", "acct-1", "Alice",
+				null, null, 8, null, null, null, null, null, "2026-01-02T00:00:00.000+0000");
+		when(jiraFields.getIssue("token-1", "cloud-1", "200")).thenReturn(refreshed);
+
+		String payload =
+				"""
+				{"webhookEvent":"jira:issue_updated","issue":{"id":"200","key":"SAGA-9","fields":{"summary":"Auth","status":{"id":"3","name":"In Progress","statusCategory":{"key":"indeterminate"}},"issuetype":{"name":"Story"},"assignee":{"accountId":"acct-1"},"project":{"id":"10000","key":"SAGA"},"updated":"2026-01-02T00:00:00.000+0000"}}}
+				""";
+		service.projectJira(receipt, payload);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		assertThat(captor.getValue().getFirst()).isSameAs(refreshed);
+		assertThat(captor.getValue().getFirst().storyPoints()).isEqualTo(8);
 	}
 
 	@Test
@@ -212,7 +321,7 @@ class ProviderWebhookProjectionServiceTest {
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
 		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn("customfield_777");
-		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn(null);
+		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn("");
 
 		String payload =
 				"""
@@ -244,8 +353,8 @@ class ProviderWebhookProjectionServiceTest {
 				.thenReturn(List.of(integration));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
-		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn(null);
-		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn(null);
+		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn("");
+		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn("");
 
 		String payload =
 				"""

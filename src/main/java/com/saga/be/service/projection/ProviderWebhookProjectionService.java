@@ -9,6 +9,7 @@ import com.saga.be.entity.integration.WebhookReceipt;
 import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.integration.jira.JiraIssueWriteClient;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
+import com.saga.be.integration.jira.JiraTeamTokenService;
 import com.saga.be.integration.webhook.WebhookReceiptService;
 import com.saga.be.realtime.ProjectRealtimeEventType;
 import com.saga.be.realtime.ProjectRealtimePublisher;
@@ -19,18 +20,29 @@ import com.saga.be.service.projection.GitCommitProjectionService.CommitDraft;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Payload-only webhook projection. No provider HTTP on the hot path.
+ * Payload-only webhook projection for the common case. {@code projectJira} is the one exception:
+ * when the dynamic Story Point/Sprint field ids for an issue's cloud are not yet cached on this
+ * process (cold start -- see {@link #refreshFromProvider}), it performs a single-issue provider
+ * fetch, kept strictly outside any JDBC transaction (matching {@link
+ * com.saga.be.service.sync.GitHubCommitSyncService}'s and {@link
+ * ProjectJiraTaskCommandService}'s existing provider-HTTP-outside-JDBC-tx convention) via {@link
+ * TransactionTemplate} rather than a method-level {@code @Transactional}, which would hold a JDBC
+ * connection open for the duration of that provider round-trip.
  */
 @Service
 @Profile("!test")
@@ -44,9 +56,11 @@ public class ProviderWebhookProjectionService {
 	private final GitCommitProjectionService commits;
 	private final JiraTaskProjectionService tasks;
 	private final JiraIssueWriteClient jiraFields;
+	private final JiraTeamTokenService tokens;
 	private final WebhookReceiptService receipts;
 	private final WebhookReceiptRepository receiptRepository;
 	private final ProjectRealtimePublisher realtime;
+	private final TransactionTemplate writes;
 
 	public ProviderWebhookProjectionService(
 			ObjectMapper mapper,
@@ -55,16 +69,20 @@ public class ProviderWebhookProjectionService {
 			GitCommitProjectionService commits,
 			JiraTaskProjectionService tasks,
 			JiraIssueWriteClient jiraFields,
+			JiraTeamTokenService tokens,
 			WebhookReceiptRepository receiptRepository,
-			ProjectRealtimePublisher realtime) {
+			ProjectRealtimePublisher realtime,
+			PlatformTransactionManager transactionManager) {
 		this.mapper = mapper;
 		this.repos = repos;
 		this.jiraIntegrations = jiraIntegrations;
 		this.commits = commits;
 		this.tasks = tasks;
 		this.jiraFields = jiraFields;
+		this.tokens = tokens;
 		this.receiptRepository = receiptRepository;
 		this.realtime = realtime;
+		this.writes = new TransactionTemplate(transactionManager);
 		this.receipts = new WebhookReceiptService(new WebhookReceiptService.Store() {
 			@Override
 			public java.util.Optional<WebhookReceipt> find(
@@ -144,7 +162,6 @@ public class ProviderWebhookProjectionService {
 		}
 	}
 
-	@Transactional
 	public void projectJira(WebhookReceipt receipt, String payloadJson) {
 		try {
 			JsonNode root = mapper.readTree(payloadJson);
@@ -174,39 +191,80 @@ public class ProviderWebhookProjectionService {
 			}
 			if (webhookEvent != null && webhookEvent.toLowerCase(Locale.ROOT).contains("deleted")) {
 				LocalDateTime now = LocalDateTime.now();
-				for (JiraIntegration integration : matches) {
-					tasks.softDelete(integration.getProject(), externalId, now);
-					realtime.publish(
-							ProjectRealtimeEventType.TASKS_CHANGED,
-							integration.getProject().getId(),
-							externalId);
-				}
-				receipts.markProcessed(receipt, LocalDateTime.now());
+				writes.executeWithoutResult(status -> {
+					for (JiraIntegration integration : matches) {
+						tasks.softDelete(integration.getProject(), externalId, now);
+						realtime.publish(
+								ProjectRealtimeEventType.TASKS_CHANGED,
+								integration.getProject().getId(),
+								externalId);
+					}
+					receipts.markProcessed(receipt, LocalDateTime.now());
+				});
 				return;
 			}
+			// Resolved BEFORE opening any DB transaction: for most integrations this is a pure
+			// payload read (no provider HTTP at all), but for a cold cache (see
+			// refreshFromProvider) it performs a single-issue provider fetch that must not hold a
+			// JDBC connection open for its duration.
+			Map<JiraIntegration, IssueSummary> summaries = new LinkedHashMap<>();
 			for (JiraIntegration integration : matches) {
-				// Cache-peek only -- this handler must never trigger provider HTTP field
-				// discovery. Before any sync has warmed the cache for this cloud, both come back
-				// null and the shared toSummary(authoritative=false) below simply cannot mark
-				// those fields "provided", which correctly preserves whatever SAGA already has.
+				// Cache-peek only -- never triggers provider HTTP field discovery on its own.
+				// Before any sync has warmed the cache for this cloud, both come back null and
+				// toSummary(authoritative=false) below simply cannot mark those fields "provided",
+				// which correctly preserves whatever SAGA already has -- UNLESS refreshFromProvider
+				// resolves the true current value with a targeted single-issue fetch instead.
 				String storyField = jiraFields.peekCachedStoryPointsFieldId(integration.getCloudId());
 				String sprintField = jiraFields.peekCachedSprintFieldId(integration.getCloudId());
-				IssueSummary summary = JiraIssueWriteClient.toSummary(issue, storyField, sprintField, false);
-				int applied =
-						tasks.upsertBatch(integration.getProject(), integration.getProjectKey(), List.of(summary));
-				if (applied > 0) {
-					realtime.publish(
-							ProjectRealtimeEventType.TASKS_CHANGED,
-							integration.getProject().getId(),
-							externalId);
-				}
+				IssueSummary summary = storyField == null || sprintField == null
+						? refreshFromProvider(integration, externalId, issue, storyField, sprintField)
+						: JiraIssueWriteClient.toSummary(issue, storyField, sprintField, false);
+				summaries.put(integration, summary);
 			}
-			receipts.markProcessed(receipt, LocalDateTime.now());
+			writes.executeWithoutResult(status -> {
+				for (Map.Entry<JiraIntegration, IssueSummary> entry : summaries.entrySet()) {
+					JiraIntegration integration = entry.getKey();
+					int applied = tasks.upsertBatch(
+							integration.getProject(), integration.getProjectKey(), List.of(entry.getValue()));
+					if (applied > 0) {
+						realtime.publish(
+								ProjectRealtimeEventType.TASKS_CHANGED,
+								integration.getProject().getId(),
+								externalId);
+					}
+				}
+				receipts.markProcessed(receipt, LocalDateTime.now());
+			});
 		} catch (Exception ex) {
 			log.warn("jira webhook projection failed type={}", ex.getClass().getSimpleName());
 			if (receipt != null) {
 				receipts.markFailed(receipt, "JIRA_PROJECTION_FAILED");
 			}
+		}
+	}
+
+	/**
+	 * Cold-cache fallback (no provider HTTP for the common case): the dynamic Story Point/Sprint
+	 * field ids have never been resolved on this process for this cloud (e.g. right after a
+	 * connect/restart, before any sync has run), so the payload's raw custom-field keys cannot be
+	 * safely interpreted even though Jira's webhook body otherwise carries the issue's full current
+	 * field snapshot. Fetches this ONE issue directly (existing {@link JiraIssueWriteClient#getIssue}
+	 * path, which also resolves and caches the field ids as a side effect so later webhooks on this
+	 * process take the fast payload-only path) -- deliberately not a full project sync for one
+	 * webhook. If the provider call itself fails (token/rate-limit/etc.), falls back to the
+	 * non-authoritative payload-derived summary so Story Point/Sprint are preserved, not guessed.
+	 */
+	private IssueSummary refreshFromProvider(
+			JiraIntegration integration, String externalId, JsonNode issue, String storyField, String sprintField) {
+		try {
+			String access = tokens.accessToken(integration);
+			return jiraFields.getIssue(access, integration.getCloudId(), externalId);
+		} catch (Exception ex) {
+			log.warn(
+					"jira webhook cold-cache issue refresh failed integrationId={} type={}",
+					integration.getId(),
+					ex.getClass().getSimpleName());
+			return JiraIssueWriteClient.toSummary(issue, storyField, sprintField, false);
 		}
 	}
 
@@ -245,31 +303,33 @@ public class ProviderWebhookProjectionService {
 		}
 		boolean deleted = webhookEvent.toLowerCase(Locale.ROOT).contains("deleted");
 		LocalDateTime now = LocalDateTime.now();
-		for (JiraIntegration integration : matches) {
-			if (deleted) {
-				tasks.softDeleteSprint(integration, sprintId, now);
-				realtime.publish(
-						ProjectRealtimeEventType.SPRINTS_CHANGED,
-						integration.getProject().getId(),
-						sprintId);
-				realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, integration.getProject().getId());
-			} else {
-				tasks.upsertSprint(
-						integration,
-						sprintId,
-						text(sprint, "name"),
-						text(sprint, "state"),
-						ProjectionMappings.parseInstant(text(sprint, "startDate")),
-						ProjectionMappings.parseInstant(text(sprint, "endDate")),
-						text(sprint, "goal"),
-						ProjectionMappings.parseInstant(text(sprint, "completeDate")));
-				realtime.publish(
-						ProjectRealtimeEventType.SPRINTS_CHANGED,
-						integration.getProject().getId(),
-						sprintId);
+		writes.executeWithoutResult(status -> {
+			for (JiraIntegration integration : matches) {
+				if (deleted) {
+					tasks.softDeleteSprint(integration, sprintId, now);
+					realtime.publish(
+							ProjectRealtimeEventType.SPRINTS_CHANGED,
+							integration.getProject().getId(),
+							sprintId);
+					realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, integration.getProject().getId());
+				} else {
+					tasks.upsertSprint(
+							integration,
+							sprintId,
+							text(sprint, "name"),
+							text(sprint, "state"),
+							ProjectionMappings.parseInstant(text(sprint, "startDate")),
+							ProjectionMappings.parseInstant(text(sprint, "endDate")),
+							text(sprint, "goal"),
+							ProjectionMappings.parseInstant(text(sprint, "completeDate")));
+					realtime.publish(
+							ProjectRealtimeEventType.SPRINTS_CHANGED,
+							integration.getProject().getId(),
+							sprintId);
+				}
 			}
-		}
-		receipts.markProcessed(receipt, LocalDateTime.now());
+			receipts.markProcessed(receipt, LocalDateTime.now());
+		});
 	}
 
 	private static String text(JsonNode node, String field) {
