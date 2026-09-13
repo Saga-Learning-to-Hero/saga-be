@@ -10,6 +10,7 @@ import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -149,9 +150,39 @@ public class JiraIssueWriteClient {
 		}
 	}
 
+	/**
+	 * Updates only the given fields on a Jira issue (omitted fields are left alone by Jira's own
+	 * PUT /issue semantics — the caller decides what "changed" means, this method never adds
+	 * fields on its own).
+	 *
+	 * <p>Before sending, fetches this issue's edit metadata ({@code GET .../editmeta}) ONCE (not
+	 * once per field) and rejects any requested field that is not on this issue's edit screen with
+	 * a controlled {@link IntegrationErrorCode#JIRA_FIELD_INVALID} naming the exact field — a field
+	 * existing globally (as returned by {@code GET /rest/api/3/field}) does not mean Jira will
+	 * accept it for THIS issue/project/screen. If the editmeta fetch itself fails (e.g. transient
+	 * network error), the check is skipped and the write is attempted directly — the editability
+	 * check is a fail-fast diagnostic, not a hard dependency, and {@link #mapWriteFailure} still
+	 * surfaces Jira's own field-rejection detail if the provider then rejects the write.
+	 */
 	public void updateIssueFields(String accessToken, String cloudId, String issueIdOrKey, Map<String, Object> fieldUpdates) {
 		if (fieldUpdates == null || fieldUpdates.isEmpty()) {
 			return;
+		}
+		Set<String> editableFieldIds = fetchEditableFieldIds(accessToken, cloudId, issueIdOrKey);
+		if (editableFieldIds != null) {
+			List<String> notEditable = fieldUpdates.keySet().stream()
+					.filter(fieldId -> !editableFieldIds.contains(fieldId))
+					.toList();
+			if (!notEditable.isEmpty()) {
+				log.warn(
+						"jira operation=updateIssue result=FIELD_NOT_EDITABLE fieldIds={} editableFieldCount={}",
+						notEditable,
+						editableFieldIds.size());
+				throw new IntegrationException(
+						IntegrationErrorCode.JIRA_FIELD_INVALID,
+						HttpStatus.BAD_REQUEST,
+						"Jira field(s) not editable for this issue: " + String.join(", ", notEditable));
+			}
 		}
 		ObjectNode body = mapper.createObjectNode();
 		ObjectNode fields = body.putObject("fields");
@@ -170,6 +201,62 @@ public class JiraIssueWriteClient {
 		} catch (RestClientResponseException ex) {
 			throw mapWriteFailure("updateIssue", IntegrationErrorCode.JIRA_ISSUE_UPDATE_FAILED, ex);
 		}
+	}
+
+	/**
+	 * Returns the set of field ids actually settable on this issue's edit screen (per {@code GET
+	 * /rest/api/3/issue/{issue}/editmeta}), or {@code null} if the metadata could not be fetched
+	 * (network/parse failure) -- {@code null} means "unknown", the caller should skip the
+	 * editability pre-check rather than treat an unrelated failure as "no fields are editable".
+	 * One request per {@link #updateIssueFields} call, never one per field.
+	 */
+	private Set<String> fetchEditableFieldIds(String accessToken, String cloudId, String issueIdOrKey) {
+		try {
+			String raw = restClient
+					.get()
+					.uri("https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issue}/editmeta", cloudId, issueIdOrKey)
+					.header("Authorization", "Bearer " + accessToken)
+					.retrieve()
+					.body(String.class);
+			if (raw == null || raw.isBlank()) {
+				return null;
+			}
+			JsonNode fields = mapper.readTree(raw).path("fields");
+			if (!fields.isObject()) {
+				return null;
+			}
+			Set<String> editable = new HashSet<>();
+			fields.fieldNames().forEachRemaining(fieldId -> {
+				if (isSettable(fields.path(fieldId).path("operations"))) {
+					editable.add(fieldId);
+				}
+			});
+			return editable;
+		} catch (Exception ex) {
+			log.warn("jira operation=editmeta result=FETCH_FAILED type={}", ex.getClass().getSimpleName());
+			return null;
+		}
+	}
+
+	/**
+	 * A field listed in editmeta with no "operations" array is treated as settable (lenient
+	 * default -- Jira normally always includes it, but we don't want a metadata-shape surprise to
+	 * block a legitimate edit). An explicitly EMPTY operations array means Jira allows no
+	 * operations on this field for this issue -- not settable, even though it's listed.
+	 */
+	private static boolean isSettable(JsonNode operations) {
+		if (!operations.isArray()) {
+			return true;
+		}
+		if (operations.isEmpty()) {
+			return false;
+		}
+		for (JsonNode op : operations) {
+			if ("set".equals(op.asText(null))) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	public List<TransitionOption> listTransitions(String accessToken, String cloudId, String issueIdOrKey) {
@@ -941,8 +1028,21 @@ public class JiraIssueWriteClient {
 			return new IntegrationException(defaultCode, HttpStatus.NOT_FOUND, "Jira resource was not found.");
 		}
 		if (status == 400) {
-			return new IntegrationException(
-					IntegrationErrorCode.JIRA_FIELD_INVALID, HttpStatus.BAD_REQUEST, "Jira rejected the field update.");
+			// "Reject field" failures carry Jira's field-keyed detail in the response body's
+			// "errors" map (e.g. "customfield_10016: Field ... cannot be set. It is not on the
+			// appropriate screen, or unknown."), not in "errorMessages" -- surface the field
+			// id(s)/message(s) (capped, no token/payload) so the caller isn't left with only a
+			// generic "rejected the field update" with no idea which field caused it.
+			String fieldDetail = JiraOAuthClient.safeFieldErrors(ex);
+			String generalDetail = JiraOAuthClient.safeErrorMessages(ex);
+			log.warn(
+					"jira operation={} httpStatus=400 errorCode=JIRA_FIELD_INVALID fieldErrors={} errorMessages={}",
+					operation,
+					fieldDetail,
+					generalDetail);
+			String detail = !fieldDetail.isBlank() ? fieldDetail : generalDetail;
+			String message = detail.isBlank() ? "Jira rejected the field update." : "Jira rejected the field update: " + detail;
+			return new IntegrationException(IntegrationErrorCode.JIRA_FIELD_INVALID, HttpStatus.BAD_REQUEST, message);
 		}
 		return new IntegrationException(defaultCode, HttpStatus.BAD_GATEWAY, "Jira write failed.");
 	}

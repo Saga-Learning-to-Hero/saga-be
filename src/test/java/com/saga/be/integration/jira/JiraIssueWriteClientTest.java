@@ -1,16 +1,32 @@
 package com.saga.be.integration.jira;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.saga.be.config.IntegrationProperties;
+import com.saga.be.exception.IntegrationException;
+import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.converter.ByteArrayHttpMessageConverter;
+import org.springframework.http.converter.FormHttpMessageConverter;
+import org.springframework.http.converter.ResourceHttpMessageConverter;
+import org.springframework.http.converter.StringHttpMessageConverter;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
@@ -28,7 +44,21 @@ class JiraIssueWriteClientTest {
 
 	@BeforeEach
 	void setUp() {
-		RestClient.Builder builder = RestClient.builder();
+		// Mirrors IntegrationConfiguration#integrationRestClient's explicit converter list. A
+		// bare RestClient.builder() picks Spring Boot 4's Jackson-3-based default JSON converter
+		// (Jackson 3 is also on the classpath), which does not recognize Jackson 2's JsonNode/
+		// ObjectNode as its own tree types -- reads of JsonNode.class fail outright, and writes of
+		// an ObjectNode body silently serialize via generic bean reflection (its isArray()/
+		// isObject()/... getters) instead of the JSON tree it holds, so Jira receives a body with
+		// no "fields" key and rejects the write. This is that same bug reproduced in a test.
+		RestClient.Builder builder = RestClient.builder().messageConverters(converters -> {
+			converters.clear();
+			converters.add(new ByteArrayHttpMessageConverter());
+			converters.add(new StringHttpMessageConverter(StandardCharsets.UTF_8));
+			converters.add(new ResourceHttpMessageConverter());
+			converters.add(new FormHttpMessageConverter());
+			converters.add(new MappingJackson2HttpMessageConverter(new ObjectMapper()));
+		});
 		server = MockRestServiceServer.bindTo(builder).build();
 		properties = new IntegrationProperties();
 		client = new JiraIssueWriteClient(builder.build(), properties, new ObjectMapper());
@@ -221,6 +251,206 @@ class JiraIssueWriteClientTest {
 		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, "customfield_10016", "customfield_10007", false);
 		assertEquals(null, summary.storyPoints());
 		assertEquals(true, summary.storyPointsProvided());
+	}
+
+	// ==================== WRITE PATH: story point estimation ====================
+
+	@Test
+	void setIssueEstimation_boardEstimationSucceeds_neverFallsBackToCustomFieldWrite() {
+		server.expect(requestTo(
+						"https://api.atlassian.com/ex/jira/cloud-8/rest/agile/1.0/issue/10001/estimation?boardId=68"))
+				.andExpect(method(HttpMethod.PUT))
+				.andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+		client.setIssueEstimation("token", "cloud-8", "68", "10001", 5);
+
+		// Only the estimation call is expected; a custom-field discovery/write would be an
+		// unexpected extra request and would fail server.verify() below.
+		server.verify();
+	}
+
+	@Test
+	void setIssueEstimation_noBoardId_companyManaged_writesResolvedCustomField() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-9/rest/api/3/field"))
+				.andRespond(withSuccess(
+						"""
+						[{"id":"customfield_10016","name":"Story Points","schema":{"custom":"com.atlassian.jira.plugin.system.customfieldtypes:float"}}]
+						""",
+						MediaType.APPLICATION_JSON));
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-9/rest/api/3/issue/10001/editmeta"))
+				.andRespond(withSuccess(
+						"""
+						{"fields":{"customfield_10016":{"operations":["set"]}}}
+						""",
+						MediaType.APPLICATION_JSON));
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-9/rest/api/3/issue/10001"))
+				.andExpect(method(HttpMethod.PUT))
+				.andExpect(content().json("""
+						{"fields":{"customfield_10016":5}}
+						"""))
+				.andRespond(withSuccess());
+
+		client.setIssueEstimation("token", "cloud-9", null, "10001", 5);
+		server.verify();
+	}
+
+	@Test
+	void setIssueEstimation_noBoardId_teamManaged_writesStoryPointEstimateField() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-10/rest/api/3/field"))
+				.andRespond(withSuccess(
+						"""
+						[{"id":"customfield_10038","name":"Story point estimate","schema":{"custom":"com.pyxis.greenhopper.jira:jsw-story-points"}}]
+						""",
+						MediaType.APPLICATION_JSON));
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-10/rest/api/3/issue/10001/editmeta"))
+				.andRespond(withSuccess(
+						"""
+						{"fields":{"customfield_10038":{"operations":["set"]}}}
+						""",
+						MediaType.APPLICATION_JSON));
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-10/rest/api/3/issue/10001"))
+				.andExpect(method(HttpMethod.PUT))
+				.andExpect(content().json("""
+						{"fields":{"customfield_10038":5}}
+						"""))
+				.andRespond(withSuccess());
+
+		client.setIssueEstimation("token", "cloud-10", null, "10001", 5);
+		server.verify();
+	}
+
+	@Test
+	void setIssueEstimation_ambiguousStoryPointField_throwsControlledError_neverWrites() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-11/rest/api/3/field"))
+				.andRespond(withSuccess(
+						"""
+						[
+						  {"id":"customfield_10016","name":"Story Points","schema":{"custom":"com.atlassian.jira.plugin.system.customfieldtypes:float"}},
+						  {"id":"customfield_20099","name":"Story Points","schema":{"custom":"com.atlassian.jira.plugin.system.customfieldtypes:float"}}
+						]
+						""",
+						MediaType.APPLICATION_JSON));
+
+		assertThatThrownBy(() -> client.setIssueEstimation("token", "cloud-11", null, "10001", 5))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_FIELD_INVALID);
+		// Only the field-metadata lookup is expected -- no editmeta/PUT after an ambiguous result.
+		server.verify();
+	}
+
+	// ==================== WRITE PATH: field editability (reject-field root cause) ====================
+
+	@Test
+	void updateIssueFields_fieldNotOnEditScreen_throwsBeforeSendingWrite() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-12/rest/api/3/issue/10001/editmeta"))
+				.andRespond(withSuccess(
+						"""
+						{"fields":{"summary":{"operations":["set"]}}}
+						""",
+						MediaType.APPLICATION_JSON));
+
+		assertThatThrownBy(() -> client.updateIssueFields(
+						"token", "cloud-12", "10001", Map.of("customfield_10016", 5)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_FIELD_INVALID);
+		// Only editmeta is expected -- the PUT must never be sent for a field editmeta didn't list.
+		server.verify();
+	}
+
+	@Test
+	void updateIssueFields_fieldOnEditScreen_sendsWrite() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-13/rest/api/3/issue/10001/editmeta"))
+				.andRespond(withSuccess(
+						"""
+						{"fields":{"summary":{"operations":["set"]}}}
+						""",
+						MediaType.APPLICATION_JSON));
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-13/rest/api/3/issue/10001"))
+				.andExpect(method(HttpMethod.PUT))
+				.andExpect(content().json("""
+						{"fields":{"summary":"New title"}}
+						"""))
+				.andRespond(withSuccess());
+
+		client.updateIssueFields("token", "cloud-13", "10001", Map.of("summary", "New title"));
+		server.verify();
+	}
+
+	@Test
+	void updateIssueFields_editMetaFetchFails_stillAttemptsWrite() {
+		// The editability pre-check is a diagnostic, not a hard dependency -- if editmeta itself
+		// can't be fetched, fall through to attempting the write (protected by mapWriteFailure's
+		// field-error surfacing if Jira then rejects it).
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-14/rest/api/3/issue/10001/editmeta"))
+				.andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-14/rest/api/3/issue/10001"))
+				.andExpect(method(HttpMethod.PUT))
+				.andRespond(withSuccess());
+
+		client.updateIssueFields("token", "cloud-14", "10001", Map.of("summary", "New title"));
+		server.verify();
+	}
+
+	@Test
+	void updateIssueFields_jiraRejects400_mapsFieldErrorDetailIntoMessage() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-15/rest/api/3/issue/10001/editmeta"))
+				.andRespond(withSuccess(
+						"""
+						{"fields":{"customfield_10016":{"operations":["set"]}}}
+						""",
+						MediaType.APPLICATION_JSON));
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-15/rest/api/3/issue/10001"))
+				.andExpect(method(HttpMethod.PUT))
+				.andRespond(withStatus(HttpStatus.BAD_REQUEST)
+						.contentType(MediaType.APPLICATION_JSON)
+						.body(
+								"""
+								{"errorMessages":[],"errors":{"customfield_10016":"Field 'customfield_10016' cannot be set. It is not on the appropriate screen, or unknown."}}
+								"""));
+
+		assertThatThrownBy(() -> client.updateIssueFields(
+						"token", "cloud-15", "10001", Map.of("customfield_10016", 5)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getMessage())
+				.satisfies(message -> assertThat((String) message).contains("customfield_10016"));
+		server.verify();
+	}
+
+	// ==================== WRITE PATH: sprint update omits unrequested fields ====================
+
+	@Test
+	void updateSprint_renameOnly_bodyContainsOnlyName() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-16/rest/agile/1.0/sprint/31"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(content().json("""
+						{"name":"Sprint Renamed"}
+						"""))
+				.andRespond(withSuccess(
+						"""
+						{"id":31,"name":"Sprint Renamed","state":"active"}
+						""",
+						MediaType.APPLICATION_JSON));
+
+		client.updateSprint("token", "cloud-16", "31", "Sprint Renamed", null, null, null, null);
+		server.verify();
+	}
+
+	@Test
+	void updateSprint_goalOnly_bodyContainsOnlyGoal() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-17/rest/agile/1.0/sprint/31"))
+				.andExpect(content().json("""
+						{"goal":"Ship auth"}
+						"""))
+				.andRespond(withSuccess(
+						"""
+						{"id":31,"name":"Sprint 1","state":"active","goal":"Ship auth"}
+						""",
+						MediaType.APPLICATION_JSON));
+
+		client.updateSprint("token", "cloud-17", "31", null, "Ship auth", null, null, null);
+		server.verify();
 	}
 
 	private static JsonNode readTree(String json) {

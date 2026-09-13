@@ -9,6 +9,8 @@ import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -319,6 +321,57 @@ public class JiraOAuthClient {
 		}
 	}
 
+	/**
+	 * Field-level rejection detail from a Jira 400 (e.g. {@code {"errors":{"customfield_10016":
+	 * "Field 'customfield_10016' cannot be set. It is not on the appropriate screen, or unknown."}}}).
+	 * Distinct from {@link #safeErrorMessages}, which only reads the top-level {@code errorMessages}
+	 * list — "reject field" failures live in the {@code errors} map instead, keyed by field id.
+	 * Never includes the OAuth token, the request body, or the raw response — only field
+	 * ids/messages, capped in count and length.
+	 */
+	static String safeFieldErrors(RestClientResponseException ex) {
+		try {
+			String body = ex.getResponseBodyAsString();
+			if (body == null || body.isBlank()) {
+				return "";
+			}
+			JiraErrorBody parsed = MAPPER.readValue(body, JiraErrorBody.class);
+			if (parsed.errors() == null || parsed.errors().isEmpty()) {
+				return "";
+			}
+			return parsed.errors().entrySet().stream()
+					.filter(entry -> entry.getKey() != null && !entry.getKey().isBlank())
+					.limit(5)
+					.map(entry -> {
+						String message = entry.getValue();
+						String safeMessage = message == null
+								? ""
+								: (message.length() > 200 ? message.substring(0, 200) : message);
+						return safeMessage.isBlank() ? entry.getKey() : entry.getKey() + ": " + safeMessage;
+					})
+					.collect(Collectors.joining("; "));
+		} catch (Exception ignored) {
+			return "";
+		}
+	}
+
+	/** Field ids from {@link #safeFieldErrors}'s parsed {@code errors} map, for programmatic use. */
+	static Set<String> rejectedFieldIds(RestClientResponseException ex) {
+		try {
+			String body = ex.getResponseBodyAsString();
+			if (body == null || body.isBlank()) {
+				return Set.of();
+			}
+			JiraErrorBody parsed = MAPPER.readValue(body, JiraErrorBody.class);
+			if (parsed.errors() == null || parsed.errors().isEmpty()) {
+				return Set.of();
+			}
+			return Set.copyOf(parsed.errors().keySet());
+		} catch (Exception ignored) {
+			return Set.of();
+		}
+	}
+
 	private static String safeProjectKey(String projectKey) {
 		if (projectKey == null || projectKey.isBlank()) {
 			return "";
@@ -398,8 +451,9 @@ public class JiraOAuthClient {
 
 	public record JiraBoardOption(String id, String name, String type) {}
 
+	/** {@code errors} is Jira's field-keyed rejection map, e.g. {@code {"customfield_10016": "..."}}. */
 	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record JiraErrorBody(List<String> errorMessages) {}
+	public record JiraErrorBody(List<String> errorMessages, Map<String, String> errors) {}
 
 	/**
 	 * {@code storyPointsProvided}/{@code sprintProvided} distinguish "Jira told us the true current

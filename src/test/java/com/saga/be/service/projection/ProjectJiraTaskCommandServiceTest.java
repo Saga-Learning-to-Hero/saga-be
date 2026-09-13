@@ -297,6 +297,179 @@ class ProjectJiraTaskCommandServiceTest {
 	}
 
 	@Test
+	void patch_summaryOnly_sendsOnlySummaryField() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "New title");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest("New title", null, null, null, null, null, null, null, null, null, null));
+
+		@SuppressWarnings("unchecked")
+		org.mockito.ArgumentCaptor<java.util.Map<String, Object>> captor =
+				org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
+		assertThat(captor.getValue()).containsOnlyKeys("summary");
+		assertThat(captor.getValue()).containsEntry("summary", "New title");
+		verify(jiraWrite, never()).setIssueEstimation(any(), any(), any(), any(), any());
+		verify(jiraWrite, never()).moveIssuesToSprint(any(), any(), any(), any());
+		verify(jiraWrite, never()).moveIssuesToBacklog(any(), any(), any(), any());
+		verify(jiraWrite, never()).transitionIssue(any(), any(), any(), any());
+	}
+
+	@Test
+	void patch_assigneeOnly_sendsOnlyAssigneeField() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(null, null, null, "acct-99", null, null, null, null, null, null, null));
+
+		@SuppressWarnings("unchecked")
+		org.mockito.ArgumentCaptor<java.util.Map<String, Object>> captor =
+				org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
+		assertThat(captor.getValue()).containsOnlyKeys("assignee");
+	}
+
+	@Test
+	void patch_priorityOnly_sendsOnlyPriorityField() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(null, null, null, null, null, "3", null, null, null, null, null));
+
+		@SuppressWarnings("unchecked")
+		org.mockito.ArgumentCaptor<java.util.Map<String, Object>> captor =
+				org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
+		assertThat(captor.getValue()).containsOnlyKeys("priority");
+	}
+
+	@Test
+	void patch_moveToBacklog_usesAgileApiThenReconciles() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(
+						null, null, null, null, null, null, null, null, Boolean.TRUE, null, null));
+
+		verify(jiraWrite).moveIssuesToBacklog("token", "cloud", "68", List.of("10001"));
+		verify(jiraWrite, never()).moveIssuesToSprint(any(), any(), any(), any());
+	}
+
+	@Test
+	void patch_neverSendsStatusThroughGenericFields_evenWhenTransitionFieldsProvided() {
+		// PatchProjectTaskRequest carries transitionId/targetStatusId only so the DTO can be reused
+		// as validation input elsewhere; patch() itself must never act on them or call the
+		// transitions API -- status changes require the dedicated POST .../transition endpoint.
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(null, null, null, null, null, null, null, null, null, "21", "3"));
+
+		verify(jiraWrite, never()).transitionIssue(any(), any(), any(), any());
+		verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+	}
+
+	@Test
+	void patch_jiraRejectsFieldUpdate_localTaskNotMutated() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		org.mockito.Mockito.doThrow(new IntegrationException(
+						IntegrationErrorCode.JIRA_FIELD_INVALID,
+						org.springframework.http.HttpStatus.BAD_REQUEST,
+						"Jira field(s) not editable for this issue: customfield_10016"))
+				.when(jiraWrite)
+				.updateIssueFields(any(), any(), any(), any());
+
+		assertThatThrownBy(() -> service.patch(
+						userId,
+						projectId,
+						task.getId(),
+						new PatchProjectTaskRequest(
+								"New title", null, null, null, null, null, null, null, null, null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_FIELD_INVALID);
+		verify(projection, never()).upsertOne(any(), any(), any());
+		verify(jiraWrite, never()).getIssue(any(), any(), any());
+		assertThat(lastEvent.get()).isNull();
+	}
+
+	@Test
 	void nonLeader_cannotCreate() {
 		UserAccount student = new UserAccount();
 		student.setId(userId);
