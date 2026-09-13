@@ -137,7 +137,8 @@ public class ProjectJiraTaskCommandService {
 				request.issueTypeId(),
 				request.assigneeAccountId(),
 				request.priorityId(),
-				null);
+				null,
+				request.labels());
 
 		boolean secondaryFailed = false;
 		if (request.storyPoints() != null) {
@@ -219,6 +220,13 @@ public class ProjectJiraTaskCommandService {
 		}
 		if (request.priorityId() != null && !request.priorityId().isBlank()) {
 			fields.put("priority", Map.of("id", request.priorityId()));
+		}
+		// PATCH semantics: labels omitted (null) -> preserve Jira's current labels (do not send the
+		// field at all). Explicitly [] -> clears all labels. A non-empty list -> replaces with
+		// exactly that list. "labels" is a standard Jira system field, always on the edit screen
+		// when present, so no dynamic field id resolution is needed here.
+		if (request.labels() != null) {
+			fields.put("labels", normalizedLabels(request.labels()));
 		}
 		if (!fields.isEmpty()) {
 			jiraWrite.updateIssueFields(access, integration.getCloudId(), issueRef, fields);
@@ -401,5 +409,14 @@ public class ProjectJiraTaskCommandService {
 			return task.getExternalId();
 		}
 		return task.getExternalKey();
+	}
+
+	/**
+	 * Conservative, Jira-compatible normalization: drop null/blank entries only. Does not dedupe or
+	 * otherwise restrict label values -- Jira itself is authoritative on what a valid label is, and
+	 * no other list-valued field in this DTO layer normalizes beyond null-safety.
+	 */
+	private static List<String> normalizedLabels(List<String> labels) {
+		return labels.stream().filter(label -> label != null && !label.isBlank()).toList();
 	}
 }

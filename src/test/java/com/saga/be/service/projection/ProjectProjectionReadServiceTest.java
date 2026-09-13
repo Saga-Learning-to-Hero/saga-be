@@ -356,6 +356,39 @@ class ProjectProjectionReadServiceTest {
 	}
 
 	@Test
+	void listTasks_withLabels_exposesLabelList() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = new Task();
+		task.setId(UUID.randomUUID());
+		task.setExternalKey("SAGA-1");
+		task.setTitle("Login");
+		task.setStatus(TaskStatus.TODO);
+		task.setLabelsJson("[\"backend\",\"urgent\"]");
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(task));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.labels()).containsExactly("backend", "urgent");
+	}
+
+	@Test
+	void listTasks_noLabels_returnsEmptyListNeverNull() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = new Task();
+		task.setId(UUID.randomUUID());
+		task.setExternalKey("SAGA-2");
+		task.setTitle("No labels");
+		task.setStatus(TaskStatus.TODO);
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(task));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.labels()).isNotNull().isEmpty();
+	}
+
+	@Test
 	void getTask_requiresSameProject() {
 		stubStudent(RoleInTeam.MEMBER);
 		UUID taskId = UUID.randomUUID();

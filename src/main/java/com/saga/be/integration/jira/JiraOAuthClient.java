@@ -198,7 +198,7 @@ public class JiraOAuthClient {
 		try {
 			int safeMax = Math.max(1, Math.min(maxResults, 100));
 			String jql = "project = \"" + projectKey.replace("\"", "") + "\" ORDER BY updated DESC";
-			String fields = "summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint,parent"
+			String fields = "summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint,parent,labels"
 					+ (storyPointsFieldId == null || storyPointsFieldId.isBlank() ? "" : "," + storyPointsFieldId)
 					+ (sprintFieldId == null || sprintFieldId.isBlank() || "sprint".equals(sprintFieldId)
 							? ""
@@ -456,13 +456,15 @@ public class JiraOAuthClient {
 	public record JiraErrorBody(List<String> errorMessages, Map<String, String> errors) {}
 
 	/**
-	 * {@code storyPointsProvided}/{@code sprintProvided}/{@code parentProvided} distinguish "Jira
-	 * told us the true current value (possibly null, meaning explicitly cleared)" from "this payload
-	 * said nothing about this field, leave whatever SAGA already has alone" — see {@link
-	 * JiraIssueWriteClient#toSummary}. The legacy 19-arg constructor defaults all three to {@code
-	 * true} (authoritative), matching every existing caller (bulk sync, single-issue fetch, and all
+	 * {@code storyPointsProvided}/{@code sprintProvided}/{@code parentProvided}/{@code
+	 * labelsProvided} distinguish "Jira told us the true current value (possibly null/empty,
+	 * meaning explicitly cleared)" from "this payload said nothing about this field, leave whatever
+	 * SAGA already has alone" — see {@link JiraIssueWriteClient#toSummary}. The legacy 19-arg
+	 * constructor defaults all four to {@code true} (authoritative) with {@code labels} defaulting
+	 * to an empty list, matching every existing caller (bulk sync, single-issue fetch, and all
 	 * pre-existing tests) unchanged; only the webhook path needs the distinction and uses the
-	 * canonical 24-arg constructor explicitly.
+	 * canonical 26-arg constructor explicitly. {@code labels} is a standard Jira system field (never
+	 * a per-site customfield_ id), unlike Story Points/Sprint.
 	 */
 	public record IssueSummary(
 			String id,
@@ -488,7 +490,9 @@ public class JiraOAuthClient {
 			boolean sprintProvided,
 			String parentExternalId,
 			String parentExternalKey,
-			boolean parentProvided) {
+			boolean parentProvided,
+			List<String> labels,
+			boolean labelsProvided) {
 
 		public IssueSummary(
 				String id,
@@ -514,7 +518,7 @@ public class JiraOAuthClient {
 					id, key, summary, statusId, statusName, statusCategory, issueTypeName, issueTypeId,
 					assigneeAccountId, assigneeDisplayName, priorityId, priorityName, storyPoints, description,
 					sprintExternalId, sprintName, sprintState, created, updated,
-					true, true, null, null, true);
+					true, true, null, null, true, List.of(), true);
 		}
 	}
 

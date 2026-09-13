@@ -1,6 +1,7 @@
 package com.saga.be.dto.project;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 public record ProjectTaskResponse(
@@ -30,6 +31,8 @@ public record ProjectTaskResponse(
 		 * {@link #issueTypeName()} -- FE decides how to render based on both.
 		 */
 		Parent parent,
+		/** Jira labels on this issue, parsed from the canonical stored representation. Never null (empty list = no labels). */
+		List<String> labels,
 		long linkedCommitCount,
 		LocalDateTime externalUpdatedAt,
 		LocalDateTime createdAt,

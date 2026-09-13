@@ -8,7 +8,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.saga.be.dto.project.CreateProjectSprintRequest;
 import com.saga.be.dto.project.PatchProjectSprintRequest;
+import com.saga.be.dto.project.ProjectSprintResponse;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.enums.AccountRole;
 import com.saga.be.entity.enums.IntegrationStatus;
@@ -198,6 +200,155 @@ class ProjectJiraSprintCommandServiceTest {
 				.isEqualTo(IntegrationErrorCode.JIRA_SPRINT_WRITE_FAILED);
 		verify(projection, never()).upsertSprint(any(), any(), any(), any(), any(), any(), any(), any());
 		assertThat(lastEvent.get()).isNull();
+	}
+
+	@Test
+	void create_leader_callsJiraThenPersistsCanonicalProjection() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Sprint local = sprintRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		SprintDetail created = new SprintDetail(31L, "Sprint 1", "future", null, null, null, null, null);
+		when(jiraWrite.createSprint("token", "cloud", "68", "Sprint 1", null, null, null)).thenReturn(created);
+		when(jiraWrite.getSprint("token", "cloud", "31")).thenReturn(created);
+		when(projection.upsertSprint(eq(integration), eq("31"), eq("Sprint 1"), eq("future"), any(), any(), any(), any()))
+				.thenReturn(local);
+
+		ProjectSprintResponse response =
+				service.create(userId, projectId, new CreateProjectSprintRequest("Sprint 1", null, null, null));
+
+		assertThat(response.externalSprintId()).isEqualTo(local.getExternalSprintId());
+		verify(jiraWrite).createSprint("token", "cloud", "68", "Sprint 1", null, null, null);
+	}
+
+	@Test
+	void delete_leader_callsJiraThenSoftDeletesProjection() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Sprint local = sprintRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(sprints.findActiveByIdAndProject_Id(local.getId(), projectId)).thenReturn(Optional.of(local));
+		when(tokens.accessToken(integration)).thenReturn("token");
+
+		service.delete(userId, projectId, local.getId());
+
+		verify(jiraWrite).deleteSprint("token", "cloud", "31");
+	}
+
+	@Test
+	void member_cannotCreateSprint() {
+		stubMember();
+
+		assertThatThrownBy(() -> service.create(userId, projectId, new CreateProjectSprintRequest("Sprint X", null, null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void member_cannotPatchSprint() {
+		stubMember();
+		UUID sprintId = UUID.randomUUID();
+
+		assertThatThrownBy(() -> service.patch(
+						userId, projectId, sprintId, new PatchProjectSprintRequest("New name", null, null, null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void member_cannotDeleteSprint() {
+		stubMember();
+		UUID sprintId = UUID.randomUUID();
+
+		assertThatThrownBy(() -> service.delete(userId, projectId, sprintId))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void unrelatedStudent_cannotCreateSprint() {
+		stubUnrelatedStudent();
+
+		assertThatThrownBy(() -> service.create(userId, projectId, new CreateProjectSprintRequest("Sprint X", null, null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.INTEGRATION_FORBIDDEN);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void assignedLecturer_cannotCreateSprint() {
+		stubLecturer();
+
+		assertThatThrownBy(() -> service.create(userId, projectId, new CreateProjectSprintRequest("Sprint X", null, null, null)))
+				.isInstanceOf(IntegrationException.class);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void admin_cannotCreateSprint() {
+		stubAdmin();
+
+		assertThatThrownBy(() -> service.create(userId, projectId, new CreateProjectSprintRequest("Sprint X", null, null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void admin_cannotDeleteSprint() {
+		stubAdmin();
+
+		assertThatThrownBy(() -> service.delete(userId, projectId, UUID.randomUUID()))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
+		verifyZeroProviderInteraction();
+	}
+
+	private void verifyZeroProviderInteraction() {
+		verify(tokens, never()).accessToken(any());
+		verify(jiraWrite, never()).createSprint(any(), any(), any(), any(), any(), any(), any());
+		verify(jiraWrite, never()).updateSprint(any(), any(), any(), any(), any(), any(), any(), any());
+		verify(jiraWrite, never()).deleteSprint(any(), any(), any());
+	}
+
+	private void stubMember() {
+		UserAccount student = new UserAccount();
+		student.setId(userId);
+		student.setAccountRole(AccountRole.STUDENT);
+		when(users.findById(userId)).thenReturn(Optional.of(student));
+		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.MEMBER));
+	}
+
+	private void stubUnrelatedStudent() {
+		UserAccount student = new UserAccount();
+		student.setId(userId);
+		student.setAccountRole(AccountRole.STUDENT);
+		when(users.findById(userId)).thenReturn(Optional.of(student));
+		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.empty());
+	}
+
+	private void stubLecturer() {
+		UserAccount lecturer = new UserAccount();
+		lecturer.setId(userId);
+		lecturer.setAccountRole(AccountRole.LECTURER);
+		when(users.findById(userId)).thenReturn(Optional.of(lecturer));
+	}
+
+	private void stubAdmin() {
+		UserAccount admin = new UserAccount();
+		admin.setId(userId);
+		admin.setAccountRole(AccountRole.ADMIN);
+		when(users.findById(userId)).thenReturn(Optional.of(admin));
 	}
 
 	private void stubLeader() {

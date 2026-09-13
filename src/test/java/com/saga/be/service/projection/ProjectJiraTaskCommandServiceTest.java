@@ -125,7 +125,7 @@ class ProjectJiraTaskCommandServiceTest {
 		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
 		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
 		when(tokens.accessToken(integration)).thenReturn("token");
-		when(jiraWrite.createIssue(eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any()))
+		when(jiraWrite.createIssue(eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(), any()))
 				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
@@ -140,7 +140,7 @@ class ProjectJiraTaskCommandServiceTest {
 				userId, projectId, new CreateProjectTaskRequest("Login", null, null, null, null, null, null, null));
 
 		assertThat(response.externalKey()).isEqualTo("SAGA-1");
-		verify(jiraWrite).createIssue(eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any());
+		verify(jiraWrite).createIssue(eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(), any());
 		verify(projection).upsertOne(project, "SAGA", canonical);
 		assertThat(lastEvent.get()).isNotNull();
 		assertThat(lastEvent.get().type()).isEqualTo(ProjectRealtimeEventType.TASKS_CHANGED);
@@ -153,7 +153,7 @@ class ProjectJiraTaskCommandServiceTest {
 		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
 		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
 		when(tokens.accessToken(integration)).thenReturn("token");
-		when(jiraWrite.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+		when(jiraWrite.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.JIRA_ISSUE_CREATE_FAILED,
 						org.springframework.http.HttpStatus.BAD_GATEWAY,
@@ -167,6 +167,179 @@ class ProjectJiraTaskCommandServiceTest {
 				.extracting(ex -> ((IntegrationException) ex).getCode())
 				.isEqualTo(IntegrationErrorCode.JIRA_ISSUE_CREATE_FAILED);
 		verify(projection, never()).upsertOne(any(), any(), any());
+		assertThat(lastEvent.get()).isNull();
+	}
+
+	@Test
+	void create_withLabels_passesLabelsToJira() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
+						eq(List.of("backend", "urgent"))))
+				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(taskRow());
+
+		service.create(
+				userId,
+				projectId,
+				new CreateProjectTaskRequest(
+						"Login", null, null, null, null, null, null, null, List.of("backend", "urgent")));
+
+		verify(jiraWrite)
+				.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
+						eq(List.of("backend", "urgent")));
+	}
+
+	@Test
+	void create_withoutLabels_doesNotSendAccidentalLabels() {
+		// labels omitted on create must reach the write client as null (Jira's own default for
+		// the issue type), never as an implicit empty list that would clear a template's labels.
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
+						org.mockito.ArgumentMatchers.isNull()))
+				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(taskRow());
+
+		service.create(
+				userId, projectId, new CreateProjectTaskRequest("Login", null, null, null, null, null, null, null));
+
+		verify(jiraWrite)
+				.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
+						org.mockito.ArgumentMatchers.isNull());
+	}
+
+	@Test
+	void patch_labelsOmitted_preservesExistingLabels() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "New title");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest("New title", null, null, null, null, null, null, null, null, null, null));
+
+		@SuppressWarnings("unchecked")
+		org.mockito.ArgumentCaptor<java.util.Map<String, Object>> captor =
+				org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
+		assertThat(captor.getValue()).doesNotContainKey("labels");
+	}
+
+	@Test
+	void patch_labelsEmptyList_clearsAllLabels() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(
+						null, null, null, null, null, null, null, null, null, null, null, List.of()));
+
+		@SuppressWarnings("unchecked")
+		org.mockito.ArgumentCaptor<java.util.Map<String, Object>> captor =
+				org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
+		assertThat(captor.getValue()).containsEntry("labels", List.of());
+	}
+
+	@Test
+	void patch_labelsSupplied_replacesWithExactList() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(
+						null, null, null, null, null, null, null, null, null, null, null,
+						List.of("backend", "urgent")));
+
+		@SuppressWarnings("unchecked")
+		org.mockito.ArgumentCaptor<java.util.Map<String, Object>> captor =
+				org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
+		assertThat(captor.getValue()).containsEntry("labels", List.of("backend", "urgent"));
+	}
+
+	@Test
+	void patch_jiraRejectsLabelUpdate_localTaskNotMutated() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		org.mockito.Mockito.doThrow(new IntegrationException(
+						IntegrationErrorCode.JIRA_FIELD_INVALID,
+						org.springframework.http.HttpStatus.BAD_REQUEST,
+						"Jira field(s) not editable for this issue: labels"))
+				.when(jiraWrite)
+				.updateIssueFields(any(), any(), any(), any());
+
+		assertThatThrownBy(() -> service.patch(
+						userId,
+						projectId,
+						task.getId(),
+						new PatchProjectTaskRequest(
+								null, null, null, null, null, null, null, null, null, null, null,
+								List.of("backend"))))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_FIELD_INVALID);
+		verify(projection, never()).upsertOne(any(), any(), any());
+		verify(jiraWrite, never()).getIssue(any(), any(), any());
 		assertThat(lastEvent.get()).isNull();
 	}
 
@@ -485,12 +658,149 @@ class ProjectJiraTaskCommandServiceTest {
 				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
 	}
 
+	// ==================== AUTHORIZATION MATRIX (section 1/2/3 audit) ====================
+	// requireStudentLeader is shared, identical code across every mutation method below --
+	// verified once per role here for create/patch/delete/transition/moveSprint (member, the
+	// specifically reported gap, on every category) plus representative coverage for
+	// lecturer/admin/unrelated-student (same guard, so exhaustive per-role x per-category
+	// duplication adds no additional coverage of the actual authorization code).
+
+	@Test
+	void member_cannotPatchTask() {
+		stubMember();
+		UUID taskId = UUID.randomUUID();
+
+		assertThatThrownBy(() -> service.patch(
+						userId, projectId, taskId,
+						new PatchProjectTaskRequest("New title", null, null, null, null, null, null, null, null, null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void member_cannotDeleteTask() {
+		stubMember();
+		UUID taskId = UUID.randomUUID();
+
+		assertThatThrownBy(() -> service.delete(userId, projectId, taskId))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
+		verify(jiraWrite, never()).deleteIssue(any(), any(), any());
+	}
+
+	@Test
+	void member_cannotTransitionTask() {
+		stubMember();
+		UUID taskId = UUID.randomUUID();
+
+		assertThatThrownBy(() -> service.transition(userId, projectId, taskId, new TransitionProjectTaskRequest(null, "3")))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void member_cannotMoveTaskSprint() {
+		stubMember();
+		UUID taskId = UUID.randomUUID();
+
+		assertThatThrownBy(() -> service.moveSprint(userId, projectId, taskId, new PutProjectTaskSprintRequest(31L)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void unrelatedStudent_cannotCreateTask() {
+		stubUnrelatedStudent();
+		assertThatThrownBy(() -> service.create(
+						userId, projectId, new CreateProjectTaskRequest("X", null, null, null, null, null, null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.INTEGRATION_FORBIDDEN);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void assignedLecturer_cannotCreateTask() {
+		stubLecturer();
+		assertThatThrownBy(() -> service.create(
+						userId, projectId, new CreateProjectTaskRequest("X", null, null, null, null, null, null, null)))
+				.isInstanceOf(IntegrationException.class);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void admin_cannotCreateTask() {
+		stubAdmin();
+		assertThatThrownBy(() -> service.create(
+						userId, projectId, new CreateProjectTaskRequest("X", null, null, null, null, null, null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void admin_cannotDeleteTask() {
+		stubAdmin();
+		assertThatThrownBy(() -> service.delete(userId, projectId, UUID.randomUUID()))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
+		verify(jiraWrite, never()).deleteIssue(any(), any(), any());
+	}
+
+	private void verifyZeroProviderInteraction() {
+		verify(tokens, never()).accessToken(any());
+		verify(jiraWrite, never()).createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+		verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+		verify(jiraWrite, never()).transitionIssue(any(), any(), any(), any());
+		verify(jiraWrite, never()).moveIssuesToSprint(any(), any(), any(), any());
+		verify(jiraWrite, never()).moveIssuesToBacklog(any(), any(), any(), any());
+	}
+
 	private void stubLeader() {
 		UserAccount student = new UserAccount();
 		student.setId(userId);
 		student.setAccountRole(AccountRole.STUDENT);
 		when(users.findById(userId)).thenReturn(Optional.of(student));
 		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.LEADER));
+	}
+
+	private void stubMember() {
+		UserAccount student = new UserAccount();
+		student.setId(userId);
+		student.setAccountRole(AccountRole.STUDENT);
+		when(users.findById(userId)).thenReturn(Optional.of(student));
+		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.MEMBER));
+	}
+
+	private void stubUnrelatedStudent() {
+		UserAccount student = new UserAccount();
+		student.setId(userId);
+		student.setAccountRole(AccountRole.STUDENT);
+		when(users.findById(userId)).thenReturn(Optional.of(student));
+		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.empty());
+	}
+
+	private void stubLecturer() {
+		UserAccount lecturer = new UserAccount();
+		lecturer.setId(userId);
+		lecturer.setAccountRole(AccountRole.LECTURER);
+		when(users.findById(userId)).thenReturn(Optional.of(lecturer));
+	}
+
+	private void stubAdmin() {
+		UserAccount admin = new UserAccount();
+		admin.setId(userId);
+		admin.setAccountRole(AccountRole.ADMIN);
+		when(users.findById(userId)).thenReturn(Optional.of(admin));
 	}
 
 	private JiraIntegration activeJira() {

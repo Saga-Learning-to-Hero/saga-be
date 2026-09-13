@@ -1,5 +1,6 @@
 package com.saga.be.service.projection;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.enums.IdentityMappingStatus;
 import com.saga.be.entity.enums.IntegrationProvider;
@@ -45,6 +46,7 @@ public class JiraTaskProjectionService {
 	private final CommitTaskAutoLinkService autoLink;
 	private final JiraIntegrationRepository jiraIntegrations;
 	private final SprintRepository sprints;
+	private final ObjectMapper mapper;
 
 	public JiraTaskProjectionService(
 			TaskRepository tasks,
@@ -52,13 +54,15 @@ public class JiraTaskProjectionService {
 			StudentProfileRepository students,
 			CommitTaskAutoLinkService autoLink,
 			JiraIntegrationRepository jiraIntegrations,
-			SprintRepository sprints) {
+			SprintRepository sprints,
+			ObjectMapper mapper) {
 		this.tasks = tasks;
 		this.identities = identities;
 		this.students = students;
 		this.autoLink = autoLink;
 		this.jiraIntegrations = jiraIntegrations;
 		this.sprints = sprints;
+		this.mapper = mapper;
 	}
 
 	@Transactional
@@ -235,6 +239,13 @@ public class JiraTaskProjectionService {
 			task.setParentExternalId(issue.parentExternalId());
 			task.setParentExternalKey(issue.parentExternalKey());
 		}
+		// Same provided-flag guard. Serialized the same way JiraIssueEvidenceSyncService's
+		// separate evidence-sync path already writes labelsJson (mapper.writeValueAsString of a
+		// plain string list), so both writers produce the exact same JSON shape TaskLabelParser
+		// already reads.
+		if (issue.labelsProvided()) {
+			task.setLabelsJson(writeLabelsJson(issue.labels()));
+		}
 		task.setExternalUpdatedAt(incoming);
 		if (status == TaskStatus.DONE && task.getResolvedAt() == null) {
 			task.setResolvedAt(incoming == null ? LocalDateTime.now() : incoming);
@@ -242,6 +253,14 @@ public class JiraTaskProjectionService {
 		}
 		if (task.getDeletedAt() != null && incoming != null && incoming.isAfter(task.getDeletedAt())) {
 			task.setDeletedAt(null);
+		}
+	}
+
+	private String writeLabelsJson(List<String> labels) {
+		try {
+			return mapper.writeValueAsString(labels == null ? List.of() : labels);
+		} catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+			return "[]";
 		}
 	}
 
@@ -335,6 +354,7 @@ public class JiraTaskProjectionService {
 					row.setSprint(candidate.getSprint());
 					row.setParentExternalId(candidate.getParentExternalId());
 					row.setParentExternalKey(candidate.getParentExternalKey());
+					row.setLabelsJson(candidate.getLabelsJson());
 					row.setExternalUpdatedAt(candidate.getExternalUpdatedAt());
 					row.setResolvedAt(candidate.getResolvedAt());
 					row.setCompletedAt(candidate.getCompletedAt());

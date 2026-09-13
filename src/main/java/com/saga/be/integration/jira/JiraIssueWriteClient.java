@@ -67,7 +67,7 @@ public class JiraIssueWriteClient {
 	public IssueSummary getIssue(String accessToken, String cloudId, String issueIdOrKey) {
 		String storyField = resolveStoryPointsFieldId(accessToken, cloudId);
 		String sprintField = resolveSprintFieldId(accessToken, cloudId);
-		String fields = "summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint,parent"
+		String fields = "summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint,parent,labels"
 				+ (storyField == null || storyField.isBlank() ? "" : "," + storyField)
 				+ (sprintField == null || sprintField.isBlank() || "sprint".equals(sprintField)
 						? ""
@@ -106,7 +106,8 @@ public class JiraIssueWriteClient {
 			String issueTypeId,
 			String assigneeAccountId,
 			String priorityId,
-			Integer storyPoints) {
+			Integer storyPoints,
+			List<String> labels) {
 		ObjectNode body = mapper.createObjectNode();
 		ObjectNode fields = body.putObject("fields");
 		fields.putObject("project").put("id", projectId);
@@ -128,6 +129,18 @@ public class JiraIssueWriteClient {
 		String storyField = resolveStoryPointsFieldId(accessToken, cloudId);
 		if (storyPoints != null && storyField != null && !storyField.isBlank()) {
 			fields.put(storyField, storyPoints);
+		}
+		// null = omitted -> Jira creates the issue with no labels (its own default); a caller that
+		// wants an explicitly-empty label set on create can still pass List.of() and it is sent
+		// as-is. "labels" is a standard Jira system field (unlike Story Points/Sprint), so no
+		// dynamic field id resolution is needed.
+		if (labels != null) {
+			ArrayNode labelsArray = fields.putArray("labels");
+			for (String label : labels) {
+				if (label != null && !label.isBlank()) {
+					labelsArray.add(label);
+				}
+			}
 		}
 		try {
 			CreatedIssueResponse created = restClient
@@ -920,6 +933,20 @@ public class JiraIssueWriteClient {
 		boolean parentProvided = authoritative || fields.has("parent");
 		String parentExternalId = parentNode.isObject() ? text(parentNode, "id") : null;
 		String parentExternalKey = parentNode.isObject() ? text(parentNode, "key") : null;
+		// "labels" is a standard Jira system field (never a per-site customfield_ id) -- same
+		// provided-flag semantics as parent: absent from a non-authoritative (webhook) payload
+		// means "unrelated change, preserve"; present (even as an empty array, an explicit clear)
+		// means "this is the true current value, apply it".
+		JsonNode labelsNode = fields.path("labels");
+		boolean labelsProvided = authoritative || fields.has("labels");
+		List<String> labels = new ArrayList<>();
+		if (labelsNode.isArray()) {
+			for (JsonNode label : labelsNode) {
+				if (label != null && label.isTextual() && !label.asText().isBlank()) {
+					labels.add(label.asText());
+				}
+			}
+		}
 		return new IssueSummary(
 				text(issue, "id"),
 				text(issue, "key"),
@@ -944,7 +971,9 @@ public class JiraIssueWriteClient {
 				sprintProvided,
 				parentExternalId,
 				parentExternalKey,
-				parentProvided);
+				parentProvided,
+				labels,
+				labelsProvided);
 	}
 
 	private ObjectNode plainAdf(String text) {

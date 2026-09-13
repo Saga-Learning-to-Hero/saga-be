@@ -319,6 +319,119 @@ class JiraIssueWriteClientTest {
 		assertEquals(true, summary.parentProvided());
 	}
 
+	// ==================== LABELS PARSING ====================
+
+	@Test
+	void toSummary_labelsPresent_parsesLabelList() {
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"Labelled","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},"labels":["backend","urgent"],
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, true);
+		assertEquals(java.util.List.of("backend", "urgent"), summary.labels());
+		assertEquals(true, summary.labelsProvided());
+	}
+
+	@Test
+	void toSummary_labelsAbsent_nonAuthoritative_marksNotProvided() {
+		// Webhook (non-authoritative) payload that doesn't carry labels at all -- must not be
+		// treated as "Jira cleared the labels".
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"Unrelated change","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, false);
+		assertEquals(java.util.List.of(), summary.labels());
+		assertEquals(false, summary.labelsProvided());
+	}
+
+	@Test
+	void toSummary_labelsExplicitEmptyArray_nonAuthoritative_marksProvided() {
+		// The "labels" key is present but an empty array -- Jira told us the true value (all
+		// labels cleared), so even a non-authoritative call must mark it provided.
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"Labels cleared","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},"labels":[],
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, false);
+		assertEquals(java.util.List.of(), summary.labels());
+		assertEquals(true, summary.labelsProvided());
+	}
+
+	@Test
+	void toSummary_labelsMissing_authoritative_marksProvidedWithEmptyList() {
+		// Authoritative (bulk/full sync) fetch explicitly requested the labels field; its absence
+		// from the response is the true current value (no labels), not an unrelated omission.
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"No labels","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, true);
+		assertEquals(java.util.List.of(), summary.labels());
+		assertEquals(true, summary.labelsProvided());
+	}
+
+	// ==================== WRITE PATH: create issue with labels ====================
+
+	@Test
+	void createIssue_withLabels_sendsLabelsArrayToJira() throws Exception {
+		properties.getJira().setStoryPointsFieldId("customfield_10016");
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-labels-1/rest/api/3/issue"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("\"labels\":[\"backend\",\"urgent\"]")))
+				.andRespond(withSuccess("{\"id\":\"10001\",\"key\":\"SAGA-1\"}", MediaType.APPLICATION_JSON));
+
+		client.createIssue(
+				"token", "cloud-labels-1", "10067", "Login", null, null, null, null, null,
+				java.util.List.of("backend", "urgent"));
+
+		server.verify();
+	}
+
+	@Test
+	void createIssue_withoutLabels_omitsLabelsFieldEntirely() throws Exception {
+		// labels=null must not be sent as an explicit empty array -- that would clear labels on an
+		// issue type where Jira defaults them from a template. Omitted means Jira's own default.
+		properties.getJira().setStoryPointsFieldId("customfield_10016");
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-labels-2/rest/api/3/issue"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("labels"))))
+				.andRespond(withSuccess("{\"id\":\"10001\",\"key\":\"SAGA-1\"}", MediaType.APPLICATION_JSON));
+
+		client.createIssue("token", "cloud-labels-2", "10067", "Login", null, null, null, null, null, null);
+
+		server.verify();
+	}
+
+	@Test
+	void createIssue_labelsWithBlankEntries_filtersBlanksBeforeSending() throws Exception {
+		properties.getJira().setStoryPointsFieldId("customfield_10016");
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-labels-3/rest/api/3/issue"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("\"labels\":[\"backend\"]")))
+				.andRespond(withSuccess("{\"id\":\"10001\",\"key\":\"SAGA-1\"}", MediaType.APPLICATION_JSON));
+
+		java.util.List<String> labelsWithBlanks = new java.util.ArrayList<>();
+		labelsWithBlanks.add("backend");
+		labelsWithBlanks.add(null);
+		labelsWithBlanks.add("  ");
+		client.createIssue("token", "cloud-labels-3", "10067", "Login", null, null, null, null, null, labelsWithBlanks);
+
+		server.verify();
+	}
+
 	// ==================== WRITE PATH: story point estimation ====================
 
 	@Test

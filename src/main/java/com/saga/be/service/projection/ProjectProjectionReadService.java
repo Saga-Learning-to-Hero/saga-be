@@ -130,6 +130,10 @@ public class ProjectProjectionReadService {
 		ProjectTaskResponse.Parent parent = task.getParentExternalId() == null
 				? null
 				: new ProjectTaskResponse.Parent(task.getParentExternalId(), task.getParentExternalKey());
+		// Reuses the same reader the contribution/peer-review label-marker feature already relies
+		// on (com.saga.be.service.contribution.TaskLabelParser) -- one canonical parse of
+		// labelsJson, not a second divergent implementation.
+		List<String> labels = com.saga.be.service.contribution.TaskLabelParser.parse(task.getLabelsJson());
 		return new ProjectTaskResponse(
 				task.getId(),
 				task.getExternalId(),
@@ -149,6 +153,7 @@ public class ProjectProjectionReadService {
 				task.getStoryPoint(),
 				sprint,
 				parent,
+				labels,
 				linkedCommitCount,
 				task.getExternalUpdatedAt(),
 				task.getCreatedAt(),
