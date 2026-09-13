@@ -218,6 +218,7 @@ class JiraOAuthClientTest {
 					assertTrue(fields.contains("customfield_10016"), "expected story points field id in fields param");
 					assertTrue(fields.contains("customfield_10020"), "expected sprint field id in fields param");
 					assertTrue(fields.contains("sprint"), "literal 'sprint' field must still be requested");
+					assertTrue(fields.contains("parent"), "parent must be requested so subtask/parent identity is available without a per-issue call");
 				})
 				.andRespond(withSuccess(
 						"""
@@ -272,6 +273,30 @@ class JiraOAuthClientTest {
 		assertEquals("42", issue.sprintExternalId());
 		assertEquals("Sprint 7", issue.sprintName());
 		assertEquals("active", issue.sprintState());
+		assertEquals(null, issue.parentExternalId());
+		server.verify();
+	}
+
+	@Test
+	void searchIssues_subtaskPayload_populatesParentExternalIdAndKey() {
+		server.expect(method(HttpMethod.GET))
+				.andRespond(withSuccess(
+						"""
+						{"issues":[{"id":"10050","key":"SAGA-50","fields":{
+						  "summary":"Implement login form",
+						  "status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+						  "issuetype":{"name":"Subtask"},
+						  "parent":{"id":"10049","key":"SAGA-49"}
+						}}],"isLast":true}
+						""",
+						MediaType.APPLICATION_JSON));
+
+		IssueSearchPage page = client.searchIssues("token", "cloud-1", "SAGA", null, 50, null, null);
+
+		var issue = page.issues().getFirst();
+		assertEquals("10049", issue.parentExternalId());
+		assertEquals("SAGA-49", issue.parentExternalKey());
+		assertEquals(true, issue.parentProvided());
 		server.verify();
 	}
 
@@ -294,6 +319,7 @@ class JiraOAuthClientTest {
 		var issue = page.issues().getFirst();
 		assertEquals(null, issue.storyPoints());
 		assertEquals(null, issue.sprintExternalId());
+		assertEquals(null, issue.parentExternalId());
 		assertEquals("A", issue.summary());
 		assertEquals("To Do", issue.statusName());
 		assertEquals("Task", issue.issueTypeName());

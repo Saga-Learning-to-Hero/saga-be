@@ -285,6 +285,77 @@ class ProjectProjectionReadServiceTest {
 	}
 
 	@Test
+	void listTasks_ordinaryTask_parentIsNull() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = new Task();
+		task.setId(UUID.randomUUID());
+		task.setExternalKey("SAGA-1");
+		task.setTitle("Ordinary task");
+		task.setStatus(TaskStatus.TODO);
+		task.setIssueTypeName("Task");
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(task));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.parent()).isNull();
+	}
+
+	@Test
+	void listTasks_subtask_exposesParentExternalIdAndKey() {
+		// Response echoes Jira's own parent identity verbatim -- no local Task lookup/join, so this
+		// is correct even if the parent Task row does not exist locally (never synced, or never
+		// will), matching section 5/6 of the audit: FE must be able to render "Parent Task ->
+		// Subtask" purely from provider identity, not a local foreign key.
+		stubStudent(RoleInTeam.MEMBER);
+		Task subtask = new Task();
+		subtask.setId(UUID.randomUUID());
+		subtask.setExternalKey("SAGA-50");
+		subtask.setTitle("Implement login form");
+		subtask.setStatus(TaskStatus.TODO);
+		subtask.setIssueTypeName("Subtask");
+		subtask.setParentExternalId("10049");
+		subtask.setParentExternalKey("SAGA-49");
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(subtask));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.parent()).isNotNull();
+		assertThat(response.parent().externalId()).isEqualTo("10049");
+		assertThat(response.parent().externalKey()).isEqualTo("SAGA-49");
+	}
+
+	@Test
+	void listTasks_multipleSubtasks_shareSameParentKey() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task subtaskA = new Task();
+		subtaskA.setId(UUID.randomUUID());
+		subtaskA.setExternalKey("SAGA-50");
+		subtaskA.setStatus(TaskStatus.TODO);
+		subtaskA.setIssueTypeName("Subtask");
+		subtaskA.setParentExternalId("10049");
+		subtaskA.setParentExternalKey("SAGA-49");
+		Task subtaskB = new Task();
+		subtaskB.setId(UUID.randomUUID());
+		subtaskB.setExternalKey("SAGA-51");
+		subtaskB.setStatus(TaskStatus.TODO);
+		subtaskB.setIssueTypeName("Subtask");
+		subtaskB.setParentExternalId("10049");
+		subtaskB.setParentExternalKey("SAGA-49");
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(subtaskA, subtaskB));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		List<ProjectTaskResponse> responses = service.listTasks(userId, projectId);
+
+		assertThat(responses).hasSize(2);
+		assertThat(responses).allSatisfy(response -> {
+			assertThat(response.parent().externalId()).isEqualTo("10049");
+			assertThat(response.parent().externalKey()).isEqualTo("SAGA-49");
+		});
+	}
+
+	@Test
 	void getTask_requiresSameProject() {
 		stubStudent(RoleInTeam.MEMBER);
 		UUID taskId = UUID.randomUUID();

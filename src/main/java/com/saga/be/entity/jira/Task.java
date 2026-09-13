@@ -74,6 +74,19 @@ public class Task extends BaseEntity {
 	@Column(name = "external_id", length = 64)
 	private String externalId;
 
+	/**
+	 * Jira's OWN parent issue identity (Subtask -> parent, or Team-managed Story/Task -> Epic --
+	 * Jira reuses {@code fields.parent} for both). Deliberately NOT a FK to {@code task.id} (unlike
+	 * the unrelated {@code blocksTask}): the parent issue may not have a local Task row yet when
+	 * this row syncs, and storing the provider's own id/key directly needs no backfill/reconciliation
+	 * once the parent Task row later appears. Null when this issue has no Jira parent.
+	 */
+	@Column(name = "parent_external_id", length = 64)
+	private String parentExternalId;
+
+	@Column(name = "parent_external_key", length = 64)
+	private String parentExternalKey;
+
 	@Column(name = "title", length = 500)
 	private String title;
 

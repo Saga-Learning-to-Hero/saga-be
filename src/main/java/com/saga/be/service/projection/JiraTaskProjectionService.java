@@ -227,6 +227,14 @@ public class JiraTaskProjectionService {
 				task.setSprint(sprintByExternalId.get(issue.sprintExternalId()));
 			}
 		}
+		// Same provided-flag guard as Story Points/Sprint above. Deliberately NO lookup against a
+		// local parent Task row here -- parentExternalId/parentExternalKey are stored verbatim as
+		// Jira's own identity, so a parent that hasn't synced yet (or never will) is not a blocker,
+		// and a parent that syncs later needs no backfill on this row.
+		if (issue.parentProvided()) {
+			task.setParentExternalId(issue.parentExternalId());
+			task.setParentExternalKey(issue.parentExternalKey());
+		}
 		task.setExternalUpdatedAt(incoming);
 		if (status == TaskStatus.DONE && task.getResolvedAt() == null) {
 			task.setResolvedAt(incoming == null ? LocalDateTime.now() : incoming);
@@ -325,6 +333,8 @@ public class JiraTaskProjectionService {
 					row.setPriority(candidate.getPriority());
 					row.setStoryPoint(candidate.getStoryPoint());
 					row.setSprint(candidate.getSprint());
+					row.setParentExternalId(candidate.getParentExternalId());
+					row.setParentExternalKey(candidate.getParentExternalKey());
 					row.setExternalUpdatedAt(candidate.getExternalUpdatedAt());
 					row.setResolvedAt(candidate.getResolvedAt());
 					row.setCompletedAt(candidate.getCompletedAt());

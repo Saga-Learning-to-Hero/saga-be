@@ -262,6 +262,221 @@ class JiraTaskProjectionServiceTest {
 	}
 
 	@Test
+	void upsertBatch_ordinaryTask_parentStaysNull() {
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of());
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary issue = issue("10001", "SAGA-1", "Ordinary task", "2026-01-02T10:00:00Z");
+		assertThat(service.upsertBatch(project, "SAGA", List.of(issue))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getParentExternalId()).isNull();
+		assertThat(captor.getValue().getFirst().getParentExternalKey()).isNull();
+	}
+
+	@Test
+	void upsertBatch_subtask_persistsParentExternalIdAndKey() {
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of());
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary subtask = new IssueSummary(
+				"10050", "SAGA-50", "Implement login form", "1", "To Do", "new", "Subtask", "10003", null, null,
+				null, null, null, null, null, null, null, null, "2026-01-02T10:00:00Z", true, true, "10049",
+				"SAGA-49", true);
+		assertThat(service.upsertBatch(project, "SAGA", List.of(subtask))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		Task saved = captor.getValue().getFirst();
+		assertThat(saved.getParentExternalId()).isEqualTo("10049");
+		assertThat(saved.getParentExternalKey()).isEqualTo("SAGA-49");
+	}
+
+	@Test
+	void upsertBatch_childSyncedBeforeParent_parentIdentityStillPersists() {
+		// No FK to a local parent Task row -- the parent Task need not exist (or ever exist)
+		// locally for the child's provider-identity fields to persist correctly.
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of());
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+		// The parent ("SAGA-49") is deliberately never looked up or referenced by id anywhere --
+		// no jiraIntegrations/sprints/tasks interaction beyond the child's own row is required.
+
+		IssueSummary childBeforeParent = new IssueSummary(
+				"10050", "SAGA-50", "Child synced first", "1", "To Do", "new", "Subtask", "10003", null, null, null,
+				null, null, null, null, null, null, null, "2026-01-02T10:00:00Z", true, true, "10049", "SAGA-49",
+				true);
+		assertThat(service.upsertBatch(project, "SAGA", List.of(childBeforeParent))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getParentExternalId()).isEqualTo("10049");
+	}
+
+	@Test
+	void upsertBatch_parentRowLaterSyncing_doesNotMutateAlreadySyncedChild() {
+		// The "parent" is just another Task row synced independently/later -- syncing it must never
+		// touch any other Task's fields (no backfill/reconciliation pass exists or is needed).
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of());
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary parentIssue = issue("10049", "SAGA-49", "Parent story", "2026-01-02T11:00:00Z");
+		assertThat(service.upsertBatch(project, "SAGA", List.of(parentIssue))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		Task savedParent = captor.getValue().getFirst();
+		assertThat(savedParent.getExternalId()).isEqualTo("10049");
+		assertThat(savedParent.getParentExternalId()).isNull();
+	}
+
+	@Test
+	void upsertBatch_authoritativeSyncRemovesParent_clearsStoredParent() {
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10050");
+		existing.setExternalKey("SAGA-50");
+		existing.setProject(project);
+		existing.setParentExternalId("10049");
+		existing.setParentExternalKey("SAGA-49");
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		// Authoritative (full sync) fetch: Jira no longer reports a parent (e.g. converted from
+		// Subtask to a standalone Task) -- fields.parent absent, authoritative=true means the
+		// legacy 19-arg constructor's parentProvided=true default, parentExternalId=null clears it.
+		IssueSummary noLongerASubtask = issue("10050", "SAGA-50", "No longer a subtask", "2026-01-02T10:05:00Z");
+		assertThat(service.upsertBatch(project, "SAGA", List.of(noLongerASubtask))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getParentExternalId()).isNull();
+		assertThat(captor.getValue().getFirst().getParentExternalKey()).isNull();
+	}
+
+	@Test
+	void upsertBatch_nonAuthoritativeWebhookOmittingParent_preservesExisting() {
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10050");
+		existing.setExternalKey("SAGA-50");
+		existing.setProject(project);
+		existing.setParentExternalId("10049");
+		existing.setParentExternalKey("SAGA-49");
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		// Non-authoritative (webhook) payload that never touched the parent field at all
+		// (parentProvided=false) -- must preserve, not clear.
+		IssueSummary webhookNoParentInfo = new IssueSummary(
+				"10050", "SAGA-50", "Title only change", "1", "To Do", "new", "Subtask", "10003", null, null, null,
+				null, null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null, false);
+		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookNoParentInfo))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getParentExternalId()).isEqualTo("10049");
+		assertThat(captor.getValue().getFirst().getParentExternalKey()).isEqualTo("SAGA-49");
+	}
+
+	@Test
+	void upsertBatch_webhookParentChanged_reflectsNewParent() {
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10050");
+		existing.setExternalKey("SAGA-50");
+		existing.setProject(project);
+		existing.setParentExternalId("10049");
+		existing.setParentExternalKey("SAGA-49");
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary webhookParentMoved = new IssueSummary(
+				"10050", "SAGA-50", "Moved to another parent", "1", "To Do", "new", "Subtask", "10003", null, null,
+				null, null, null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, "10060",
+				"SAGA-60", true);
+		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookParentMoved))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getParentExternalId()).isEqualTo("10060");
+		assertThat(captor.getValue().getFirst().getParentExternalKey()).isEqualTo("SAGA-60");
+	}
+
+	@Test
+	void upsertBatch_webhookParentRemoved_clearsParentThroughProvidedFlag() {
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10050");
+		existing.setExternalKey("SAGA-50");
+		existing.setProject(project);
+		existing.setParentExternalId("10049");
+		existing.setParentExternalKey("SAGA-49");
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		// Webhook explicitly reports parent removed (parentProvided=true, ids null) -- distinct
+		// from "omitted" (parentProvided=false, tested above).
+		IssueSummary webhookParentRemoved = new IssueSummary(
+				"10050", "SAGA-50", "Detached from parent", "1", "To Do", "new", "Task", "10001", null, null, null,
+				null, null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null, true);
+		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookParentRemoved))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getParentExternalId()).isNull();
+		assertThat(captor.getValue().getFirst().getParentExternalKey()).isNull();
+	}
+
+	@Test
+	void upsertBatch_softDeletedParentTask_doesNotCorruptChildParentFields() {
+		// No relationship traversal exists between a child's parentExternalId/Key and any local
+		// parent Task row, so soft-deleting the parent Task (a separate, independent row) has zero
+		// effect on the child's own stored parent identity fields.
+		Task softDeletedParent = new Task();
+		softDeletedParent.setId(UUID.randomUUID());
+		softDeletedParent.setExternalId("10049");
+		softDeletedParent.setExternalKey("SAGA-49");
+		softDeletedParent.setProject(project);
+		softDeletedParent.setDeletedAt(LocalDateTime.of(2026, 1, 1, 0, 0));
+
+		Task child = new Task();
+		child.setId(UUID.randomUUID());
+		child.setExternalId("10050");
+		child.setExternalKey("SAGA-50");
+		child.setProject(project);
+		child.setParentExternalId("10049");
+		child.setParentExternalKey("SAGA-49");
+		child.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(child));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary childUnrelatedUpdate = new IssueSummary(
+				"10050", "SAGA-50", "Unrelated title change", "1", "To Do", "new", "Subtask", "10003", null, null,
+				null, null, null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null,
+				false);
+		assertThat(service.upsertBatch(project, "SAGA", List.of(childUnrelatedUpdate))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getParentExternalId()).isEqualTo("10049");
+		assertThat(captor.getValue().getFirst().getParentExternalKey()).isEqualTo("SAGA-49");
+	}
+
+	@Test
 	void upsertBatch_webhookPayloadOmittingFields_preservesExistingStoryPointAndSprint() {
 		// Regression: a full sync sets storyPoint=5 and Sprint X; a later partial webhook that
 		// never carries those custom fields (storyPointsProvided/sprintProvided=false) must leave
@@ -288,7 +503,8 @@ class JiraTaskProjectionServiceTest {
 
 		IssueSummary webhookIssue = new IssueSummary(
 				"10001", "SAGA-1", "Login", "1", "In Progress", "indeterminate", "Story", "10001", "acc-1", "Alice",
-				"2", "High", null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false);
+				"2", "High", null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null,
+				false);
 		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookIssue))).isEqualTo(1);
 
 		@SuppressWarnings("unchecked")

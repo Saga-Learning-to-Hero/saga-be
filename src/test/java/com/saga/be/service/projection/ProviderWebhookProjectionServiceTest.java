@@ -371,6 +371,99 @@ class ProviderWebhookProjectionServiceTest {
 	}
 
 	@Test
+	void jiraIssueUpdated_unrelatedWebhookOmitsParent_preservesExisting() {
+		// fields.parent is a base/system field (unlike Story Points/Sprint it needs no dynamic
+		// field id resolution), but a webhook could still legitimately omit it if Jira's payload
+		// for this event simply doesn't include it -- must not be treated as "parent cleared".
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setCloudId("cloud-1");
+		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
+				.thenReturn(List.of(integration));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+
+		String payload =
+				"""
+				{"webhookEvent":"jira:issue_updated","issue":{"id":"200","key":"SAGA-50","fields":{"summary":"Unrelated title change","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},"issuetype":{"name":"Subtask"},"project":{"id":"10000","key":"SAGA"},"updated":"2026-01-02T00:00:00.000+0000"}}}
+				""";
+		service.projectJira(receipt, payload);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		assertThat(captor.getValue().getFirst().parentProvided()).isFalse();
+	}
+
+	@Test
+	void jiraIssueUpdated_webhookParentChanged_reflectsNewParent() {
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setCloudId("cloud-1");
+		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
+				.thenReturn(List.of(integration));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+
+		String payload =
+				"""
+				{"webhookEvent":"jira:issue_updated","issue":{"id":"200","key":"SAGA-50","fields":{"summary":"Moved","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},"issuetype":{"name":"Subtask"},"project":{"id":"10000","key":"SAGA"},"parent":{"id":"10060","key":"SAGA-60"},"updated":"2026-01-02T00:00:00.000+0000"}}}
+				""";
+		service.projectJira(receipt, payload);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		IssueSummary summary = captor.getValue().getFirst();
+		assertThat(summary.parentProvided()).isTrue();
+		assertThat(summary.parentExternalId()).isEqualTo("10060");
+		assertThat(summary.parentExternalKey()).isEqualTo("SAGA-60");
+	}
+
+	@Test
+	void jiraIssueUpdated_webhookParentRemoved_clearedThroughExplicitNullField() {
+		// Jira sent the "parent" key with an explicit null value -- distinguishable from the key
+		// being absent entirely (the "omits" test above), matching the same has()-based semantics
+		// already proven for Story Points/Sprint.
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setCloudId("cloud-1");
+		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
+				.thenReturn(List.of(integration));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+
+		String payload =
+				"""
+				{"webhookEvent":"jira:issue_updated","issue":{"id":"200","key":"SAGA-50","fields":{"summary":"Detached","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},"issuetype":{"name":"Task"},"project":{"id":"10000","key":"SAGA"},"parent":null,"updated":"2026-01-02T00:00:00.000+0000"}}}
+				""";
+		service.projectJira(receipt, payload);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		IssueSummary summary = captor.getValue().getFirst();
+		assertThat(summary.parentProvided()).isTrue();
+		assertThat(summary.parentExternalId()).isNull();
+		assertThat(summary.parentExternalKey()).isNull();
+	}
+
+	@Test
 	void jiraSprintCreated_projectsWhenBoardMatches() {
 		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
 		Project project = new Project();

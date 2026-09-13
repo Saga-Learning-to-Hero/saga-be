@@ -253,6 +253,72 @@ class JiraIssueWriteClientTest {
 		assertEquals(true, summary.storyPointsProvided());
 	}
 
+	// ==================== PARENT/SUBTASK PARSING ====================
+
+	@Test
+	void toSummary_ordinaryTask_noParentField_parentIdsNull() {
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"Ordinary task","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, true);
+		assertEquals(null, summary.parentExternalId());
+		assertEquals(null, summary.parentExternalKey());
+		assertEquals(true, summary.parentProvided());
+	}
+
+	@Test
+	void toSummary_subtaskPayload_parsesParentIdAndKey_withoutRequiringParentFields() {
+		// "Do not require parent.fields.* just to store identity" -- this payload's parent object
+		// has no nested "fields" at all, only id/key, and must still parse correctly.
+		JsonNode issue = readTree(
+				"""
+				{"id":"10050","key":"SAGA-50","fields":{"summary":"Implement login form","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Subtask","id":"10003"},"parent":{"id":"10049","key":"SAGA-49"},
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, true);
+		assertEquals("10049", summary.parentExternalId());
+		assertEquals("SAGA-49", summary.parentExternalKey());
+		assertEquals(true, summary.parentProvided());
+	}
+
+	@Test
+	void toSummary_parentAbsent_nonAuthoritative_marksNotProvided() {
+		// Webhook (non-authoritative) payload that doesn't carry the parent key at all -- must not
+		// be treated as "Jira cleared the parent".
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"Unrelated change","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Subtask","id":"10003"},
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, false);
+		assertEquals(null, summary.parentExternalId());
+		assertEquals(false, summary.parentProvided());
+	}
+
+	@Test
+	void toSummary_explicitNullParent_nonAuthoritative_marksProvided() {
+		// The "parent" key is present but explicitly null -- Jira told us the true value (no
+		// parent / detached), so even a non-authoritative call must mark it provided.
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"Detached from parent","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},"parent":null,
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, false);
+		assertEquals(null, summary.parentExternalId());
+		assertEquals(true, summary.parentProvided());
+	}
+
 	// ==================== WRITE PATH: story point estimation ====================
 
 	@Test

@@ -67,7 +67,7 @@ public class JiraIssueWriteClient {
 	public IssueSummary getIssue(String accessToken, String cloudId, String issueIdOrKey) {
 		String storyField = resolveStoryPointsFieldId(accessToken, cloudId);
 		String sprintField = resolveSprintFieldId(accessToken, cloudId);
-		String fields = "summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint"
+		String fields = "summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint,parent"
 				+ (storyField == null || storyField.isBlank() ? "" : "," + storyField)
 				+ (sprintField == null || sprintField.isBlank() || "sprint".equals(sprintField)
 						? ""
@@ -912,6 +912,14 @@ public class JiraIssueWriteClient {
 			sprintName = text(sprintNode, "name");
 			sprintState = text(sprintNode, "state");
 		}
+		// fields.parent is Jira's OWN parent-issue reference (Subtask -> parent, or Team-managed
+		// Story/Task -> Epic -- Jira reuses this same key for both). Only the identity (id/key) is
+		// stored; parent.fields.* (summary/status/etc. of the parent) is intentionally not read --
+		// SAGA already has its own copy of the parent issue's fields once/if the parent syncs.
+		JsonNode parentNode = fields.path("parent");
+		boolean parentProvided = authoritative || fields.has("parent");
+		String parentExternalId = parentNode.isObject() ? text(parentNode, "id") : null;
+		String parentExternalKey = parentNode.isObject() ? text(parentNode, "key") : null;
 		return new IssueSummary(
 				text(issue, "id"),
 				text(issue, "key"),
@@ -933,7 +941,10 @@ public class JiraIssueWriteClient {
 				text(fields, "created"),
 				text(fields, "updated"),
 				storyPointsProvided,
-				sprintProvided);
+				sprintProvided,
+				parentExternalId,
+				parentExternalKey,
+				parentProvided);
 	}
 
 	private ObjectNode plainAdf(String text) {

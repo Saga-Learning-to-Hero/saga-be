@@ -125,6 +125,11 @@ public class ProjectProjectionReadService {
 					task.getSprint().getName(),
 					task.getSprint().getState());
 		}
+		// Jira's own parent identity, echoed verbatim -- never a local Task lookup/join. A parent
+		// SAGA hasn't synced yet (or never will) still surfaces its true provider identity here.
+		ProjectTaskResponse.Parent parent = task.getParentExternalId() == null
+				? null
+				: new ProjectTaskResponse.Parent(task.getParentExternalId(), task.getParentExternalKey());
 		return new ProjectTaskResponse(
 				task.getId(),
 				task.getExternalId(),
@@ -143,6 +148,7 @@ public class ProjectProjectionReadService {
 				priorityDetail,
 				task.getStoryPoint(),
 				sprint,
+				parent,
 				linkedCommitCount,
 				task.getExternalUpdatedAt(),
 				task.getCreatedAt(),

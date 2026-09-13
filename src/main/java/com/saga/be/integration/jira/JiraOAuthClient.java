@@ -198,7 +198,7 @@ public class JiraOAuthClient {
 		try {
 			int safeMax = Math.max(1, Math.min(maxResults, 100));
 			String jql = "project = \"" + projectKey.replace("\"", "") + "\" ORDER BY updated DESC";
-			String fields = "summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint"
+			String fields = "summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint,parent"
 					+ (storyPointsFieldId == null || storyPointsFieldId.isBlank() ? "" : "," + storyPointsFieldId)
 					+ (sprintFieldId == null || sprintFieldId.isBlank() || "sprint".equals(sprintFieldId)
 							? ""
@@ -456,12 +456,13 @@ public class JiraOAuthClient {
 	public record JiraErrorBody(List<String> errorMessages, Map<String, String> errors) {}
 
 	/**
-	 * {@code storyPointsProvided}/{@code sprintProvided} distinguish "Jira told us the true current
-	 * value (possibly null, meaning explicitly cleared)" from "this payload said nothing about this
-	 * field, leave whatever SAGA already has alone" — see {@link JiraIssueWriteClient#toSummary}.
-	 * The legacy 19-arg constructor defaults both to {@code true} (authoritative), matching every
-	 * existing caller (bulk sync, single-issue fetch, and all pre-existing tests) unchanged; only
-	 * the webhook path needs the distinction and uses the canonical 21-arg constructor explicitly.
+	 * {@code storyPointsProvided}/{@code sprintProvided}/{@code parentProvided} distinguish "Jira
+	 * told us the true current value (possibly null, meaning explicitly cleared)" from "this payload
+	 * said nothing about this field, leave whatever SAGA already has alone" — see {@link
+	 * JiraIssueWriteClient#toSummary}. The legacy 19-arg constructor defaults all three to {@code
+	 * true} (authoritative), matching every existing caller (bulk sync, single-issue fetch, and all
+	 * pre-existing tests) unchanged; only the webhook path needs the distinction and uses the
+	 * canonical 24-arg constructor explicitly.
 	 */
 	public record IssueSummary(
 			String id,
@@ -484,7 +485,10 @@ public class JiraOAuthClient {
 			String created,
 			String updated,
 			boolean storyPointsProvided,
-			boolean sprintProvided) {
+			boolean sprintProvided,
+			String parentExternalId,
+			String parentExternalKey,
+			boolean parentProvided) {
 
 		public IssueSummary(
 				String id,
@@ -510,7 +514,7 @@ public class JiraOAuthClient {
 					id, key, summary, statusId, statusName, statusCategory, issueTypeName, issueTypeId,
 					assigneeAccountId, assigneeDisplayName, priorityId, priorityName, storyPoints, description,
 					sprintExternalId, sprintName, sprintState, created, updated,
-					true, true);
+					true, true, null, null, true);
 		}
 	}
 

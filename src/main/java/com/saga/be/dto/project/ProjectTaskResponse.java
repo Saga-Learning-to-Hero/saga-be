@@ -24,6 +24,12 @@ public record ProjectTaskResponse(
 		PriorityDetail priorityDetail,
 		Integer storyPoint,
 		ProjectTaskSprintResponse sprint,
+		/**
+		 * Jira's own parent issue identity (Subtask -> parent, or Team-managed Story/Task -> Epic).
+		 * Null when this issue has no Jira parent. Factual provider hierarchy, not filtered by
+		 * {@link #issueTypeName()} -- FE decides how to render based on both.
+		 */
+		Parent parent,
 		long linkedCommitCount,
 		LocalDateTime externalUpdatedAt,
 		LocalDateTime createdAt,
@@ -32,4 +38,6 @@ public record ProjectTaskResponse(
 	public record Assignee(String accountId, String displayName, UUID studentId) {}
 
 	public record PriorityDetail(String id, String name) {}
+
+	public record Parent(String externalId, String externalKey) {}
 }
