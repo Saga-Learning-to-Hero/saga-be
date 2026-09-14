@@ -18,6 +18,7 @@ import com.saga.be.repository.GithubProjectInstallationRepository;
 import com.saga.be.repository.SyncJobLogRepository;
 import com.saga.be.service.projection.GitCommitProjectionService;
 import com.saga.be.service.projection.GitCommitProjectionService.CommitDraft;
+import com.saga.be.service.projection.GitCommitBranchSnapshotService;
 import com.saga.be.service.projection.GitRepoCommitClaimCutoff;
 import com.saga.be.service.projection.ProjectionMappings;
 import com.saga.be.realtime.ProjectRealtimeEventType;
@@ -25,8 +26,10 @@ import com.saga.be.realtime.ProjectRealtimePublisher;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -40,7 +43,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Complete multi-branch GitHub commit reconciliation for ACTIVE selected repositories.
  * Canonical commit identity is (repo_id, sha_hash). {@code headRef} is best-effort metadata only
- * (single column; first-seen branch wins within a run).
+ * (single column; first-seen branch wins within a run). Exact branch reachability is stored in
+ * {@code git_commit_branch} and replaced only after a successful FULL traversal of every branch.
  *
  * <p>Claim cutoff (Option B): list pages with full pagination, then upsert only commits with
  * {@code committedAt >= gitRepo.createdAt}. Local {@link GitRepoCommitClaimCutoff} is authoritative.
@@ -69,6 +73,7 @@ public class GitHubCommitSyncService {
 	private final GitHubOAuthClient github;
 	private final GitHubAppJwtService githubJwt;
 	private final GitCommitProjectionService projection;
+	private final GitCommitBranchSnapshotService branchSnapshots;
 	private final SyncJobLogRepository syncJobs;
 	private final SyncJobClaimService claims;
 	private final TransactionTemplate writes;
@@ -80,6 +85,7 @@ public class GitHubCommitSyncService {
 			GitHubOAuthClient github,
 			GitHubAppJwtService githubJwt,
 			GitCommitProjectionService projection,
+			GitCommitBranchSnapshotService branchSnapshots,
 			SyncJobLogRepository syncJobs,
 			SyncJobClaimService claims,
 			PlatformTransactionManager transactionManager,
@@ -89,6 +95,7 @@ public class GitHubCommitSyncService {
 		this.github = github;
 		this.githubJwt = githubJwt;
 		this.projection = projection;
+		this.branchSnapshots = branchSnapshots;
 		this.syncJobs = syncJobs;
 		this.claims = claims;
 		this.writes = new TransactionTemplate(transactionManager);
@@ -190,19 +197,32 @@ public class GitHubCommitSyncService {
 				&& repos.existsByProviderAndRepositoryIdAndProject_IdNotAndCreatedAtLessThan(
 						repo.getProvider(), repo.getRepositoryId(), repo.getProject().getId(), repo.getCreatedAt());
 		Set<String> seenShas = new HashSet<>();
+		Map<String, Set<String>> memberships = new LinkedHashMap<>();
 		int uniqueUpserted = 0;
 		for (String branch : branches) {
-			uniqueUpserted += syncBranch(token, repo, branch, seenShas, cutoffApplies);
+			uniqueUpserted += syncBranch(token, repo, branch, seenShas, memberships, cutoffApplies);
 		}
+		// Snapshot replacement is reached only after every branch page was fetched AND every
+		// required upsertBatch returned without throwing. A provider or persist failure above
+		// leaves the previous git_commit_branch rows and branchMembershipSyncedAt untouched.
+		// Commits already committed by earlier pages remain visible on unfiltered reads.
+		LocalDateTime resolvedAt = LocalDateTime.now();
 		writes.executeWithoutResult(status -> {
-			repo.setLastSyncedAt(LocalDateTime.now());
+			branchSnapshots.replaceSnapshot(repo, memberships, resolvedAt);
+			repo.setLastSyncedAt(resolvedAt);
 			repo.setConsecutiveFailures(0);
 			repos.save(repo);
 		});
 		return uniqueUpserted;
 	}
 
-	private int syncBranch(String token, GitRepo repo, String branch, Set<String> seenShas, boolean cutoffApplies) {
+	private int syncBranch(
+			String token,
+			GitRepo repo,
+			String branch,
+			Set<String> seenShas,
+			Map<String, Set<String>> memberships,
+			boolean cutoffApplies) {
 		int page = 1;
 		int upserted = 0;
 		while (page <= MAX_COMMIT_PAGES_PER_BRANCH) {
@@ -218,20 +238,23 @@ public class GitHubCommitSyncService {
 				if (summary == null || summary.sha() == null || summary.sha().isBlank()) {
 					continue;
 				}
-				if (!seenShas.add(summary.sha())) {
-					continue; // already reconciled via another branch in this run
-				}
-				CommitDraft draft = new CommitDraft(
+				CommitDraft observed = new CommitDraft(
 						summary.sha(),
 						summary.message(),
 						ProjectionMappings.parseInstant(summary.committedAt()),
 						summary.authorId() == null ? null : String.valueOf(summary.authorId()),
 						summary.authorLogin(),
 						branch);
-				if (!GitRepoCommitClaimCutoff.isEligible(draft, repo, cutoffApplies)) {
+				if (GitRepoCommitClaimCutoff.isEligible(observed, repo, cutoffApplies)) {
+					memberships.computeIfAbsent(summary.sha(), ignored -> new LinkedHashSet<>()).add(branch);
+				}
+				if (!seenShas.add(summary.sha())) {
+					continue; // already projected via another branch; membership was still recorded
+				}
+				if (!GitRepoCommitClaimCutoff.isEligible(observed, repo, cutoffApplies)) {
 					continue;
 				}
-				drafts.add(draft);
+				drafts.add(observed);
 			}
 			if (!drafts.isEmpty()) {
 				Integer applied = writes.execute(status -> projection.upsertBatch(repo, drafts));

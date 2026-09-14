@@ -32,6 +32,7 @@ import com.saga.be.service.projection.GitCommitProjectionService.CommitDraft;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -60,6 +61,8 @@ class GitHubCommitSyncServiceTest {
 	private GitHubAppJwtService githubJwt;
 	@Mock
 	private GitCommitProjectionService projection;
+	@Mock
+	private com.saga.be.service.projection.GitCommitBranchSnapshotService branchSnapshots;
 	@Mock
 	private SyncJobLogRepository syncJobs;
 	@Mock
@@ -93,6 +96,7 @@ class GitHubCommitSyncServiceTest {
 				github,
 				githubJwt,
 				projection,
+				branchSnapshots,
 				syncJobs,
 				claims,
 				transactionManager,
@@ -354,8 +358,12 @@ class GitHubCommitSyncServiceTest {
 				.as("default branch is processed first by orderBranches(), so it wins headRef even"
 						+ " though the provider's branch list returned 'dev' before 'main'")
 				.isEqualTo("main");
-		// "dev" never appears as a headRef for this sha in this run -- its membership in dev is
-		// unobservable from persisted data once main has already claimed the sha.
+		// headRef remains first-processed branch metadata. Exact membership is collected
+		// independently of seenShas and replaced only after the FULL traversal succeeds.
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, java.util.Set<String>>> memberships = ArgumentCaptor.forClass(Map.class);
+		verify(branchSnapshots).replaceSnapshot(eq(repo), memberships.capture(), any());
+		assertThat(memberships.getValue().get("shared-1")).containsExactlyInAnyOrder("main", "dev");
 	}
 
 	@Test
@@ -556,6 +564,128 @@ class GitHubCommitSyncServiceTest {
 		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.FAILED);
 		assertThat(job.getErrorCategory()).isEqualTo("GITHUB_RATE_LIMITED");
 		verify(claims, never()).markSucceeded(any(), anyInt());
+		verify(branchSnapshots, never()).replaceSnapshot(any(), any(), any());
+	}
+
+	@Test
+	void sameShaOnThreeBranches_oneUpsertAndThreeMemberships() {
+		GitRepo repo = activeRepo("org", "a");
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("develop", "release/v1", "main"));
+		CommitSummary shared = new CommitSummary("abc", "m", "2026-06-01T12:00:00Z", null, null);
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100)))
+				.thenReturn(List.of(shared));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("develop"), eq(1), eq(100)))
+				.thenReturn(List.of(shared));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("release/v1"), eq(1), eq(100)))
+				.thenReturn(List.of(shared));
+
+		assertThat(service.initialSync(projectId).getItemsProcessed()).isEqualTo(1);
+		verify(projection, times(1)).upsertBatch(eq(repo), any());
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, Set<String>>> memberships = ArgumentCaptor.forClass(Map.class);
+		verify(branchSnapshots).replaceSnapshot(eq(repo), memberships.capture(), any());
+		assertThat(memberships.getValue()).containsOnlyKeys("abc");
+		assertThat(memberships.getValue().get("abc")).containsExactlyInAnyOrder("develop", "release/v1", "main");
+	}
+
+	@Test
+	void providerFailureMidRepo_doesNotReplacePreviousSnapshot() {
+		GitRepo repo = activeRepo("org", "a");
+		java.time.LocalDateTime t1 = java.time.LocalDateTime.of(2026, 9, 1, 10, 0);
+		repo.setBranchMembershipSyncedAt(t1);
+		repo.setLastSyncedAt(t1);
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main", "dev"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100)))
+				.thenReturn(List.of(new CommitSummary("commit-c", "SAGA-1", "2026-06-01T12:00:00Z", null, null)));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("dev"), eq(1), eq(100)))
+				.thenThrow(new IntegrationException(
+						IntegrationErrorCode.GITHUB_SYNC_INCOMPLETE, HttpStatus.BAD_GATEWAY, "boom"));
+
+		SyncJobLog job = service.initialSync(projectId);
+
+		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.FAILED);
+		verify(projection).upsertBatch(eq(repo), any());
+		verify(branchSnapshots, never()).replaceSnapshot(any(), any(), any());
+		assertThat(repo.getBranchMembershipSyncedAt()).isEqualTo(t1);
+		assertThat(repo.getLastSyncedAt()).isEqualTo(t1);
+	}
+
+	@Test
+	void persistFailureAfterProviderPage_doesNotReplaceSnapshot() {
+		GitRepo repo = activeRepo("org", "a");
+		java.time.LocalDateTime t1 = java.time.LocalDateTime.of(2026, 9, 1, 10, 0);
+		repo.setBranchMembershipSyncedAt(t1);
+		repo.setLastSyncedAt(t1);
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100)))
+				.thenReturn(summaries(100, "p1-"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(2), eq(100)))
+				.thenReturn(summaries(10, "p2-"));
+		when(projection.upsertBatch(eq(repo), any()))
+				.thenReturn(100)
+				.thenThrow(new IllegalStateException("canonical GitCommit persist failed"));
+
+		SyncJobLog job = service.initialSync(projectId);
+
+		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.FAILED);
+		verify(projection, times(2)).upsertBatch(eq(repo), any());
+		verify(branchSnapshots, never()).replaceSnapshot(any(), any(), any());
+		assertThat(repo.getBranchMembershipSyncedAt()).isEqualTo(t1);
+		assertThat(repo.getLastSyncedAt()).isEqualTo(t1);
+	}
+
+	@Test
+	void successfulSync_replacesSnapshotAndSetsResolvedAt() {
+		GitRepo repo = activeRepo("org", "a");
+		repo.setBranchMembershipSyncedAt(java.time.LocalDateTime.of(2026, 1, 1, 0, 0));
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100)))
+				.thenReturn(List.of(new CommitSummary("abc", "m", "2026-06-01T12:00:00Z", null, null)));
+
+		assertThat(service.initialSync(projectId).getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		verify(branchSnapshots).replaceSnapshot(eq(repo), any(), any());
+		assertThat(repo.getLastSyncedAt()).isNotNull();
+	}
+
+	@Test
+	void emptySuccessfulTraversal_stillReplacesSnapshot() {
+		GitRepo repo = activeRepo("org", "empty");
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "empty")).thenReturn(List.of("main"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("empty"), eq("main"), eq(1), eq(100)))
+				.thenReturn(List.of());
+
+		assertThat(service.initialSync(projectId).getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, Set<String>>> memberships = ArgumentCaptor.forClass(Map.class);
+		verify(branchSnapshots).replaceSnapshot(eq(repo), memberships.capture(), any());
+		assertThat(memberships.getValue()).isEmpty();
+	}
+
+	@Test
+	void claimCutoff_excludesPreClaimFromMemberships() {
+		GitRepo repo = activeRepo("org", "b");
+		when(repos.existsByProviderAndRepositoryIdAndProject_IdNotAndCreatedAtLessThan(
+						repo.getProvider(), repo.getRepositoryId(), projectId, repo.getCreatedAt()))
+				.thenReturn(true);
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "b")).thenReturn(List.of("main"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("b"), eq("main"), eq(1), eq(100)))
+				.thenReturn(List.of(
+						new CommitSummary("a-pre-claim", "A's old commit", "2025-06-01T00:00:00Z", null, null),
+						new CommitSummary("b-post-claim", "B's own commit", "2026-06-01T00:00:00Z", null, null)));
+
+		service.initialSync(projectId);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, Set<String>>> memberships = ArgumentCaptor.forClass(Map.class);
+		verify(branchSnapshots).replaceSnapshot(eq(repo), memberships.capture(), any());
+		assertThat(memberships.getValue()).containsOnlyKeys("b-post-claim");
+		assertThat(memberships.getValue()).doesNotContainKey("a-pre-claim");
 	}
 
 	@Test

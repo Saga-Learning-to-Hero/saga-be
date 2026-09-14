@@ -11,6 +11,7 @@ import com.saga.be.dto.project.ProjectProgressResponse;
 import com.saga.be.dto.project.ProjectSprintResponse;
 import com.saga.be.dto.project.ProjectSyncEnqueueResponse;
 import com.saga.be.dto.project.ProjectSyncStatusResponse;
+import com.saga.be.dto.project.ProjectTaskCommitLinksResponse;
 import com.saga.be.dto.project.ProjectTaskOptionsResponse;
 import com.saga.be.dto.project.ProjectTaskResponse;
 import com.saga.be.dto.project.PutProjectTaskSprintRequest;
@@ -22,6 +23,7 @@ import com.saga.be.service.projection.ProjectJiraSprintCommandService;
 import com.saga.be.service.projection.ProjectJiraTaskCommandService;
 import com.saga.be.service.projection.ProjectProgressService;
 import com.saga.be.service.projection.ProjectProjectionReadService;
+import com.saga.be.service.projection.ProjectTaskCommitLinkReadService;
 import com.saga.be.service.sync.ProjectManualSyncService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -41,6 +43,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -56,6 +59,7 @@ public class ProjectProjectionController {
 	private final ProjectManualSyncService manualSync;
 	private final ProjectProgressService progress;
 	private final ProjectGitBranchReadService branches;
+	private final ProjectTaskCommitLinkReadService linkReads;
 
 	public ProjectProjectionController(
 			ProjectProjectionReadService projections,
@@ -63,13 +67,15 @@ public class ProjectProjectionController {
 			ProjectJiraSprintCommandService sprintCommands,
 			ProjectManualSyncService manualSync,
 			ProjectProgressService progress,
-			ProjectGitBranchReadService branches) {
+			ProjectGitBranchReadService branches,
+			ProjectTaskCommitLinkReadService linkReads) {
 		this.projections = projections;
 		this.taskCommands = taskCommands;
 		this.sprintCommands = sprintCommands;
 		this.manualSync = manualSync;
 		this.progress = progress;
 		this.branches = branches;
+		this.linkReads = linkReads;
 	}
 
 	@GetMapping("/tasks")
@@ -214,6 +220,26 @@ public class ProjectProjectionController {
 	public List<ProjectCommitResponse> commits(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
 		return projections.listCommits(principal.getUserId(), projectId);
+	}
+
+	@GetMapping("/task-commit-links")
+	@Operation(
+			summary = "Canonical paged Task ↔ Commit links for the Pipeline / Audit Matrix.",
+			description =
+					"""
+					Queries task_git_commit_link directly (auto, manual, merge, no Jira key).
+					repoId is the SAGA GitRepo UUID, not GitHub's numeric repository id.
+					branchName requires repoId and means REACHABLE_AT_SYNC membership from the latest
+					successful FULL snapshot — not GitCommit.headRef and not commit-message parsing.
+					""")
+	public ProjectTaskCommitLinksResponse taskCommitLinks(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@RequestParam(required = false) UUID repoId,
+			@RequestParam(required = false) String branchName,
+			@RequestParam(required = false) Integer page,
+			@RequestParam(required = false) Integer size) {
+		return linkReads.list(principal.getUserId(), projectId, repoId, branchName, page, size);
 	}
 
 	@GetMapping("/repos/{repoId}/branches")

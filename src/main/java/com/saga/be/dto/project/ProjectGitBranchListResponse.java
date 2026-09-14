@@ -16,10 +16,11 @@ import java.util.UUID;
  * {@code unique(commits.map(commit.headRef))} as a branch list/count — use this endpoint instead.
  *
  * <p>Consequently, filtering commits by {@code commit.headRef == selectedBranch} remains
- * best-effort/observed-branch filtering only, not exact: a commit may exist on multiple branches
- * while {@code GitCommit} stores only one {@code headRef}. Exact many-to-many commit-to-branch
- * membership is not represented by the current data model and would require a separate persisted
- * relation (future work, out of scope for this endpoint).
+ * best-effort/observed-branch filtering only, not exact. Exact many-to-many commit-to-branch
+ * membership is persisted in {@code git_commit_branch} after a successful FULL GitHub sync and is
+ * exposed on {@code GET /api/projects/{projectId}/task-commit-links} as {@code branchNames} /
+ * {@code branchName} filter ({@code branchResolution=REACHABLE_AT_SYNC}). This live inventory
+ * endpoint remains the source for the branch dropdown; it does not itself persist membership.
  */
 public record ProjectGitBranchListResponse(UUID repoId, String repositoryFullName, int branchCount, List<Branch> branches) {
 

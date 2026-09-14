@@ -906,28 +906,101 @@ PUT /api/projects/{projectId}/tasks/{taskId}/sprint
 | Method | Path | Mục đích |
 |---|---|---|
 | GET | `/api/projects/{projectId}/commits` | Toàn bộ commit đã đồng bộ của project |
-| GET | `/api/projects/{projectId}/tasks/{taskId}/commits` | Commit đã liên kết với 1 task cụ thể |
+| GET | `/api/projects/{projectId}/tasks/{taskId}/commits` | Commit đã liên kết với 1 task cụ thể (chi tiết 1 task, không dùng cho Audit Matrix) |
+| GET | `/api/projects/{projectId}/repos/{repoId}/branches` | Branch dropdown — inventory live từ GitHub cho 1 `GitRepo` ACTIVE |
+| GET | `/api/projects/{projectId}/task-commit-links` | **Canonical batch** Task ↔ Commit cho Pipeline / Audit Matrix |
+
+### 25.1. Audit Matrix — contract bắt buộc
+
+```
+Repository dropdown: GET hiện có của project repos / integration data
+Branch dropdown:     GET /api/projects/{projectId}/repos/{repoId}/branches
+Audit matrix:        GET /api/projects/{projectId}/task-commit-links
+                       ?repoId={gitRepoUuid}
+                       &branchName={branchName}
+                       &page=0
+                       &size=100
+```
+
+FE **không được**:
+
+- parse Jira key từ `commit.message` để dựng liên kết
+- filter đúng branch bằng `commit.headRef`
+- gọi `/tasks/{taskId}/commits` một lần cho mỗi task (N+1)
+
+`repoId` = UUID nội bộ SAGA của `GitRepo` (không phải numeric GitHub repository id).
+`repositoryId` trong JSON = numeric GitHub repository id.
+
+`branchName` **bắt buộc** có `repoId`. Thiếu `repoId` → `400 REQUEST_INVALID`.
+Repo sai project / REVOKED → `404 PROJECT_NOT_FOUND` (không lộ sự tồn tại của repo).
+
+Query params: `page` mặc định `0`, `size` mặc định `100`, tối đa `200`.
+
+`branchName` nghĩa là commit **reachable** từ branch đó tại snapshot FULL sync thành công gần nhất (`branchResolution = REACHABLE_AT_SYNC`), không phải `headRef`. Branch chưa từng có link → `links = []`, `total = 0` (không phải 404, không gọi GitHub để validate tên branch).
 
 ```json
-// ProjectCommitResponse
 {
-  "id": "uuid", "repoId": "uuid", "repositoryFullName": "org/repo",
-  "sha": "...", "message": "...", "authorExternalId": "github-login",
-  "authorStudentId": "uuid-hoặc-null", "committedAt": "...", "createdAt": "..."
+  "projectId": "uuid",
+  "filter": {
+    "repoId": "git-repo-uuid-or-null",
+    "repositoryId": 1338790015,
+    "repositoryFullName": "Saga-Learning-to-Hero/saga-fe",
+    "branchName": "develop",
+    "branchResolution": "REACHABLE_AT_SYNC",
+    "resolvedAt": "2026-09-14T10:00:00"
+  },
+  "links": [
+    {
+      "taskId": "task-uuid",
+      "taskKey": "SAGA-66",
+      "commitId": "commit-uuid",
+      "sha": "544a942...",
+      "message": "feat: ...",
+      "repoId": "git-repo-uuid",
+      "repositoryId": 1338790015,
+      "repositoryFullName": "Saga-Learning-to-Hero/saga-fe",
+      "headRef": "develop",
+      "branchNames": ["develop", "release/v1"],
+      "linkedAt": "2026-09-14T09:00:00",
+      "linkSource": "COMMIT_MESSAGE"
+    }
+  ],
+  "page": 0,
+  "size": 100,
+  "total": 1
 }
 ```
 
-**Đây là API chỉ đọc** — không có endpoint nào để FE tự tạo/xoá liên kết Task↔Commit. Việc liên kết là **hoàn toàn tự động ở backend**:
+- `headRef`: metadata ingestion (nhánh quan sát lần đầu), **chỉ để hiển thị**.
+- `branchNames[]`: membership canonical từ snapshot FULL sync.
+- `linkedAt`: `created_at` của hàng `task_git_commit_link`.
+- `linkSource`: enum canonical `TraceLinkSource` (`COMMIT_MESSAGE`, `BRANCH_NAME`, `PR_TITLE`, `PR_BODY`, `MANUAL`, `RECONCILIATION`) — **không** suy ra `"AUTO"` từ format message.
+- Không filter `repoId`: `filter.repoId` / `repositoryId` / `repositoryFullName` / `resolvedAt` = `null`; mỗi phần tử `links[]` vẫn mang repo của chính nó.
+- `resolvedAt` = `git_repo.branch_membership_synced_at` của repo đang filter (`null` nếu chưa FULL-sync membership, hoặc request không filter `repoId`). Webhook **không** cập nhật field này.
+- **Timezone:** `resolvedAt`, `linkedAt`, `committedAt`, `createdAt`, `GET /sync-status` `startedAt`/`completedAt` đều là `LocalDateTime`. JSON là ISO-8601 **không có suffix timezone** (vd `"2026-09-14T10:00:00"`). Đây là convention canonical của project — **không** gắn `"Z"` trừ khi giá trị local đúng là chứa chữ Z (không xảy ra với `LocalDateTime`). FE không được interpret field này như UTC Instant.
+
+Auth đọc: giống commits/tasks — Team Leader/Member ACTIVE, Lecturer được gán course; student ngoài team `403 INTEGRATION_FORBIDDEN`; ADMIN `403 ACCESS_DENIED`.
+
+### 25.2. ProjectCommitResponse (list commits / per-task commits)
+
+```json
+{
+  "id": "uuid", "repoId": "uuid", "repositoryFullName": "org/repo",
+  "sha": "...", "message": "...", "authorExternalId": "github-login",
+  "authorStudentId": "uuid-hoặc-null", "headRef": "main",
+  "committedAt": "...", "createdAt": "..."
+}
+```
+
+Liên kết Task↔Commit vẫn được backend tạo tự động (parse key trong message/branch) và có thể tồn tại hàng `MANUAL` trong schema. **Không có API FE để tự tạo/xoá link.** Webhook có thể hiện commit mới ngay trên list không filter branch; `branchNames` / filter branch chỉ đổi sau FULL sync thành công.
 
 ```
-Lập trình viên push code lên GitHub (có nhắc mã task trong message/branch, vd "SAGA-123: fix bug")
+Lập trình viên push code lên GitHub
   → GitHub gửi webhook về backend
-  → backend lưu commit vào projection
-  → backend tự parse mã Jira key trong message/branch → tự tạo liên kết Task↔Commit
-  → SSE bắn sự kiện COMMITS_CHANGED và/hoặc TASK_LINKS_CHANGED
-  → FE nhận sự kiện → refetch danh sách commit/task tương ứng (mục 27)
+  → backend lưu GitCommit + có thể tạo TaskGitCommitLink
+  → SSE COMMITS_CHANGED / TASK_LINKS_CHANGED
+  → FE refetch task-commit-links (không N+1 /tasks/{id}/commits)
 ```
-FE không cần và không thể tự dựng liên kết này qua API.
 
 ---
 
@@ -1531,6 +1604,8 @@ export function subscribeProjectEvents(
 | Method | Path | Role |
 |---|---|---|
 | GET | `/api/projects/{projectId}/commits` | thành viên |
+| GET | `/api/projects/{projectId}/task-commit-links` | thành viên |
+| GET | `/api/projects/{projectId}/repos/{repoId}/branches` | thành viên |
 
 ### SYNC
 | Method | Path | Role |

@@ -99,6 +99,8 @@ class ProviderWebhookProjectionServiceTest {
 		repo.setProject(project);
 		repo.setRepositoryId(55L);
 		repo.setCreatedAt(java.time.LocalDateTime.of(2025, 12, 1, 0, 0));
+		java.time.LocalDateTime stamp = java.time.LocalDateTime.of(2026, 9, 1, 10, 0);
+		repo.setBranchMembershipSyncedAt(stamp);
 		when(repos.findFetchedActiveByProviderAndRepositoryId(GitProvider.GITHUB, 55L, IntegrationStatus.ACTIVE))
 				.thenReturn(List.of(repo));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -119,6 +121,9 @@ class ProviderWebhookProjectionServiceTest {
 		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.PROCESSED);
 		verify(realtime).publish(com.saga.be.realtime.ProjectRealtimeEventType.COMMITS_CHANGED, project.getId());
 		verify(realtime).publish(com.saga.be.realtime.ProjectRealtimeEventType.TASK_LINKS_CHANGED, project.getId());
+		assertThat(repo.getBranchMembershipSyncedAt()).isEqualTo(stamp);
+		assertThat(repo.getLastSyncedAt()).isNull();
+		verify(repos, never()).save(any());
 	}
 
 	@Test

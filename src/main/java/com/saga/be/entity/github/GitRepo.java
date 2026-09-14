@@ -101,6 +101,18 @@ public class GitRepo extends BaseEntity {
 	@Column(name = "last_synced_at")
 	private LocalDateTime lastSyncedAt;
 
+	/**
+	 * When the last successful FULL branch-membership snapshot was persisted for this GitRepo.
+	 * Distinct from {@link #lastSyncedAt}: pre-V18 full syncs wrote lastSyncedAt without storing
+	 * {@code git_commit_branch} rows. Webhooks never write this field.
+	 *
+	 * <p>Type is {@link LocalDateTime} — the same convention as {@link #lastSyncedAt},
+	 * {@code GitCommit.committedAt}, {@code BaseEntity.createdAt}, and sync-job
+	 * {@code startedAt}/{@code completedAt}. Stored and exposed without a timezone offset.
+	 */
+	@Column(name = "branch_membership_synced_at")
+	private LocalDateTime branchMembershipSyncedAt;
+
 	@Column(name = "review_cutover_at")
 	private LocalDateTime reviewCutoverAt;
 
