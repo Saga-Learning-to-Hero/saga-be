@@ -174,13 +174,16 @@ AND đúng một nhãn: saga:code | saga:test | saga:document | saga:research
 
 Nhãn **đúng chữ, phân biệt hoa thường**.
 
-Danh sách task (để Leader nộp evidence):
+Danh sách / tạo task (Leader tạo trên SAGA, ghi Jira rồi trả projection):
 
 ```http
-GET /api/projects/{projectId}/tasks
+GET  /api/projects/{projectId}/tasks
+POST /api/projects/{projectId}/tasks
 ```
 
-Quyền: student trong team sở hữu project, hoặc lecturer đúng course. `status` là enum `TODO` | `IN_PROGRESS` | `IN_REVIEW` | `DONE` | `BLOCKED`. Response **không** gồm labels/sprint; scoring vẫn đọc labels từ DB. FE chỉ cần `id` để gọi API file/link.
+CRUD đầy đủ: `docs/FE_API_INTEGRATION_GUIDE_VI.md` §19. Gắn file/link: `docs/FRONTEND_TASK_EVIDENCE_API.md`.
+
+Quyền đọc: student trong team sở hữu project, hoặc lecturer đúng course. Ghi task: **Leader**. `status` là enum `TODO` | `IN_PROGRESS` | `IN_REVIEW` | `DONE` | `BLOCKED`. Response **không** gồm labels; scoring vẫn đọc labels từ DB. FE dùng `id` để gọi API file/link.
 
 ---
 
@@ -404,14 +407,13 @@ GET /api/tasks/{taskId}/files | web-links     (đọc / download, không upload 
 
 ### Member (không phải Leader)
 
-Không gọi evaluate. Vẫn nộp file/link trên task nếu là member.
+Không gọi evaluate. Vẫn nộp file/link trên task nếu là member. Vẫn chấm peer: [`docs/FRONTEND_PEER_REVIEW_API.md`](./FRONTEND_PEER_REVIEW_API.md).
 
 ---
 
 ## 9. Việc chưa có trên API này
 
-- Submit peer review (evaluate **đọc** `peer_review` đã có; chưa có POST nộp sao).
-- Tạo/sửa task trên SAGA (task tới từ Jira sync / projection).
 - Snapshot lịch sử `assessment_run` (mỗi GET là số hiện tại).
+- Gắn nhãn `saga:*` lúc tạo task (nhãn vẫn từ Jira). Task CRUD: `docs/FE_API_INTEGRATION_GUIDE_VI.md` §19.
 
-Peer chưa có → `peerReviewScore = 1` và `% slice` = `% cuối` (trừ khi đã override).
+Peer review **đã ship** — playbook FE: [`docs/FRONTEND_PEER_REVIEW_API.md`](./FRONTEND_PEER_REVIEW_API.md). Evaluate đọc `peer_review.star_rating` đã nộp. Peer chưa có → `peerReviewScore = 1` và `% slice` = `% cuối` (trừ khi đã override).

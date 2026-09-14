@@ -1532,6 +1532,17 @@ export function subscribeProjectEvents(
 |---|---|---|
 | GET | `/api/projects/{projectId}/events` | thành viên |
 
+### PEER REVIEW
+| Method | Path | Role |
+|---|---|---|
+| GET | `/api/peer-review-rubrics/default` | đã đăng nhập |
+| GET | `/api/teams/{teamId}/peer-review-rubric` | thành viên / GV phụ trách / ADMIN |
+| GET | `/api/teams/{teamId}/sprints/{sprintId}/peer-reviews/candidates` | STUDENT thuộc team |
+| POST | `/api/teams/{teamId}/sprints/{sprintId}/peer-reviews` | STUDENT thuộc team |
+| GET | `/api/teams/{teamId}/sprints/{sprintId}/peer-reviews` | thành viên / GV phụ trách / ADMIN |
+
+Chi tiết: [`docs/PEER_REVIEW_FLOW_SUMMARY.md`](./PEER_REVIEW_FLOW_SUMMARY.md).
+
 ### EVIDENCE / CONTRIBUTION
 | Method | Path | Role |
 |---|---|---|

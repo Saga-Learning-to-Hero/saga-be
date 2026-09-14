@@ -1,8 +1,8 @@
 # Hướng dẫn Frontend — Gắn link và file vào task
 
-Playbook kéo API khi sinh viên nộp **URL** hoặc **file** vào một task Jira đã sync sang SAGA. Dùng làm bằng chứng DOCUMENT / RESEARCH (DEC-090 / DEC-092). FE **không** tính điểm; chỉ gắn evidence rồi (nếu là Leader) gọi lại evaluate.
+Playbook kéo API khi sinh viên nộp **URL** hoặc **file** vào một task trên SAGA. Dùng làm bằng chứng DOCUMENT / RESEARCH (DEC-090 / DEC-092). FE **không** tính điểm; chỉ gắn evidence rồi (nếu là Leader) gọi lại evaluate.
 
-Contract tổng: `docs/FRONTEND_API_INTEGRATION.md` §18. Luồng % đóng góp: `docs/FRONTEND_CONTRIBUTION_API.md`.
+Task CRUD (tạo / sửa / transition / sprint): `docs/FE_API_INTEGRATION_GUIDE_VI.md` §19–24. Contract đóng góp: `docs/FRONTEND_API_INTEGRATION.md` §18. Luồng %: `docs/FRONTEND_CONTRIBUTION_API.md`.
 
 Base path: `/api`. Cookie session `SAGA_SESSION`. Mọi `fetch` dùng `credentials: "include"`. **Không Bearer / JWT.**
 
@@ -40,15 +40,22 @@ async function csrfHeader() {
 
 ---
 
-## 1. Lấy `taskId` trước khi gắn evidence
+## 1. Lấy hoặc tạo `taskId` trước khi gắn evidence
 
-Task **không tạo trên SAGA**. Chúng tới từ Jira (webhook / job INITIAL sau khi team connect Jira). FE chỉ đọc `id` (UUID SAGA) rồi gọi API evidence.
+Task sống trên SAGA dưới dạng **projection Jira**. Hai cách có `taskId`:
 
-### Student
+1. **Tạo trên SAGA** — Team Leader `POST /api/projects/{projectId}/tasks`. Backend tạo issue trên Jira **đồng bộ**, rồi lưu projection và trả `ProjectTaskResponse` (`201`). Dùng `id` ngay, không cần refetch list.
+2. **Đọc list** — `GET /api/projects/{projectId}/tasks` (cả task tạo từ SAGA lẫn issue tạo trực tiếp trên Jira rồi webhook/sync về).
+
+Project phải đã connect Jira (`GET /api/projects/{projectId}/integrations` → `jira.status === "ACTIVE"`). Chưa có project / chưa connect → không tạo được task.
+
+CRUD đầy đủ (options, PATCH, transition, sprint, xóa): `docs/FE_API_INTEGRATION_GUIDE_VI.md` §19.
+
+### Student — bootstrap `projectId`
 
 ```text
 GET /api/student/courses
-GET /api/student/courses/{courseId}/team      → projectId, myRole
+GET /api/student/courses/{courseId}/team      → projectId, myRole (LEADER mới POST được)
 GET /api/student/courses/{courseId}/project   → projectId (nếu team đã setup)
 GET /api/projects/{projectId}/tasks           → id của từng task
 ```
@@ -62,9 +69,31 @@ GET /api/lecturer/courses/{courseId}/teams    → projectId từng team
 GET /api/projects/{projectId}/tasks
 ```
 
-Quyền list task: student trong team sở hữu project, hoặc lecturer đúng course.
+Lecturer **đọc** task, **không** POST/PATCH/DELETE task (chỉ Leader). List: student trong team sở hữu project, hoặc lecturer đúng course.
 
-`GET /api/projects/{projectId}/tasks` trả `ProjectTaskResponse`:
+### Tạo task (Leader, CSRF)
+
+```text
+GET  /api/projects/{projectId}/tasks/options   (mọi member — dựng form)
+POST /api/projects/{projectId}/tasks           (chỉ Leader)
+```
+
+```json
+POST /api/projects/{projectId}/tasks
+{
+  "summary": "Viết báo cáo SRS",
+  "description": "optional, tối đa 10000",
+  "issueTypeId": "từ /tasks/options",
+  "assigneeAccountId": "Jira accountId từ options.assignableUsers",
+  "priorityId": "từ /tasks/options",
+  "storyPoints": 5,
+  "sprintId": 123
+}
+```
+
+`summary` bắt buộc, tối đa 255. `assigneeAccountId` là **Jira accountId**, không phải SAGA `userId`/`studentId`. Không phải Leader → `403 NOT_TEAM_LEADER`.
+
+Response `201` — lấy `id` làm `taskId` cho web-links / files:
 
 ```json
 {
@@ -72,20 +101,27 @@ Quyền list task: student trong team sở hữu project, hoặc lecturer đúng
   "externalId": "10001",
   "externalKey": "SWP-12",
   "title": "Viết báo cáo SRS",
-  "status": "DONE",
+  "description": null,
+  "status": "TODO",
+  "jiraStatusName": "To Do",
   "issueTypeName": "Story",
   "assigneeExternalId": null,
+  "assigneeDisplayName": null,
   "assigneeStudentId": null,
+  "assignee": null,
+  "priority": null,
+  "storyPoint": 5,
+  "sprint": null,
   "linkedCommitCount": 0,
   "externalUpdatedAt": "2026-09-08T09:00:00",
-  "createdAt": "2026-09-01T08:00:00",
+  "createdAt": "2026-09-08T09:00:00",
   "updatedAt": "2026-09-08T09:00:00"
 }
 ```
 
-`id` = `taskId` dùng cho mọi API bên dưới. `status`: `TODO` | `IN_PROGRESS` | `IN_REVIEW` | `DONE` | `BLOCKED`.
+`status`: `TODO` | `IN_PROGRESS` | `IN_REVIEW` | `DONE` | `BLOCKED`. Field điểm là **`storyPoint`** (số ít); request tạo dùng **`storyPoints`**.
 
-Response **không** gồm labels / sprint. Scoring vẫn đọc nhãn `saga:document` / `saga:research` từ DB. FE có thể cho phép gắn evidence trên mọi task; backend chỉ **công nhận điểm** khi task DONE + đúng một nhãn DOCUMENT/RESEARCH + ≥1 evidence.
+`GET /tasks` **không** trả labels. Scoring vẫn đọc nhãn `saga:code|test|document|research` từ DB (Jira). `POST /tasks` hiện **không** nhận field label — gắn `saga:document` / `saga:research` trên Jira (hoặc sync về). FE vẫn cho nộp file/link trên mọi task; backend chỉ **công nhận điểm** khi DONE + đúng một nhãn DOCUMENT/RESEARCH + ≥1 evidence.
 
 ---
 
@@ -375,8 +411,8 @@ FE:
 ```text
 login + CSRF
 → lấy projectId
-→ GET /api/projects/{projectId}/tasks
-→ user chọn task (id)
+→ (Leader, task mới) GET .../tasks/options → POST /api/projects/{projectId}/tasks → dùng response.id
+→ (hoặc) GET /api/projects/{projectId}/tasks → user chọn task
 → song song:
      GET /api/tasks/{taskId}/web-links
      GET /api/tasks/{taskId}/files
@@ -398,10 +434,10 @@ Checklist UI:
 
 ---
 
-## 9. Việc API này không làm
+## 9. Việc API evidence này không làm
 
-- Tạo / sửa / đổi status task trên SAGA (vẫn làm trên Jira).
-- Sửa URL hay thay file in-place — xóa `SAGA` rồi tạo mới.
+- CRUD task — dùng `/api/projects/{projectId}/tasks` (mục 1 và `FE_API_INTEGRATION_GUIDE_VI.md` §19).
+- Sửa URL hay thay file in-place — xóa row `SAGA` rồi tạo mới.
 - Preview PDF/ảnh phía server.
 - Nộp GitHub attachment (không ingest).
-- Tự gắn nhãn `saga:document` — nhãn phải có trên issue Jira.
+- Gắn nhãn `saga:document` / `saga:research` khi `POST /tasks` — nhãn vẫn lấy từ Jira.

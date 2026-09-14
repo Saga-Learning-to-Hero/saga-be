@@ -17,6 +17,7 @@ http://localhost:8080/v3/api-docs      (OpenAPI JSON)
 docs/FRONTEND_API_INTEGRATION.md
 docs/FRONTEND_CONTRIBUTION_API.md      (playbook luồng % đóng góp)
 docs/FRONTEND_TASK_EVIDENCE_API.md     (playbook gắn URL + file vào task)
+docs/FRONTEND_PEER_REVIEW_API.md       (playbook chấm đồng đội theo sprint)
 ```
 
 OpenAPI YAML: `http://localhost:8080/v3/api-docs.yaml`.
@@ -512,6 +513,11 @@ Breaking change phải được nêu rõ.
 | GET | `/api/student/courses/{courseId}/team` | Session | STUDENT | Lecturer Team V1 | `StudentCourseTeamController` |
 | GET | `/api/teams/{teamId}/contribution-evaluation` | Session | ADMIN; LECTURER assigned; STUDENT LEADER of that team | Contribution V1 | `TeamContributionController` |
 | POST | `/api/teams/{teamId}/contribution-override` | Session + CSRF | ADMIN; LECTURER assigned | Contribution V1 | `TeamContributionController` |
+| GET | `/api/peer-review-rubrics/default` | Session | Authenticated | Peer review V1 | `PeerReviewRubricController` |
+| GET | `/api/teams/{teamId}/peer-review-rubric` | Session | ADMIN; assigned lecturer; team student | Peer review V1 | `TeamPeerReviewController` |
+| GET | `/api/teams/{teamId}/sprints/{sprintId}/peer-reviews/candidates` | Session | Team student only | Peer review V1 | `TeamPeerReviewController` |
+| POST | `/api/teams/{teamId}/sprints/{sprintId}/peer-reviews` | Session + CSRF | Team student only | Peer review V1 | `TeamPeerReviewController` |
+| GET | `/api/teams/{teamId}/sprints/{sprintId}/peer-reviews` | Session | ADMIN; assigned lecturer; team student | Peer review V1 | `TeamPeerReviewController` |
 | GET | `/api/lecturer/courses/{courseId}/contribution-slice-weights` | Session | LECTURER (assigned) or ADMIN | Contribution V1 | `LecturerContributionWeightController` |
 | PUT | `/api/lecturer/courses/{courseId}/contribution-slice-weights` | Session + CSRF | LECTURER (assigned) or ADMIN | Contribution V1 | `LecturerContributionWeightController` |
 | PUT | `/api/lecturer/courses/{courseId}/contribution-config-mode` | Session + CSRF | LECTURER (assigned) or ADMIN | Contribution V1 | `LecturerContributionWeightController` |
