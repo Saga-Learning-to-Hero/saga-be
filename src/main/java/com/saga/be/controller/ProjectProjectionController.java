@@ -14,6 +14,7 @@ import com.saga.be.dto.project.ProjectSyncStatusResponse;
 import com.saga.be.dto.project.ProjectTaskOptionsResponse;
 import com.saga.be.dto.project.ProjectTaskResponse;
 import com.saga.be.dto.project.PutProjectTaskSprintRequest;
+import com.saga.be.dto.project.SprintActivityResponse;
 import com.saga.be.dto.project.TransitionProjectTaskRequest;
 import com.saga.be.integration.jira.JiraIssueWriteClient.TransitionOption;
 import com.saga.be.security.SagaUserPrincipal;
@@ -22,6 +23,7 @@ import com.saga.be.service.projection.ProjectJiraSprintCommandService;
 import com.saga.be.service.projection.ProjectJiraTaskCommandService;
 import com.saga.be.service.projection.ProjectProgressService;
 import com.saga.be.service.projection.ProjectProjectionReadService;
+import com.saga.be.service.projection.SprintActivityAnalyticsService;
 import com.saga.be.service.sync.ProjectManualSyncService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -41,6 +43,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -55,6 +58,7 @@ public class ProjectProjectionController {
 	private final ProjectJiraSprintCommandService sprintCommands;
 	private final ProjectManualSyncService manualSync;
 	private final ProjectProgressService progress;
+	private final SprintActivityAnalyticsService sprintActivityAnalytics;
 	private final ProjectGitBranchReadService branches;
 
 	public ProjectProjectionController(
@@ -63,12 +67,14 @@ public class ProjectProjectionController {
 			ProjectJiraSprintCommandService sprintCommands,
 			ProjectManualSyncService manualSync,
 			ProjectProgressService progress,
+			SprintActivityAnalyticsService sprintActivityAnalytics,
 			ProjectGitBranchReadService branches) {
 		this.projections = projections;
 		this.taskCommands = taskCommands;
 		this.sprintCommands = sprintCommands;
 		this.manualSync = manualSync;
 		this.progress = progress;
+		this.sprintActivityAnalytics = sprintActivityAnalytics;
 		this.branches = branches;
 	}
 
@@ -269,5 +275,23 @@ public class ProjectProjectionController {
 			@PathVariable UUID projectId,
 			@PathVariable UUID studentId) {
 		return progress.getMemberProgress(principal.getUserId(), projectId, studentId);
+	}
+
+	@GetMapping("/analytics/sprint-activity")
+	@Operation(
+			summary = "Per-sprint task and commit activity (personal for students; project-wide for lecturers).",
+			description =
+					"""
+					Read-only aggregation of canonical Task/Sprint/Commit projections — no live
+					Jira/GitHub call, no grading formula. STUDENT always receives their own assigned
+					tasks and authored commits (studentId query is ignored). Assigned LECTURER may
+					omit studentId for the whole project, or pass an ACTIVE member's studentId.
+					Any ACTIVE team member or assigned lecturer may call this (unlike GET /progress).
+					""")
+	public SprintActivityResponse sprintActivity(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@RequestParam(required = false) UUID studentId) {
+		return sprintActivityAnalytics.getSprintActivity(principal.getUserId(), projectId, studentId);
 	}
 }

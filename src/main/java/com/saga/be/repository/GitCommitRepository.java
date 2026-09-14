@@ -43,6 +43,29 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			""")
 	List<Object[]> countAndMaxCommittedAtGroupedByAuthorStudent(@Param("projectId") UUID projectId);
 
+	/**
+	 * Sprint activity: commit id + timestamp for date-window unlinked counts —
+	 * {@code Object[]{UUID commitId, LocalDateTime committedAt}}.
+	 */
+	@Query(
+			"""
+			select c.id, coalesce(c.committedAt, c.createdAt)
+			from GitCommit c
+			where c.repo.project.id = :projectId
+			""")
+	List<Object[]> findIdAndCommittedAtByProject(@Param("projectId") UUID projectId);
+
+	/** Personal sprint activity: same shape as {@link #findIdAndCommittedAtByProject}, authored by {@code studentId}. */
+	@Query(
+			"""
+			select c.id, coalesce(c.committedAt, c.createdAt)
+			from GitCommit c
+			where c.repo.project.id = :projectId
+			  and c.authorStudent.id = :studentId
+			""")
+	List<Object[]> findIdAndCommittedAtByProjectAndAuthor(
+			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
+
 	/** Progress dashboard (Lecturer course overview): one row per project — {@code Object[]{UUID projectId, Long count, LocalDateTime lastCommittedAt}}. */
 	@Query(
 			"""

@@ -16,6 +16,8 @@ import com.saga.be.entity.enums.TaskStatus;
 import com.saga.be.entity.enums.TraceLinkSource;
 import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.github.GitRepo;
+import com.saga.be.entity.jira.JiraIntegration;
+import com.saga.be.entity.jira.Sprint;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.traceability.TaskGitCommitLink;
@@ -101,6 +103,10 @@ class TaskProgressSoftDeleteQueryTest {
 	private GitCommitRepository commits;
 	@Autowired
 	private TaskGitCommitLinkRepository links;
+	@Autowired
+	private JiraIntegrationRepository jiraIntegrations;
+	@Autowired
+	private SprintRepository sprintRows;
 
 	private Project project;
 	private StudentProfile student;
@@ -165,6 +171,73 @@ class TaskProgressSoftDeleteQueryTest {
 	void deletedTaskDoesNotInflateProjectWideLinkedCommitTotal() {
 		long linked = links.countDistinctLinkedCommitsByProject_Id(project.getId());
 		assertThat(linked).isEqualTo(1);
+	}
+
+	@Test
+	void deletedAndBacklogTasksExcludedFromSprintActivityAggregate() {
+		Sprint sprint = persistSprint();
+		activeTask.setSprint(sprint);
+		deletedTask.setSprint(sprint);
+		tasks.save(activeTask);
+		tasks.save(deletedTask);
+		Task backlog = tasks.save(task(project, student, TaskStatus.TODO, null));
+
+		List<Object[]> rows = tasks.countGroupedBySprintAndStatus(project.getId());
+		assertThat(rows).hasSize(1);
+		assertThat(rows.getFirst()[0]).isEqualTo(sprint.getId());
+		assertThat(rows.getFirst()[1]).isEqualTo(TaskStatus.DONE);
+		assertThat((Long) rows.getFirst()[2]).isEqualTo(1L);
+		assertThat(backlog.getSprint()).isNull();
+	}
+
+	@Test
+	void sprintActivityAssigneeFilterExcludesOtherStudentsTasks() {
+		Sprint sprint = persistSprint();
+		activeTask.setSprint(sprint);
+		tasks.save(activeTask);
+		UserAccount otherAccount = users.save(studentAccount());
+		StudentProfile other = students.save(studentProfile(otherAccount));
+		Task otherTask = task(project, other, TaskStatus.TODO, null);
+		otherTask.setSprint(sprint);
+		tasks.save(otherTask);
+
+		List<Object[]> mine = tasks.countGroupedBySprintAndStatusForAssignee(project.getId(), student.getId());
+		assertThat(mine).hasSize(1);
+		assertThat((Long) mine.getFirst()[2]).isEqualTo(1L);
+
+		List<Object[]> theirs = tasks.countGroupedBySprintAndStatusForAssignee(project.getId(), other.getId());
+		assertThat(theirs).hasSize(1);
+		assertThat(theirs.getFirst()[1]).isEqualTo(TaskStatus.TODO);
+	}
+
+	@Test
+	void deletedTaskExcludedFromSprintLinkedCommitIds() {
+		Sprint sprint = persistSprint();
+		activeTask.setSprint(sprint);
+		deletedTask.setSprint(sprint);
+		tasks.save(activeTask);
+		tasks.save(deletedTask);
+
+		List<Object[]> rows = links.findLinkedCommitIdsBySprint(project.getId());
+		assertThat(rows).hasSize(1);
+		assertThat(rows.getFirst()[0]).isEqualTo(sprint.getId());
+	}
+
+	private Sprint persistSprint() {
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
+		integration.setConsecutiveFailures(0);
+		integration.setVersion(0L);
+		integration = jiraIntegrations.save(integration);
+		Sprint sprint = new Sprint();
+		sprint.setJiraIntegration(integration);
+		sprint.setName("Sprint 1");
+		sprint.setState("active");
+		sprint.setExternalSprintId("10001");
+		sprint.setStartDate(LocalDateTime.now().minusDays(7));
+		sprint.setEndDate(LocalDateTime.now().plusDays(7));
+		return sprintRows.save(sprint);
 	}
 
 	private static Semester semester() {

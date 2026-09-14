@@ -101,6 +101,39 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 
 	long countByProject_IdAndSprint_IdAndStatusAndDeletedAtIsNull(UUID projectId, UUID sprintId, TaskStatus status);
 
+	/**
+	 * Sprint activity: one row per (sprint, status) for non-deleted tasks in a sprint —
+	 * {@code Object[]{UUID sprintId, TaskStatus status, Long count}}. Backlog (null sprint) is
+	 * excluded.
+	 */
+	@Query(
+			"""
+			select t.sprint.id, t.status, count(t)
+			from Task t
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			  and t.sprint is not null
+			group by t.sprint.id, t.status
+			""")
+	List<Object[]> countGroupedBySprintAndStatus(@Param("projectId") UUID projectId);
+
+	/**
+	 * Personal sprint activity: same shape as {@link #countGroupedBySprintAndStatus}, filtered to
+	 * tasks assigned to {@code studentId}.
+	 */
+	@Query(
+			"""
+			select t.sprint.id, t.status, count(t)
+			from Task t
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			  and t.sprint is not null
+			  and t.assigneeStudent.id = :studentId
+			group by t.sprint.id, t.status
+			""")
+	List<Object[]> countGroupedBySprintAndStatusForAssignee(
+			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
+
 	@Query(
 			"select max(coalesce(t.externalUpdatedAt, t.updatedAt)) from Task t where t.project.id = :projectId and t.deletedAt is null")
 	LocalDateTime findMaxUpdatedAtByProject_Id(@Param("projectId") UUID projectId);
