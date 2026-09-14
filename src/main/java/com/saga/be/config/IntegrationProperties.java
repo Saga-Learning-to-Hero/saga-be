@@ -291,6 +291,8 @@ public class IntegrationProperties {
 		private String storyPointsFieldId = "";
 		/** Optional explicit sprint custom field id. Resolved via metadata when blank. */
 		private String sprintFieldId = "";
+		/** Optional explicit "Start date" custom field id. Resolved via metadata when blank. */
+		private String startDateFieldId = "";
 
 		public boolean isConfigured() {
 			return enabled
@@ -386,6 +388,14 @@ public class IntegrationProperties {
 
 		public void setSprintFieldId(String sprintFieldId) {
 			this.sprintFieldId = sprintFieldId;
+		}
+
+		public String getStartDateFieldId() {
+			return startDateFieldId;
+		}
+
+		public void setStartDateFieldId(String startDateFieldId) {
+			this.startDateFieldId = startDateFieldId;
 		}
 	}
 

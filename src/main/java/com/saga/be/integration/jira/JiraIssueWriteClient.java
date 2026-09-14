@@ -9,6 +9,7 @@ import com.saga.be.config.IntegrationProperties;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -52,11 +53,22 @@ public class JiraIssueWriteClient {
 	/** Company-managed Sprint field's schema custom type. Not assumed present on Team-managed. */
 	private static final String SPRINT_SCHEMA_CUSTOM_TYPE_FRAGMENT = "gh-sprint";
 
+	/**
+	 * "Start date" has no standard Jira field key on ordinary Task/Story/Subtask issue types (unlike
+	 * {@code duedate}) -- it is always a per-site custom field, on both Company-managed and
+	 * Team-managed projects. No schema-only fallback is attempted for it: its schema custom type is
+	 * the generic {@code datepicker} type shared by many unrelated date fields (e.g. "Target start",
+	 * "Contract date"), so schema alone would be false-positive-prone. Only an exact (case-insensitive)
+	 * name match is trusted.
+	 */
+	private static final String START_DATE_EXACT_NAME = "start date";
+
 	private final RestClient restClient;
 	private final IntegrationProperties properties;
 	private final ObjectMapper mapper;
 	private final ConcurrentHashMap<String, String> storyPointsFieldByCloud = new ConcurrentHashMap<>();
 	private final ConcurrentHashMap<String, String> sprintFieldByCloud = new ConcurrentHashMap<>();
+	private final ConcurrentHashMap<String, String> startDateFieldByCloud = new ConcurrentHashMap<>();
 
 	public JiraIssueWriteClient(RestClient integrationRestClient, IntegrationProperties properties, ObjectMapper mapper) {
 		this.restClient = integrationRestClient;
@@ -67,11 +79,13 @@ public class JiraIssueWriteClient {
 	public IssueSummary getIssue(String accessToken, String cloudId, String issueIdOrKey) {
 		String storyField = resolveStoryPointsFieldId(accessToken, cloudId);
 		String sprintField = resolveSprintFieldId(accessToken, cloudId);
-		String fields = "summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint,parent,labels"
+		String startDateField = resolveStartDateFieldId(accessToken, cloudId);
+		String fields = "summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint,parent,labels,duedate"
 				+ (storyField == null || storyField.isBlank() ? "" : "," + storyField)
 				+ (sprintField == null || sprintField.isBlank() || "sprint".equals(sprintField)
 						? ""
-						: "," + sprintField);
+						: "," + sprintField)
+				+ (startDateField == null || startDateField.isBlank() ? "" : "," + startDateField);
 		try {
 			JsonNode node = restClient
 					.get()
@@ -86,7 +100,7 @@ public class JiraIssueWriteClient {
 			if (node == null || node.path("id").isMissingNode()) {
 				throw issueNotFound();
 			}
-			return toSummary(node, storyField, sprintField, true);
+			return toSummary(node, storyField, sprintField, startDateField, true);
 		} catch (IntegrationException ex) {
 			throw ex;
 		} catch (RestClientResponseException ex) {
@@ -108,6 +122,55 @@ public class JiraIssueWriteClient {
 			String priorityId,
 			Integer storyPoints,
 			List<String> labels) {
+		return createIssue(
+				accessToken, cloudId, projectId, summary, description, issueTypeId, assigneeAccountId, priorityId,
+				storyPoints, labels, null);
+	}
+
+	/**
+	 * Same as the 10-arg overload, extended with Jira's standard {@code duedate} field. {@code
+	 * dueDate} null = omitted (Jira's own default, no due date on create); a value is sent as plain
+	 * ISO {@code yyyy-MM-dd} ({@link LocalDate#toString()} already produces exactly that format).
+	 */
+	public CreatedIssue createIssue(
+			String accessToken,
+			String cloudId,
+			String projectId,
+			String summary,
+			String description,
+			String issueTypeId,
+			String assigneeAccountId,
+			String priorityId,
+			Integer storyPoints,
+			List<String> labels,
+			LocalDate dueDate) {
+		return createIssue(
+				accessToken, cloudId, projectId, summary, description, issueTypeId, assigneeAccountId, priorityId,
+				storyPoints, labels, dueDate, null);
+	}
+
+	/**
+	 * Same as the 11-arg overload, extended with Jira's Start Date. Unlike {@code dueDate}, Start
+	 * Date has no standard field key -- the custom field id is resolved internally the same way
+	 * {@code storyField} already is (dynamic discovery, cached per cloud; never hardcoded). {@code
+	 * startDate} null = omitted. If a value is supplied but the field cannot be resolved safely
+	 * (missing or ambiguous exact-name match), this throws {@link
+	 * IntegrationErrorCode#JIRA_FIELD_INVALID} rather than guessing a customfield id or silently
+	 * dropping the caller's date.
+	 */
+	public CreatedIssue createIssue(
+			String accessToken,
+			String cloudId,
+			String projectId,
+			String summary,
+			String description,
+			String issueTypeId,
+			String assigneeAccountId,
+			String priorityId,
+			Integer storyPoints,
+			List<String> labels,
+			LocalDate dueDate,
+			LocalDate startDate) {
 		ObjectNode body = mapper.createObjectNode();
 		ObjectNode fields = body.putObject("fields");
 		fields.putObject("project").put("id", projectId);
@@ -141,6 +204,17 @@ public class JiraIssueWriteClient {
 					labelsArray.add(label);
 				}
 			}
+		}
+		// null = omitted -> Jira creates the issue with no due date (its own default). "duedate" is
+		// a standard Jira system field, so no dynamic field id resolution is needed.
+		if (dueDate != null) {
+			fields.put("duedate", dueDate.toString());
+		}
+		// null = omitted -> no Start Date sent (Jira's own default). A supplied value with no
+		// safely-resolved field id is a controlled failure -- never guesses/hardcodes an id and
+		// never POSTs the issue without the date the caller asked to set.
+		if (startDate != null) {
+			fields.put(requireStartDateFieldId(accessToken, cloudId), startDate.toString());
 		}
 		try {
 			CreatedIssueResponse created = restClient
@@ -751,6 +825,41 @@ public class JiraIssueWriteClient {
 		return sprintFieldByCloud.get(cloudId);
 	}
 
+	/** Same precedence as {@link #resolveStoryPointsFieldId}, for {@code saga.integration.jira.start-date-field-id}. */
+	public String resolveStartDateFieldId(String accessToken, String cloudId) {
+		String configured = properties.getJira().getStartDateFieldId();
+		if (configured != null && !configured.isBlank()) {
+			log.info("jira field discovery cloudId={} concept=startDate result=CONFIG_OVERRIDE fieldId={}", cloudId, configured);
+			return configured;
+		}
+		return startDateFieldByCloud.computeIfAbsent(cloudId, id -> discoverStartDateField(accessToken, id));
+	}
+
+	/**
+	 * Resolves the Start Date custom field id for a write. Blank/null (undiscoverable or
+	 * ambiguous) is {@link IntegrationErrorCode#JIRA_FIELD_INVALID} -- callers that actually
+	 * intend to set or clear the field must not guess an id.
+	 */
+	public String requireStartDateFieldId(String accessToken, String cloudId) {
+		String startField = resolveStartDateFieldId(accessToken, cloudId);
+		if (startField == null || startField.isBlank()) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_FIELD_INVALID,
+					HttpStatus.BAD_REQUEST,
+					"Start Date field could not be resolved for this Jira site.");
+		}
+		return startField;
+	}
+
+	/** Cache-only counterpart of {@link #peekCachedStoryPointsFieldId} for the Start Date field. */
+	public String peekCachedStartDateFieldId(String cloudId) {
+		String configured = properties.getJira().getStartDateFieldId();
+		if (configured != null && !configured.isBlank()) {
+			return configured;
+		}
+		return startDateFieldByCloud.get(cloudId);
+	}
+
 	private String discoverStoryPointsField(String accessToken, String cloudId) {
 		List<JsonNode> candidates = fetchFieldMetadata(accessToken, cloudId);
 		if (candidates == null) {
@@ -802,6 +911,31 @@ public class JiraIssueWriteClient {
 			}
 		}
 		return selectUnambiguous(cloudId, "sprint", candidates.size(), exactNameMatches, schemaOnlyMatches);
+	}
+
+	/**
+	 * Exact-name-only discovery (see {@link #START_DATE_EXACT_NAME}) -- deliberately no schema-only
+	 * fallback tier, unlike Story Points/Sprint. If more than one field is literally named
+	 * "Start date" (or none are), {@link #selectUnambiguous} fails safe and returns {@code ""}
+	 * rather than guessing.
+	 */
+	private String discoverStartDateField(String accessToken, String cloudId) {
+		List<JsonNode> candidates = fetchFieldMetadata(accessToken, cloudId);
+		if (candidates == null) {
+			return "";
+		}
+		List<String> exactNameMatches = new ArrayList<>();
+		for (JsonNode field : candidates) {
+			String id = text(field, "id");
+			String name = text(field, "name");
+			if (id == null) {
+				continue;
+			}
+			if (name != null && START_DATE_EXACT_NAME.equalsIgnoreCase(name.trim())) {
+				exactNameMatches.add(id);
+			}
+		}
+		return selectUnambiguous(cloudId, "startDate", candidates.size(), exactNameMatches, List.of());
 	}
 
 	/**
@@ -887,6 +1021,18 @@ public class JiraIssueWriteClient {
 	 * the field must never be treated as "Jira cleared this field".
 	 */
 	public static IssueSummary toSummary(JsonNode issue, String storyField, String sprintField, boolean authoritative) {
+		return toSummary(issue, storyField, sprintField, null, authoritative);
+	}
+
+	/**
+	 * Same payload-shape audit as the 4-arg overload, extended with the dynamically-resolved
+	 * "Start date" field id (see {@link #resolveStartDateFieldId}); {@code startDateField} may be
+	 * {@code null}/blank when undiscoverable, in which case {@code startDate} is always {@code null}
+	 * with {@code startDateProvided} following {@code authoritative} alone (never guessed from a
+	 * field id we don't have).
+	 */
+	public static IssueSummary toSummary(
+			JsonNode issue, String storyField, String sprintField, String startDateField, boolean authoritative) {
 		JsonNode fields = issue.path("fields");
 		JsonNode status = fields.path("status");
 		JsonNode category = status.path("statusCategory");
@@ -947,6 +1093,19 @@ public class JiraIssueWriteClient {
 				}
 			}
 		}
+		// "duedate" is Jira's standard system field (never a per-site customfield_ id, unlike Story
+		// Points/Sprint/Start date) -- present on every issue type, on every Jira Cloud site. Same
+		// provided-flag semantics as parent/labels.
+		LocalDate dueDate = parseLocalDate(text(fields, "duedate"));
+		boolean dueDateProvided = authoritative || fields.has("duedate");
+		// "Start date" has no standard field key -- only trust it when the caller resolved a real
+		// custom field id AND the payload actually carries that key. Never guess an id here.
+		LocalDate startDate = null;
+		boolean startDateProvided = authoritative;
+		if (startDateField != null && !startDateField.isBlank() && fields.has(startDateField)) {
+			startDateProvided = true;
+			startDate = parseLocalDate(text(fields, startDateField));
+		}
 		return new IssueSummary(
 				text(issue, "id"),
 				text(issue, "key"),
@@ -973,7 +1132,28 @@ public class JiraIssueWriteClient {
 				parentExternalKey,
 				parentProvided,
 				labels,
-				labelsProvided);
+				labelsProvided,
+				dueDate,
+				dueDateProvided,
+				startDate,
+				startDateProvided);
+	}
+
+	/**
+	 * Jira sends {@code duedate} and date-only custom fields (like "Start date") as plain ISO
+	 * {@code yyyy-MM-dd} with no time component, unlike {@code created}/{@code updated}/sprint dates,
+	 * which carry a full offset timestamp -- LocalDate is therefore the correct canonical type,
+	 * needing no timezone handling.
+	 */
+	private static LocalDate parseLocalDate(String value) {
+		if (value == null || value.isBlank()) {
+			return null;
+		}
+		try {
+			return LocalDate.parse(value.length() > 10 ? value.substring(0, 10) : value);
+		} catch (java.time.format.DateTimeParseException ex) {
+			return null;
+		}
 	}
 
 	private ObjectNode plainAdf(String text) {

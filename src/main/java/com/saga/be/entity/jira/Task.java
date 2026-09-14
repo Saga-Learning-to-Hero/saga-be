@@ -124,6 +124,16 @@ public class Task extends BaseEntity {
 	@Column(name = "due_date")
 	private LocalDateTime dueDate;
 
+	/**
+	 * Jira's Start Date -- a per-site dynamically-resolved custom field (unlike {@code dueDate}'s
+	 * standard {@code duedate} field id; see {@code JiraIssueWriteClient#resolveStartDateFieldId}).
+	 * Same {@code DATETIME(6)} representation as {@code dueDate} (stored at local midnight; both
+	 * are date-only Jira "datepicker" values with no time-of-day), deliberately NOT derived from
+	 * {@link Sprint#getStartDate()}, which is the iteration's own schedule, not this issue's field.
+	 */
+	@Column(name = "start_date")
+	private LocalDateTime startDate;
+
 	@Column(name = "external_updated_at")
 	private LocalDateTime externalUpdatedAt;
 

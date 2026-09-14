@@ -188,6 +188,7 @@ class SyncJobStaleRecoveryTest {
 						org.mockito.ArgumentMatchers.nullable(String.class),
 						org.mockito.ArgumentMatchers.anyInt(),
 						org.mockito.ArgumentMatchers.nullable(String.class),
+						org.mockito.ArgumentMatchers.nullable(String.class),
 						org.mockito.ArgumentMatchers.nullable(String.class)))
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.BAD_GATEWAY, "down"));

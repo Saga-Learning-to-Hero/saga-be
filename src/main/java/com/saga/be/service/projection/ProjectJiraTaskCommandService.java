@@ -138,7 +138,9 @@ public class ProjectJiraTaskCommandService {
 				request.assigneeAccountId(),
 				request.priorityId(),
 				null,
-				request.labels());
+				request.labels(),
+				request.dueDate(),
+				request.startDate());
 
 		boolean secondaryFailed = false;
 		if (request.storyPoints() != null) {
@@ -227,6 +229,29 @@ public class ProjectJiraTaskCommandService {
 		// when present, so no dynamic field id resolution is needed here.
 		if (request.labels() != null) {
 			fields.put("labels", normalizedLabels(request.labels()));
+		}
+		// PATCH semantics (mirrors assignee/clearAssignee above): omitted (dueDate=null,
+		// clearDueDate not true) -> preserve. clearDueDate=true -> explicit clear (Jira standard
+		// "duedate" field accepts null to clear it). A value -> set to exactly that date. A bare
+		// null dueDate is never treated as an accidental clear.
+		if (Boolean.TRUE.equals(request.clearDueDate())) {
+			fields.put("duedate", null);
+		} else if (request.dueDate() != null) {
+			fields.put("duedate", request.dueDate().toString());
+		}
+		// Same PATCH semantics as dueDate/clearDueDate, but Start Date has no standard field key --
+		// the custom field id is resolved dynamically (cached per cloud), and only when this PATCH
+		// actually touches Start Date, never on every patch call. Undiscoverable/ambiguous on this
+		// site -> controlled JIRA_FIELD_INVALID, never a guessed id. clearStartDate=true wins over
+		// a simultaneous startDate value, matching clearDueDate/dueDate above.
+		boolean touchesStartDate = Boolean.TRUE.equals(request.clearStartDate()) || request.startDate() != null;
+		if (touchesStartDate) {
+			String startField = jiraWrite.requireStartDateFieldId(access, integration.getCloudId());
+			if (Boolean.TRUE.equals(request.clearStartDate())) {
+				fields.put(startField, null);
+			} else {
+				fields.put(startField, request.startDate().toString());
+			}
 		}
 		if (!fields.isEmpty()) {
 			jiraWrite.updateIssueFields(access, integration.getCloudId(), issueRef, fields);

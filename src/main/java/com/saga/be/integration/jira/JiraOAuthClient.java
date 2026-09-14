@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.saga.be.config.IntegrationProperties;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -195,14 +196,33 @@ public class JiraOAuthClient {
 			int maxResults,
 			String storyPointsFieldId,
 			String sprintFieldId) {
+		return searchIssues(accessToken, cloudId, projectKey, nextPageToken, maxResults, storyPointsFieldId, sprintFieldId, null);
+	}
+
+	/**
+	 * Same as the 7-arg overload, extended with the dynamically-resolved "Start date" custom field id
+	 * (see {@link JiraIssueWriteClient#resolveStartDateFieldId}) -- {@code null}/blank when
+	 * undiscoverable on this site, in which case Start date is simply not requested/parsed. The
+	 * standard {@code duedate} field is always requested; it needs no per-site discovery.
+	 */
+	public IssueSearchPage searchIssues(
+			String accessToken,
+			String cloudId,
+			String projectKey,
+			String nextPageToken,
+			int maxResults,
+			String storyPointsFieldId,
+			String sprintFieldId,
+			String startDateFieldId) {
 		try {
 			int safeMax = Math.max(1, Math.min(maxResults, 100));
 			String jql = "project = \"" + projectKey.replace("\"", "") + "\" ORDER BY updated DESC";
-			String fields = "summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint,parent,labels"
+			String fields = "summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint,parent,labels,duedate"
 					+ (storyPointsFieldId == null || storyPointsFieldId.isBlank() ? "" : "," + storyPointsFieldId)
 					+ (sprintFieldId == null || sprintFieldId.isBlank() || "sprint".equals(sprintFieldId)
 							? ""
-							: "," + sprintFieldId);
+							: "," + sprintFieldId)
+					+ (startDateFieldId == null || startDateFieldId.isBlank() ? "" : "," + startDateFieldId);
 			String raw = restClient
 					.get()
 					.uri(builder -> {
@@ -230,7 +250,7 @@ public class JiraOAuthClient {
 				if (issueNode == null || issueNode.path("id").isMissingNode() || issueNode.path("id").isNull()) {
 					continue;
 				}
-				issues.add(JiraIssueWriteClient.toSummary(issueNode, storyPointsFieldId, sprintFieldId, true));
+				issues.add(JiraIssueWriteClient.toSummary(issueNode, storyPointsFieldId, sprintFieldId, startDateFieldId, true));
 			}
 			String nextToken = blankToNull(node.path("nextPageToken").asText(null));
 			boolean last = node.path("isLast").asBoolean(false) || nextToken == null || issues.isEmpty();
@@ -492,7 +512,20 @@ public class JiraOAuthClient {
 			String parentExternalKey,
 			boolean parentProvided,
 			List<String> labels,
-			boolean labelsProvided) {
+			boolean labelsProvided,
+			/**
+			 * Jira's standard {@code duedate} system field. Always a plain calendar date (no time
+			 * component) on every Jira Cloud site, Company-managed or Team-managed alike.
+			 */
+			LocalDate dueDate,
+			boolean dueDateProvided,
+			/**
+			 * Jira's "Start date" -- unlike {@code dueDate}, this has no standard system field key;
+			 * it is a per-site custom field (dynamically resolved the same way as Story Points/Sprint)
+			 * that may not exist at all on a given site, hence nullable with its own provided flag.
+			 */
+			LocalDate startDate,
+			boolean startDateProvided) {
 
 		public IssueSummary(
 				String id,
@@ -518,7 +551,7 @@ public class JiraOAuthClient {
 					id, key, summary, statusId, statusName, statusCategory, issueTypeName, issueTypeId,
 					assigneeAccountId, assigneeDisplayName, priorityId, priorityName, storyPoints, description,
 					sprintExternalId, sprintName, sprintState, created, updated,
-					true, true, null, null, true, List.of(), true);
+					true, true, null, null, true, List.of(), true, null, true, null, true);
 		}
 	}
 

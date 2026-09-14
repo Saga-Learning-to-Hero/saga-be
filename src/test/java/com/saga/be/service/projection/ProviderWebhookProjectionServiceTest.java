@@ -73,6 +73,9 @@ class ProviderWebhookProjectionServiceTest {
 		org.mockito.Mockito.lenient()
 				.when(jiraFields.peekCachedSprintFieldId(org.mockito.ArgumentMatchers.any()))
 				.thenReturn("");
+		org.mockito.Mockito.lenient()
+				.when(jiraFields.peekCachedStartDateFieldId(org.mockito.ArgumentMatchers.any()))
+				.thenReturn("");
 		service = new ProviderWebhookProjectionService(
 				new ObjectMapper(),
 				repos,

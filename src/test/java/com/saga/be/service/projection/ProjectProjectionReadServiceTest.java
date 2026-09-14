@@ -389,6 +389,94 @@ class ProjectProjectionReadServiceTest {
 	}
 
 	@Test
+	void listTasks_withDueDate_exposesPlainCalendarDate() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = new Task();
+		task.setId(UUID.randomUUID());
+		task.setExternalKey("SAGA-1");
+		task.setTitle("Has due date");
+		task.setStatus(TaskStatus.TODO);
+		task.setDueDate(java.time.LocalDateTime.of(2026, 9, 18, 0, 0));
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(task));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.dueDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 18));
+	}
+
+	@Test
+	void listTasks_noDueDate_isNull() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = new Task();
+		task.setId(UUID.randomUUID());
+		task.setExternalKey("SAGA-2");
+		task.setTitle("No due date");
+		task.setStatus(TaskStatus.TODO);
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(task));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.dueDate()).isNull();
+	}
+
+	@Test
+	void listTasks_withStartDate_exposesPlainCalendarDate() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = new Task();
+		task.setId(UUID.randomUUID());
+		task.setExternalKey("SAGA-1");
+		task.setTitle("Has start date");
+		task.setStatus(TaskStatus.TODO);
+		task.setStartDate(java.time.LocalDateTime.of(2026, 9, 14, 0, 0));
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(task));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.startDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 14));
+	}
+
+	@Test
+	void listTasks_noStartDate_isNull() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = new Task();
+		task.setId(UUID.randomUUID());
+		task.setExternalKey("SAGA-2");
+		task.setTitle("No start date");
+		task.setStatus(TaskStatus.TODO);
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(task));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.startDate()).isNull();
+	}
+
+	@Test
+	void listTasks_startDateAndDueDate_noTimezoneShift() {
+		// Persistence is local midnight DATETIME(6); the API boundary must truncate via
+		// LocalDateTime.toLocalDate() with no Instant/UTC conversion that could shift the calendar
+		// day. A late-in-day stored time must still expose the same local date.
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = new Task();
+		task.setId(UUID.randomUUID());
+		task.setExternalKey("SAGA-3");
+		task.setTitle("Dates");
+		task.setStatus(TaskStatus.TODO);
+		task.setStartDate(java.time.LocalDateTime.of(2026, 9, 14, 23, 30));
+		task.setDueDate(java.time.LocalDateTime.of(2026, 9, 18, 23, 30));
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(task));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.startDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 14));
+		assertThat(response.dueDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 18));
+	}
+
+	@Test
 	void getTask_requiresSameProject() {
 		stubStudent(RoleInTeam.MEMBER);
 		UUID taskId = UUID.randomUUID();

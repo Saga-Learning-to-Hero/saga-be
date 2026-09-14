@@ -116,6 +116,10 @@ public class JiraTaskSyncService {
 			// (e.g. customfield_10020) vary between Jira sites.
 			String storyPointsFieldId = jiraFields.resolveStoryPointsFieldId(accessToken, integration.getCloudId());
 			String sprintFieldId = jiraFields.resolveSprintFieldId(accessToken, integration.getCloudId());
+			// Discovered/cached the same way as Story Points/Sprint, and requested so bulk sync's
+			// IssueSummary carries a parsed Start Date that JiraTaskProjectionService persists
+			// onto task.start_date (V17). Never hardcoded -- the custom field id varies per site.
+			String startDateFieldId = jiraFields.resolveStartDateFieldId(accessToken, integration.getCloudId());
 			int pageSize = Math.max(1, Math.min(properties.getJiraIssuePageSize(), 100));
 			String nextPageToken = null;
 			int processed = 0;
@@ -132,7 +136,8 @@ public class JiraTaskSyncService {
 							nextPageToken,
 							pageSize,
 							storyPointsFieldId,
-							sprintFieldId);
+							sprintFieldId,
+							startDateFieldId);
 				} catch (IntegrationException ex) {
 					if (ex.getCode() == IntegrationErrorCode.JIRA_UNAUTHORIZED && !refreshedForUnauthorized) {
 						String rejected = accessToken;
@@ -145,7 +150,8 @@ public class JiraTaskSyncService {
 								nextPageToken,
 								pageSize,
 								storyPointsFieldId,
-								sprintFieldId);
+								sprintFieldId,
+								startDateFieldId);
 					} else {
 						throw ex;
 					}

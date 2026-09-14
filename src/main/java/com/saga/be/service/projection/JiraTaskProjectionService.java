@@ -246,6 +246,22 @@ public class JiraTaskProjectionService {
 		if (issue.labelsProvided()) {
 			task.setLabelsJson(writeLabelsJson(issue.labels()));
 		}
+		// Same provided-flag guard. Jira's "duedate" is a plain calendar date (no time-of-day);
+		// stored at local midnight in the existing DATETIME(6) column -- this is a business due
+		// date, never to be confused with created_at/updated_at/external_updated_at, which track
+		// row/provider modification time, not a planned deadline.
+		if (issue.dueDateProvided()) {
+			task.setDueDate(issue.dueDate() == null ? null : issue.dueDate().atStartOfDay());
+		}
+		// Same provided-flag guard as dueDate. startDateProvided already correctly encodes all four
+		// required semantics from the caller (JiraIssueWriteClient.toSummary): authoritative
+		// sync's absence -> provided=true, value=null -> clears; partial webhook that never carried
+		// the dynamically-resolved Start Date field -> provided=false -> this branch is skipped,
+		// preserving whatever is already stored; an explicit null in a webhook payload (the field
+		// key present but blank) -> provided=true, value=null -> clears; a real value -> updates.
+		if (issue.startDateProvided()) {
+			task.setStartDate(issue.startDate() == null ? null : issue.startDate().atStartOfDay());
+		}
 		task.setExternalUpdatedAt(incoming);
 		if (status == TaskStatus.DONE && task.getResolvedAt() == null) {
 			task.setResolvedAt(incoming == null ? LocalDateTime.now() : incoming);
@@ -355,6 +371,8 @@ public class JiraTaskProjectionService {
 					row.setParentExternalId(candidate.getParentExternalId());
 					row.setParentExternalKey(candidate.getParentExternalKey());
 					row.setLabelsJson(candidate.getLabelsJson());
+					row.setDueDate(candidate.getDueDate());
+					row.setStartDate(candidate.getStartDate());
 					row.setExternalUpdatedAt(candidate.getExternalUpdatedAt());
 					row.setResolvedAt(candidate.getResolvedAt());
 					row.setCompletedAt(candidate.getCompletedAt());

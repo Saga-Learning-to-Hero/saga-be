@@ -285,7 +285,7 @@ class JiraTaskProjectionServiceTest {
 		IssueSummary subtask = new IssueSummary(
 				"10050", "SAGA-50", "Implement login form", "1", "To Do", "new", "Subtask", "10003", null, null,
 				null, null, null, null, null, null, null, null, "2026-01-02T10:00:00Z", true, true, "10049",
-				"SAGA-49", true, List.of(), true);
+				"SAGA-49", true, List.of(), true, null, true, null, true);
 		assertThat(service.upsertBatch(project, "SAGA", List.of(subtask))).isEqualTo(1);
 
 		@SuppressWarnings("unchecked")
@@ -308,7 +308,7 @@ class JiraTaskProjectionServiceTest {
 		IssueSummary childBeforeParent = new IssueSummary(
 				"10050", "SAGA-50", "Child synced first", "1", "To Do", "new", "Subtask", "10003", null, null, null,
 				null, null, null, null, null, null, null, "2026-01-02T10:00:00Z", true, true, "10049", "SAGA-49",
-				true, List.of(), true);
+				true, List.of(), true, null, true, null, true);
 		assertThat(service.upsertBatch(project, "SAGA", List.of(childBeforeParent))).isEqualTo(1);
 
 		@SuppressWarnings("unchecked")
@@ -379,7 +379,7 @@ class JiraTaskProjectionServiceTest {
 		IssueSummary webhookNoParentInfo = new IssueSummary(
 				"10050", "SAGA-50", "Title only change", "1", "To Do", "new", "Subtask", "10003", null, null, null,
 				null, null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null, false,
-				List.of(), false);
+				List.of(), false, null, false, null, false);
 		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookNoParentInfo))).isEqualTo(1);
 
 		@SuppressWarnings("unchecked")
@@ -405,7 +405,7 @@ class JiraTaskProjectionServiceTest {
 		IssueSummary webhookParentMoved = new IssueSummary(
 				"10050", "SAGA-50", "Moved to another parent", "1", "To Do", "new", "Subtask", "10003", null, null,
 				null, null, null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, "10060",
-				"SAGA-60", true, List.of(), false);
+				"SAGA-60", true, List.of(), false, null, false, null, false);
 		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookParentMoved))).isEqualTo(1);
 
 		@SuppressWarnings("unchecked")
@@ -433,7 +433,7 @@ class JiraTaskProjectionServiceTest {
 		IssueSummary webhookParentRemoved = new IssueSummary(
 				"10050", "SAGA-50", "Detached from parent", "1", "To Do", "new", "Task", "10001", null, null, null,
 				null, null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null, true,
-				List.of(), false);
+				List.of(), false, null, false, null, false);
 		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookParentRemoved))).isEqualTo(1);
 
 		@SuppressWarnings("unchecked")
@@ -469,7 +469,7 @@ class JiraTaskProjectionServiceTest {
 		IssueSummary childUnrelatedUpdate = new IssueSummary(
 				"10050", "SAGA-50", "Unrelated title change", "1", "To Do", "new", "Subtask", "10003", null, null,
 				null, null, null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null,
-				false, List.of(), false);
+				false, List.of(), false, null, false, null, false);
 		assertThat(service.upsertBatch(project, "SAGA", List.of(childUnrelatedUpdate))).isEqualTo(1);
 
 		@SuppressWarnings("unchecked")
@@ -507,7 +507,7 @@ class JiraTaskProjectionServiceTest {
 		IssueSummary webhookIssue = new IssueSummary(
 				"10001", "SAGA-1", "Login", "1", "In Progress", "indeterminate", "Story", "10001", "acc-1", "Alice",
 				"2", "High", null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null,
-				false, List.of(), false);
+				false, List.of(), false, null, false, null, false);
 		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookIssue))).isEqualTo(1);
 
 		@SuppressWarnings("unchecked")
@@ -599,7 +599,7 @@ class JiraTaskProjectionServiceTest {
 		IssueSummary labelled = new IssueSummary(
 				"10001", "SAGA-1", "Login", "1", "To Do", "new", "Task", "10001", null, null, null, null, null, null,
 				null, null, null, null, "2026-01-02T10:00:00Z", true, true, null, null, true,
-				List.of("backend", "urgent"), true);
+				List.of("backend", "urgent"), true, null, true, null, true);
 		assertThat(service.upsertBatch(project, "SAGA", List.of(labelled))).isEqualTo(1);
 
 		@SuppressWarnings("unchecked")
@@ -627,7 +627,7 @@ class JiraTaskProjectionServiceTest {
 		IssueSummary webhookNoLabelInfo = new IssueSummary(
 				"10001", "SAGA-1", "Title only change", "1", "To Do", "new", "Task", "10001", null, null, null, null,
 				null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null, false,
-				List.of(), false);
+				List.of(), false, null, false, null, false);
 		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookNoLabelInfo))).isEqualTo(1);
 
 		@SuppressWarnings("unchecked")
@@ -653,7 +653,7 @@ class JiraTaskProjectionServiceTest {
 		IssueSummary webhookLabelsCleared = new IssueSummary(
 				"10001", "SAGA-1", "Labels cleared in Jira", "1", "To Do", "new", "Task", "10001", null, null, null,
 				null, null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null, false,
-				List.of(), true);
+				List.of(), true, null, true, null, true);
 		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookLabelsCleared))).isEqualTo(1);
 
 		@SuppressWarnings("unchecked")
@@ -678,7 +678,7 @@ class JiraTaskProjectionServiceTest {
 		IssueSummary webhookLabelsUpdated = new IssueSummary(
 				"10001", "SAGA-1", "Labels updated in Jira", "1", "To Do", "new", "Task", "10001", null, null, null,
 				null, null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null, false,
-				List.of("frontend", "urgent"), true);
+				List.of("frontend", "urgent"), true, null, true, null, true);
 		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookLabelsUpdated))).isEqualTo(1);
 
 		@SuppressWarnings("unchecked")
@@ -686,6 +686,215 @@ class JiraTaskProjectionServiceTest {
 		verify(tasks).saveAll(captor.capture());
 		assertThat(com.saga.be.service.contribution.TaskLabelParser.parse(captor.getValue().getFirst().getLabelsJson()))
 				.containsExactly("frontend", "urgent");
+	}
+
+	// ==================== DUE DATE PROJECTION (full sync + webhook) ====================
+
+	@Test
+	void upsertBatch_authoritativeSync_persistsDueDate() {
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of());
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary withDueDate = new IssueSummary(
+				"10001", "SAGA-1", "Login", "1", "To Do", "new", "Task", "10001", null, null, null, null, null, null,
+				null, null, null, null, "2026-01-02T10:00:00Z", true, true, null, null, true, List.of(), true,
+				java.time.LocalDate.of(2026, 9, 18), true, null, true);
+		assertThat(service.upsertBatch(project, "SAGA", List.of(withDueDate))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		Task saved = captor.getValue().getFirst();
+		assertThat(saved.getDueDate()).isEqualTo(LocalDateTime.of(2026, 9, 18, 0, 0));
+	}
+
+	@Test
+	void upsertBatch_authoritativeSync_noDueDate_staysNull() {
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of());
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary noDueDate = issue("10001", "SAGA-1", "Login", "2026-01-02T10:00:00Z");
+		assertThat(service.upsertBatch(project, "SAGA", List.of(noDueDate))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getDueDate()).isNull();
+	}
+
+	@Test
+	void upsertBatch_webhookOmittingDueDate_preservesExistingDueDate() {
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10001");
+		existing.setExternalKey("SAGA-1");
+		existing.setProject(project);
+		existing.setDueDate(LocalDateTime.of(2026, 9, 18, 0, 0));
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		// Non-authoritative (webhook) payload that never carries "duedate" at all -- must preserve.
+		IssueSummary webhookNoDueDateInfo = new IssueSummary(
+				"10001", "SAGA-1", "Title only change", "1", "To Do", "new", "Task", "10001", null, null, null, null,
+				null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null, false,
+				List.of(), false, null, false, null, false);
+		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookNoDueDateInfo))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getDueDate()).isEqualTo(LocalDateTime.of(2026, 9, 18, 0, 0));
+	}
+
+	@Test
+	void upsertBatch_webhookExplicitDueDateClear_clearsIt() {
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10001");
+		existing.setExternalKey("SAGA-1");
+		existing.setProject(project);
+		existing.setDueDate(LocalDateTime.of(2026, 9, 18, 0, 0));
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		// Webhook reports "duedate":null explicitly -- the true current value (cleared in Jira),
+		// distinct from "omitted" (tested above).
+		IssueSummary webhookDueDateCleared = new IssueSummary(
+				"10001", "SAGA-1", "Due date cleared in Jira", "1", "To Do", "new", "Task", "10001", null, null, null,
+				null, null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null, false,
+				List.of(), false, null, true, null, false);
+		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookDueDateCleared))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getDueDate()).isNull();
+	}
+
+	@Test
+	void upsertBatch_authoritativeSyncRemovesDueDate_clearsStoredDueDate() {
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10001");
+		existing.setExternalKey("SAGA-1");
+		existing.setProject(project);
+		existing.setDueDate(LocalDateTime.of(2026, 9, 18, 0, 0));
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		// Authoritative (full sync) fetch: Jira no longer reports a due date -- must clear it (a
+		// full/authoritative fetch's absence IS the true current value).
+		IssueSummary noLongerDue = issue("10001", "SAGA-1", "Due date removed", "2026-01-02T10:05:00Z");
+		assertThat(service.upsertBatch(project, "SAGA", List.of(noLongerDue))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getDueDate()).isNull();
+	}
+
+	@Test
+	void upsertBatch_authoritativeSync_persistsStartDate() {
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of());
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary withStartDate = new IssueSummary(
+				"10001", "SAGA-1", "Login", "1", "To Do", "new", "Task", "10001", null, null, null, null, null, null,
+				null, null, null, null, "2026-01-02T10:00:00Z", true, true, null, null, true, List.of(), true, null,
+				true, java.time.LocalDate.of(2026, 9, 14), true);
+		assertThat(service.upsertBatch(project, "SAGA", List.of(withStartDate))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		Task saved = captor.getValue().getFirst();
+		assertThat(saved.getStartDate()).isEqualTo(LocalDateTime.of(2026, 9, 14, 0, 0));
+	}
+
+	@Test
+	void upsertBatch_authoritativeSync_noStartDate_staysNull() {
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of());
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary noStartDate = issue("10001", "SAGA-1", "Login", "2026-01-02T10:00:00Z");
+		assertThat(service.upsertBatch(project, "SAGA", List.of(noStartDate))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getStartDate()).isNull();
+	}
+
+	@Test
+	void upsertBatch_webhookOmittingStartDate_preservesExistingStartDate() {
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10001");
+		existing.setExternalKey("SAGA-1");
+		existing.setProject(project);
+		existing.setStartDate(LocalDateTime.of(2026, 9, 14, 0, 0));
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary webhookNoStartDateInfo = new IssueSummary(
+				"10001", "SAGA-1", "Title only change", "1", "To Do", "new", "Task", "10001", null, null, null, null,
+				null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null, false,
+				List.of(), false, null, false, null, false);
+		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookNoStartDateInfo))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getStartDate()).isEqualTo(LocalDateTime.of(2026, 9, 14, 0, 0));
+	}
+
+	@Test
+	void upsertBatch_webhookExplicitStartDateClear_clearsIt() {
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10001");
+		existing.setExternalKey("SAGA-1");
+		existing.setProject(project);
+		existing.setStartDate(LocalDateTime.of(2026, 9, 14, 0, 0));
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary webhookStartDateCleared = new IssueSummary(
+				"10001", "SAGA-1", "Start date cleared in Jira", "1", "To Do", "new", "Task", "10001", null, null, null,
+				null, null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, null, null, false,
+				List.of(), false, null, false, null, true);
+		assertThat(service.upsertBatch(project, "SAGA", List.of(webhookStartDateCleared))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getStartDate()).isNull();
+	}
+
+	@Test
+	void upsertBatch_authoritativeSyncRemovesStartDate_clearsStoredStartDate() {
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10001");
+		existing.setExternalKey("SAGA-1");
+		existing.setProject(project);
+		existing.setStartDate(LocalDateTime.of(2026, 9, 14, 0, 0));
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary noLongerStarted = issue("10001", "SAGA-1", "Start date removed", "2026-01-02T10:05:00Z");
+		assertThat(service.upsertBatch(project, "SAGA", List.of(noLongerStarted))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getStartDate()).isNull();
 	}
 
 	private static IssueSummary issue(String id, String key, String summary, String updated) {

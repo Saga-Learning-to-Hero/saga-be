@@ -134,6 +134,13 @@ public class ProjectProjectionReadService {
 		// on (com.saga.be.service.contribution.TaskLabelParser) -- one canonical parse of
 		// labelsJson, not a second divergent implementation.
 		List<String> labels = com.saga.be.service.contribution.TaskLabelParser.parse(task.getLabelsJson());
+		// task.getDueDate() is stored at local midnight (Jira's duedate has no time component) --
+		// truncate back to a plain calendar date for the API contract, distinct from the
+		// LocalDateTime createdAt/updatedAt/externalUpdatedAt row-modification timestamps.
+		java.time.LocalDate dueDate = task.getDueDate() == null ? null : task.getDueDate().toLocalDate();
+		// Same truncation rule as dueDate -- task.getStartDate() is stored at local midnight (Jira's
+		// Start Date custom field is also date-only, no time component).
+		java.time.LocalDate startDate = task.getStartDate() == null ? null : task.getStartDate().toLocalDate();
 		return new ProjectTaskResponse(
 				task.getId(),
 				task.getExternalId(),
@@ -154,6 +161,8 @@ public class ProjectProjectionReadService {
 				sprint,
 				parent,
 				labels,
+				dueDate,
+				startDate,
 				linkedCommitCount,
 				task.getExternalUpdatedAt(),
 				task.getCreatedAt(),

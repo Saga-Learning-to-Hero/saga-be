@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -125,7 +126,9 @@ class ProjectJiraTaskCommandServiceTest {
 		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
 		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
 		when(tokens.accessToken(integration)).thenReturn("token");
-		when(jiraWrite.createIssue(eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(), any()))
+		when(jiraWrite.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(), any(),
+						any(), any()))
 				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
@@ -140,7 +143,10 @@ class ProjectJiraTaskCommandServiceTest {
 				userId, projectId, new CreateProjectTaskRequest("Login", null, null, null, null, null, null, null));
 
 		assertThat(response.externalKey()).isEqualTo("SAGA-1");
-		verify(jiraWrite).createIssue(eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(), any());
+		verify(jiraWrite)
+				.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(), any(),
+						any(), any());
 		verify(projection).upsertOne(project, "SAGA", canonical);
 		assertThat(lastEvent.get()).isNotNull();
 		assertThat(lastEvent.get().type()).isEqualTo(ProjectRealtimeEventType.TASKS_CHANGED);
@@ -153,7 +159,7 @@ class ProjectJiraTaskCommandServiceTest {
 		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
 		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
 		when(tokens.accessToken(integration)).thenReturn("token");
-		when(jiraWrite.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+		when(jiraWrite.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.JIRA_ISSUE_CREATE_FAILED,
 						org.springframework.http.HttpStatus.BAD_GATEWAY,
@@ -180,7 +186,7 @@ class ProjectJiraTaskCommandServiceTest {
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.createIssue(
 						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
-						eq(List.of("backend", "urgent"))))
+						eq(List.of("backend", "urgent")), any(), any()))
 				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
@@ -195,7 +201,7 @@ class ProjectJiraTaskCommandServiceTest {
 		verify(jiraWrite)
 				.createIssue(
 						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
-						eq(List.of("backend", "urgent")));
+						eq(List.of("backend", "urgent")), any(), any());
 	}
 
 	@Test
@@ -210,7 +216,7 @@ class ProjectJiraTaskCommandServiceTest {
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.createIssue(
 						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
-						org.mockito.ArgumentMatchers.isNull()))
+						isNull(), any(), any()))
 				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
@@ -222,7 +228,7 @@ class ProjectJiraTaskCommandServiceTest {
 		verify(jiraWrite)
 				.createIssue(
 						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
-						org.mockito.ArgumentMatchers.isNull());
+						isNull(), any(), any());
 	}
 
 	@Test
@@ -335,6 +341,367 @@ class ProjectJiraTaskCommandServiceTest {
 						new PatchProjectTaskRequest(
 								null, null, null, null, null, null, null, null, null, null, null,
 								List.of("backend"))))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_FIELD_INVALID);
+		verify(projection, never()).upsertOne(any(), any(), any());
+		verify(jiraWrite, never()).getIssue(any(), any(), any());
+		assertThat(lastEvent.get()).isNull();
+	}
+
+	@Test
+	void create_withDueDate_passesDueDateToJira() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		java.time.LocalDate dueDate = java.time.LocalDate.of(2026, 9, 18);
+		when(jiraWrite.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
+						any(), eq(dueDate), isNull()))
+				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(taskRow());
+
+		service.create(
+				userId,
+				projectId,
+				new CreateProjectTaskRequest("Login", null, null, null, null, null, null, null, null, dueDate));
+
+		verify(jiraWrite)
+				.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
+						any(), eq(dueDate), isNull());
+	}
+
+	@Test
+	void patch_dueDateOmitted_preservesExistingDueDate() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "New title");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(
+						"New title", null, null, null, null, null, null, null, null, null, null, null, null, null));
+
+		@SuppressWarnings("unchecked")
+		org.mockito.ArgumentCaptor<java.util.Map<String, Object>> captor =
+				org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
+		assertThat(captor.getValue()).doesNotContainKey("duedate");
+	}
+
+	@Test
+	void patch_dueDateSupplied_sendsDuedateField() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(
+						null, null, null, null, null, null, null, null, null, null, null, null,
+						java.time.LocalDate.of(2026, 9, 18), null));
+
+		@SuppressWarnings("unchecked")
+		org.mockito.ArgumentCaptor<java.util.Map<String, Object>> captor =
+				org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
+		assertThat(captor.getValue()).containsEntry("duedate", "2026-09-18");
+	}
+
+	@Test
+	void patch_clearDueDate_sendsExplicitNullDuedate() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(
+						null, null, null, null, null, null, null, null, null, null, null, null, null, Boolean.TRUE));
+
+		@SuppressWarnings("unchecked")
+		org.mockito.ArgumentCaptor<java.util.Map<String, Object>> captor =
+				org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
+		assertThat(captor.getValue()).containsKey("duedate");
+		assertThat(captor.getValue().get("duedate")).isNull();
+	}
+
+	@Test
+	void patch_jiraRejectsDueDateUpdate_localTaskNotMutated() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		org.mockito.Mockito.doThrow(new IntegrationException(
+						IntegrationErrorCode.JIRA_FIELD_INVALID,
+						org.springframework.http.HttpStatus.BAD_REQUEST,
+						"Jira field(s) not editable for this issue: duedate"))
+				.when(jiraWrite)
+				.updateIssueFields(any(), any(), any(), any());
+
+		assertThatThrownBy(() -> service.patch(
+						userId,
+						projectId,
+						task.getId(),
+						new PatchProjectTaskRequest(
+								null, null, null, null, null, null, null, null, null, null, null, null,
+								java.time.LocalDate.of(2026, 9, 18), null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_FIELD_INVALID);
+		verify(projection, never()).upsertOne(any(), any(), any());
+		verify(jiraWrite, never()).getIssue(any(), any(), any());
+		assertThat(lastEvent.get()).isNull();
+	}
+
+	@Test
+	void create_withStartDate_passesStartDateToJira() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		java.time.LocalDate startDate = java.time.LocalDate.of(2026, 9, 14);
+		when(jiraWrite.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
+						any(), isNull(), eq(startDate)))
+				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(taskRow());
+
+		service.create(
+				userId,
+				projectId,
+				new CreateProjectTaskRequest(
+						"Login", null, null, null, null, null, null, null, null, null, startDate));
+
+		verify(jiraWrite)
+				.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
+						any(), isNull(), eq(startDate));
+	}
+
+	@Test
+	void create_withoutStartDate_doesNotSendAccidentalStartDate() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
+						any(), any(), isNull()))
+				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(taskRow());
+
+		service.create(
+				userId, projectId, new CreateProjectTaskRequest("Login", null, null, null, null, null, null, null));
+
+		verify(jiraWrite)
+				.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
+						any(), any(), isNull());
+	}
+
+	@Test
+	void patch_startDateOmitted_preservesExistingStartDate() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "New title");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(
+						"New title", null, null, null, null, null, null, null, null, null, null, null, null, null,
+						null, null));
+
+		@SuppressWarnings("unchecked")
+		org.mockito.ArgumentCaptor<java.util.Map<String, Object>> captor =
+				org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
+		assertThat(captor.getValue().keySet())
+				.noneMatch(key -> key.startsWith("customfield_") || "startDate".equalsIgnoreCase(key));
+		verify(jiraWrite, never()).requireStartDateFieldId(any(), any());
+		verify(jiraWrite, never()).resolveStartDateFieldId(any(), any());
+	}
+
+	@Test
+	void patch_startDateSupplied_sendsResolvedStartDateField() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.requireStartDateFieldId("token", "cloud")).thenReturn("customfield_10015");
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(
+						null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+						java.time.LocalDate.of(2026, 9, 14), null));
+
+		@SuppressWarnings("unchecked")
+		org.mockito.ArgumentCaptor<java.util.Map<String, Object>> captor =
+				org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
+		assertThat(captor.getValue()).containsEntry("customfield_10015", "2026-09-14");
+	}
+
+	@Test
+	void patch_clearStartDate_sendsExplicitNullOnResolvedField() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.requireStartDateFieldId("token", "cloud")).thenReturn("customfield_10015");
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(
+						null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+						Boolean.TRUE));
+
+		@SuppressWarnings("unchecked")
+		org.mockito.ArgumentCaptor<java.util.Map<String, Object>> captor =
+				org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
+		assertThat(captor.getValue()).containsKey("customfield_10015");
+		assertThat(captor.getValue().get("customfield_10015")).isNull();
+	}
+
+	@Test
+	void patch_unresolvedStartDateField_doesNotGuessOrWrite() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.requireStartDateFieldId("token", "cloud"))
+				.thenThrow(new IntegrationException(
+						IntegrationErrorCode.JIRA_FIELD_INVALID,
+						org.springframework.http.HttpStatus.BAD_REQUEST,
+						"Start Date field could not be resolved for this Jira site."));
+
+		assertThatThrownBy(() -> service.patch(
+						userId,
+						projectId,
+						task.getId(),
+						new PatchProjectTaskRequest(
+								null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+								java.time.LocalDate.of(2026, 9, 14), null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_FIELD_INVALID);
+		verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+		verify(projection, never()).upsertOne(any(), any(), any());
+		verify(jiraWrite, never()).getIssue(any(), any(), any());
+		assertThat(lastEvent.get()).isNull();
+	}
+
+	@Test
+	void patch_jiraRejectsStartDateUpdate_localTaskNotMutated() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.requireStartDateFieldId("token", "cloud")).thenReturn("customfield_10015");
+		org.mockito.Mockito.doThrow(new IntegrationException(
+						IntegrationErrorCode.JIRA_FIELD_INVALID,
+						org.springframework.http.HttpStatus.BAD_REQUEST,
+						"Jira field(s) not editable for this issue: customfield_10015"))
+				.when(jiraWrite)
+				.updateIssueFields(any(), any(), any(), any());
+
+		assertThatThrownBy(() -> service.patch(
+						userId,
+						projectId,
+						task.getId(),
+						new PatchProjectTaskRequest(
+								null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+								java.time.LocalDate.of(2026, 9, 14), null)))
 				.isInstanceOf(IntegrationException.class)
 				.extracting(ex -> ((IntegrationException) ex).getCode())
 				.isEqualTo(IntegrationErrorCode.JIRA_FIELD_INVALID);
@@ -758,7 +1125,8 @@ class ProjectJiraTaskCommandServiceTest {
 
 	private void verifyZeroProviderInteraction() {
 		verify(tokens, never()).accessToken(any());
-		verify(jiraWrite, never()).createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+		verify(jiraWrite, never())
+				.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
 		verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
 		verify(jiraWrite, never()).transitionIssue(any(), any(), any(), any());
 		verify(jiraWrite, never()).moveIssuesToSprint(any(), any(), any(), any());

@@ -1,5 +1,6 @@
 package com.saga.be.dto.project;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -33,6 +34,20 @@ public record ProjectTaskResponse(
 		Parent parent,
 		/** Jira labels on this issue, parsed from the canonical stored representation. Never null (empty list = no labels). */
 		List<String> labels,
+		/**
+		 * Jira's {@code duedate} -- a factual business deadline, NEVER to be confused with {@link
+		 * #createdAt()}/{@link #updatedAt()}/{@link #externalUpdatedAt()} (all row/provider
+		 * modification timestamps) or the Sprint's own start/end dates. Null when Jira has no due
+		 * date set on this issue.
+		 */
+		LocalDate dueDate,
+		/**
+		 * Jira's Start Date custom field -- a factual planned-start date, NEVER to be confused with
+		 * {@link #createdAt()}/{@link #updatedAt()}/{@link #externalUpdatedAt()} (row/provider
+		 * modification timestamps) or the Sprint's own start/end dates. Null when Jira has no Start
+		 * Date set on this issue, or the site has no discoverable Start Date field at all.
+		 */
+		LocalDate startDate,
 		long linkedCommitCount,
 		LocalDateTime externalUpdatedAt,
 		LocalDateTime createdAt,

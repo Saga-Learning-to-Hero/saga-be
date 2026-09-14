@@ -233,11 +233,14 @@ public class ProviderWebhookProjectionService {
 				// toSummary(authoritative=false) below simply cannot mark those fields "provided",
 				// which correctly preserves whatever SAGA already has -- UNLESS refreshFromProvider
 				// resolves the true current value with a targeted single-issue fetch instead.
+				// (Start date's cache is peeked the same way; a cold Start date cache alone also
+				// triggers the same targeted single-issue refresh rather than a guess.)
 				String storyField = jiraFields.peekCachedStoryPointsFieldId(integration.getCloudId());
 				String sprintField = jiraFields.peekCachedSprintFieldId(integration.getCloudId());
-				IssueSummary summary = storyField == null || sprintField == null
-						? refreshFromProvider(integration, externalId, issue, storyField, sprintField)
-						: JiraIssueWriteClient.toSummary(issue, storyField, sprintField, false);
+				String startField = jiraFields.peekCachedStartDateFieldId(integration.getCloudId());
+				IssueSummary summary = storyField == null || sprintField == null || startField == null
+						? refreshFromProvider(integration, externalId, issue, storyField, sprintField, startField)
+						: JiraIssueWriteClient.toSummary(issue, storyField, sprintField, startField, false);
 				summaries.put(integration, summary);
 			}
 			writes.executeWithoutResult(status -> {
@@ -274,7 +277,12 @@ public class ProviderWebhookProjectionService {
 	 * non-authoritative payload-derived summary so Story Point/Sprint are preserved, not guessed.
 	 */
 	private IssueSummary refreshFromProvider(
-			JiraIntegration integration, String externalId, JsonNode issue, String storyField, String sprintField) {
+			JiraIntegration integration,
+			String externalId,
+			JsonNode issue,
+			String storyField,
+			String sprintField,
+			String startField) {
 		try {
 			String access = tokens.accessToken(integration);
 			return jiraFields.getIssue(access, integration.getCloudId(), externalId);
@@ -283,7 +291,7 @@ public class ProviderWebhookProjectionService {
 					"jira webhook cold-cache issue refresh failed integrationId={} type={}",
 					integration.getId(),
 					ex.getClass().getSimpleName());
-			return JiraIssueWriteClient.toSummary(issue, storyField, sprintField, false);
+			return JiraIssueWriteClient.toSummary(issue, storyField, sprintField, startField, false);
 		}
 	}
 

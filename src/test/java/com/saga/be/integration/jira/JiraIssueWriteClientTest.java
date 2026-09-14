@@ -383,6 +383,357 @@ class JiraIssueWriteClientTest {
 		assertEquals(true, summary.labelsProvided());
 	}
 
+	// ==================== DUE DATE PARSING (standard "duedate" field) ====================
+
+	@Test
+	void toSummary_dueDatePresent_parsesPlainCalendarDate() {
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"Has due date","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},"duedate":"2026-09-18",
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, true);
+		assertEquals(java.time.LocalDate.of(2026, 9, 18), summary.dueDate());
+		assertEquals(true, summary.dueDateProvided());
+	}
+
+	@Test
+	void toSummary_dueDateAbsent_nonAuthoritative_marksNotProvided() {
+		// Webhook (non-authoritative) payload that doesn't carry duedate at all -- must not be
+		// treated as "Jira cleared the due date".
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"Unrelated change","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, false);
+		assertEquals(null, summary.dueDate());
+		assertEquals(false, summary.dueDateProvided());
+	}
+
+	@Test
+	void toSummary_dueDateExplicitNull_nonAuthoritative_marksProvided() {
+		// "duedate" key present but explicitly null -- Jira told us the true value (cleared), so
+		// even a non-authoritative call must mark it provided.
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"Due date cleared","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},"duedate":null,
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, false);
+		assertEquals(null, summary.dueDate());
+		assertEquals(true, summary.dueDateProvided());
+	}
+
+	@Test
+	void toSummary_dueDateMissing_authoritative_marksProvidedWithNull() {
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"No due date","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, true);
+		assertEquals(null, summary.dueDate());
+		assertEquals(true, summary.dueDateProvided());
+	}
+
+	// ==================== START DATE DISCOVERY (dynamic custom field) ====================
+
+	@Test
+	void resolveStartDateFieldId_companyManaged_exactNameMatch() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-sd-1/rest/api/3/field"))
+				.andRespond(withSuccess(
+						"""
+						[
+						  {"id":"customfield_10015","name":"Start date","schema":{"custom":"com.atlassian.jira.plugin.system.customfieldtypes:datepicker"}},
+						  {"id":"customfield_10001","name":"Epic Link","schema":{"custom":"com.pyxis.greenhopper.jira:gh-epic-link"}}
+						]
+						""",
+						MediaType.APPLICATION_JSON));
+
+		assertEquals("customfield_10015", client.resolveStartDateFieldId("token", "cloud-sd-1"));
+		server.verify();
+	}
+
+	@Test
+	void resolveStartDateFieldId_teamManaged_exactNameMatch() {
+		// Team-managed sites are not assumed to expose "Start date" under any particular id, but the
+		// discovered id is still whatever this site actually assigned -- exact-name discovery must
+		// work identically regardless of project management style.
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-sd-2/rest/api/3/field"))
+				.andRespond(withSuccess(
+						"""
+						[
+						  {"id":"customfield_10052","name":"Start date","schema":{"custom":"com.atlassian.jira.plugin.system.customfieldtypes:datepicker"}}
+						]
+						""",
+						MediaType.APPLICATION_JSON));
+
+		assertEquals("customfield_10052", client.resolveStartDateFieldId("token", "cloud-sd-2"));
+		server.verify();
+	}
+
+	@Test
+	void resolveStartDateFieldId_ambiguousExactNameMatches_failsSafeInsteadOfPickingFirst() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-sd-3/rest/api/3/field"))
+				.andRespond(withSuccess(
+						"""
+						[
+						  {"id":"customfield_10015","name":"Start date","schema":{"custom":"com.atlassian.jira.plugin.system.customfieldtypes:datepicker"}},
+						  {"id":"customfield_20099","name":"Start date","schema":{"custom":"com.atlassian.jira.plugin.system.customfieldtypes:datepicker"}}
+						]
+						""",
+						MediaType.APPLICATION_JSON));
+
+		assertEquals("", client.resolveStartDateFieldId("token", "cloud-sd-3"));
+		server.verify();
+	}
+
+	@Test
+	void resolveStartDateFieldId_onlyGenericDatepickerFields_noExactNameMatch_notFound() {
+		// Unlike Story Points/Sprint, Start date has no schema-only fallback -- other unrelated
+		// datepicker-typed fields (e.g. "Target start", "Contract date") must never be mistaken for
+		// "Start date" just because they share the generic datepicker schema type.
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-sd-4/rest/api/3/field"))
+				.andRespond(withSuccess(
+						"""
+						[
+						  {"id":"customfield_10099","name":"Target start","schema":{"custom":"com.atlassian.jira.plugin.system.customfieldtypes:datepicker"}},
+						  {"id":"customfield_10100","name":"Contract date","schema":{"custom":"com.atlassian.jira.plugin.system.customfieldtypes:datepicker"}}
+						]
+						""",
+						MediaType.APPLICATION_JSON));
+
+		assertEquals("", client.resolveStartDateFieldId("token", "cloud-sd-4"));
+		server.verify();
+	}
+
+	@Test
+	void resolveStartDateFieldId_configuredOverride_skipsDiscoveryEntirely() {
+		properties.getJira().setStartDateFieldId("customfield_99998");
+		assertEquals("customfield_99998", client.resolveStartDateFieldId("token", "cloud-sd-5"));
+		server.verify();
+	}
+
+	@Test
+	void peekCachedStartDateFieldId_beforeAnyDiscovery_returnsNullWithoutHttpCall() {
+		assertEquals(null, client.peekCachedStartDateFieldId("cloud-sd-never-synced"));
+		server.verify();
+	}
+
+	@Test
+	void toSummary_startDateFieldResolved_parsesDate() {
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"Has start date","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},"customfield_10015":"2026-09-01",
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, "customfield_10015", true);
+		assertEquals(java.time.LocalDate.of(2026, 9, 1), summary.startDate());
+		assertEquals(true, summary.startDateProvided());
+	}
+
+	@Test
+	void toSummary_startDateFieldUndiscovered_neverGuessesAValue() {
+		// startDateField is null (undiscoverable on this site) -- startDate must stay null. An
+		// authoritative call still marks provided=true (full sync's absence is a clear); never
+		// parsed from an arbitrary field id we don't have.
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"No start date field on this site","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, null, true);
+		assertEquals(null, summary.startDate());
+		assertEquals(true, summary.startDateProvided());
+	}
+
+	@Test
+	void toSummary_startDateFieldResolvedButAbsentFromPayload_nonAuthoritative_marksNotProvided() {
+		// Field id is known, but this particular (non-authoritative) webhook payload doesn't carry
+		// it -- must preserve, not clear.
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"Unrelated change","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, "customfield_10015", false);
+		assertEquals(null, summary.startDate());
+		assertEquals(false, summary.startDateProvided());
+	}
+
+	@Test
+	void toSummary_startDateExplicitNull_nonAuthoritative_marksProvided() {
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"Start date cleared","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},"customfield_10015":null,
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, "customfield_10015", false);
+		assertEquals(null, summary.startDate());
+		assertEquals(true, summary.startDateProvided());
+	}
+
+	@Test
+	void toSummary_startDateMissing_authoritative_marksProvidedWithNull() {
+		JsonNode issue = readTree(
+				"""
+				{"id":"400","key":"SAGA-1","fields":{"summary":"No start date","status":{"id":"1","name":"To Do","statusCategory":{"key":"new"}},
+				"issuetype":{"name":"Task","id":"10002"},
+				"created":"2026-01-01T00:00:00.000+0000","updated":"2026-01-02T00:00:00.000+0000"}}
+				""");
+
+		IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, null, "customfield_10015", true);
+		assertEquals(null, summary.startDate());
+		assertEquals(true, summary.startDateProvided());
+	}
+
+	// ==================== WRITE PATH: create issue with due date ====================
+
+	@Test
+	void createIssue_withDueDate_sendsDuedateField() throws Exception {
+		properties.getJira().setStoryPointsFieldId("customfield_10016");
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-dd-1/rest/api/3/issue"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("\"duedate\":\"2026-09-18\"")))
+				.andRespond(withSuccess("{\"id\":\"10001\",\"key\":\"SAGA-1\"}", MediaType.APPLICATION_JSON));
+
+		client.createIssue(
+				"token", "cloud-dd-1", "10067", "Login", null, null, null, null, null, null,
+				java.time.LocalDate.of(2026, 9, 18));
+
+		server.verify();
+	}
+
+	@Test
+	void createIssue_withoutDueDate_omitsDuedateFieldEntirely() throws Exception {
+		properties.getJira().setStoryPointsFieldId("customfield_10016");
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-dd-2/rest/api/3/issue"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("duedate"))))
+				.andRespond(withSuccess("{\"id\":\"10001\",\"key\":\"SAGA-1\"}", MediaType.APPLICATION_JSON));
+
+		client.createIssue("token", "cloud-dd-2", "10067", "Login", null, null, null, null, null, null, null);
+
+		server.verify();
+	}
+
+	@Test
+	void createIssue_withStartDate_sendsDynamicallyResolvedFieldAsIsoDate() throws Exception {
+		properties.getJira().setStoryPointsFieldId("customfield_10016");
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-sd-write-1/rest/api/3/field"))
+				.andRespond(withSuccess(
+						"""
+						[
+						  {"id":"customfield_10015","name":"Start date","schema":{"custom":"com.atlassian.jira.plugin.system.customfieldtypes:datepicker"}}
+						]
+						""",
+						MediaType.APPLICATION_JSON));
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-sd-write-1/rest/api/3/issue"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("\"customfield_10015\":\"2026-09-14\"")))
+				.andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("startDate"))))
+				.andRespond(withSuccess("{\"id\":\"10001\",\"key\":\"SAGA-1\"}", MediaType.APPLICATION_JSON));
+
+		client.createIssue(
+				"token", "cloud-sd-write-1", "10067", "Login", null, null, null, null, null, null, null,
+				java.time.LocalDate.of(2026, 9, 14));
+
+		server.verify();
+	}
+
+	@Test
+	void createIssue_withoutStartDate_omitsStartDateFieldEntirely() throws Exception {
+		properties.getJira().setStoryPointsFieldId("customfield_10016");
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-sd-write-2/rest/api/3/issue"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("customfield_10015"))))
+				.andRespond(withSuccess("{\"id\":\"10001\",\"key\":\"SAGA-1\"}", MediaType.APPLICATION_JSON));
+
+		client.createIssue("token", "cloud-sd-write-2", "10067", "Login", null, null, null, null, null, null, null, null);
+
+		server.verify();
+	}
+
+	@Test
+	void createIssue_unresolvedStartDateField_throwsControlledError_neverWrites() {
+		properties.getJira().setStoryPointsFieldId("customfield_10016");
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-sd-write-3/rest/api/3/field"))
+				.andRespond(withSuccess(
+						"""
+						[
+						  {"id":"customfield_10099","name":"Target start","schema":{"custom":"com.atlassian.jira.plugin.system.customfieldtypes:datepicker"}}
+						]
+						""",
+						MediaType.APPLICATION_JSON));
+
+		assertThatThrownBy(() -> client.createIssue(
+						"token",
+						"cloud-sd-write-3",
+						"10067",
+						"Login",
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						java.time.LocalDate.of(2026, 9, 14)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_FIELD_INVALID);
+		server.verify();
+	}
+
+	@Test
+	void createIssue_ambiguousStartDateField_throwsControlledError_neverWrites() {
+		properties.getJira().setStoryPointsFieldId("customfield_10016");
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-sd-write-4/rest/api/3/field"))
+				.andRespond(withSuccess(
+						"""
+						[
+						  {"id":"customfield_10015","name":"Start date","schema":{"custom":"com.atlassian.jira.plugin.system.customfieldtypes:datepicker"}},
+						  {"id":"customfield_20099","name":"Start date","schema":{"custom":"com.atlassian.jira.plugin.system.customfieldtypes:datepicker"}}
+						]
+						""",
+						MediaType.APPLICATION_JSON));
+
+		assertThatThrownBy(() -> client.createIssue(
+						"token",
+						"cloud-sd-write-4",
+						"10067",
+						"Login",
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						java.time.LocalDate.of(2026, 9, 14)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_FIELD_INVALID);
+		server.verify();
+	}
+
 	// ==================== WRITE PATH: create issue with labels ====================
 
 	@Test
