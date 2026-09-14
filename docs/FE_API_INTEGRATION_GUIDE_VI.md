@@ -1009,14 +1009,25 @@ Base: `/api/tasks/{taskId}` — **lưu ý path KHÔNG nằm dưới `/api/projec
 
 | Method | Path | Mục đích |
 |---|---|---|
-| POST | `/work-sessions/start` | Bắt đầu 1 phiên làm việc trên task |
-| POST | `/work-sessions/{sessionId}/stop` | Kết thúc phiên |
+| GET | `/work-sessions` | Phiên OPEN hiện tại của user + lịch sử phiên trên task này. Dùng để **khôi phục timer sau reload/đóng modal**. |
+| POST | `/work-sessions/start` | Bắt đầu phiên, hoặc trả về phiên OPEN sẵn có (cùng user + cùng task). **Không tạo bản ghi mới nếu đã có OPEN.** |
+| POST | `/work-sessions/{sessionId}/stop` | Kết thúc phiên. **Chỉ gọi khi user bấm Stop.** Đóng modal / đổi route / reload **không** được gọi stop. |
 | POST | `/contribution-confirmations` | Xác nhận đóng góp — body: `{ "commitShas": [...], "pullRequests": [...] }`, **yêu cầu step-up session** (xác thực lại gần đây) |
 | GET/POST | `/web-links` | Danh sách / thêm link tham khảo cho task |
 | DELETE | `/web-links/{linkId}` | Xoá link |
 | GET/POST | `/files` | Danh sách / upload file đính kèm (multipart) |
 | GET | `/files/{fileId}` | Tải file |
 | DELETE | `/files/{fileId}` | Xoá file |
+
+**Work session — lifecycle (server là nguồn sự thật):**
+
+- `ACTIVE` trên server = `status: "OPEN"` và `endedAt: null`. Timer FE = `now - startedAt` (hoặc dùng `elapsedSeconds` server tính tại thời điểm đọc). **Không persist** một giá trị ticking.
+- Đóng modal / đổi route / reload / mất SSE: **không** gọi `POST .../stop`. Phiên OPEN vẫn chạy trên server.
+- Mở lại Task: `GET /api/tasks/{taskId}/work-sessions` → `activeSession` (có thể `null`). `setInterval` chỉ để vẽ UI.
+- Cùng student + cùng task: tối đa **một** phiên `OPEN`. `POST start` lần 2 trả về phiên đó, không insert thêm. Student **được** có OPEN trên task khác.
+- Nếu `sessions` chứa **nhiều** `OPEN` (dữ liệu cũ trước khi START idempotent): `activeSession` là phiên `startedAt` sớm nhất. Backend **không** tự đóng các bản còn lại. FE vẫn không gọi stop khi đóng modal.
+- `sessions` là lịch sử đầy đủ (OPEN hiện tại + mọi phiên `STOPPED`). Không gộp/xoá lịch sử hợp lệ.
+- Response một phiên: `{ "id", "taskId", "startedAt", "endedAt", "status", "elapsedSeconds" }`.
 
 **Bằng chứng đồng bộ từ Jira là bất biến**: nếu `source === "JIRA"` (field `source` trong response web-link/file), request `DELETE` sẽ bị từ chối với `409 TASK_EVIDENCE_JIRA_IMMUTABLE` — chỉ nội dung do chính SAGA tạo ra (`source === "SAGA"`) mới xoá được.
 
@@ -1535,6 +1546,7 @@ export function subscribeProjectEvents(
 ### EVIDENCE / CONTRIBUTION
 | Method | Path | Role |
 |---|---|---|
+| GET | `/api/tasks/{taskId}/work-sessions` | thành viên (chỉ session của chính mình) |
 | POST | `/api/tasks/{taskId}/work-sessions/start`, `/{sessionId}/stop` | thành viên |
 | POST | `/api/tasks/{taskId}/contribution-confirmations` | thành viên (cần step-up) |
 | GET/POST/DELETE | `/api/tasks/{taskId}/web-links`, `/{linkId}` | thành viên |

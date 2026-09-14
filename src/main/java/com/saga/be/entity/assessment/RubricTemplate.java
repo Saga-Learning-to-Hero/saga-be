@@ -8,7 +8,6 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -27,9 +26,6 @@ public class RubricTemplate extends BaseEntity {
 
 	@Column(name = "criteria_name", length = 255)
 	private String criteriaName;
-
-	@Column(name = "weight", precision = 10, scale = 4)
-	private BigDecimal weight;
 
 	@Column(name = "description", length = 1000)
 	private String description;

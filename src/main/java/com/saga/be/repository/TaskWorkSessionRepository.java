@@ -8,7 +8,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface TaskWorkSessionRepository extends JpaRepository<TaskWorkSession, UUID> {
 
-	List<TaskWorkSession> findByTask_IdAndUser_IdAndStatus(UUID taskId, UUID userId, WorkSessionStatus status);
+	List<TaskWorkSession> findByTask_IdAndUser_IdAndStatusOrderByStartedAtAsc(
+			UUID taskId, UUID userId, WorkSessionStatus status);
+
+	List<TaskWorkSession> findByTask_IdAndUser_IdOrderByStartedAtAsc(UUID taskId, UUID userId);
 
 	boolean existsByProject_Id(UUID projectId);
 

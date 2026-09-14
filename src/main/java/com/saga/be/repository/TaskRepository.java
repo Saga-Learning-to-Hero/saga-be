@@ -2,12 +2,14 @@ package com.saga.be.repository;
 
 import com.saga.be.entity.enums.TaskStatus;
 import com.saga.be.entity.jira.Task;
+import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -60,6 +62,15 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 	Optional<Task> findActiveFetchedById(@Param("id") UUID id);
 
 	Optional<Task> findByIdAndProject_IdAndDeletedAtIsNull(UUID id, UUID projectId);
+
+	/**
+	 * Serializes work-session starts for one Task so two concurrent START requests cannot both
+	 * insert an OPEN row for the same student. Empty SELECT-FOR-UPDATE on sessions would not lock
+	 * the "no row yet" case; locking the Task row does.
+	 */
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	@Query("select t from Task t where t.id = :id and t.deletedAt is null")
+	Optional<Task> lockActiveById(@Param("id") UUID id);
 
 	long countByProject_IdAndDeletedAtIsNull(UUID projectId);
 

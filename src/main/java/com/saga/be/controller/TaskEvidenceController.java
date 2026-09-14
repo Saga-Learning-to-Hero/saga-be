@@ -4,8 +4,9 @@ import com.saga.be.auth.StepUpAuthenticationService;
 import com.saga.be.dto.task.CreateTaskWebLinkRequest;
 import com.saga.be.dto.task.TaskFileResponse;
 import com.saga.be.dto.task.TaskWebLinkResponse;
+import com.saga.be.dto.task.TaskWorkSessionResponse;
+import com.saga.be.dto.task.TaskWorkSessionsResponse;
 import com.saga.be.entity.attribution.ContributionConfirmation;
-import com.saga.be.entity.attribution.TaskWorkSession;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.evidence.TaskEvidenceService;
 import com.saga.be.service.evidence.TaskFileService;
@@ -55,20 +56,27 @@ public class TaskEvidenceController {
 		this.files = files;
 	}
 
-	@PostMapping("/work-sessions/start")
-	public Map<String, Object> start(
+	@GetMapping("/work-sessions")
+	@Operation(summary = "List the current user's work sessions on this task, including any OPEN session")
+	public TaskWorkSessionsResponse listWorkSessions(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID taskId) {
-		TaskWorkSession session = evidence.start(principal.getUserId(), taskId);
-		return Map.of("id", session.getId(), "status", session.getStatus().name());
+		return evidence.listForUser(principal.getUserId(), taskId);
+	}
+
+	@PostMapping("/work-sessions/start")
+	@Operation(summary = "Start a work session, or return the existing OPEN session for this user+task")
+	public TaskWorkSessionResponse start(
+			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID taskId) {
+		return evidence.start(principal.getUserId(), taskId);
 	}
 
 	@PostMapping("/work-sessions/{sessionId}/stop")
-	public Map<String, Object> stop(
+	@Operation(summary = "Stop the caller's work session. Closing a modal/tab must not call this.")
+	public TaskWorkSessionResponse stop(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID taskId,
 			@PathVariable UUID sessionId) {
-		TaskWorkSession session = evidence.stop(principal.getUserId(), taskId, sessionId);
-		return Map.of("id", session.getId(), "status", session.getStatus().name());
+		return evidence.stop(principal.getUserId(), taskId, sessionId);
 	}
 
 	@PostMapping("/contribution-confirmations")
