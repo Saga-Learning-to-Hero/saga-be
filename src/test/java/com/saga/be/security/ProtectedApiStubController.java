@@ -32,6 +32,11 @@ class ProtectedApiStubController {
 		return "sse-ok";
 	}
 
+	@GetMapping(value = "/api/users/me/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+	String userEvents() {
+		return "user-sse-ok";
+	}
+
 	@PostMapping("/api/webhooks/github")
 	ResponseEntity<Void> githubWebhook() {
 		return ResponseEntity.noContent().build();

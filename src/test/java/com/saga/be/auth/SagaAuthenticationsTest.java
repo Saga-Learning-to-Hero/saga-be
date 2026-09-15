@@ -43,6 +43,18 @@ class SagaAuthenticationsTest {
 		assertEquals(AccountRole.ADMIN, principal.getRole());
 	}
 
+	@Test
+	void localAndGoogleAuthenticationNameIsStableUserId() {
+		UserAccount local = account(AccountRole.STUDENT, null, "$argon2id$hash");
+		UserAccount google = account(AccountRole.STUDENT, "google-sub", null);
+		google.setId(local.getId());
+		assertEquals(local.getId().toString(), SagaAuthentications.authenticated(local).getName());
+		assertEquals(local.getId().toString(), SagaAuthentications.authenticated(google).getName());
+		assertEquals(
+				local.getId().toString(),
+				((SagaUserPrincipal) SagaAuthentications.authenticated(local).getPrincipal()).getName());
+	}
+
 	private static UserAccount account(AccountRole role, String googleSubject, String hash) {
 		UserAccount account = new UserAccount();
 		account.setId(UUID.randomUUID());

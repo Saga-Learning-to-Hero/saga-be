@@ -21,7 +21,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
  * Re-checks {@code UserAccount.accountStatus} by primary key on authenticated API requests.
- * Existing Redis sessions are not enumerated or revoked; this is the request-time substitute.
+ * After a successful indexed session delete the caller is unauthenticated (401 / {@code /api/auth/me}
+ * {@code authenticated:false}). This filter is the fallback when a legacy or missed session still
+ * authenticates an INACTIVE account (403 {@code ACCOUNT_DISABLED}).
  */
 public class AccountStatusEnforcementFilter extends OncePerRequestFilter {
 

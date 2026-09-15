@@ -19,8 +19,14 @@ import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.audit.AuditRedactor;
 import com.saga.be.service.audit.AuditService;
+import com.saga.be.realtime.ProjectSseHub;
+import com.saga.be.realtime.UserSseHub;
+import com.saga.be.security.AccountDisabledAfterCommitListener;
+import com.saga.be.security.AccountDisabledEvent;
+import com.saga.be.security.IndexedSessionRevocationService;
 import jakarta.persistence.EntityManager;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +35,9 @@ import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.persistence.autoconfigure.EntityScan;
+import org.springframework.context.ApplicationEvent;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.PayloadApplicationEvent;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -84,7 +93,8 @@ class AdminUserCommandPersistTest {
 	void persistStudentTransitionWritesExactAuditAndNoOpDoesNot() {
 		UserAccount actor = persistAccount("root@saga.local", "Root", AccountRole.ADMIN, AccountStatus.ACTIVE);
 		UserAccount student = persistStudent("ada@fpt.edu.vn", "Ada", "SE123456", AccountStatus.ACTIVE);
-		AdminUserCommandService service = commandService();
+		List<Object> published = new ArrayList<>();
+		AdminUserCommandService service = commandService(published);
 		AuditRequest auditRequest = new AuditRequest("req-9", "10.0.0.1", "JUnit");
 
 		AdminUserResponse inactivated =
@@ -110,19 +120,23 @@ class AdminUserCommandPersistTest {
 		assertEquals("{\"role\":\"STUDENT\"}", row.getMetadataJson());
 		assertTrue(row.getMetadataJson() == null || !row.getMetadataJson().toLowerCase().contains("token"));
 		assertTrue(row.getMetadataJson() == null || !row.getMetadataJson().toLowerCase().contains("session"));
+		assertEquals(1, published.size());
+		assertEquals(student.getId(), ((AccountDisabledEvent) published.getFirst()).userId());
 
 		AdminUserResponse noop = service.updateStatus(actor.getId(), student.getId(), "INACTIVE", auditRequest);
 		entityManager.flush();
 		assertEquals("INACTIVE", noop.accountStatus());
 		assertEquals(1, auditLogs.findAll().size());
+		assertEquals(1, published.size());
 	}
 
 	@Test
 	void persistLecturerInactiveToActive() {
 		UserAccount actor = persistAccount("root@saga.local", "Root", AccountRole.ADMIN, AccountStatus.ACTIVE);
 		UserAccount lecturer = persistLecturer("lan@fe.edu.vn", "Lan", AccountStatus.INACTIVE);
-		AdminUserResponse activated =
-				commandService().updateStatus(actor.getId(), lecturer.getId(), "ACTIVE", new AuditRequest(null, null, null));
+		List<Object> published = new ArrayList<>();
+		AdminUserResponse activated = commandService(published)
+				.updateStatus(actor.getId(), lecturer.getId(), "ACTIVE", new AuditRequest(null, null, null));
 		entityManager.flush();
 		assertEquals("ACTIVE", activated.accountStatus());
 		assertEquals("LECTURER", activated.role());
@@ -131,14 +145,50 @@ class AdminUserCommandPersistTest {
 		assertEquals("{\"accountStatus\":\"INACTIVE\"}", row.getBeforeData());
 		assertEquals("{\"accountStatus\":\"ACTIVE\"}", row.getAfterData());
 		assertEquals("{\"role\":\"LECTURER\"}", row.getMetadataJson());
+		assertTrue(published.isEmpty());
 	}
 
-	private AdminUserCommandService commandService() {
+	@Test
+	void redisRevocationFailureDoesNotReactivateCommittedInactive() {
+		UserAccount actor = persistAccount("root@saga.local", "Root", AccountRole.ADMIN, AccountStatus.ACTIVE);
+		UserAccount student = persistStudent("ada@fpt.edu.vn", "Ada", "SE123456", AccountStatus.ACTIVE);
+		commandService(new ArrayList<>())
+				.updateStatus(actor.getId(), student.getId(), "INACTIVE", new AuditRequest("req-x", null, null));
+		entityManager.flush();
+		assertEquals(AccountStatus.INACTIVE, users.findById(student.getId()).orElseThrow().getAccountStatus());
+
+		IndexedSessionRevocationService failing = org.mockito.Mockito.mock(IndexedSessionRevocationService.class);
+		org.mockito.Mockito.doThrow(new IllegalStateException("redis down")).when(failing).revokeAllForUser(student.getId());
+		new AccountDisabledAfterCommitListener(failing, new UserSseHub(), new ProjectSseHub())
+				.onAccountDisabled(new AccountDisabledEvent(student.getId(), java.time.Instant.parse("2026-09-15T12:00:00Z")));
+
+		entityManager.flush();
+		entityManager.clear();
+		assertEquals(AccountStatus.INACTIVE, users.findById(student.getId()).orElseThrow().getAccountStatus());
+	}
+
+	private AdminUserCommandService commandService(List<Object> published) {
 		ObjectMapper mapper = new ObjectMapper();
+		ApplicationEventPublisher events = new ApplicationEventPublisher() {
+			@Override
+			public void publishEvent(ApplicationEvent event) {
+				if (event instanceof PayloadApplicationEvent<?> payload) {
+					published.add(payload.getPayload());
+				} else {
+					published.add(event);
+				}
+			}
+
+			@Override
+			public void publishEvent(Object event) {
+				published.add(event);
+			}
+		};
 		return new AdminUserCommandService(
 				users,
 				new AdminUserQueryService(users),
-				new AuditService(auditLogs, students, new AuditRedactor(mapper), mapper));
+				new AuditService(auditLogs, students, new AuditRedactor(mapper), mapper),
+				events);
 	}
 
 	private UserAccount persistStudent(String email, String name, String code, AccountStatus status) {

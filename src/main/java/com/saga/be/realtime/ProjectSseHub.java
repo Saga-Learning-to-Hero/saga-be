@@ -15,7 +15,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
- * In-memory project-scoped SSE fan-out. Single backend instance only.
+ * In-memory project-scoped SSE fan-out. Single backend instance only; ACCOUNT_DISABLED
+ * close is also process-local. Redis session revocation remains global.
  */
 @Component
 public class ProjectSseHub {
@@ -23,11 +24,16 @@ public class ProjectSseHub {
 	private static final Logger log = LoggerFactory.getLogger(ProjectSseHub.class);
 	private static final long EMITTER_TIMEOUT_MS = 30 * 60 * 1000L;
 
-	private final ConcurrentHashMap<UUID, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
+	private final ConcurrentHashMap<UUID, CopyOnWriteArrayList<Subscription>> emitters = new ConcurrentHashMap<>();
 
 	public SseEmitter subscribe(UUID projectId) {
+		return subscribe(projectId, null);
+	}
+
+	public SseEmitter subscribe(UUID projectId, UUID userId) {
 		SseEmitter emitter = new SseEmitter(EMITTER_TIMEOUT_MS);
-		emitters.computeIfAbsent(projectId, id -> new CopyOnWriteArrayList<>()).add(emitter);
+		Subscription subscription = new Subscription(userId, emitter);
+		emitters.computeIfAbsent(projectId, id -> new CopyOnWriteArrayList<>()).add(subscription);
 		emitter.onCompletion(() -> remove(projectId, emitter));
 		emitter.onTimeout(() -> remove(projectId, emitter));
 		emitter.onError(ex -> remove(projectId, emitter));
@@ -51,12 +57,31 @@ public class ProjectSseHub {
 		return emitter;
 	}
 
+	public void closeForUser(UUID userId) {
+		if (userId == null) {
+			return;
+		}
+		for (Map.Entry<UUID, CopyOnWriteArrayList<Subscription>> entry : emitters.entrySet()) {
+			for (Subscription subscription : List.copyOf(entry.getValue())) {
+				if (!userId.equals(subscription.userId())) {
+					continue;
+				}
+				try {
+					subscription.emitter().complete();
+				} catch (Exception ignored) {
+					// ignore
+				}
+				remove(entry.getKey(), subscription.emitter());
+			}
+		}
+	}
+
 	@EventListener
 	public void onProjectEvent(ProjectRealtimeEvent event) {
 		if (event == null || event.projectId() == null || event.type() == ProjectRealtimeEventType.READY) {
 			return;
 		}
-		List<SseEmitter> live = emitters.get(event.projectId());
+		List<Subscription> live = emitters.get(event.projectId());
 		if (live == null || live.isEmpty()) {
 			return;
 		}
@@ -67,7 +92,8 @@ public class ProjectSseHub {
 			payload.put("entityId", event.entityId());
 		}
 		payload.put("occurredAt", event.occurredAt() == null ? java.time.Instant.now().toString() : event.occurredAt().toString());
-		for (SseEmitter emitter : live) {
+		for (Subscription subscription : live) {
+			SseEmitter emitter = subscription.emitter();
 			try {
 				emitter.send(SseEmitter.event()
 						.name(event.type().name())
@@ -86,8 +112,9 @@ public class ProjectSseHub {
 
 	@Scheduled(fixedDelayString = "${saga.realtime.heartbeat-ms:25000}")
 	public void heartbeat() {
-		for (Map.Entry<UUID, CopyOnWriteArrayList<SseEmitter>> entry : emitters.entrySet()) {
-			for (SseEmitter emitter : entry.getValue()) {
+		for (Map.Entry<UUID, CopyOnWriteArrayList<Subscription>> entry : emitters.entrySet()) {
+			for (Subscription subscription : entry.getValue()) {
+				SseEmitter emitter = subscription.emitter();
 				try {
 					emitter.send(SseEmitter.event().comment("heartbeat"));
 				} catch (Exception ex) {
@@ -103,18 +130,20 @@ public class ProjectSseHub {
 	}
 
 	void remove(UUID projectId, SseEmitter emitter) {
-		CopyOnWriteArrayList<SseEmitter> list = emitters.get(projectId);
+		CopyOnWriteArrayList<Subscription> list = emitters.get(projectId);
 		if (list == null) {
 			return;
 		}
-		list.remove(emitter);
+		list.removeIf(subscription -> subscription.emitter() == emitter);
 		if (list.isEmpty()) {
 			emitters.remove(projectId, list);
 		}
 	}
 
 	int subscriberCount(UUID projectId) {
-		CopyOnWriteArrayList<SseEmitter> list = emitters.get(projectId);
+		CopyOnWriteArrayList<Subscription> list = emitters.get(projectId);
 		return list == null ? 0 : list.size();
 	}
+
+	private record Subscription(UUID userId, SseEmitter emitter) {}
 }

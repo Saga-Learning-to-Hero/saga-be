@@ -36,6 +36,6 @@ public class ProjectRealtimeController {
 	public SseEmitter subscribe(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
 		authorization.requireReader(principal.getUserId(), projectId);
-		return hub.subscribe(projectId);
+		return hub.subscribe(projectId, principal.getUserId());
 	}
 }

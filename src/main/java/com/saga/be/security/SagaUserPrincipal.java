@@ -3,9 +3,14 @@ package com.saga.be.security;
 import com.saga.be.entity.enums.AccountRole;
 import java.io.Serial;
 import java.io.Serializable;
+import java.security.Principal;
 import java.util.UUID;
 
-public final class SagaUserPrincipal implements Serializable {
+/**
+ * Session principal. {@link #getName()} is the immutable {@code UserAccount.id} so Spring Session
+ * indexed lookup and revocation use a stable key rather than email or username.
+ */
+public final class SagaUserPrincipal implements Principal, Serializable {
 
 	@Serial
 	private static final long serialVersionUID = 1L;
@@ -33,6 +38,11 @@ public final class SagaUserPrincipal implements Serializable {
 		this.avatarUrl = avatarUrl;
 		this.role = role;
 		this.passwordSetupRequired = passwordSetupRequired;
+	}
+
+	@Override
+	public String getName() {
+		return userId == null ? "" : userId.toString();
 	}
 
 	public UUID getUserId() {

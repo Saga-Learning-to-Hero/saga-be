@@ -18,6 +18,7 @@ import com.saga.be.entity.enums.AuditSource;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.repository.UserAccountRepository;
+import com.saga.be.security.AccountDisabledEvent;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.audit.AuditService;
 import java.time.LocalDateTime;
@@ -29,6 +30,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
@@ -40,12 +42,14 @@ class AdminUserCommandServiceTest {
 	private AdminUserQueryService queries;
 	@Mock
 	private AuditService audit;
+	@Mock
+	private ApplicationEventPublisher events;
 
 	private AdminUserCommandService service;
 
 	@BeforeEach
 	void setUp() {
-		service = new AdminUserCommandService(users, queries, audit);
+		service = new AdminUserCommandService(users, queries, audit, events);
 	}
 
 	@Test
@@ -63,6 +67,7 @@ class AdminUserCommandServiceTest {
 		assertEquals(AccountStatus.INACTIVE, target.getAccountStatus());
 		verify(users).findByIdForUpdate(target.getId());
 		verify(users).save(target);
+		verify(events).publishEvent(any(AccountDisabledEvent.class));
 		verify(audit)
 				.record(
 						eq(actor),
@@ -91,6 +96,7 @@ class AdminUserCommandServiceTest {
 		AdminUserResponse result = service.updateStatus(actor.getId(), target.getId(), "ACTIVE", auditRequest());
 
 		assertEquals("ACTIVE", result.accountStatus());
+		verify(events, never()).publishEvent(any(AccountDisabledEvent.class));
 		verify(audit)
 				.record(
 						eq(actor),
@@ -121,6 +127,7 @@ class AdminUserCommandServiceTest {
 		assertEquals("INACTIVE", result.accountStatus());
 		verify(users, never()).save(any());
 		verifyNoInteractions(audit);
+		verify(events, never()).publishEvent(any(AccountDisabledEvent.class));
 	}
 
 	@Test
@@ -144,6 +151,7 @@ class AdminUserCommandServiceTest {
 		assertEquals(missingEx.getMessage(), adminEx.getMessage());
 		verify(users, never()).save(any());
 		verifyNoInteractions(audit);
+		verify(events, never()).publishEvent(any(AccountDisabledEvent.class));
 	}
 
 	@Test
@@ -152,7 +160,7 @@ class AdminUserCommandServiceTest {
 		assertInvalid("PENDING");
 		assertInvalid("LOCKED");
 		assertInvalid(" ");
-		verifyNoInteractions(users, queries, audit);
+		verifyNoInteractions(users, queries, audit, events);
 	}
 
 	private void assertInvalid(String status) {

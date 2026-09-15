@@ -63,7 +63,7 @@ class AccountStatusEnforcementWebTest {
 	}
 
 	@Test
-	void disabledSessionCannotUseProtectedApiButMeAndLogoutWork() throws Exception {
+	void leftoverAuthenticatedSessionIsForbiddenWithAccountDisabled() throws Exception {
 		UserAccount account = student(AccountStatus.INACTIVE);
 		when(users.findById(account.getId())).thenReturn(Optional.of(account));
 
@@ -83,6 +83,17 @@ class AccountStatusEnforcementWebTest {
 						.cookie(csrf.cookie())
 						.header("X-XSRF-TOKEN", csrf.token()))
 				.andExpect(status().isNoContent());
+	}
+
+	@Test
+	void successfulRevocationLooksUnauthenticatedNotAccountDisabled() throws Exception {
+		mockMvc.perform(get("/api/auth/me"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.authenticated").value(false))
+				.andExpect(jsonPath("$.user").value(org.hamcrest.Matchers.nullValue()));
+		mockMvc.perform(get("/api/student/anything"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.code").value("INVALID_CREDENTIALS"));
 	}
 
 	@Test
@@ -144,6 +155,9 @@ class AccountStatusEnforcementWebTest {
 		when(users.findById(account.getId())).thenReturn(Optional.of(account));
 		mockMvc.perform(get("/api/projects/" + UUID.randomUUID() + "/events")
 						.with(authentication(SagaAuthentications.authenticated(account))))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.code").value("ACCOUNT_DISABLED"));
+		mockMvc.perform(get("/api/users/me/events").with(authentication(SagaAuthentications.authenticated(account))))
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.code").value("ACCOUNT_DISABLED"));
 	}

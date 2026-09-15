@@ -8,12 +8,15 @@ import com.saga.be.entity.enums.AuditSource;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.repository.UserAccountRepository;
+import com.saga.be.security.AccountDisabledEvent;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.audit.AuditService;
 import com.saga.be.web.RequestTiming;
+import java.time.Instant;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -34,12 +37,17 @@ public class AdminUserCommandService {
 	private final UserAccountRepository users;
 	private final AdminUserQueryService queries;
 	private final AuditService audit;
+	private final ApplicationEventPublisher events;
 
 	public AdminUserCommandService(
-			UserAccountRepository users, AdminUserQueryService queries, AuditService audit) {
+			UserAccountRepository users,
+			AdminUserQueryService queries,
+			AuditService audit,
+			ApplicationEventPublisher events) {
 		this.users = users;
 		this.queries = queries;
 		this.audit = audit;
+		this.events = events;
 	}
 
 	@Transactional
@@ -53,10 +61,11 @@ public class AdminUserCommandService {
 			if (target.getAccountRole() == AccountRole.ADMIN) {
 				throw notFound();
 			}
-			if (target.getAccountStatus() == requested) {
+			AccountStatus previous = target.getAccountStatus();
+			if (previous == requested) {
 				return queries.get(target.getId());
 			}
-			Map<String, Object> before = Map.of("accountStatus", target.getAccountStatus().name());
+			Map<String, Object> before = Map.of("accountStatus", previous.name());
 			target.setAccountStatus(requested);
 			users.save(target);
 			audit.record(
@@ -73,6 +82,9 @@ public class AdminUserCommandService {
 					auditRequest == null ? null : auditRequest.requestId(),
 					auditRequest == null ? null : auditRequest.ip(),
 					auditRequest == null ? null : auditRequest.userAgent());
+			if (previous == AccountStatus.ACTIVE && requested == AccountStatus.INACTIVE) {
+				events.publishEvent(new AccountDisabledEvent(target.getId(), Instant.now()));
+			}
 			return queries.get(target.getId());
 		});
 	}

@@ -122,8 +122,8 @@ Centralized in backend (`saga.auth.password`):
 
 | HTTP | Code | When |
 | --- | --- | --- |
-| 401 | `INVALID_CREDENTIALS` | Local login failed (generic; no user enumeration) or unauthenticated |
-| 403 | `ACCOUNT_DISABLED` | `account_status` is not `ACTIVE` |
+| 401 | `INVALID_CREDENTIALS` | Local login failed (generic; no user enumeration), or the caller has no session (including after a successful hard session revoke) |
+| 403 | `ACCOUNT_DISABLED` | A leftover authenticated session exists but `account_status` is not `ACTIVE` (legacy/unindexed/missed revoke). Login of an INACTIVE account also returns this. |
 | 403 | `GOOGLE_EMAIL_NOT_VERIFIED` | Google email not verified |
 | 403 | `GOOGLE_DOMAIN_NOT_ALLOWED` | Personal/non-institutional Google, or `hd` policy fail-closed |
 | 409 | `GOOGLE_IDENTITY_CONFLICT` | Email already linked to a different Google `sub` |
@@ -185,6 +185,10 @@ Also sets cookie `XSRF-TOKEN` (same raw `token` value).
 ```
 
 Never includes `passwordHash`, `googleSubject`, session id, or provider tokens.
+
+After a **successful indexed session revoke** (admin ACTIVE → INACTIVE), `GET /api/auth/me` returns `authenticated: false` and protected APIs return **401** `INVALID_CREDENTIALS`. **403** `ACCOUNT_DISABLED` is the fallback when a leftover session still authenticates.
+
+After login, connect `EventSource` to `GET /api/users/me/events` (own stream only). Event `ACCOUNT_DISABLED` payload `{ "type": "ACCOUNT_DISABLED", "occurredAt": "..." }` means: clear client auth state, close EventSource, redirect to login. `POST /api/auth/logout` is best-effort. SSE is process-local; always also handle 401 and 403 `ACCOUNT_DISABLED`.
 
 ### POST /api/auth/login
 

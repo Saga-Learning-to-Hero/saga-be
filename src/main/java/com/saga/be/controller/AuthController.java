@@ -102,7 +102,7 @@ public class AuthController {
 	@Operation(
 			summary = "Current session",
 			description =
-					"Returns the authenticated user when cookie `SAGA_SESSION` is valid. Anonymous callers receive authenticated=false. Role is loaded from MySQL.")
+					"Returns the authenticated user when cookie `SAGA_SESSION` is valid. Anonymous callers and callers whose session was revoked receive authenticated=false. This endpoint does not return 403 ACCOUNT_DISABLED; that code is the fallback on protected APIs when a leftover session still authenticates an INACTIVE account.")
 	@ApiResponses({
 		@ApiResponse(
 				responseCode = "200",

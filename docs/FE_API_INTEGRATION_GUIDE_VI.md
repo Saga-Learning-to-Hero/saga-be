@@ -194,7 +194,7 @@ App load
 | Status | code | Ý nghĩa |
 |---|---|---|
 | 401 | `INVALID_CREDENTIALS` | Sai tài khoản/mật khẩu |
-| 403 | `ACCOUNT_DISABLED` | Tài khoản bị khoá |
+| 403 | `ACCOUNT_DISABLED` | Session còn lại vẫn authenticate nhưng tài khoản không ACTIVE (revoke miss/legacy). Login khi INACTIVE cũng trả mã này. Sau revoke thành công: `/api/auth/me` là `authenticated:false`, API bảo vệ là 401. |
 | 403 | `ACCESS_DENIED` | CSRF sai/thiếu |
 
 ### Luồng màn hình Login
