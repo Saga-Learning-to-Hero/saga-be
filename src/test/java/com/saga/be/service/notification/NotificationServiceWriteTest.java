@@ -9,15 +9,24 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.saga.be.config.FcmProperties;
 import com.saga.be.dto.notification.UserNotificationResponse;
 import com.saga.be.entity.account.UserAccount;
+import com.saga.be.entity.enums.DeliveryStatus;
 import com.saga.be.entity.enums.NotificationType;
+import com.saga.be.entity.enums.PushPlatform;
+import com.saga.be.entity.notification.FirebaseInstallation;
+import com.saga.be.entity.notification.NotificationDelivery;
 import com.saga.be.entity.notification.UserNotification;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.notification.NotificationCreatedEvent;
+import com.saga.be.repository.FirebaseInstallationRepository;
+import com.saga.be.repository.NotificationDeliveryRepository;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.repository.UserNotificationRepository;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -37,6 +46,10 @@ class NotificationServiceWriteTest {
 	private UserAccountRepository users;
 	@Mock
 	private ApplicationEventPublisher events;
+	@Mock
+	private FirebaseInstallationRepository installations;
+	@Mock
+	private NotificationDeliveryRepository deliveries;
 
 	@Test
 	void duplicateEventKeyAfterLockReusesRowAndDoesNotPublish() {
@@ -59,6 +72,8 @@ class NotificationServiceWriteTest {
 		assertEquals(existing.getId(), response.id());
 		verify(notifications, never()).save(any());
 		verify(events, never()).publishEvent(any());
+		verify(deliveries, never()).save(any());
+		verify(installations, never()).findActiveWithTokenByOwnerUserId(any());
 	}
 
 	@Test
@@ -110,8 +125,57 @@ class NotificationServiceWriteTest {
 		assertSame(AcademicErrorCode.REQUEST_INVALID, ex.getCode());
 	}
 
+	@Test
+	void createWithFcmEnabledPlansPendingDelivery() {
+		UUID recipientId = UUID.randomUUID();
+		UserAccount recipient = recipient(recipientId);
+		FirebaseInstallation device = device(recipient, "token-1");
+		when(users.findByIdForUpdate(recipientId)).thenReturn(Optional.of(recipient));
+		when(notifications.save(any(UserNotification.class))).thenAnswer(invocation -> {
+			UserNotification row = invocation.getArgument(0);
+			row.setId(UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"));
+			return row;
+		});
+		when(installations.findActiveWithTokenByOwnerUserId(recipientId)).thenReturn(List.of(device));
+		when(deliveries.existsByNotification_IdAndInstallation_Id(any(), any())).thenReturn(false);
+
+		service(true)
+				.createNotification(recipientId, NotificationType.SYSTEM, "Hello", "Body", "/inbox", null);
+
+		ArgumentCaptor<NotificationDelivery> captor = ArgumentCaptor.forClass(NotificationDelivery.class);
+		verify(deliveries).save(captor.capture());
+		assertEquals(DeliveryStatus.PENDING, captor.getValue().getDeliveryStatus());
+		assertEquals(device.getId(), captor.getValue().getInstallation().getId());
+		assertEquals(0, captor.getValue().getAttemptCount());
+		verify(events).publishEvent(any(NotificationCreatedEvent.class));
+	}
+
+	@Test
+	void createWithFcmDisabledDoesNotPlanDeliveries() {
+		UUID recipientId = UUID.randomUUID();
+		UserAccount recipient = recipient(recipientId);
+		when(users.findByIdForUpdate(recipientId)).thenReturn(Optional.of(recipient));
+		when(notifications.save(any(UserNotification.class))).thenAnswer(invocation -> {
+			UserNotification row = invocation.getArgument(0);
+			row.setId(UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"));
+			return row;
+		});
+
+		service(false)
+				.createNotification(recipientId, NotificationType.SYSTEM, "Hello", "Body", "/inbox", null);
+
+		verify(installations, never()).findActiveWithTokenByOwnerUserId(any());
+		verify(deliveries, never()).save(any());
+	}
+
 	private NotificationService service() {
-		return new NotificationService(notifications, users, events);
+		return service(false);
+	}
+
+	private NotificationService service(boolean fcmEnabled) {
+		FcmProperties properties = new FcmProperties();
+		properties.setEnabled(fcmEnabled);
+		return new NotificationService(notifications, users, events, installations, deliveries, properties);
 	}
 
 	private static UserAccount recipient(UUID id) {
@@ -129,6 +193,19 @@ class NotificationServiceWriteTest {
 		row.setTitle("Added to a team");
 		row.setMessage("You were added to Team 1.");
 		row.setEventKey(eventKey);
+		return row;
+	}
+
+	private static FirebaseInstallation device(UserAccount owner, String token) {
+		FirebaseInstallation row = new FirebaseInstallation();
+		row.setId(UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc"));
+		row.setOwnerUser(owner);
+		row.setFirebaseInstallationId("fid-1");
+		row.setFcmToken(token);
+		row.setPlatform(PushPlatform.WEB);
+		row.setActive(true);
+		row.setLastRegisteredAt(LocalDateTime.of(2026, 1, 1, 0, 0));
+		row.setVersion(0L);
 		return row;
 	}
 }

@@ -2,6 +2,7 @@ package com.saga.be.repository;
 
 import com.saga.be.entity.notification.FirebaseInstallation;
 import jakarta.persistence.LockModeType;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -37,4 +38,14 @@ public interface FirebaseInstallationRepository extends JpaRepository<FirebaseIn
 	long countByOwnerUser_Id(UUID ownerUserId);
 
 	void deleteByOwnerUser_Id(UUID ownerUserId);
+
+	@Query(
+			"""
+			select i from FirebaseInstallation i join fetch i.ownerUser
+			where i.ownerUser.id = :ownerId
+			  and i.active = true
+			  and i.fcmToken is not null
+			  and i.fcmToken <> ''
+			""")
+	List<FirebaseInstallation> findActiveWithTokenByOwnerUserId(@Param("ownerId") UUID ownerUserId);
 }
