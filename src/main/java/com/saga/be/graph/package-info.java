@@ -1,4 +1,4 @@
 /**
- * Graph-specific orchestration, including Neo4j projection, query, and mapping.
+ * Neo4j projection and Cytoscape graph query for SAGA activity graphs.
  */
 package com.saga.be.graph;
