@@ -410,7 +410,7 @@ FK peer_review **ON DELETE CASCADE**, rubric_template RESTRICT.
 
 ### 38. `rubric_template`
 
-Optional `subject_id`. Soft-delete `deleted_at`.
+Optional `subject_id`. Soft-delete `deleted_at`. No per-criterion `weight` — peer score is the star total.
 
 ### 39. `project_group_weight_config`
 

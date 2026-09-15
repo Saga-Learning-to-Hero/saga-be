@@ -94,6 +94,20 @@ public interface TeamMemberRepository extends JpaRepository<TeamMember, UUID> {
 
 	@Query(
 			"""
+			SELECT CASE WHEN COUNT(m) > 0 THEN true ELSE false END
+			FROM TeamMember m
+			JOIN m.team t
+			JOIN m.courseEnrollment e
+			JOIN e.studentProfile p
+			WHERE t.project.id = :projectId
+			  AND p.id = :studentId
+			  AND e.enrollmentStatus = com.saga.be.entity.enums.EnrollmentStatus.ACTIVE
+			""")
+	boolean existsActiveByProjectIdAndStudentProfileId(
+			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
+
+	@Query(
+			"""
 			SELECT m FROM TeamMember m
 			JOIN FETCH m.team
 			JOIN FETCH m.courseEnrollment e

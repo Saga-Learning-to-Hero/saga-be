@@ -174,4 +174,36 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			where l.id in :ids
 			""")
 	List<TaskGitCommitLink> findFetchedByIdIn(@Param("ids") Collection<UUID> ids);
+
+	/**
+	 * Sprint activity: commit ids linked to a non-deleted task in a sprint —
+	 * {@code Object[]{UUID sprintId, UUID commitId}}. A commit linked to several tasks in the same
+	 * sprint appears more than once; callers must distinct-count per sprint.
+	 */
+	@Query(
+			"""
+			select t.sprint.id, c.id
+			from TaskGitCommitLink l
+			join l.gitCommit c
+			join l.task t
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			  and t.sprint is not null
+			""")
+	List<Object[]> findLinkedCommitIdsBySprint(@Param("projectId") UUID projectId);
+
+	/** Personal sprint activity: same shape as {@link #findLinkedCommitIdsBySprint}, authored by {@code studentId}. */
+	@Query(
+			"""
+			select t.sprint.id, c.id
+			from TaskGitCommitLink l
+			join l.gitCommit c
+			join l.task t
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			  and t.sprint is not null
+			  and c.authorStudent.id = :studentId
+			""")
+	List<Object[]> findLinkedCommitIdsBySprintAndAuthor(
+			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
 }
