@@ -389,24 +389,24 @@ Backend phải ghi rõ:
 
 Backend không được lấy “trả về toàn bộ graph” làm pattern tích hợp mặc định.
 
-Graph endpoint sau này nên expose scope tường minh, ví dụ:
+Năm endpoint Cytoscape dưới đây **đã chốt**, luôn scoped 1 project / 1 sprint / 1 student. GET rebuild Neo4j projection từ MySQL rồi trả `{ nodes, edges }` (Cytoscape.js elements). Evidence phase này chỉ `COMMIT`.
 
-```text
-course
-class
-project
-team
-sprint
-status
-depth
-maxNodes
-```
+Quyền: `ProjectDataAuthorization.requireReader` (ACTIVE team member hoặc lecturer phụ trách course). ADMIN bị deny.
 
-Query parameter chính xác: **TBD / Chưa chốt**.
+`type` node: `STUDENT | TEAM | PROJECT | SPRINT | TASK | COMMIT | CRITERION | IDENTITY`  
+`label` cạnh: `MEMBER_OF | OWNS | HAS_SPRINT | CONTAINS | ASSIGNED_TO | EVIDENCED_BY | CLASSIFIED_AS | AUTHORED_BY | MAPS_TO | REVIEWED`
 
-Frontend không được dựa vào kích thước graph mà Backend chưa cam kết trong contract.
+| Method | Path | Graph |
+| --- | --- | --- |
+| GET | `/api/projects/{projectId}/graph/overview?sprintId=` | 1 Student Activity (`sprintId` optional) |
+| GET | `/api/projects/{projectId}/students/{studentId}/graph/contribution?sprintId=` | 2 Contribution path (`sprintId` optional) |
+| GET | `/api/projects/{projectId}/sprints/{sprintId}/graph/activity` | 3 Sprint activity |
+| GET | `/api/projects/{projectId}/graph/attribution?sprintId=` | 4 Attribution / identity (`sprintId` optional) |
+| GET | `/api/projects/{projectId}/sprints/{sprintId}/graph/peer-review` | 5 Peer review |
 
-Lần load graph ban đầu nên được xem là snapshot/read query; realtime chủ yếu phát delta.
+Chi tiết node/cạnh từng graph: `docs/GRAPHS_TO_DRAW.md`.
+
+Realtime vẫn chủ yếu phát delta; lần GET graph là snapshot.
 
 ---
 
@@ -524,6 +524,11 @@ Breaking change phải được nêu rõ.
 | GET | `/api/lecturer/courses/{courseId}/contribution-team-weights` | Session | LECTURER (assigned) or ADMIN | Contribution V1 | `LecturerContributionWeightController` |
 | GET | `/api/projects/{projectId}/group-weights` | Session | LECTURER (assigned) or ADMIN | Contribution V1 | `ProjectGroupWeightController` |
 | PUT | `/api/projects/{projectId}/group-weights` | Session + CSRF | LECTURER (assigned) or ADMIN | Contribution V1 | `ProjectGroupWeightController` |
+| GET | `/api/projects/{projectId}/graph/overview` | Session | Team member or assigned lecturer | Graph V1 (Neo4j); `sprintId` optional | `ProjectGraphController` |
+| GET | `/api/projects/{projectId}/students/{studentId}/graph/contribution` | Session | Team member or assigned lecturer | Graph V1 (Neo4j); `sprintId` optional | `ProjectGraphController` |
+| GET | `/api/projects/{projectId}/sprints/{sprintId}/graph/activity` | Session | Team member or assigned lecturer | Graph V1 (Neo4j) | `ProjectGraphController` |
+| GET | `/api/projects/{projectId}/graph/attribution` | Session | Team member or assigned lecturer | Graph V1 (Neo4j); `sprintId` optional | `ProjectGraphController` |
+| GET | `/api/projects/{projectId}/sprints/{sprintId}/graph/peer-review` | Session | Team member or assigned lecturer | Graph V1 (Neo4j) | `ProjectGraphController` |
 | GET | `/api/tasks/{taskId}/web-links` | Session | Team member | Task evidence V1 | `TaskEvidenceController` |
 | POST | `/api/tasks/{taskId}/web-links` | Session + CSRF | Team member | Task evidence V1 | `TaskEvidenceController` |
 | DELETE | `/api/tasks/{taskId}/web-links/{linkId}` | Session + CSRF | Team member | Task evidence V1 | `TaskEvidenceController` |

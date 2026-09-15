@@ -142,11 +142,11 @@ interface CytoscapeGraphResponse {
 
 ## IV. Phản hồi Backend (đã chốt)
 
-Ngôn ngữ đồ thị khóa tại [`docs/SAGA_GRAPHS_TO_DRAW.md`](./SAGA_GRAPHS_TO_DRAW.md). Graph API **đã ship** (`ProjectGraphController`, assemble từ projection JPA). Neo4j projection **chưa ship**. FE gọi đúng 5 path dưới đây; **đừng** tự ghép từ `/tasks` + `/commits`.
+Ngôn ngữ đồ thị khóa tại [`docs/SAGA_GRAPHS_TO_DRAW.md`](./SAGA_GRAPHS_TO_DRAW.md) (nếu còn) / mục dưới. Graph API **đã ship** (`ProjectGraphController`). GET rebuild projection Neo4j từ MySQL rồi trả Cytoscape JSON.
 
 ### 1. Tên cạnh — trả lời câu hỏi Cypher
 
-Hiện **không có Cypher đang chạy**. Chốt tên cạnh cho Cytoscape CSS như sau. Không dùng `IMPLEMENTS` / đảo mũi tên evidence.
+Hiện Cypher **đang chạy** khi FE gọi 5 GET graph (rebuild + query Neo4j). Tên cạnh Cytoscape CSS:
 
 | Cạnh chốt | Chiều | FE đề xuất | Quyết định |
 | --- | --- | --- | --- |
@@ -171,11 +171,11 @@ Hiện **không có Cypher đang chạy**. Chốt tên cạnh cho Cytoscape CSS 
 - `name`: `CODE` / `TEST` / `DOCUMENT` / `RESEARCH` — **không** viết tắt `DOC`
 - Task chỉ có cạnh `CLASSIFIED_AS` khi đúng một nhãn `saga:*` và (nếu DOCUMENT/RESEARCH) đã có file hoặc link nộp
 
-Khi graph API chưa đọc Neo4j, BE vẫn **emit 4 node Criterion + cạnh thật** trong JSON. Không phải “node giả”; đó là khái niệm domain.
+Khi GET graph, BE MERGE 4 node Criterion trên Neo4j rồi emit đúng node + cạnh `CLASSIFIED_AS` trong JSON.
 
 ### 3. Identity — trạng thái thật
 
-- Neo4j **chưa** có node `(:Identity)`.
+- Neo4j **đã** có node `(:Identity)` khi GET graph (projection từ commit + `identity_map`/`authorStudent`).
 - Commit **không** map thẳng bắt buộc sang Student. Projection GitHub giữ commit dù không khớp ai: `authorStudentId = null`, vẫn có `authorExternalId` / login.
 - Map người qua identity đã link (GitHub account id hoặc username). Khớp thì gán student; không khớp thì commit **vẫn lưu** (commit mồ côi — đúng Graph 4).
 
@@ -212,13 +212,13 @@ Chỉnh so với bản FE:
 
 | Graph | Path | Node có mặt | Cạnh có mặt |
 | --- | --- | --- | --- |
-| 1 Overview | `GET /api/projects/{projectId}/graph/overview` | STUDENT, TEAM, PROJECT, SPRINT, TASK, COMMIT | MEMBER_OF, OWNS, HAS_SPRINT, CONTAINS, ASSIGNED_TO, EVIDENCED_BY |
+| 1 Overview | `GET /api/projects/{projectId}/graph/overview?sprintId=` | STUDENT, TEAM, PROJECT, SPRINT, TASK, COMMIT | MEMBER_OF, OWNS, HAS_SPRINT, CONTAINS, ASSIGNED_TO, EVIDENCED_BY |
 | 2 Contribution | `GET /api/projects/{projectId}/students/{studentId}/graph/contribution?sprintId=` | STUDENT, TASK, CRITERION, COMMIT | ASSIGNED_TO, CLASSIFIED_AS, EVIDENCED_BY |
 | 3 Sprint | `GET /api/projects/{projectId}/sprints/{sprintId}/graph/activity` | STUDENT, SPRINT, TASK, CRITERION, COMMIT | CONTAINS, ASSIGNED_TO, CLASSIFIED_AS, EVIDENCED_BY |
-| 4 Attribution | `GET /api/projects/{projectId}/graph/attribution` | COMMIT, IDENTITY, STUDENT, TASK (nếu đã link) | AUTHORED_BY, MAPS_TO, EVIDENCED_BY, ASSIGNED_TO |
+| 4 Attribution | `GET /api/projects/{projectId}/graph/attribution?sprintId=` | COMMIT, IDENTITY, STUDENT, TASK (nếu đã link) | AUTHORED_BY, MAPS_TO, EVIDENCED_BY, ASSIGNED_TO |
 | 5 Peer | `GET /api/projects/{projectId}/sprints/{sprintId}/graph/peer-review` | STUDENT | REVIEWED `{weight: stars}` |
 
-`sprintId` trên Graph 2 là **optional**. Bỏ query = cả project (chỉ Task DONE + có sprint, đúng rule contribution).
+`sprintId` trên Graph 1, 2, 4 là **optional**. Bỏ query = cả project. Có `sprintId` = chỉ sprint đó (Graph 1 không gồm task backlog; Graph 4 chỉ commit gắn task trong sprint). Graph 3 và 5 luôn theo sprint trên path.
 
 Graph 1 **không** trả Criterion / Identity / REVIEWED. Graph 5 **chỉ** Student + REVIEWED.
 
@@ -228,4 +228,4 @@ Payload: `{ nodes: [{ data: { id, label, type, ... } }], edges: [{ data: { id, s
 
 ### Việc FE làm với API đã ship
 
-Cytoscape CSS lock theo tên cạnh cột “Cạnh chốt”. Gọi 5 GET trên; không mock payload nữa. Neo4j không nằm trên đường đọc này.
+Cytoscape CSS lock theo tên cạnh cột “Cạnh chốt”. Gọi 5 GET trên. Mỗi GET rebuild graph Neo4j của project rồi đọc lại.

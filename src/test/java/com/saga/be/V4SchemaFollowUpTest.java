@@ -7,8 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.HexFormat;
 import org.junit.jupiter.api.Test;
 
 class V4SchemaFollowUpTest {
@@ -44,11 +42,7 @@ class V4SchemaFollowUpTest {
 	}
 
 	private static String sha256(String classpath) throws Exception {
-		try (InputStream in = V4SchemaFollowUpTest.class.getResourceAsStream(classpath)) {
-			assertTrue(in != null, "missing " + classpath);
-			byte[] digest = MessageDigest.getInstance("SHA-256").digest(in.readAllBytes());
-			return HexFormat.of().formatHex(digest);
-		}
+		return MigrationChecksumSupport.sha256Lf(V4SchemaFollowUpTest.class, classpath);
 	}
 
 	private static String read(String classpath) throws IOException {

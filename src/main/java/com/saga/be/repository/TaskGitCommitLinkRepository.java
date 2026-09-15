@@ -23,6 +23,16 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 
 	@Query(
 			"""
+			select l from TaskGitCommitLink l
+			join fetch l.task t
+			join fetch l.gitCommit
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			""")
+	List<TaskGitCommitLink> findFetchedByProject_Id(@Param("projectId") UUID projectId);
+
+	@Query(
+			"""
 			select l.task.id, count(l)
 			from TaskGitCommitLink l
 			join l.task t
