@@ -115,7 +115,13 @@ public class ProjectGraphProjector {
 	}
 
 	public static String etag(UUID projectId, long revision) {
-		return "graph-" + projectId + "-" + revision;
+		return etag(projectId, revision, "");
+	}
+
+	public static String etag(UUID projectId, long revision, String viewKey) {
+		String base = "graph-" + projectId + "-" + revision;
+		String hash = GraphRead.viewKeyHash(viewKey);
+		return hash.isEmpty() ? base : base + "-" + hash;
 	}
 
 	private CompletableFuture<Long> rebuildAsync(UUID projectId) {

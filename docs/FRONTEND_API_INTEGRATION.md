@@ -394,7 +394,7 @@ Backend phải ghi rõ:
 
 Backend không được lấy “trả về toàn bộ graph” làm pattern tích hợp mặc định.
 
-Năm endpoint Cytoscape dưới đây **đã chốt**, luôn scoped 1 project / 1 sprint / 1 student. GET **đọc** Neo4j; rebuild chạy debounce sau mutation MySQL, rồi SSE `GRAPH_CHANGED`. Body `{ nodes, edges }`. ETag / `304` / header `X-Graph-Revision`. Playbook: `docs/FRONTEND_GRAPH_API.md`. Evidence phase này chỉ `COMMIT`.
+Năm endpoint Cytoscape dưới đây **đã chốt**, luôn scoped 1 project / 1 sprint / 1 student. GET **đọc** Neo4j; rebuild chạy debounce sau mutation MySQL, rồi SSE `GRAPH_CHANGED`. Không query subgraph: body `{ nodes, edges }` như cũ. Có `focusNodeId` / `depth` / `nodeTypes` / `edgeTypes` / `anomaliesOnly` / `maxNodes` / `cursor`: thêm `meta` (truncate + continuation), ETag phụ thuộc revision **và** query. Playbook: `docs/FRONTEND_GRAPH_API.md`. Evidence phase này chỉ `COMMIT`.
 
 Quyền: `ProjectDataAuthorization.requireReader` (ACTIVE team member hoặc lecturer phụ trách course). ADMIN bị deny.
 
