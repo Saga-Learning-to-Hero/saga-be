@@ -1,10 +1,9 @@
 package com.saga.be.graph;
 
-import com.saga.be.dto.graph.CytoscapeGraphResponse;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
-import com.saga.be.graph.ProjectGraphSnapshot.StudentNode;
 import com.saga.be.repository.SprintRepository;
+import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.service.projection.ProjectDataAuthorization;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
@@ -16,38 +15,36 @@ import org.springframework.stereotype.Service;
 public class ProjectGraphService {
 
 	private final ProjectDataAuthorization authorization;
-	private final ProjectGraphLoader loader;
-	private final ProjectGraphWriter writer;
+	private final ProjectGraphProjector projector;
 	private final ProjectGraphReader reader;
 	private final SprintRepository sprints;
+	private final TeamMemberRepository members;
 
 	public ProjectGraphService(
 			ProjectDataAuthorization authorization,
-			ProjectGraphLoader loader,
-			ProjectGraphWriter writer,
+			ProjectGraphProjector projector,
 			ProjectGraphReader reader,
-			SprintRepository sprints) {
+			SprintRepository sprints,
+			TeamMemberRepository members) {
 		this.authorization = authorization;
-		this.loader = loader;
-		this.writer = writer;
+		this.projector = projector;
 		this.reader = reader;
 		this.sprints = sprints;
+		this.members = members;
 	}
 
-	public CytoscapeGraphResponse overview(UUID userId, UUID projectId, UUID sprintId) {
+	public GraphRead overview(UUID userId, UUID projectId, UUID sprintId) {
 		authorization.requireReader(userId, projectId);
 		if (sprintId != null) {
 			requireSprint(projectId, sprintId);
 		}
-		rebuild(projectId);
-		return reader.overview(projectId, sprintId);
+		long revision = projector.ensureFresh(projectId);
+		return new GraphRead(reader.overview(projectId, sprintId), revision);
 	}
 
-	public CytoscapeGraphResponse contribution(UUID userId, UUID projectId, UUID studentId, UUID sprintId) {
+	public GraphRead contribution(UUID userId, UUID projectId, UUID studentId, UUID sprintId) {
 		authorization.requireReader(userId, projectId);
-		ProjectGraphSnapshot snapshot = rebuild(projectId);
-		boolean member = snapshot.students().stream().map(StudentNode::id).anyMatch(studentId::equals);
-		if (!member) {
+		if (!members.existsActiveByProjectIdAndStudentProfileId(projectId, studentId)) {
 			throw new AcademicException(
 					AcademicErrorCode.ROSTER_STUDENT_NOT_FOUND,
 					HttpStatus.NOT_FOUND,
@@ -56,36 +53,31 @@ public class ProjectGraphService {
 		if (sprintId != null) {
 			requireSprint(projectId, sprintId);
 		}
-		return reader.contribution(projectId, studentId, sprintId);
+		long revision = projector.ensureFresh(projectId);
+		return new GraphRead(reader.contribution(projectId, studentId, sprintId), revision);
 	}
 
-	public CytoscapeGraphResponse activity(UUID userId, UUID projectId, UUID sprintId) {
+	public GraphRead activity(UUID userId, UUID projectId, UUID sprintId) {
 		authorization.requireReader(userId, projectId);
 		requireSprint(projectId, sprintId);
-		rebuild(projectId);
-		return reader.activity(projectId, sprintId);
+		long revision = projector.ensureFresh(projectId);
+		return new GraphRead(reader.activity(projectId, sprintId), revision);
 	}
 
-	public CytoscapeGraphResponse attribution(UUID userId, UUID projectId, UUID sprintId) {
+	public GraphRead attribution(UUID userId, UUID projectId, UUID sprintId) {
 		authorization.requireReader(userId, projectId);
 		if (sprintId != null) {
 			requireSprint(projectId, sprintId);
 		}
-		rebuild(projectId);
-		return reader.attribution(projectId, sprintId);
+		long revision = projector.ensureFresh(projectId);
+		return new GraphRead(reader.attribution(projectId, sprintId), revision);
 	}
 
-	public CytoscapeGraphResponse peerReview(UUID userId, UUID projectId, UUID sprintId) {
+	public GraphRead peerReview(UUID userId, UUID projectId, UUID sprintId) {
 		authorization.requireReader(userId, projectId);
 		requireSprint(projectId, sprintId);
-		rebuild(projectId);
-		return reader.peerReview(projectId, sprintId);
-	}
-
-	private ProjectGraphSnapshot rebuild(UUID projectId) {
-		ProjectGraphSnapshot snapshot = loader.load(projectId);
-		writer.rebuild(snapshot);
-		return snapshot;
+		long revision = projector.ensureFresh(projectId);
+		return new GraphRead(reader.peerReview(projectId, sprintId), revision);
 	}
 
 	private void requireSprint(UUID projectId, UUID sprintId) {

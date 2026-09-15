@@ -30,6 +30,8 @@ import com.saga.be.entity.project.Team;
 import com.saga.be.entity.project.TeamMember;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
+import com.saga.be.realtime.ProjectRealtimeEventType;
+import com.saga.be.realtime.ProjectRealtimePublisher;
 import com.saga.be.repository.PeerReviewDetailRepository;
 import com.saga.be.repository.PeerReviewRepository;
 import com.saga.be.repository.RubricTemplateRepository;
@@ -60,6 +62,8 @@ class PeerReviewServiceTest {
 	private PeerReviewRepository reviews;
 	@Mock
 	private PeerReviewDetailRepository details;
+	@Mock
+	private ProjectRealtimePublisher realtime;
 
 	private PeerReviewService service;
 	private UUID teamId;
@@ -77,7 +81,7 @@ class PeerReviewServiceTest {
 
 	@BeforeEach
 	void setUp() {
-		service = new PeerReviewService(teams, members, sprints, rubrics, reviews, details);
+		service = new PeerReviewService(teams, members, sprints, rubrics, reviews, details, realtime);
 		teamId = UUID.randomUUID();
 		sprintId = UUID.randomUUID();
 		subjectId = UUID.randomUUID();
@@ -199,6 +203,7 @@ class PeerReviewServiceTest {
 						"Phối hợp tốt"));
 
 		assertThat(response.starRating()).isEqualTo(9);
+		verify(realtime).publish(ProjectRealtimeEventType.PEER_REVIEW_CHANGED, project.getId(), response.id().toString());
 		assertThat(response.reviewerId()).isEqualTo(alice.getId());
 		assertThat(response.revieweeId()).isEqualTo(bob.getId());
 		assertThat(response.comment()).isEqualTo("Phối hợp tốt");

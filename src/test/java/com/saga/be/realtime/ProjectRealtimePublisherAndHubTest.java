@@ -70,6 +70,7 @@ class ProjectRealtimePublisherAndHubTest {
 		SseEmitter emitter = hub.subscribe(projectId);
 		assertThat(hub.subscriberCount(projectId)).isEqualTo(1);
 		hub.onProjectEvent(ProjectRealtimeEvent.of(ProjectRealtimeEventType.TASKS_CHANGED, projectId, "task-1"));
+		hub.onProjectEvent(ProjectRealtimeEvent.graphChanged(projectId, 7L, "TASKS_CHANGED"));
 		hub.remove(projectId, emitter);
 		assertThat(hub.subscriberCount(projectId)).isEqualTo(0);
 	}

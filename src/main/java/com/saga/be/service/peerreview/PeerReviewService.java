@@ -19,6 +19,8 @@ import com.saga.be.entity.project.Team;
 import com.saga.be.entity.project.TeamMember;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
+import com.saga.be.realtime.ProjectRealtimeEventType;
+import com.saga.be.realtime.ProjectRealtimePublisher;
 import com.saga.be.repository.PeerReviewDetailRepository;
 import com.saga.be.repository.PeerReviewRepository;
 import com.saga.be.repository.RubricTemplateRepository;
@@ -48,6 +50,7 @@ public class PeerReviewService {
 	private final RubricTemplateRepository rubrics;
 	private final PeerReviewRepository reviews;
 	private final PeerReviewDetailRepository details;
+	private final ProjectRealtimePublisher realtime;
 
 	public PeerReviewService(
 			TeamRepository teams,
@@ -55,13 +58,15 @@ public class PeerReviewService {
 			SprintRepository sprints,
 			RubricTemplateRepository rubrics,
 			PeerReviewRepository reviews,
-			PeerReviewDetailRepository details) {
+			PeerReviewDetailRepository details,
+			ProjectRealtimePublisher realtime) {
 		this.teams = teams;
 		this.members = members;
 		this.sprints = sprints;
 		this.rubrics = rubrics;
 		this.reviews = reviews;
 		this.details = details;
+		this.realtime = realtime;
 	}
 
 	@Transactional(readOnly = true)
@@ -134,6 +139,11 @@ public class PeerReviewService {
 		PeerReview saved = reviews.save(row);
 		replaceDetails(saved, rated.lines());
 		List<PeerReviewDetail> persisted = details.findByPeerReview_IdOrderByCriteriaOrderAsc(saved.getId());
+		Project project = scope.team().getProject();
+		if (project != null) {
+			realtime.publish(
+					ProjectRealtimeEventType.PEER_REVIEW_CHANGED, project.getId(), saved.getId().toString());
+		}
 		return toResponse(saved, scope.sprint(), persisted);
 	}
 
