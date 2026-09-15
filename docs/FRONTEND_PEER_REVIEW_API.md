@@ -75,7 +75,7 @@ GET  /api/teams/{teamId}/sprints/{sprintId}/peer-reviews/candidates
 POST /api/teams/{teamId}/sprints/{sprintId}/peer-reviews     (CSRF)
 ```
 
-Sau nộp: gọi lại **candidates** (cập nhật `alreadyReviewed`) hoặc **list**. Leader muốn thấy % đổi: `GET /api/teams/{teamId}/contribution-evaluation`.
+Sau nộp: gọi lại **candidates** (cập nhật `alreadyReviewed`) hoặc **list**. SSE `PEER_REVIEW_CHANGED` trên `GET /api/projects/{projectId}/events` — refetch list/candidates. Graph 5 đợi `GRAPH_CHANGED` rồi GET graph (không lấy nodes từ SSE). Leader muốn thấy % đổi: `GET /api/teams/{teamId}/contribution-evaluation`.
 
 ### 2.2 Lecturer / Admin / Leader — xem mạng lưới sao
 

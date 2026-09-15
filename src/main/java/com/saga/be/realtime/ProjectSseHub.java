@@ -91,6 +91,12 @@ public class ProjectSseHub {
 		if (event.entityId() != null) {
 			payload.put("entityId", event.entityId());
 		}
+		if (event.revision() != null) {
+			payload.put("revision", event.revision());
+		}
+		if (event.reason() != null) {
+			payload.put("reason", event.reason());
+		}
 		payload.put("occurredAt", event.occurredAt() == null ? java.time.Instant.now().toString() : event.occurredAt().toString());
 		for (Subscription subscription : live) {
 			SseEmitter emitter = subscription.emitter();

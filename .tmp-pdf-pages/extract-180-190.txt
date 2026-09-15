@@ -1,0 +1,387 @@
+﻿ 
+ 
+Figure 2.3 ΓÇô Database schema: TicketService ΓÇö ticket_db 
+2.4 NotificationService ΓÇö notification_db 
+Delivery and addressing: the notification records and the templates they are rendered from, 
+per-account and per-category preferences, registered device tokens, push receipts, and the batch 
+and group tables used for a broadcast. 
+180 
+ 
+ 
+Figure 2.4 ΓÇô Database schema: NotificationService ΓÇö notification_db 
+SmsService, FileStorageService and AuditAggregatorService are not shown as diagrams. Their 
+schemas are small and almost entirely free-standing ΓÇö a gateway device with its outbound message 
+queue, the object metadata with its access log, and the aggregated audit trail ΓÇö so they are covered 
+by the table descriptions below instead. 
+2.5 Files Description 
+Not everything the system stores is a database row. Binary content ΓÇö profile photographs, ticket 
+attachments, maintenance evidence, guide images and firmware images ΓÇö is held in S3-compatible 
+object storage (MinIO), and the database keeps only the metadata needed to find and authorise it. 
+The bytes and the row describing them are therefore two separate things, which is what allows an 
+attachment to be served directly to a browser without passing through a service. 
+No Property Value 
+01 Provider MinIO, addressed through the S3 API with path-style addressing, so the same 
+code runs against any S3-compatible endpoint without change. 
+181 
+ 
+No Property Value 
+02 Bucket solar-battery-files ΓÇö a single bucket for the whole platform. It is created at 
+startup if absent, and the deployment applies an anonymous download 
+policy so a stored object can be fetched directly by URL. 
+03 Object key <folder>/<32-character GUID><extension>, for example 
+ticket-attachments/9f1c4b7e2a8d4f6b9c0e5a3d7b2f8e14.pdf. The original 
+file name is never used as the key; it is preserved as object metadata and in 
+the database row instead. 
+04 Folder segment Supplied per upload and sanitised before use: invalid path characters are 
+replaced, any '..' sequence is neutralised, and an empty value falls back to 
+'default'. This is what prevents a crafted folder name from escaping the 
+bucket prefix. 
+05 Maximum size 20 MB per file (MaxFileSizeBytes). An empty upload is rejected outright, and 
+a file with no extension is rejected before it reaches storage. 
+06 Allowed extensions .jpg, .jpeg, .png, .webp, .gif ΓÇö images; .pdf, .doc, .docx, .xls, .xlsx, .txt, .csv ΓÇö 
+documents; .bin, .hex, .fw ΓÇö firmware images for the IoT rollout path. 
+07 Content type Derived from the file's own signature bytes rather than from the 
+Content-Type the client declares, then stored with the object. A mis-declared 
+header would otherwise make an image or document fail to open when 
+served directly from the bucket. 
+08 Access Reads are served either by a presigned URL with a bounded lifetime or 
+through the service, which checks the caller against the file's purpose before 
+streaming it. Every upload and download is written to file_audit_logs with 
+the actor and the outcome. 
+Table 2.1 ΓÇô Object storage configuration 
+Uploads are separated by purpose, and the purpose is what decides both the folder an object lands 
+in and who may read it afterwards. 
+No Property Content held 
+01 Avatar Profile photographs for an account. 
+02 TicketAttachment Files attached to a ticket or posted into a ticket chat thread. These are the 
+only uploads that also pass through the virus scan worker, which records its 
+verdict on the attachment row. 
+03 MaintenancePhoto Before and after evidence captured by a technician while resolving a ticket, 
+referenced from the maintenance log. 
+04 KbImage Images embedded in a guide article or a blog post. 
+05 Firmware Firmware images published for the IoT gateways, verified by checksum before 
+a device applies one. 
+06 Other Anything that does not fall into the categories above. 
+Table 2.2 ΓÇô Storage folders by file purpose 
+Every stored object carries a status, so a file that failed a check is withheld rather than silently 
+deleted. 
+182 
+ 
+No Status Meaning 
+01 Uploaded The object is written to storage but not yet usable. 
+02 Processing Post-upload work is in progress, such as a scan. 
+03 Ready The object may be served. This is the normal state. 
+04 Quarantined Withheld from every reader after a scan verdict; the row is kept so the event 
+stays auditable rather than disappearing. 
+05 Deleted Soft-deleted. The row remains for the audit trail after the object itself has 
+been removed. 
+Table 2.3 ΓÇô Stored object lifecycle states 
+2.6 Table Descriptions 
+Every table in the system is listed below with its purpose, its primary key and its foreign keys. All 
+tables use a single surrogate primary key named id, except audit_aggregate, which is keyed by id and 
+occurred_at so the trail can be partitioned by time. Where a column identifies a row owned by a 
+different service it is listed as an external reference rather than a foreign key: the value is resolved 
+through that service's API or through a local read model, and no database constraint enforces it, 
+because a foreign key cannot span two databases. 
+No Table Description 
+ AuthService ΓÇö auth_db 14 tables 
+01 account_merge_logs Record of merging a Google identity into an existing local account. Primary key: 
+id. Foreign keys: None. External references: primary_account_id, 
+secondary_account_id 
+02 account_profiles Extended profile attached one-to-one to an account, holding the descriptive data 
+that is not needed on the authentication path. Primary key: id. Foreign keys: 
+account_id. External references: avatar_file_id 
+03 accounts System user account used for authentication and authorisation: credentials, 
+contact details, confirmation flags, two-factor state and lockout counters. Primary 
+key: id. Foreign keys: role_id. External references: merged_into_id 
+04 audit_logs AuthService's own audit trail of security-relevant actions. Primary key: id. Foreign 
+keys: None. External references: actor_account_id, device_id, target_account_id 
+05 audit_outbox Audit records queued for the aggregator, written in the same transaction as the 
+action they describe. Primary key: id. Foreign keys: None 
+06 backup_codes Single-use recovery codes generated when two-factor authentication is enabled. 
+Primary key: id. Foreign keys: account_id 
+07 login_attempts Record of every sign-in attempt and its outcome. Drives lockout and the sign-in 
+history screen. Primary key: id. Foreign keys: account_id. External references: 
+device_id 
+08 permissions Permission catalogue. A permission code gates an individual action inside a 
+screen. Primary key: id. Foreign keys: None 
+09 refresh_tokens Rotating refresh tokens issued per session, with their expiry and revocation state. 
+Primary key: id. Foreign keys: account_id. External references: device_id 
+183 
+ 
+No Table Description 
+10 role_permissions Join table resolving the many-to-many relationship between roles and 
+permissions. Primary key: id. Foreign keys: permission_id, role_id 
+11 roles Role catalogue. A role gates which routes an account may open. Primary key: id. 
+Foreign keys: None 
+12 staff_profiles Technician profile for a staff account, including the skill tier used when matching a 
+ticket to an assignee. Primary key: id. Foreign keys: account_id 
+13 staff_skills Skill entries a technician holds. Referenced by the assignment logic when 
+choosing a candidate for a ticket. Primary key: id. Foreign keys: None. External 
+references: staff_account_id 
+14 trusted_devices Devices a user has marked as trusted, used to skip or approve second-factor 
+challenges. Primary key: id. Foreign keys: account_id 
+ BatteryService ΓÇö 
+battery_db 
+22 tables 
+15 alerts Alert raised when a reading crosses a threshold, with its deduplication and merge 
+state and its lifecycle from open to resolved. Primary key: id. Foreign keys: 
+battery_asset_id, iot_device_id, merged_into_alert_id, site_id. External 
+references: acknowledged_by_user_id, ai_prescription_id, 
+environmental_incident_id, ticket_id 
+16 ambient_readings Append-only environmental measurements per site, from the IoT sensors or the 
+weather API. Primary key: time, site_id. Foreign keys: site_id. External 
+references: source_device_id 
+17 ambient_threshold_conf
+igs 
+Environmental limits per site, which are distinct from the pack temperature limits 
+held in threshold_configs. Primary key: id. Foreign keys: site_id 
+18 anomaly_classifications Cached anomaly classification returned by the AI module, with the confidence, 
+model version and any technician feedback. Primary key: id. Foreign keys: 
+alert_id, battery_asset_id. External references: staff_feedback_by_user_id 
+19 battery_assets The physical battery identified by serial number. The central entity that telemetry, 
+alerts, AI results and energy records all resolve back to. Primary key: id. Foreign 
+keys: battery_type_id, site_id. External references: customer_id 
+20 battery_audit_logs BatteryService's own audit trail. Primary key: id. Foreign keys: None. External 
+references: actor_account_id 
+21 battery_audit_outbox Audit records queued for the aggregator. Primary key: id. Foreign keys: None 
+22 battery_types Battery model catalogue: nominal capacity, voltage, chemistry and maximum 
+cycle count. Thresholds are configured per type. Primary key: id. Foreign keys: 
+None 
+23 environmental_incidents Safety incident such as smoke or water ingress. More severe than an ordinary 
+alert and able to spawn one. Primary key: id. Foreign keys: site_id 
+24 iot_device_calibrations Calibration history per device, holding the offset and scale factor applied to raw 
+readings. Primary key: id. Foreign keys: iot_device_id. External references: 
+battery_asset_id 
+25 iot_device_commands Commands dispatched to a gateway, such as switching charge or discharge, 
+together with their acknowledgement state. Primary key: id. Foreign keys: 
+battery_asset_id, iot_device_id. External references: issued_by_account_id 
+26 iot_device_heartbeats Sixty-second health stream per gateway: CPU, memory, disk, queue depth and 
+signal strength. Primary key: time, iot_device_id. Foreign keys: iot_device_id 
+184 
+ 
+No Table Description 
+27 iot_devices Gateway registry with the per-device API key used to authenticate ingestion. 
+Primary key: id. Foreign keys: site_id, target_firmware_release_id 
+28 import_entity_link Mapping from a third party's own reference code to the record it created here, so 
+a later upload updates that record instead of duplicating it. Primary key: id. 
+Foreign keys: None. External references: internal_id, created_by_batch_id 
+29 import_batch One upload of third-party CSV files, holding the file hash that blocks a repeated 
+upload and the row counters for each outcome. Primary key: id. Foreign keys: 
+None. External references: requested_by 
+30 import_row One line of an uploaded file, kept with its raw values and its validation errors so a 
+rejected row can be traced back to the source. Primary key: id. Foreign keys: 
+import_batch_id. External references: created_entity_id, linked_account_id 
+30 noise_breach_events Records of readings that cross a limit only briefly, kept so that transient noise does 
+not raise a full alert. Primary key: time, battery_asset_id, anomaly_type. Foreign 
+keys: battery_asset_id. External references: promoted_to_alert_id 
+31 sensor_ingest_idempote
+ncy_records 
+Replay guard that lets a gateway resend a batch of readings without creating 
+duplicates. Primary key: id. Foreign keys: None 
+32 sensor_readings Append-only measurement stream from the batteries, stored as a TimescaleDB 
+hypertable partitioned by time. Primary key: time, battery_asset_id. Foreign 
+keys: battery_asset_id. External references: source_device_id 
+33 sites Installation site holding the batteries, with GPS coordinates used for the weather 
+lookup and the total installed capacity. Primary key: id. Foreign keys: None. 
+External references: customer_id 
+34 soh_predictions Cached state-of-health estimate per asset, with confidence, model version and 
+measured latency, so opening a screen never triggers a fresh inference. Primary 
+key: id. Foreign keys: battery_asset_id 
+35 threshold_configs Versioned alert limits per battery type (voltage, temperature, state of charge, 
+state of health, internal resistance). Exactly one version is active per type. Primary 
+key: id. Foreign keys: battery_type_id 
+ TicketService ΓÇö 
+ticket_db 
+33 tables 
+36 alert_ticket_saga_states State of the saga that raises a ticket from an alert, which is what the Saga Debug 
+screen renders. Primary key: correlation_id. Foreign keys: None. External 
+references: alert_id, battery_asset_id, customer_id, environmental_incident_id, 
+site_id, ticket_id 
+37 blog_post_versions Version history of a blog post. Primary key: id. Foreign keys: None. External 
+references: blog_post_id, changed_by_user_id 
+38 blog_posts Blog post with its publication state. Primary key: id. Foreign keys: 
+blog_template_id, source_kb_article_id. External references: author_user_id 
+39 blog_templates Templates a blog post can be started from. Primary key: id. Foreign keys: None. 
+External references: created_by_user_id 
+40 chat_ai_suggestions AI-generated reply suggestions offered to a technician on a thread. Primary key: 
+id. Foreign keys: final_chat_id, ticket_id 
+41 chat_escalation_review_
+saga_states 
+State of the saga that escalates a chat thread for review. Primary key: 
+correlation_id. Foreign keys: None. External references: manager_user_id, 
+ticket_id 
+185 
+ 
+No Table Description 
+42 chat_metrics_daily Daily roll-up of conversation metrics, read by the analytics screens. Primary key: 
+id. Foreign keys: None. External references: staff_id, ticket_id 
+43 customer_accounts Projection of the customer account data owned by AuthService, kept current by 
+domain events so ticket queries need no synchronous call per row. Primary key: 
+id. Foreign keys: None. External references: account_id 
+44 kb_article_versions Version history of a guide article. Primary key: id. Foreign keys: None. External 
+references: article_id 
+45 knowledge_base_article
+s 
+Guide article with its publication state. Primary key: id. Foreign keys: None. 
+External references: created_by_user_id 
+46 maintenance_logs Work record produced by a technician while resolving a ticket. Primary key: id. 
+Foreign keys: ticket_id. External references: staff_id 
+47 outbox_messages Transactional outbox. A state change and the events it implies are written in one 
+transaction and relayed afterwards, so a commit and an event can never diverge. 
+Primary key: id. Foreign keys: None. External references: aggregate_id 
+48 sla_pause_events Periods during which an SLA timer was legitimately paused, so a breach reflects 
+working time only. Primary key: id. Foreign keys: sla_timer_id. External 
+references: approved_by_manager_id, paused_by_user_id, resumed_by_user_id 
+49 sla_timers Countdown against the deadline implied by the ticket priority. Primary key: id. 
+Foreign keys: ticket_id 
+50 staff_accounts Projection of the staff account data owned by AuthService, used for assignment 
+and display. Primary key: id. Foreign keys: None. External references: account_id 
+51 ticket_activities Immutable activity timeline of everything that happened to a ticket. Primary key: 
+id. Foreign keys: ticket_id. External references: actor_user_id, source_ticket_id 
+52 ticket_ai_suggestions AI-generated suggestions attached to the ticket itself, such as a proposed priority 
+or category. Primary key: id. Foreign keys: ticket_id. External references: 
+prescription_id 
+53 ticket_assignments Assignment of a ticket to a technician, kept as rows so reassignment history is 
+preserved. Primary key: id. Foreign keys: ticket_id. External references: staff_id 
+54 ticket_attachments Files attached to a ticket, referencing the object owned by FileStorageService. 
+Primary key: id. Foreign keys: chat_id, ticket_id. External references: file_id, 
+source_ticket_id, uploaded_by_user_id 
+55 ticket_audit_logs TicketService's own audit trail. Primary key: id. Foreign keys: None. External 
+references: actor_account_id 
+56 ticket_audit_outbox Audit records queued for the aggregator. Primary key: id. Foreign keys: None 
+57 ticket_battery_assets Link between a ticket and the battery assets it concerns. Primary key: id. Foreign 
+keys: ticket_id. External references: battery_asset_id 
+58 ticket_chat_edits Edit history of a chat message. Primary key: id. Foreign keys: chat_id. External 
+references: edited_by_user_id 
+59 ticket_chat_hides Moderation state hiding a message from a thread without deleting it. Primary 
+key: id. Foreign keys: chat_id. External references: user_id 
+60 ticket_chat_mentions Mentions raised in a message, resolved to the accounts to notify. Primary key: id. 
+Foreign keys: chat_id. External references: mentioned_user_id 
+61 ticket_chat_reactions Emoji reactions on a chat message. Primary key: id. Foreign keys: chat_id. 
+External references: user_id 
+186 
+ 
+No Table Description 
+62 ticket_chat_reads Per-user read receipts, which drive the unread badge. Primary key: id. Foreign 
+keys: chat_id. External references: user_id 
+63 ticket_chat_translation_
+users 
+Which user requested which cached translation, and in which target language. 
+Primary key: id. Foreign keys: translation_id. External references: user_id 
+64 ticket_chat_translations Cached translation of a message, so the same text is not translated repeatedly. 
+Primary key: id. Foreign keys: chat_id 
+65 ticket_chats Messages on a ticket, on either the public thread or the internal staff-only thread. 
+Primary key: id. Foreign keys: parent_chat_id, ticket_id. External references: 
+author_user_id, last_edited_by_user_id, pinned_by_user_id, thread_root_id 
+66 ticket_kb_references Link between a ticket and a guide article that was relevant to it. Primary key: id. 
+Foreign keys: ticket_id. External references: chat_id, kb_article_id, 
+referenced_by_user_id 
+67 ticket_participants Accounts taking part in a ticket, which is what governs who may read its chat. 
+Primary key: id. Foreign keys: ticket_id. External references: added_by_user_id, 
+removed_by_user_id, user_id 
+68 tickets The maintenance request itself, with its priority, lifecycle state, SLA deadline and 
+the code shown to users. Primary key: id. Foreign keys: None. External 
+references: active_incident_episode_id, approved_by_manager_id, 
+battery_asset_id, customer_id, environmental_incident_id, 
+merged_into_ticket_id, origin_alert_id, resolved_by_staff_id, 
+suspected_duplicate_of_ticket_id 
+ NotificationService ΓÇö 
+notification_db 
+14 tables 
+69 account_read_models Projection of the account data owned by AuthService, used to address a 
+notification without a synchronous call. Primary key: id. Foreign keys: None 
+70 device_tokens Registered push tokens per device, used to address a mobile delivery. Primary 
+key: id. Foreign keys: None. External references: user_id 
+71 notification_audit_logs NotificationService's own audit trail. Primary key: id. Foreign keys: None. External 
+references: actor_account_id 
+72 notification_audit_outb
+ox 
+Audit records queued for the aggregator. Primary key: id. Foreign keys: None 
+73 notification_batch_targe
+ts 
+The individual recipients resolved for a batch. Primary key: id. Foreign keys: 
+group_id. External references: batch_id, user_id 
+74 notification_batches A batch of notifications dispatched together, such as a broadcast. Primary key: id. 
+Foreign keys: None. External references: template_id 
+75 notification_category_pr
+eferences 
+Per-account preferences at the category level, applied before the per-event ones. 
+Primary key: id. Foreign keys: None. External references: user_id 
+76 notification_group_mem
+bers 
+Membership of a recipient group. Primary key: id. Foreign keys: None. External 
+references: group_id, user_id 
+77 notification_groups Named recipient groups used when addressing a broadcast. Primary key: id. 
+Foreign keys: None 
+78 notification_preferences Per-account, per-channel delivery preferences. Primary key: id. Foreign keys: 
+None. External references: user_id 
+79 notification_settings Account-wide notification settings such as quiet hours. Primary key: id. Foreign 
+keys: None 
+187 
+ 
+No Table Description 
+80 notification_templates Content templates a notification is rendered from. Primary key: id. Foreign keys: 
+None 
+81 notifications Delivered and pending notifications addressed to an account. Primary key: id. 
+Foreign keys: batch_id. External references: user_id 
+82 push_receipts Delivery receipts returned by the push provider, reconciled asynchronously. 
+Primary key: id. Foreign keys: None. External references: notification_id, 
+ticket_id, user_id 
+ SmsService ΓÇö sms_db 4 tables 
+83 sms_audit_logs SmsService's own audit trail. Primary key: id. Foreign keys: None. External 
+references: sms_message_id 
+84 sms_audit_outbox Audit records queued for the aggregator. Primary key: id. Foreign keys: None 
+85 sms_gateway_devices The registered Android gateway that physically sends the messages, with its API 
+key. Primary key: id. Foreign keys: None 
+86 sms_messages Outbound message queue with the per-message delivery status. Primary key: id. 
+Foreign keys: None. External references: gateway_device_id 
+ FileStorageService ΓÇö 
+file_db 
+2 tables 
+87 file_audit_logs Record of every upload and download with the actor and the outcome. Primary 
+key: id. Foreign keys: None. External references: actor_account_id 
+88 uploaded_files Metadata for an object held in MinIO: its key, purpose, size, content type and scan 
+status. The bytes live in object storage, not in the database. Primary key: id. 
+Foreign keys: None 
+ AuditAggregatorService 
+ΓÇö audit_db 
+2 tables 
+89 audit_aggregate The aggregated, append-only audit trail collected from every service. Keyed by 
+identifier and time so it can be partitioned. Primary key: id, occurred_at. Foreign 
+keys: None. External references: actor_account_id 
+90 audit_replay_job A request to replay audit events from a service, with its progress and outcome. 
+Primary key: id. Foreign keys: None. External references: 
+requested_by_account_id 
+Table 2.4 ΓÇô Table descriptions 
+3. Detailed Design 
+Each subsection below covers one feature: the class diagrams of the participants in its main flows, 
+followed by a specification of every class in them. The pipeline is the same throughout ΓÇö a controller 
+forwards a command to the mediator, a validation behaviour runs before the handler, the handler 
+works through repository interfaces, and the unit of work commits the state change together with 
+the outbox rows it produced. 
+3.1 Account Registration and Activation 
+Owning service: AuthService 
+Registration creates an inactive account and defers activation to an emailed one-time code. The 
+password is hashed with BCrypt inside the handler and the plaintext never leaves the request scope. 
+188 
+ 
+The verification email is not sent inline: the handler writes the integration event to the outbox in the 
+same transaction as the account row, so an account is never created without its email being queued 
+and never has an email queued without being created. 
+3.1.1 Class Diagrams and Sequence Diagrams 
+Register 
+ 
+Figure 3.1 ΓÇô Class diagram: Register 
+189 
+ 
+ 
+Figure 3.2 ΓÇô Sequence diagram: Register 
+190 
+ 
+Account Activated Sync
+ 
+ 
+Figure 3.3 ΓÇô Class diagram: Account Activated Sync 
+ 
+191 
