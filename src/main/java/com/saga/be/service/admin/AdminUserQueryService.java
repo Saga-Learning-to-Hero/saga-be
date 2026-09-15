@@ -21,8 +21,7 @@ import org.springframework.util.StringUtils;
 
 /**
  * ADMIN-only directory of STUDENT and LECTURER accounts. ADMIN rows are never listed or
- * returned by id. Future PATCH status/role APIs on this surface must reject or hide ADMIN
- * targets the same way unless a separate admin-management policy is introduced.
+ * returned by id. Status PATCH on this surface hides ADMIN targets with the same 404.
  */
 @Service
 @Profile("!test")

@@ -1,10 +1,12 @@
 package com.saga.be.security;
 
+import com.saga.be.auth.AccountStatusGuard;
 import com.saga.be.auth.AuthErrorCode;
 import com.saga.be.auth.GoogleAccountService;
 import com.saga.be.config.AuthProperties;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.exception.AuthException;
+import com.saga.be.repository.UserAccountRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -79,7 +81,9 @@ public class SecurityConfig {
 			SecurityContextRepository securityContextRepository,
 			CookieCsrfTokenRepository cookieCsrfTokenRepository,
 			ObjectProvider<GoogleAccountService> googleAccounts,
-			ObjectProvider<ClientRegistrationRepository> clientRegistrations)
+			ObjectProvider<ClientRegistrationRepository> clientRegistrations,
+			ObjectProvider<UserAccountRepository> userAccounts,
+			AccountStatusGuard accountStatusGuard)
 			throws Exception {
 		http.cors(Customizer.withDefaults())
 				.csrf(csrf -> csrf.csrfTokenRepository(cookieCsrfTokenRepository)
@@ -154,7 +158,10 @@ public class SecurityConfig {
 						}))
 				.logout(logout -> logout.disable());
 
-		http.addFilterAfter(new PasswordSetupEnforcementFilter(), UsernamePasswordAuthenticationFilter.class);
+		http.addFilterAfter(
+				new AccountStatusEnforcementFilter(userAccounts.getIfAvailable(), accountStatusGuard),
+				UsernamePasswordAuthenticationFilter.class);
+		http.addFilterAfter(new PasswordSetupEnforcementFilter(), AccountStatusEnforcementFilter.class);
 
 		if (properties.getGoogle().isConfigured() && clientRegistrations.getIfAvailable() != null) {
 			http.oauth2Login(oauth -> oauth.loginPage("/oauth2/authorization/google")
