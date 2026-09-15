@@ -277,7 +277,7 @@ Response thành công: `AuthMeResponse` (session được làm mới, `passwordS
 ```json
 { "message": "Mật khẩu đã được cập nhật. Vui lòng đăng nhập lại." }
 ```
-- Lỗi: `400 PASSWORD_RESET_TOKEN_INVALID` (token sai/đã dùng), `400 PASSWORD_RESET_TOKEN_EXPIRED` (hết hạn, mặc định 30 phút), `400 PASSWORD_POLICY_VIOLATION`/`PASSWORD_CONFIRMATION_MISMATCH` (chính sách mật khẩu).
+- Lỗi: `400 PASSWORD_RESET_TOKEN_INVALID` (token sai/đã dùng), `400 PASSWORD_RESET_TOKEN_EXPIRED` (hết hạn, mặc định 30 phút), `400 PASSWORD_POLICY_VIOLATION`/`PASSWORD_CONFIRMATION_MISMATCH` (chính sách mật khẩu), `400 PASSWORD_REUSED` (trùng mật khẩu hiện tại; token **không** bị consume, có thể thử lại mật khẩu khác).
 
 ### Luồng FE hoàn chỉnh
 
@@ -1141,6 +1141,7 @@ Mọi lỗi domain (không phải lỗi mạng) trả về đúng 1 khuôn dạn
 | `TASK_EVIDENCE_JIRA_IMMUTABLE` | 409 | Link/file đồng bộ từ Jira không thể xoá ở SAGA | Ẩn nút xoá cho các mục `source === "JIRA"` |
 | `PASSWORD_RESET_TOKEN_INVALID` | 400 | Link đặt lại mật khẩu sai/đã dùng | Yêu cầu gửi lại email quên mật khẩu |
 | `PASSWORD_RESET_TOKEN_EXPIRED` | 400 | Link đặt lại mật khẩu hết hạn | Yêu cầu gửi lại email |
+| `PASSWORD_REUSED` | 400 | Mật khẩu mới trùng mật khẩu hiện tại | Giữ nguyên token; nhập mật khẩu khác |
 | `NOT_TEAM_LEADER` | 403 | Hành động chỉ dành cho Leader | Ẩn nút hành động nếu `myRole !== "LEADER"` |
 | `PROJECT_ALREADY_EXISTS` | 409 | Team đã có Project | Điều hướng sang xem Project hiện có thay vì tạo mới |
 

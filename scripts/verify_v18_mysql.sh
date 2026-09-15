@@ -136,4 +136,8 @@ echo "== Hibernate schema validation =="
 ./mvnw.cmd test "-Dtest=com.saga.be.repository.V18MysqlHibernateValidateIT" "-Dsaga.verify.mysql=true" \
     "-Dsaga.verify.mysql.url=jdbc:mysql://127.0.0.1:$PORT/$DB"
 
+echo "== ContributionConfirmation JPA persist: JSON_TYPE=OBJECT, Map.toString 3141 =="
+./mvnw.cmd test "-Dtest=com.saga.be.repository.ContributionConfirmationJsonMysqlIT" "-Dsaga.verify.mysql=true" \
+    "-Dsaga.verify.mysql.url=jdbc:mysql://127.0.0.1:$PORT/$DB"
+
 echo "== done: mysqld will be stopped and the disposable datadir removed =="

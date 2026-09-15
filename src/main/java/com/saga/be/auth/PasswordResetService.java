@@ -134,6 +134,13 @@ public class PasswordResetService {
 			// This still runs the project's exact length/strength policy.
 			passwordPolicy.validate(newPassword, newPassword);
 			UserAccount account = token.getUser();
+			if (StringUtils.hasText(account.getPasswordHash())
+					&& passwordEncoder.matches(newPassword, account.getPasswordHash())) {
+				throw new AuthException(
+						AuthErrorCode.PASSWORD_REUSED,
+						HttpStatus.BAD_REQUEST,
+						"New password must be different from the current password.");
+			}
 			account.setPasswordHash(passwordEncoder.encode(newPassword));
 			users.save(account);
 			token.setUsedAt(LocalDateTime.now());

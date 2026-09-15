@@ -1,12 +1,12 @@
 package com.saga.be.service.evidence;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -17,8 +17,12 @@ import com.saga.be.dto.task.TaskWorkSessionResponse;
 import com.saga.be.dto.task.TaskWorkSessionsResponse;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.academic.Course;
+import com.saga.be.entity.attribution.ContributionConfirmation;
 import com.saga.be.entity.attribution.TaskWorkSession;
 import com.saga.be.entity.enums.AccountRole;
+import com.saga.be.entity.enums.ConfirmationEvent;
+import com.saga.be.entity.enums.ConfirmationMethod;
+import com.saga.be.entity.enums.TaskStatus;
 import com.saga.be.entity.enums.WorkSessionStatus;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
@@ -35,7 +39,9 @@ import com.saga.be.repository.TaskWorkSessionRepository;
 import com.saga.be.repository.TeamByProjectRepository;
 import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.repository.UserAccountRepository;
+import com.saga.be.service.confirmation.EvidenceHasher;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -46,6 +52,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 @ExtendWith(MockitoExtension.class)
@@ -102,6 +109,8 @@ class TaskEvidenceServiceTest {
 		task = new Task();
 		task.setId(UUID.randomUUID());
 		task.setProject(project);
+		task.setExternalKey("SAGA-1");
+		task.setStatus(TaskStatus.TODO);
 	}
 
 	@Test
@@ -422,6 +431,95 @@ class TaskEvidenceServiceTest {
 		IntegrationException ex =
 				assertThrows(IntegrationException.class, () -> service.listForUser(student.getId(), task.getId()));
 		assertEquals(IntegrationErrorCode.INTEGRATION_FORBIDDEN, ex.getCode());
+	}
+
+	@Test
+	void confirmWithoutStepUp_isStepUpRequiredAndDoesNotPersist() {
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.confirm(student.getId(), task.getId(), null, List.of("abc"), List.of()));
+		assertEquals(IntegrationErrorCode.STEP_UP_REQUIRED, ex.getCode());
+		assertEquals(HttpStatus.FORBIDDEN, ex.getStatus());
+		verify(confirmations, never()).save(any());
+		assertNull(lastEvent.get());
+	}
+
+	@Test
+	void confirmAfterFreshPasswordStepUp_persistsValidJsonSnapshot() {
+		stubConfirmMember();
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(confirmations.save(any(ContributionConfirmation.class))).thenAnswer(invocation -> {
+			ContributionConfirmation row = invocation.getArgument(0);
+			row.setId(UUID.randomUUID());
+			return row;
+		});
+		String sha = "d362a3532ceaebe36c78f7e151e881daae8c6277";
+
+		ContributionConfirmation saved =
+				service.confirm(student.getId(), task.getId(), Instant.now(), List.of(sha), List.of());
+
+		assertEquals(ConfirmationEvent.CONFIRMED, saved.getEventState());
+		assertEquals(ConfirmationMethod.PASSWORD_STEP_UP, saved.getConfirmationMethod());
+		assertEquals(EvidenceHasher.canonical("SAGA-1", List.of(sha), List.of(), "TODO"), saved.getEvidenceSnapshotJson());
+		assertEquals(EvidenceHasher.sha256(saved.getEvidenceSnapshotJson()), saved.getEvidenceHash());
+		assertTrue(saved.getEvidenceSnapshotJson().startsWith("{"));
+		assertTrue(saved.getEvidenceSnapshotJson().contains("\"commits\""));
+		assertFalse(saved.getEvidenceSnapshotJson().startsWith("{commits="));
+		assertEquals(ProjectRealtimeEventType.TASK_EVIDENCE_CHANGED, lastEvent.get().type());
+	}
+
+	@Test
+	void confirmRejectsNonMemberAfterStepUpWithoutPersisting() {
+		when(tasks.findById(task.getId())).thenReturn(Optional.of(task));
+		when(teams.findByProject_Id(project.getId())).thenReturn(Optional.of(team));
+		when(members.existsByProjectIdAndUserId(project.getId(), student.getId())).thenReturn(false);
+
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.confirm(student.getId(), task.getId(), Instant.now(), List.of("abc"), List.of()));
+		assertEquals(IntegrationErrorCode.INTEGRATION_FORBIDDEN, ex.getCode());
+		verify(confirmations, never()).save(any());
+		assertNull(lastEvent.get());
+	}
+
+	@Test
+	void confirmDoesNotLookUpCommitOwnership_currentSemanticsSnapshotClientShas() {
+		stubConfirmMember();
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(confirmations.save(any(ContributionConfirmation.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+		ContributionConfirmation saved = service.confirm(
+				student.getId(),
+				task.getId(),
+				Instant.now(),
+				List.of("ffffffffffffffffffffffffffffffffffffffff"),
+				List.of());
+
+		assertTrue(saved.getEvidenceSnapshotJson().contains("ffffffffffffffffffffffffffffffffffffffff"));
+		verify(confirmations, times(1)).save(any(ContributionConfirmation.class));
+	}
+
+	@Test
+	void confirmPersistenceFailure_doesNotPublishRealtime() {
+		stubConfirmMember();
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(confirmations.save(any(ContributionConfirmation.class))).thenThrow(new IllegalStateException("jdbc 3141"));
+
+		assertThrows(
+				IllegalStateException.class,
+				() -> service.confirm(
+						student.getId(),
+						task.getId(),
+						Instant.now(),
+						List.of("d362a3532ceaebe36c78f7e151e881daae8c6277"),
+						List.of()));
+		assertNull(lastEvent.get());
+	}
+
+	private void stubConfirmMember() {
+		when(tasks.findById(task.getId())).thenReturn(Optional.of(task));
+		when(teams.findByProject_Id(project.getId())).thenReturn(Optional.of(team));
+		when(members.existsByProjectIdAndUserId(project.getId(), student.getId())).thenReturn(true);
 	}
 
 	private void stubMemberLock() {

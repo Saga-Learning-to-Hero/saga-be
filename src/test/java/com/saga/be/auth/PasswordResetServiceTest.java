@@ -35,6 +35,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -227,7 +228,111 @@ class PasswordResetServiceTest {
 		AuthException ex =
 				assertThrows(AuthException.class, () -> service.resetPassword(rawTokenFor(token), "short"));
 		assertEquals(AuthErrorCode.PASSWORD_POLICY_VIOLATION, ex.getCode());
+		assertNull(token.getUsedAt());
+		assertNull(account.getPasswordHash());
 		verify(users, never()).save(any());
+		verify(tokens, never()).save(any());
+	}
+
+	@Test
+	void resetRejectsCurrentPasswordAndLeavesTokenUnused() {
+		String current = "current-pass1";
+		UserAccount account = googleStudent(passwordEncoder.encode(current));
+		String hashBefore = account.getPasswordHash();
+		PasswordResetToken token = validToken(account);
+		when(tokens.findByTokenHashForUpdate(token.getTokenHash())).thenReturn(Optional.of(token));
+
+		AuthException ex =
+				assertThrows(AuthException.class, () -> service.resetPassword(rawTokenFor(token), current));
+		assertEquals(AuthErrorCode.PASSWORD_REUSED, ex.getCode());
+		assertEquals(HttpStatus.BAD_REQUEST, ex.getStatus());
+		assertNull(token.getUsedAt());
+		assertEquals(hashBefore, account.getPasswordHash());
+		verify(users, never()).save(any());
+		verify(tokens, never()).save(any());
+		verify(tokens, never()).invalidateUnusedForUser(any(), any());
+	}
+
+	@Test
+	void sameTokenSucceedsWithDifferentPasswordAfterReuseRejection() {
+		String current = "current-pass1";
+		UserAccount account = googleStudent(passwordEncoder.encode(current));
+		String hashBefore = account.getPasswordHash();
+		PasswordResetToken token = validToken(account);
+		when(tokens.findByTokenHashForUpdate(token.getTokenHash())).thenReturn(Optional.of(token));
+
+		assertThrows(AuthException.class, () -> service.resetPassword(rawTokenFor(token), current));
+		assertNull(token.getUsedAt());
+		assertEquals(hashBefore, account.getPasswordHash());
+
+		service.resetPassword(rawTokenFor(token), "brand-new-pass1");
+
+		assertTrue(passwordEncoder.matches("brand-new-pass1", account.getPasswordHash()));
+		assertNotEquals(hashBefore, account.getPasswordHash());
+		assertNotEquals(null, token.getUsedAt());
+		verify(users).save(account);
+		verify(tokens).save(token);
+	}
+
+	@Test
+	void googleOnlyAccountWithoutLocalPasswordIsNotTreatedAsReuse() {
+		UserAccount account = googleStudent(null);
+		PasswordResetToken token = validToken(account);
+		when(tokens.findByTokenHashForUpdate(token.getTokenHash())).thenReturn(Optional.of(token));
+
+		service.resetPassword(rawTokenFor(token), "brand-new-pass1");
+
+		assertTrue(passwordEncoder.matches("brand-new-pass1", account.getPasswordHash()));
+		assertNotEquals(null, token.getUsedAt());
+	}
+
+	@Test
+	void expiredTokenLeavesPasswordAndTokenUnchanged() {
+		String current = "current-pass1";
+		UserAccount account = googleStudent(passwordEncoder.encode(current));
+		String hashBefore = account.getPasswordHash();
+		PasswordResetToken token = validToken(account);
+		token.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+		when(tokens.findByTokenHashForUpdate(token.getTokenHash())).thenReturn(Optional.of(token));
+
+		AuthException ex = assertThrows(
+				AuthException.class, () -> service.resetPassword(rawTokenFor(token), "brand-new-pass1"));
+		assertEquals(AuthErrorCode.PASSWORD_RESET_TOKEN_EXPIRED, ex.getCode());
+		assertNull(token.getUsedAt());
+		assertEquals(hashBefore, account.getPasswordHash());
+		verify(users, never()).save(any());
+		verify(tokens, never()).save(any());
+	}
+
+	@Test
+	void alreadyUsedTokenLeavesPasswordAndUsedAtUnchanged() {
+		String current = "current-pass1";
+		UserAccount account = googleStudent(passwordEncoder.encode(current));
+		String hashBefore = account.getPasswordHash();
+		PasswordResetToken token = validToken(account);
+		LocalDateTime usedAt = LocalDateTime.of(2026, 9, 1, 10, 0);
+		token.setUsedAt(usedAt);
+		when(tokens.findByTokenHashForUpdate(token.getTokenHash())).thenReturn(Optional.of(token));
+
+		AuthException ex = assertThrows(
+				AuthException.class, () -> service.resetPassword(rawTokenFor(token), "brand-new-pass1"));
+		assertEquals(AuthErrorCode.PASSWORD_RESET_TOKEN_INVALID, ex.getCode());
+		assertEquals(usedAt, token.getUsedAt());
+		assertEquals(hashBefore, account.getPasswordHash());
+		verify(users, never()).save(any());
+		verify(tokens, never()).save(any());
+	}
+
+	@Test
+	void unknownTokenDoesNotTouchUsersOrTokens() {
+		when(tokens.findByTokenHashForUpdate(any())).thenReturn(Optional.empty());
+
+		AuthException ex = assertThrows(
+				AuthException.class, () -> service.resetPassword("totally-random-not-a-real-token", "brand-new-pass1"));
+		assertEquals(AuthErrorCode.PASSWORD_RESET_TOKEN_INVALID, ex.getCode());
+		verify(users, never()).save(any());
+		verify(tokens, never()).save(any());
+		verify(tokens, never()).invalidateUnusedForUser(any(), any());
 	}
 
 	// --------------------------------------------------------------- helpers

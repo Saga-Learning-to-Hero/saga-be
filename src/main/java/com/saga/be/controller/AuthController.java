@@ -293,7 +293,8 @@ public class AuthController {
 		@ApiResponse(responseCode = "200", description = "Password updated; token consumed"),
 		@ApiResponse(
 				responseCode = "400",
-				description = "Invalid, expired, or already-used token, or password policy violation",
+				description =
+						"Invalid, expired, or already-used token, password policy violation, or reused current password",
 				content =
 						@Content(
 								schema = @Schema(implementation = ApiErrorResponse.class),
@@ -305,7 +306,11 @@ public class AuthController {
 									@ExampleObject(
 											name = "PASSWORD_RESET_TOKEN_EXPIRED",
 											value =
-													"{\"code\":\"PASSWORD_RESET_TOKEN_EXPIRED\",\"message\":\"This password reset link has expired.\"}")
+													"{\"code\":\"PASSWORD_RESET_TOKEN_EXPIRED\",\"message\":\"This password reset link has expired.\"}"),
+									@ExampleObject(
+											name = "PASSWORD_REUSED",
+											value =
+													"{\"code\":\"PASSWORD_REUSED\",\"message\":\"New password must be different from the current password.\"}")
 								}))
 	})
 	public ResetPasswordResponse resetPassword(@Valid @RequestBody ResetPasswordRequest request) {

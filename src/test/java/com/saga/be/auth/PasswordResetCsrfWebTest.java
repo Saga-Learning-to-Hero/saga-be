@@ -109,6 +109,25 @@ class PasswordResetCsrfWebTest {
 	}
 
 	@Test
+	void resetWithCsrfSurfacesPasswordReusedAsAuthDomainError() throws Exception {
+		doThrow(new AuthException(
+						AuthErrorCode.PASSWORD_REUSED,
+						HttpStatus.BAD_REQUEST,
+						"New password must be different from the current password."))
+				.when(passwordResetService)
+				.resetPassword(eq("good-token"), eq("current-pass1"));
+		Csrf csrf = fetchCsrf();
+
+		mockMvc.perform(post("/api/auth/password/reset")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"token\":\"good-token\",\"newPassword\":\"current-pass1\"}")
+						.cookie(csrf.cookie())
+						.header("X-XSRF-TOKEN", csrf.token()))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("PASSWORD_REUSED"));
+	}
+
+	@Test
 	void resetWithCsrfSucceedsAndReturnsSuccessMessage() throws Exception {
 		Csrf csrf = fetchCsrf();
 		mockMvc.perform(post("/api/auth/password/reset")
