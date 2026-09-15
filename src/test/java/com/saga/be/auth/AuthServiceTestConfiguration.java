@@ -3,6 +3,8 @@ package com.saga.be.auth;
 import com.saga.be.service.admin.AdminAuditLogQueryService;
 import com.saga.be.service.admin.AdminUserCommandService;
 import com.saga.be.service.admin.AdminUserQueryService;
+import com.saga.be.service.notification.NotificationService;
+import com.saga.be.service.notification.PushInstallationService;
 import org.mockito.Mockito;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -59,5 +61,17 @@ public class AuthServiceTestConfiguration {
 	@Primary
 	AdminUserCommandService adminUserCommandService() {
 		return Mockito.mock(AdminUserCommandService.class);
+	}
+
+	@Bean
+	@Primary
+	NotificationService notificationService() {
+		return Mockito.mock(NotificationService.class);
+	}
+
+	@Bean
+	@Primary
+	PushInstallationService pushInstallationService() {
+		return Mockito.mock(PushInstallationService.class);
 	}
 }

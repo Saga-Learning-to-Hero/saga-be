@@ -10,6 +10,24 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 class UserSseHubTest {
 
 	@Test
+	void notifyCreatedKeepsEmittersAndDoesNotNotifyOtherUsers() {
+		UserSseHub hub = new UserSseHub();
+		UUID recipient = UUID.randomUUID();
+		UUID other = UUID.randomUUID();
+		hub.subscribe(recipient);
+		hub.subscribe(recipient);
+		hub.subscribe(other);
+		assertThat(hub.subscriberCount(recipient)).isEqualTo(2);
+		assertThat(hub.subscriberCount(other)).isEqualTo(1);
+		hub.notifyCreated(recipient, UUID.randomUUID(), Instant.parse("2026-09-16T00:00:00Z"));
+		assertThat(hub.subscriberCount(recipient)).isEqualTo(2);
+		assertThat(hub.subscriberCount(other)).isEqualTo(1);
+		hub.notifyDisabled(recipient, Instant.parse("2026-09-16T00:00:01Z"));
+		assertThat(hub.subscriberCount(recipient)).isEqualTo(0);
+		assertThat(hub.subscriberCount(other)).isEqualTo(1);
+	}
+
+	@Test
 	void notifyDisabledRemovesEmittersAfterAccountDisabled() {
 		UserSseHub hub = new UserSseHub();
 		UUID userId = UUID.randomUUID();

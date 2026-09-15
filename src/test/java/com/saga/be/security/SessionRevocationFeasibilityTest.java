@@ -67,7 +67,9 @@ class SessionRevocationFeasibilityTest {
 	void userSseIsTheKickChannelAndProjectHubCanCloseByUser() throws Exception {
 		String userHub = Files.readString(Path.of("src/main/java/com/saga/be/realtime/UserSseHub.java"));
 		assertTrue(userHub.contains("ACCOUNT_DISABLED"));
+		assertTrue(userHub.contains("NOTIFICATION_CREATED"));
 		assertTrue(userHub.contains("process-local"));
+		assertTrue(userHub.contains("notifyCreated"));
 		String controller = Files.readString(Path.of("src/main/java/com/saga/be/controller/UserRealtimeController.java"));
 		assertTrue(controller.contains("/api/users/me/events"));
 		assertFalse(controller.contains("@PathVariable"));

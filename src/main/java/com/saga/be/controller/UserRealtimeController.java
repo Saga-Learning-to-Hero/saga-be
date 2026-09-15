@@ -16,7 +16,10 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @RestController
 @Profile("!test")
 @RequestMapping("/api/users/me/events")
-@Tag(name = "User realtime", description = "Authenticated user-scoped SSE on this instance. Used for ACCOUNT_DISABLED kick. Not cross-replica.")
+@Tag(
+		name = "User realtime",
+		description =
+				"Authenticated user-scoped SSE on this instance. READY, NOTIFICATION_CREATED, and ACCOUNT_DISABLED. Process-local; not cross-replica.")
 @SecurityRequirement(name = "SAGA_SESSION")
 public class UserRealtimeController {
 

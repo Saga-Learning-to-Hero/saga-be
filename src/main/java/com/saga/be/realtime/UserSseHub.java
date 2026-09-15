@@ -15,14 +15,16 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
- * In-memory user-scoped SSE. Used to push {@code ACCOUNT_DISABLED} after a hard ban.
- * Emitters are process-local; other replicas do not receive this event. Redis session
- * revocation and request-time account-status enforcement remain global.
+ * In-memory user-scoped SSE. Carries {@code READY}, {@code NOTIFICATION_CREATED}, and
+ * {@code ACCOUNT_DISABLED} on one connection. Emitters are process-local; other replicas do not
+ * receive these events. Inbox rows in MySQL remain the source of truth. Redis session revocation
+ * and request-time account-status enforcement remain global.
  */
 @Component
 public class UserSseHub {
 
 	public static final String ACCOUNT_DISABLED = "ACCOUNT_DISABLED";
+	public static final String NOTIFICATION_CREATED = "NOTIFICATION_CREATED";
 	public static final String READY = "READY";
 
 	private static final Logger log = LoggerFactory.getLogger(UserSseHub.class);
@@ -48,6 +50,36 @@ public class UserSseHub {
 			emitter.completeWithError(ex);
 		}
 		return emitter;
+	}
+
+	public void notifyCreated(UUID userId, UUID notificationId, Instant occurredAt) {
+		if (userId == null || notificationId == null) {
+			return;
+		}
+		CopyOnWriteArrayList<SseEmitter> live = emitters.get(userId);
+		if (live == null || live.isEmpty()) {
+			return;
+		}
+		Map<String, Object> payload = new java.util.LinkedHashMap<>();
+		payload.put("type", NOTIFICATION_CREATED);
+		payload.put("notificationId", notificationId.toString());
+		payload.put("occurredAt", (occurredAt == null ? Instant.now() : occurredAt).toString());
+		for (SseEmitter emitter : List.copyOf(live)) {
+			try {
+				emitter.send(SseEmitter.event()
+						.name(NOTIFICATION_CREATED)
+						.data(payload, MediaType.APPLICATION_JSON)
+						.reconnectTime(3000L));
+			} catch (Exception ex) {
+				log.debug("user sse notification send failed");
+				remove(userId, emitter);
+				try {
+					emitter.complete();
+				} catch (Exception ignored) {
+					// already completed
+				}
+			}
+		}
 	}
 
 	public void notifyDisabled(UUID userId, Instant occurredAt) {

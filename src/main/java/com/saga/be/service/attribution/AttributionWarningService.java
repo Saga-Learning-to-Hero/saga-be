@@ -8,16 +8,14 @@ import com.saga.be.entity.enums.WarningCategory;
 import com.saga.be.entity.enums.WarningSeverity;
 import com.saga.be.entity.integration.IdentityMap;
 import com.saga.be.entity.jira.Task;
-import com.saga.be.entity.notification.UserNotification;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
 import com.saga.be.entity.warning.BusinessWarning;
 import com.saga.be.repository.BusinessWarningRepository;
-import com.saga.be.repository.UserNotificationRepository;
 import com.saga.be.service.mail.EmailOutboxService;
+import com.saga.be.service.notification.NotificationService;
 import java.time.LocalDateTime;
 import java.util.Map;
-import java.util.UUID;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,13 +25,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class AttributionWarningService {
 
 	private final BusinessWarningRepository warnings;
-	private final UserNotificationRepository notifications;
+	private final NotificationService notifications;
 	private final EmailOutboxService emails;
 
 	public AttributionWarningService(
-			BusinessWarningRepository warnings,
-			UserNotificationRepository notifications,
-			EmailOutboxService emails) {
+			BusinessWarningRepository warnings, NotificationService notifications, EmailOutboxService emails) {
 		this.warnings = warnings;
 		this.notifications = notifications;
 		this.emails = emails;
@@ -93,13 +89,15 @@ public class AttributionWarningService {
 		AttributionWarningRouter.Delivery delivery = AttributionWarningRouter.forSeverity(severity);
 		if (delivery.inAppNotification() && project != null && project.getCourse() != null && project.getCourse().getInstructor() != null) {
 			UserAccount lecturer = project.getCourse().getInstructor().getUserAccount();
-			UserNotification notification = new UserNotification();
-			notification.setRecipientUser(lecturer);
-			notification.setNotificationType(NotificationType.WARNING);
-			notification.setTitle("Potential contribution attribution issue");
-			notification.setMessage(summary);
-			notification.setEventKey(eventKey);
-			notifications.save(notification);
+			if (lecturer != null && lecturer.getId() != null) {
+				notifications.createNotification(
+						lecturer.getId(),
+						NotificationType.WARNING,
+						"Potential contribution attribution issue",
+						summary,
+						null,
+						eventKey);
+			}
 			if (delivery.emailLecturer()) {
 				emails.enqueue(new EmailEnqueueRequest(
 						lecturer.getEmail(),
