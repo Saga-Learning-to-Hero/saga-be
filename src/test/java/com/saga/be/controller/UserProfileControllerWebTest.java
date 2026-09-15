@@ -115,6 +115,28 @@ class UserProfileControllerWebTest {
 	}
 
 	@Test
+	void adminCanStillReadOwnSelfProfile() throws Exception {
+		UUID id = UUID.randomUUID();
+		when(userProfileService.getProfile(id))
+				.thenReturn(new UserProfileResponse(
+						id, "admin@saga.local", "admin", "System Admin", null, "ADMIN", "ACTIVE", null));
+		UserAccount admin = new UserAccount();
+		admin.setId(id);
+		admin.setEmail("admin@saga.local");
+		admin.setUsername("admin");
+		admin.setFullName("System Admin");
+		admin.setAccountRole(AccountRole.ADMIN);
+		admin.setAccountStatus(AccountStatus.ACTIVE);
+		admin.setPasswordHash("not-plaintext");
+		mockMvc.perform(get("/api/users/me/profile").with(authentication(SagaAuthentications.authenticated(admin))))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.id").value(id.toString()))
+				.andExpect(jsonPath("$.role").value("ADMIN"))
+				.andExpect(jsonPath("$.email").value("admin@saga.local"));
+		verify(userProfileService).getProfile(id);
+	}
+
+	@Test
 	void patchProfileDelegatesToServiceUsingPrincipalIdAndRefreshesSession() throws Exception {
 		UUID id = UUID.randomUUID();
 		UserAccount updated = student(id);

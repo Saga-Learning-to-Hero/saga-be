@@ -1,5 +1,7 @@
 package com.saga.be.auth;
 
+import com.saga.be.service.admin.AdminAuditLogQueryService;
+import com.saga.be.service.admin.AdminUserQueryService;
 import org.mockito.Mockito;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -38,5 +40,17 @@ public class AuthServiceTestConfiguration {
 	@Primary
 	UserProfileService userProfileService() {
 		return Mockito.mock(UserProfileService.class);
+	}
+
+	@Bean
+	@Primary
+	AdminUserQueryService adminUserQueryService() {
+		return Mockito.mock(AdminUserQueryService.class);
+	}
+
+	@Bean
+	@Primary
+	AdminAuditLogQueryService adminAuditLogQueryService() {
+		return Mockito.mock(AdminAuditLogQueryService.class);
 	}
 }

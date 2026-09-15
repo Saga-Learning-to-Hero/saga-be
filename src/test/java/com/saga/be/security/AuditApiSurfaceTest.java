@@ -24,6 +24,13 @@ class AuditApiSurfaceTest {
 		}
 		String code = sources.toString();
 		assertFalse(code.contains("/api/audit") && code.contains("DeleteMapping"));
+		String auditController =
+				Files.readString(Path.of("src/main/java/com/saga/be/controller/AdminAuditLogController.java"));
+		assertTrue(auditController.contains("/api/admin/audit-logs"));
+		assertFalse(auditController.contains("@PostMapping"));
+		assertFalse(auditController.contains("@PatchMapping"));
+		assertFalse(auditController.contains("@DeleteMapping"));
+		assertFalse(auditController.contains("@PutMapping"));
 		Path auditService = Path.of("src/main/java/com/saga/be/service/audit");
 		StringBuilder auditSources = new StringBuilder();
 		try (var files = Files.walk(auditService)) {

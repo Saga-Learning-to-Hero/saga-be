@@ -75,6 +75,26 @@ class UserProfileServiceTest {
 	}
 
 	@Test
+	void getProfileIncludesAdminRoleAndOmitsStudentCode() {
+		UUID id = UUID.randomUUID();
+		UserAccount account = new UserAccount();
+		account.setId(id);
+		account.setEmail("admin@saga.local");
+		account.setUsername("admin");
+		account.setFullName("System Admin");
+		account.setAccountRole(AccountRole.ADMIN);
+		account.setAccountStatus(AccountStatus.ACTIVE);
+		when(users.findById(id)).thenReturn(Optional.of(account));
+
+		UserProfileResponse response = service.getProfile(id);
+
+		assertEquals("ADMIN", response.role());
+		assertEquals("ACTIVE", response.accountStatus());
+		assertNull(response.studentCode());
+		verify(students, never()).findByUserAccount_Id(any());
+	}
+
+	@Test
 	void updatingOnlyFullNameLeavesAvatarUrlUnchanged() {
 		UUID id = UUID.randomUUID();
 		UserAccount account = lecturer(id);
