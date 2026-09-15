@@ -28,7 +28,7 @@ class RubricTemplateMappingTest {
 
 	@Test
 	void noVersionedFlywayMigrationAltersRubricTemplate() throws IOException {
-		for (int version = 2; version <= 17; version++) {
+		for (int version = 2; version <= 19; version++) {
 			String resource = switch (version) {
 				case 2 -> "/db/migration/V2__user_account_password_hash_and_comment_task.sql";
 				case 3 -> "/db/migration/V3__auth_v1_account_identity.sql";
@@ -46,6 +46,8 @@ class RubricTemplateMappingTest {
 				case 15 -> "/db/migration/V15__github_active_scoped_repository_uniqueness.sql";
 				case 16 -> "/db/migration/V16__task_jira_parent_identity.sql";
 				case 17 -> "/db/migration/V17__task_jira_start_date.sql";
+				case 18 -> "/db/migration/V18__git_commit_branch_membership.sql";
+				case 19 -> "/db/migration/V19__peer_review_default_rubric.sql";
 				default -> throw new IllegalStateException("unexpected version " + version);
 			};
 			String sql = readClasspath(resource);

@@ -1,5 +1,6 @@
 package com.saga.be;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -7,7 +8,12 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
@@ -48,6 +54,28 @@ class DatabaseFoundationLockTest {
 			assertTrue(base.contains("GenerationType.UUID"));
 			assertTrue(base.contains("java.util.UUID"));
 		}
+	}
+
+	@Test
+	void versionedFlywayMigrationsHaveUniqueVersionsThroughV19() throws IOException {
+		Pattern versioned = Pattern.compile("^V(\\d+)__.+\\.sql$");
+		Map<Integer, List<String>> byVersion = new TreeMap<>();
+		try (Stream<Path> files = Files.list(Path.of("src/main/resources/db/migration"))) {
+			files.map(path -> path.getFileName().toString()).forEach(name -> {
+				Matcher matcher = versioned.matcher(name);
+				if (matcher.matches()) {
+					byVersion
+							.computeIfAbsent(Integer.parseInt(matcher.group(1)), unused -> new ArrayList<>())
+							.add(name);
+				}
+			});
+		}
+		byVersion.forEach((version, names) -> assertEquals(
+				1, names.size(), "duplicate Flyway version " + version + ": " + names));
+		assertEquals(List.of("V17__task_jira_start_date.sql"), byVersion.get(17));
+		assertEquals(List.of("V18__git_commit_branch_membership.sql"), byVersion.get(18));
+		assertEquals(List.of("V19__peer_review_default_rubric.sql"), byVersion.get(19));
+		assertEquals(19, byVersion.keySet().stream().mapToInt(Integer::intValue).max().orElse(0));
 	}
 
 	private static String allMigrations() throws IOException {
