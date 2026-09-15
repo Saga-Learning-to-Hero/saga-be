@@ -43,6 +43,8 @@ public interface UserNotificationRepository extends JpaRepository<UserNotificati
 
 	Optional<UserNotification> findByRecipientUser_IdAndEventKey(UUID recipientUserId, String eventKey);
 
+	long countByBroadcast_Id(UUID broadcastId);
+
 	@Modifying(clearAutomatically = true, flushAutomatically = true)
 	@Query(
 			"""

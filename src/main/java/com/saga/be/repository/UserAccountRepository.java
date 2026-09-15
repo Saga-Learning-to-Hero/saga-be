@@ -34,6 +34,16 @@ public interface UserAccountRepository extends JpaRepository<UserAccount, UUID> 
 	Optional<UserAccount> findByIdForUpdate(@Param("id") UUID id);
 
 	@Query(
+			"""
+			select u.id from UserAccount u
+			where u.accountStatus = :status
+			  and u.accountRole in :roles
+			order by u.id asc
+			""")
+	List<UUID> findIdsByAccountStatusAndAccountRoleInOrderByIdAsc(
+			@Param("status") AccountStatus status, @Param("roles") Collection<AccountRole> roles);
+
+	@Query(
 			value =
 					"""
 					select new com.saga.be.repository.AdminUserQueryRow(

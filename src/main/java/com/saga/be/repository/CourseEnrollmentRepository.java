@@ -2,6 +2,7 @@ package com.saga.be.repository;
 
 import com.saga.be.entity.academic.CourseEnrollment;
 import com.saga.be.entity.enums.EnrollmentStatus;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -38,6 +39,16 @@ public interface CourseEnrollmentRepository extends JpaRepository<CourseEnrollme
 			""")
 	List<CourseEnrollment> findFetchedByCourse_IdAndEnrollmentStatus(
 			@Param("courseId") UUID courseId, @Param("status") EnrollmentStatus status);
+
+	@Query(
+			"""
+			SELECT e FROM CourseEnrollment e
+			JOIN FETCH e.studentProfile p
+			JOIN FETCH p.userAccount
+			WHERE e.course.id IN :courseIds AND e.enrollmentStatus = :status
+			""")
+	List<CourseEnrollment> findFetchedByCourse_IdInAndEnrollmentStatus(
+			@Param("courseIds") Collection<UUID> courseIds, @Param("status") EnrollmentStatus status);
 
 	@Query(
 			"""

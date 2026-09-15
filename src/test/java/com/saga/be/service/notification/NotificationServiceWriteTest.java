@@ -16,6 +16,7 @@ import com.saga.be.entity.enums.DeliveryStatus;
 import com.saga.be.entity.enums.NotificationType;
 import com.saga.be.entity.enums.PushPlatform;
 import com.saga.be.entity.notification.FirebaseInstallation;
+import com.saga.be.entity.notification.NotificationBroadcast;
 import com.saga.be.entity.notification.NotificationDelivery;
 import com.saga.be.entity.notification.UserNotification;
 import com.saga.be.exception.AcademicErrorCode;
@@ -148,6 +149,27 @@ class NotificationServiceWriteTest {
 		assertEquals(device.getId(), captor.getValue().getInstallation().getId());
 		assertEquals(0, captor.getValue().getAttemptCount());
 		verify(events).publishEvent(any(NotificationCreatedEvent.class));
+	}
+
+	@Test
+	void createAttachesBroadcastWhenProvided() {
+		UUID recipientId = UUID.randomUUID();
+		UserAccount recipient = recipient(recipientId);
+		NotificationBroadcast broadcast = new NotificationBroadcast();
+		broadcast.setId(UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd"));
+		when(users.findByIdForUpdate(recipientId)).thenReturn(Optional.of(recipient));
+		when(notifications.save(any(UserNotification.class))).thenAnswer(invocation -> {
+			UserNotification row = invocation.getArgument(0);
+			row.setId(UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"));
+			return row;
+		});
+
+		service().createNotification(
+				recipientId, NotificationType.COURSE, "Hello", "Body", null, "manual:x:" + recipientId, broadcast);
+
+		ArgumentCaptor<UserNotification> captor = ArgumentCaptor.forClass(UserNotification.class);
+		verify(notifications).save(captor.capture());
+		assertSame(broadcast, captor.getValue().getBroadcast());
 	}
 
 	@Test

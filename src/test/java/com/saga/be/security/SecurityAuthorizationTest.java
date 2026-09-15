@@ -279,6 +279,53 @@ class SecurityAuthorizationTest {
 	}
 
 	@Test
+	void studentAndLecturerCannotSendAdminSystemNotification() throws Exception {
+		mockMvc.perform(post("/api/admin/notifications/system")
+						.with(csrf())
+						.with(authentication(auth(AccountRole.STUDENT, "hash")))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"title\":\"Hello\",\"message\":\"Body\"}"))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(post("/api/admin/notifications/system")
+						.with(csrf())
+						.with(authentication(auth(AccountRole.LECTURER, "hash")))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"title\":\"Hello\",\"message\":\"Body\"}"))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void adminCannotSendLecturerNotifications() throws Exception {
+		UUID courseId = UUID.fromString("00000000-0000-0000-0000-000000000021");
+		UUID teamId = UUID.fromString("00000000-0000-0000-0000-000000000022");
+		UUID studentId = UUID.fromString("00000000-0000-0000-0000-000000000023");
+		mockMvc.perform(post("/api/lecturer/notifications/all-courses")
+						.with(csrf())
+						.with(authentication(auth(AccountRole.ADMIN, "hash")))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"title\":\"Hello\",\"message\":\"Body\"}"))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(post("/api/lecturer/courses/" + courseId + "/notifications")
+						.with(csrf())
+						.with(authentication(auth(AccountRole.ADMIN, "hash")))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"title\":\"Hello\",\"message\":\"Body\"}"))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(post("/api/lecturer/teams/" + teamId + "/notifications")
+						.with(csrf())
+						.with(authentication(auth(AccountRole.ADMIN, "hash")))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"title\":\"Hello\",\"message\":\"Body\"}"))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(post("/api/lecturer/courses/" + courseId + "/students/" + studentId + "/notifications")
+						.with(csrf())
+						.with(authentication(auth(AccountRole.ADMIN, "hash")))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"title\":\"Hello\",\"message\":\"Body\"}"))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
 	void unauthenticatedCannotReadContributionEvaluation() throws Exception {
 		UUID teamId = UUID.fromString("00000000-0000-0000-0000-000000000088");
 		mockMvc.perform(get("/api/teams/" + teamId + "/contribution-evaluation"))

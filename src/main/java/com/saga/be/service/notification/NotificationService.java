@@ -9,6 +9,7 @@ import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.enums.DeliveryStatus;
 import com.saga.be.entity.enums.NotificationType;
 import com.saga.be.entity.notification.FirebaseInstallation;
+import com.saga.be.entity.notification.NotificationBroadcast;
 import com.saga.be.entity.notification.NotificationDelivery;
 import com.saga.be.entity.notification.UserNotification;
 import com.saga.be.exception.AcademicErrorCode;
@@ -34,9 +35,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 /**
- * Own-inbox queries plus the internal writer for future business flows. REST never creates
- * notifications. Rows are inserted in the caller's transaction; {@link NotificationCreatedEvent}
- * is delivered AFTER_COMMIT.
+ * Own-inbox queries plus the internal writer for business flows including ADMIN/LECTURER
+ * manual sends. Inbox REST never creates notifications. Send REST goes through
+ * {@code ManualNotificationService}, which calls this writer. Rows are inserted in the caller's
+ * transaction; {@link NotificationCreatedEvent} is delivered AFTER_COMMIT.
  *
  * <p>When FCM is enabled, one {@code notification_delivery(PENDING)} is inserted in the same
  * transaction for each active recipient installation that has a token. Firebase is never called
@@ -141,6 +143,18 @@ public class NotificationService {
 			String message,
 			String actionUrl,
 			String eventKey) {
+		return createNotification(recipientUserId, notificationType, title, message, actionUrl, eventKey, null);
+	}
+
+	@Transactional
+	public UserNotificationResponse createNotification(
+			UUID recipientUserId,
+			NotificationType notificationType,
+			String title,
+			String message,
+			String actionUrl,
+			String eventKey,
+			NotificationBroadcast broadcast) {
 		if (recipientUserId == null) {
 			throw invalid("recipient is required.");
 		}
@@ -167,6 +181,7 @@ public class NotificationService {
 		row.setMessage(trimmedMessage);
 		row.setActionUrl(trimmedActionUrl);
 		row.setEventKey(trimmedEventKey);
+		row.setBroadcast(broadcast);
 		notifications.save(row);
 		planPushDeliveries(row, recipientUserId);
 		events.publishEvent(new NotificationCreatedEvent(recipientUserId, row.getId(), Instant.now()));

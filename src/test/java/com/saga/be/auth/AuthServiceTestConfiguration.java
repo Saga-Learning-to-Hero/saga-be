@@ -74,4 +74,10 @@ public class AuthServiceTestConfiguration {
 	PushInstallationService pushInstallationService() {
 		return Mockito.mock(PushInstallationService.class);
 	}
+
+	@Bean
+	@Primary
+	com.saga.be.service.notification.ManualNotificationService manualNotificationService() {
+		return Mockito.mock(com.saga.be.service.notification.ManualNotificationService.class);
+	}
 }
