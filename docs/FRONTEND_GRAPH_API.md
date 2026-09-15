@@ -130,7 +130,61 @@ Optional:
 If-None-Match: "graph-{projectId}-{revision}"
 ```
 
-Response headers: `ETag`, `X-Graph-Revision`. Cùng revision → `304` (không body). Body `{ nodes, edges }` **không** đổi shape.
+Response headers: `ETag`, `X-Graph-Revision`. Cùng revision **và cùng query** → `304` (không body). Không có query subgraph mới: body vẫn `{ nodes, edges }` (không `meta`), ETag vẫn `graph-{projectId}-{revision}`. Có filter: ETag thêm hash view (`graph-{projectId}-{revision}-{16 hex}`).
+
+### 4.2 Subgraph filters (progressive loading)
+
+Đồ thị lớn: **đừng** tải full rồi ẩn trên Cytoscape. GET lại cùng endpoint với query dưới đây. **Không** rebuild Neo4j khi đổi filter/focus — chỉ đọc projection hiện có.
+
+| Param | Bắt buộc | Default | Ghi chú |
+| --- | --- | --- | --- |
+| `focusNodeId` | không | — | `task:{id}`, `student:{id}`, … đúng prefix mục 5.1. Phải nằm **trong** graph đã scoped (project + `sprintId` nếu có). Sai scope → `400 REQUEST_INVALID`. |
+| `depth` | không | `1` | Neighborhood vô hướng từ `focusNodeId` (hoặc từ anomaly). Chỉ `1`–`3`. **Chỉ có `depth` thì bị bỏ qua** — phải kèm focus / type / paging. |
+| `nodeTypes` | không | mọi type | CSV enum canonical: `STUDENT,TEAM,PROJECT,SPRINT,TASK,COMMIT,CRITERION,IDENTITY`. Sai enum → 400. |
+| `edgeTypes` | không | mọi label | CSV: `MEMBER_OF,OWNS,HAS_SPRINT,CONTAINS,ASSIGNED_TO,EVIDENCED_BY,CLASSIFIED_AS,AUTHORED_BY,MAPS_TO,REVIEWED`. |
+| `anomaliesOnly` | không | `false` | `true` = anomaly **kèm neighborhood** (không trả node cô lập nếu chúng còn cạnh). |
+| `maxNodes` | không | — | `1`–`2000`. Cắt theo thứ tự ổn định trong cùng revision. |
+| `cursor` | không | — | Token `revision:lastNodeId` từ `meta.nextCursor`. Alias: `continuationToken`. Sai revision → 400. |
+
+Ví dụ overview gọn + drill-down task:
+
+```http
+GET /api/projects/{projectId}/graph/overview
+    ?sprintId={sprintId}
+    &nodeTypes=STUDENT,TEAM,PROJECT,SPRINT,TASK
+GET /api/projects/{projectId}/graph/overview
+    ?sprintId={sprintId}
+    &focusNodeId=task:{taskId}
+    &depth=1
+    &nodeTypes=TASK,COMMIT,STUDENT
+    &edgeTypes=ASSIGNED_TO,EVIDENCED_BY
+    &maxNodes=200
+```
+
+Khi **bất kỳ** param subgraph nào active, body thêm `meta` (node/edge **shape không đổi**):
+
+```json
+{
+  "nodes": [],
+  "edges": [],
+  "meta": {
+    "revision": "4",
+    "totalNodes": 850,
+    "totalEdges": 1200,
+    "returnedNodes": 200,
+    "returnedEdges": 310,
+    "truncated": true,
+    "nextCursor": "4:task:…"
+  }
+}
+```
+
+Quy tắc:
+
+- Không bao giờ trả cạnh nếu `source` hoặc `target` vắng trong `nodes`.
+- `truncated: true` → lấy trang sau cùng filter + `cursor=meta.nextCursor`.
+- Cursor **chỉ** valid khi `X-Graph-Revision` / `meta.revision` còn đúng. SSE `GRAPH_CHANGED` → bỏ cursor, GET lại từ đầu.
+- `sprintId` (query hoặc path) vẫn lọc MySQL/Neo4j scope trước; `nodeTypes`/`edgeTypes` lọc tiếp trên lát đó.
 
 ---
 
@@ -173,6 +227,15 @@ Field `null` **bị ommit** (`JsonInclude.NON_NULL`). Đừng `=== false` trên 
 interface CytoscapeGraphResponse {
   nodes: Array<{ data: CytoscapeNodeData }>;
   edges: Array<{ data: CytoscapeEdgeData }>;
+  meta?: {
+    revision: string;
+    totalNodes: number;
+    totalEdges: number;
+    returnedNodes: number;
+    returnedEdges: number;
+    truncated: boolean;
+    nextCursor?: string;
+  };
 }
 
 interface CytoscapeNodeData {
@@ -268,15 +331,21 @@ Không Criterion, không Identity, không `REVIEWED`.
 
 Không `sprintId`: cả project, **gồm task backlog** (task không nằm sprint). Có `sprintId`: chỉ sprint đó, **không** backlog.
 
+Mặc định **vẫn đủ COMMIT** (contract cũ). Overview gọn: `nodeTypes=STUDENT,TEAM,PROJECT,SPRINT,TASK` — loại COMMIT/IDENTITY phía server, không ẩn trên canvas. Drill-down: `focusNodeId=task:…&depth=1&nodeTypes=TASK,COMMIT,STUDENT`.
+
 ### Graph 2 — Contribution path
 
 Luôn trả **4 node Criterion** (kể cả chưa có cạnh). Chỉ task **DONE** đã gán sinh viên đó **và** đang thuộc một sprint. Backlog / task chưa DONE không vào graph này.
+
+Drill-down evidence: `focusNodeId=task:{taskId}&depth=1&nodeTypes=TASK,COMMIT&edgeTypes=EVIDENCED_BY`.
 
 `weightType` trên task: `CODE` \| `TEST` \| `DOCUMENT` \| `RESEARCH`. Không viết `DOC`. Task DOCUMENT/RESEARCH thiếu file/link → **không** có cạnh `CLASSIFIED_AS`.
 
 ### Graph 3 — Sprint activity
 
 Mọi task trong sprint (mọi status) + Criterion + commit evidence + assignee.
+
+Commit theo task (tránh tải hết SHA một lần): `focusNodeId=task:{taskId}&depth=1&nodeTypes=TASK,COMMIT&edgeTypes=EVIDENCED_BY&maxNodes=200`, rồi `cursor` nếu `truncated`.
 
 ### Graph 4 — Attribution
 
@@ -286,9 +355,13 @@ Không `sprintId`: mọi commit của project. Có `sprintId`: chỉ commit đã
 
 Highlight: node IDENTITY/COMMIT `isAnomaly`, hoặc Identity không có cạnh `MAPS_TO` đi ra.
 
+Ưu tiên anomaly + context: `anomaliesOnly=true` (Identity chưa map, commit mồ côi — **kèm** student/task/commit kề, không chỉ chấm đỏ đơn lẻ).
+
 ### Graph 5 — Peer review
 
 Chỉ STUDENT + `REVIEWED`. `edge.data.weight` = tổng sao. Mọi member ACTIVE vẫn là node dù chưa ai chấm (cạnh `[]`).
+
+Team nhỏ: **không cần** `maxNodes`/`cursor`. Filter vẫn dùng được nếu cần.
 
 BE **không** set `isAnomaly` trên cạnh REVIEWED. FE tự highlight nếu thiếu chiều ngược / `weight` thấp — không đổi % đóng góp.
 
@@ -315,7 +388,7 @@ Nhấp nháy đỏ: `data.isAnomaly === true`.
 4. Tab “Attribution” → Graph 4 (cùng `sprintId` nếu đang filter).
 5. Tab “Peer review” → Graph 5 (cần sprint).
 
-Layout: `breadthfirst` / `cose` / `concentric` / `circle` là việc FE. Neighborhood dimming: `cy.$id(id).neighborhood()`.
+Layout: `breadthfirst` / `cose` / `concentric` / `circle` là việc FE. Click node → **GET lại** với `focusNodeId` + `depth=1` (đừng layout full 800 node). Neighborhood dimming local: `cy.$id(id).neighborhood()` chỉ khi payload đã nhỏ.
 
 Sau webhook / sync: SSE `GRAPH_CHANGED` rồi GET graph (`If-None-Match`). Không refetch graph trên mọi `TASKS_CHANGED`.
 
@@ -331,6 +404,7 @@ Sau webhook / sync: SSE `GRAPH_CHANGED` rồi GET graph (`If-None-Match`). Khôn
 | 403 | `ACCESS_DENIED` | ADMIN hoặc role khác | Không dùng graph cho admin |
 | 404 | `ROSTER_STUDENT_NOT_FOUND` | `studentId` không phải member ACTIVE | Toast; đừng dùng `user.id` |
 | 404 | `PROJECT_NOT_FOUND` | Sai `sprintId` (hoặc sprint đã xóa) | Bỏ filter sprint |
+| 400 | `REQUEST_INVALID` | `focusNodeId` ngoài scope, enum type sai, `depth`/`maxNodes`/`cursor` invalid | Toast; đừng gửi cursor sau `GRAPH_CHANGED` |
 | 5xx | — | Neo4j sai DB name (`neo4j` trên Aura) hoặc Aura down. Health **không** check Neo4j | Railway: xóa `NEO4J_DATABASE=neo4j` hoặc để trống |
 
 CORS: origin FE phải nằm `SAGA_AUTH_FRONTEND_ORIGINS`. Local: `http://localhost:3000` + `credentials: "include"`.
@@ -345,3 +419,4 @@ CORS: origin FE phải nằm `SAGA_AUTH_FRONTEND_ORIGINS`. Local: `http://localh
 - Không nối `Commit → Student` tắt Identity.
 - Không đợi node Pull Request.
 - Không gọi 5 graph song song lúc mount nếu chưa cần.
+- Không tải full graph rồi gom/ẩn trên Cytoscape — dùng `nodeTypes` / `focusNodeId` / `maxNodes`.

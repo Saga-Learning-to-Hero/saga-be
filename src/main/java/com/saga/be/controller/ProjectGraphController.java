@@ -2,7 +2,7 @@ package com.saga.be.controller;
 
 import com.saga.be.dto.graph.CytoscapeGraphResponse;
 import com.saga.be.graph.GraphRead;
-import com.saga.be.graph.ProjectGraphProjector;
+import com.saga.be.graph.GraphViewQuery;
 import com.saga.be.graph.ProjectGraphService;
 import com.saga.be.security.SagaUserPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
@@ -34,62 +34,148 @@ public class ProjectGraphController {
 	}
 
 	@GetMapping("/graph/overview")
-	@Operation(summary = "Graph 1 — Student Activity Graph. Optional sprintId limits tasks/commits to one sprint.")
+	@Operation(summary = "Graph 1 - Student Activity Graph. Optional sprintId and subgraph filters.")
 	public ResponseEntity<CytoscapeGraphResponse> overview(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
 			@RequestParam(required = false) UUID sprintId,
+			@RequestParam(required = false) String focusNodeId,
+			@RequestParam(required = false) Integer depth,
+			@RequestParam(required = false) String nodeTypes,
+			@RequestParam(required = false) String edgeTypes,
+			@RequestParam(required = false) Boolean anomaliesOnly,
+			@RequestParam(required = false) Integer maxNodes,
+			@RequestParam(required = false) String cursor,
+			@RequestParam(required = false) String continuationToken,
 			@RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
-		return respond(ifNoneMatch, projectId, graphs.overview(principal.getUserId(), projectId, sprintId));
+		return respond(
+				ifNoneMatch,
+				projectId,
+				graphs.overview(
+						principal.getUserId(),
+						projectId,
+						sprintId,
+						view(focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken)));
 	}
 
 	@GetMapping("/students/{studentId}/graph/contribution")
-	@Operation(summary = "Graph 2 — Contribution path for one student. Optional sprintId filter.")
+	@Operation(summary = "Graph 2 - Contribution path for one student. Optional sprintId and subgraph filters.")
 	public ResponseEntity<CytoscapeGraphResponse> contribution(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
 			@PathVariable UUID studentId,
 			@RequestParam(required = false) UUID sprintId,
+			@RequestParam(required = false) String focusNodeId,
+			@RequestParam(required = false) Integer depth,
+			@RequestParam(required = false) String nodeTypes,
+			@RequestParam(required = false) String edgeTypes,
+			@RequestParam(required = false) Boolean anomaliesOnly,
+			@RequestParam(required = false) Integer maxNodes,
+			@RequestParam(required = false) String cursor,
+			@RequestParam(required = false) String continuationToken,
 			@RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
 		return respond(
 				ifNoneMatch,
 				projectId,
-				graphs.contribution(principal.getUserId(), projectId, studentId, sprintId));
+				graphs.contribution(
+						principal.getUserId(),
+						projectId,
+						studentId,
+						sprintId,
+						view(focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken)));
 	}
 
 	@GetMapping("/sprints/{sprintId}/graph/activity")
-	@Operation(summary = "Graph 3 — Sprint activity subgraph.")
+	@Operation(summary = "Graph 3 - Sprint activity subgraph.")
 	public ResponseEntity<CytoscapeGraphResponse> activity(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
 			@PathVariable UUID sprintId,
+			@RequestParam(required = false) String focusNodeId,
+			@RequestParam(required = false) Integer depth,
+			@RequestParam(required = false) String nodeTypes,
+			@RequestParam(required = false) String edgeTypes,
+			@RequestParam(required = false) Boolean anomaliesOnly,
+			@RequestParam(required = false) Integer maxNodes,
+			@RequestParam(required = false) String cursor,
+			@RequestParam(required = false) String continuationToken,
 			@RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
-		return respond(ifNoneMatch, projectId, graphs.activity(principal.getUserId(), projectId, sprintId));
+		return respond(
+				ifNoneMatch,
+				projectId,
+				graphs.activity(
+						principal.getUserId(),
+						projectId,
+						sprintId,
+						view(focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken)));
 	}
 
 	@GetMapping("/graph/attribution")
-	@Operation(summary = "Graph 4 — Commit identity attribution. Optional sprintId keeps commits linked to that sprint.")
+	@Operation(summary = "Graph 4 - Commit identity attribution. Optional sprintId and subgraph filters.")
 	public ResponseEntity<CytoscapeGraphResponse> attribution(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
 			@RequestParam(required = false) UUID sprintId,
+			@RequestParam(required = false) String focusNodeId,
+			@RequestParam(required = false) Integer depth,
+			@RequestParam(required = false) String nodeTypes,
+			@RequestParam(required = false) String edgeTypes,
+			@RequestParam(required = false) Boolean anomaliesOnly,
+			@RequestParam(required = false) Integer maxNodes,
+			@RequestParam(required = false) String cursor,
+			@RequestParam(required = false) String continuationToken,
 			@RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
-		return respond(ifNoneMatch, projectId, graphs.attribution(principal.getUserId(), projectId, sprintId));
+		return respond(
+				ifNoneMatch,
+				projectId,
+				graphs.attribution(
+						principal.getUserId(),
+						projectId,
+						sprintId,
+						view(focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken)));
 	}
 
 	@GetMapping("/sprints/{sprintId}/graph/peer-review")
-	@Operation(summary = "Graph 5 — Peer-review network for one sprint.")
+	@Operation(summary = "Graph 5 - Peer-review network for one sprint.")
 	public ResponseEntity<CytoscapeGraphResponse> peerReview(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
 			@PathVariable UUID sprintId,
+			@RequestParam(required = false) String focusNodeId,
+			@RequestParam(required = false) Integer depth,
+			@RequestParam(required = false) String nodeTypes,
+			@RequestParam(required = false) String edgeTypes,
+			@RequestParam(required = false) Boolean anomaliesOnly,
+			@RequestParam(required = false) Integer maxNodes,
+			@RequestParam(required = false) String cursor,
+			@RequestParam(required = false) String continuationToken,
 			@RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
-		return respond(ifNoneMatch, projectId, graphs.peerReview(principal.getUserId(), projectId, sprintId));
+		return respond(
+				ifNoneMatch,
+				projectId,
+				graphs.peerReview(
+						principal.getUserId(),
+						projectId,
+						sprintId,
+						view(focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken)));
+	}
+
+	private static GraphViewQuery view(
+			String focusNodeId,
+			Integer depth,
+			String nodeTypes,
+			String edgeTypes,
+			Boolean anomaliesOnly,
+			Integer maxNodes,
+			String cursor,
+			String continuationToken) {
+		return GraphViewQuery.parse(
+				focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken);
 	}
 
 	private static ResponseEntity<CytoscapeGraphResponse> respond(
 			String ifNoneMatch, UUID projectId, GraphRead read) {
-		String etag = ProjectGraphProjector.etag(projectId, read.revision());
+		String etag = read.etag(projectId);
 		if (etagEquals(ifNoneMatch, etag)) {
 			return ResponseEntity.status(304)
 					.eTag(etag)

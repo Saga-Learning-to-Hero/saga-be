@@ -105,6 +105,15 @@ class ProjectGraphProjectorTest {
 	}
 
 	@Test
+	void etagIncludesViewHashOnlyWhenFiltersArePresent() {
+		assertThat(ProjectGraphProjector.etag(projectId, 4L)).isEqualTo("graph-" + projectId + "-4");
+		assertThat(ProjectGraphProjector.etag(projectId, 4L, "")).isEqualTo("graph-" + projectId + "-4");
+		assertThat(ProjectGraphProjector.etag(projectId, 4L, "TASK|1")).isNotEqualTo("graph-" + projectId + "-4");
+		assertThat(ProjectGraphProjector.etag(projectId, 4L, "TASK|1"))
+				.isEqualTo(ProjectGraphProjector.etag(projectId, 4L, "TASK|1"));
+	}
+
+	@Test
 	void mutationMarksDirtyThenGetRebuilds() {
 		when(client.projectExists(projectId)).thenReturn(true);
 		when(loader.load(projectId)).thenReturn(snapshot());
