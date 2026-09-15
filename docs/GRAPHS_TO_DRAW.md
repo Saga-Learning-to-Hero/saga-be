@@ -142,7 +142,7 @@ interface CytoscapeGraphResponse {
 
 ## IV. Phản hồi Backend (đã chốt)
 
-Ngôn ngữ đồ thị khóa tại [`docs/SAGA_GRAPHS_TO_DRAW.md`](./SAGA_GRAPHS_TO_DRAW.md) (nếu còn) / mục dưới. Graph API **đã ship** (`ProjectGraphController`). GET rebuild projection Neo4j từ MySQL rồi trả Cytoscape JSON.
+Ngôn ngữ đồ thị khóa tại [`docs/SAGA_GRAPHS_TO_DRAW.md`](./SAGA_GRAPHS_TO_DRAW.md) (nếu còn) / mục dưới. Graph API **đã ship** (`ProjectGraphController`). GET đọc Neo4j; rebuild debounce sau mutation rồi SSE `GRAPH_CHANGED`.
 
 ### 1. Tên cạnh — trả lời câu hỏi Cypher
 
@@ -228,4 +228,4 @@ Payload: `{ nodes: [{ data: { id, label, type, ... } }], edges: [{ data: { id, s
 
 ### Việc FE làm với API đã ship
 
-Cytoscape CSS lock theo tên cạnh cột “Cạnh chốt”. Gọi 5 GET trên. Mỗi GET rebuild graph Neo4j của project rồi đọc lại.
+Cytoscape CSS lock theo tên cạnh cột “Cạnh chốt”. Gọi 5 GET trên. Đổi sprint/mode chỉ đọc projection; cập nhật canvas khi SSE `GRAPH_CHANGED` (`docs/FRONTEND_GRAPH_API.md`).

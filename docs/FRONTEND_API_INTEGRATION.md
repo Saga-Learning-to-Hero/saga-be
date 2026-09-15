@@ -2,7 +2,7 @@
 
 File này là **contract tích hợp Backend ↔ Frontend có hiệu lực** khi public API đã được implement.
 
-> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim) đã chốt. Lecturer Team Management V1 (assigned courses, ACTIVE roster, team XLSX preview/confirm, student my-team) đã chốt. Student My Courses V1 (`GET /api/student/courses`) đã chốt. Team Leader Project Setup V1 (project-type catalog, student team project create/read, then existing GitHub/Jira project integrations) đã chốt. Team Contribution Evaluation V1 (DEC-092 formula on V2 schema) đã chốt. Graph/SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
+> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim) đã chốt. Lecturer Team Management V1 (assigned courses, ACTIVE roster, team XLSX preview/confirm, student my-team) đã chốt. Student My Courses V1 (`GET /api/student/courses`) đã chốt. Team Leader Project Setup V1 (project-type catalog, student team project create/read, then existing GitHub/Jira project integrations) đã chốt. Team Contribution Evaluation V1 (DEC-092 formula on V2 schema) đã chốt. Graph Cytoscape V1 đã chốt (`docs/FRONTEND_GRAPH_API.md`). SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
 
 ---
 
@@ -18,6 +18,7 @@ docs/FRONTEND_API_INTEGRATION.md
 docs/FRONTEND_CONTRIBUTION_API.md      (playbook luồng % đóng góp)
 docs/FRONTEND_TASK_EVIDENCE_API.md     (playbook gắn URL + file vào task)
 docs/FRONTEND_PEER_REVIEW_API.md       (playbook chấm đồng đội theo sprint)
+docs/FRONTEND_GRAPH_API.md             (playbook 5 graph Cytoscape)
 ```
 
 OpenAPI YAML: `http://localhost:8080/v3/api-docs.yaml`.
@@ -52,7 +53,7 @@ trừ khi đang debug lỗi implement phía Backend.
 | Session/token transport | HttpOnly cookie `SAGA_SESSION` (server-side session; **không JWT**) |
 | Error response format | `{ "code": "...", "message": "..." }` |
 | Pagination format | TBD / Chưa chốt |
-| Graph snapshot endpoint | TBD / Chưa chốt |
+| Graph snapshot endpoint | Graph V1 Cytoscape — `docs/FRONTEND_GRAPH_API.md` |
 | Graph delta/recovery endpoint | TBD / Chưa chốt |
 | SSE endpoint | TBD / Chưa chốt |
 | SSE event envelope | Đã lên kế hoạch kiến trúc, schema chính xác TBD / Chưa chốt |
@@ -389,7 +390,7 @@ Backend phải ghi rõ:
 
 Backend không được lấy “trả về toàn bộ graph” làm pattern tích hợp mặc định.
 
-Năm endpoint Cytoscape dưới đây **đã chốt**, luôn scoped 1 project / 1 sprint / 1 student. GET rebuild Neo4j projection từ MySQL rồi trả `{ nodes, edges }` (Cytoscape.js elements). Evidence phase này chỉ `COMMIT`.
+Năm endpoint Cytoscape dưới đây **đã chốt**, luôn scoped 1 project / 1 sprint / 1 student. GET **đọc** Neo4j; rebuild chạy debounce sau mutation MySQL, rồi SSE `GRAPH_CHANGED`. Body `{ nodes, edges }`. ETag / `304` / header `X-Graph-Revision`. Playbook: `docs/FRONTEND_GRAPH_API.md`. Evidence phase này chỉ `COMMIT`.
 
 Quyền: `ProjectDataAuthorization.requireReader` (ACTIVE team member hoặc lecturer phụ trách course). ADMIN bị deny.
 
@@ -406,7 +407,7 @@ Quyền: `ProjectDataAuthorization.requireReader` (ACTIVE team member hoặc lec
 
 Chi tiết node/cạnh từng graph: `docs/GRAPHS_TO_DRAW.md`.
 
-Realtime vẫn chủ yếu phát delta; lần GET graph là snapshot.
+Realtime: sau GET graph là snapshot theo revision hiện tại; cập nhật canvas khi SSE `GRAPH_CHANGED`.
 
 ---
 

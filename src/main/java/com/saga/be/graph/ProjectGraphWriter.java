@@ -275,6 +275,15 @@ public class ProjectGraphWriter {
 				SET c.name = row.name, c.label = row.label
 				""",
 				Map.of("rows", CRITERIA)));
+		List<String> indexes = List.of(
+				"CREATE INDEX team_projectId IF NOT EXISTS FOR (n:Team) ON (n.projectId)",
+				"CREATE INDEX sprint_projectId IF NOT EXISTS FOR (n:Sprint) ON (n.projectId)",
+				"CREATE INDEX task_projectId IF NOT EXISTS FOR (n:Task) ON (n.projectId)",
+				"CREATE INDEX commit_projectId IF NOT EXISTS FOR (n:Commit) ON (n.projectId)",
+				"CREATE INDEX identity_projectId IF NOT EXISTS FOR (n:Identity) ON (n.projectId)");
+		for (String cypher : indexes) {
+			graph.write(tx -> tx.run(cypher));
+		}
 	}
 
 	private static String nullToEmpty(String value) {
