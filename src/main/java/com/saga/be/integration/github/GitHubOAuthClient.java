@@ -5,14 +5,21 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.saga.be.config.IntegrationProperties;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import org.springframework.context.annotation.Profile;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageConversionException;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 @Component
@@ -301,6 +308,185 @@ public class GitHubOAuthClient {
 		}
 	}
 
+	/**
+	 * Live GitHub "Get a commit" for one SHA. Metadata is taken from page 1. Changed files are
+	 * paginated at {@code per_page=100} for at most {@link #MAX_COMMIT_DETAIL_FILE_PAGES} pages and
+	 * capped at {@link #MAX_COMMIT_DETAIL_FILES}. {@code filesTruncated=true} means GitHub still had
+	 * more files after that product cap — the UI is showing only the first bounded portion.
+	 */
+	public CommitDetail getCommit(String installationToken, String owner, String repo, String sha) {
+		Map<String, CommitFileChange> uniqueFiles = new LinkedHashMap<>();
+		GitHubCommitDetailApiResponse first = null;
+		boolean filesTruncated = false;
+		for (int page = 1; page <= MAX_COMMIT_DETAIL_FILE_PAGES; page++) {
+			CommitPage fetched = getCommitPage(installationToken, owner, repo, sha, page, COMMIT_DETAIL_FILES_PER_PAGE);
+			if (first == null) {
+				first = fetched.body();
+			}
+			List<GitHubCommitFile> pageFiles = fetched.body() == null || fetched.body().files() == null
+					? List.of()
+					: fetched.body().files();
+			boolean skippedBecauseCap = false;
+			for (GitHubCommitFile file : pageFiles) {
+				if (file == null || file.filename() == null || file.filename().isBlank()) {
+					continue;
+				}
+				if (uniqueFiles.containsKey(file.filename())) {
+					continue;
+				}
+				if (uniqueFiles.size() >= MAX_COMMIT_DETAIL_FILES) {
+					skippedBecauseCap = true;
+					break;
+				}
+				uniqueFiles.put(
+						file.filename(),
+						new CommitFileChange(
+								file.filename(),
+								file.previousFilename(),
+								file.status(),
+								file.additions(),
+								file.deletions(),
+								file.changes(),
+								file.patch()));
+			}
+			boolean hasNext = fetched.hasNext();
+			if (skippedBecauseCap || (uniqueFiles.size() >= MAX_COMMIT_DETAIL_FILES && hasNext)) {
+				filesTruncated = true;
+				break;
+			}
+			if (!hasNext) {
+				break;
+			}
+			if (page == MAX_COMMIT_DETAIL_FILE_PAGES) {
+				filesTruncated = true;
+			}
+		}
+		if (first == null) {
+			throw commitUnavailable();
+		}
+		return toCommitDetail(first, List.copyOf(uniqueFiles.values()), filesTruncated);
+	}
+
+	private CommitPage getCommitPage(
+			String installationToken, String owner, String repo, String sha, int page, int perPage) {
+		try {
+			int safePerPage = Math.max(1, Math.min(perPage, 100));
+			int safePage = Math.max(1, page);
+			ResponseEntity<GitHubCommitDetailApiResponse> entity = restClient
+					.get()
+					.uri(
+							"https://api.github.com/repos/{owner}/{repo}/commits/{sha}?per_page={perPage}&page={page}",
+							owner,
+							repo,
+							sha,
+							safePerPage,
+							safePage)
+					.header("Authorization", "Bearer " + installationToken)
+					.header("Accept", "application/vnd.github+json")
+					.retrieve()
+					.toEntity(GitHubCommitDetailApiResponse.class);
+			GitHubCommitDetailApiResponse body = entity.getBody();
+			if (body == null || body.sha() == null || body.sha().isBlank()) {
+				throw commitUnavailable();
+			}
+			boolean linkPresent = hasLinkHeader(entity.getHeaders());
+			return new CommitPage(body, hasRelNext(entity.getHeaders()), linkPresent);
+		} catch (IntegrationException ex) {
+			throw ex;
+		} catch (RestClientResponseException ex) {
+			throw mapGithubCommitFailure(ex);
+		} catch (RestClientException | HttpMessageConversionException ex) {
+			throw commitUnavailable();
+		}
+	}
+
+	private static CommitDetail toCommitDetail(
+			GitHubCommitDetailApiResponse first, List<CommitFileChange> files, boolean filesTruncated) {
+		GitHubCommitDetailBody commit = first.commit();
+		GitHubCommitAuthorMeta authorMeta = commit == null ? null : commit.author();
+		GitHubCommitAuthorMeta committerMeta = commit == null ? null : commit.committer();
+		String authorName = firstNonBlank(authorMeta == null ? null : authorMeta.name(), committerMeta == null ? null : committerMeta.name());
+		String committedAt = firstNonBlank(
+				authorMeta == null ? null : authorMeta.date(), committerMeta == null ? null : committerMeta.date());
+		String authorLogin = firstNonBlank(
+				first.author() == null ? null : first.author().login(),
+				first.committer() == null ? null : first.committer().login());
+		List<CommitParent> parents = first.parents() == null
+				? List.of()
+				: first.parents().stream()
+						.filter(parent -> parent != null && parent.sha() != null && !parent.sha().isBlank())
+						.map(parent -> new CommitParent(parent.sha()))
+						.toList();
+		GitHubCommitStats stats = first.stats();
+		return new CommitDetail(
+				first.sha(),
+				first.htmlUrl(),
+				commit == null ? null : commit.message(),
+				authorName,
+				authorLogin,
+				committedAt,
+				stats == null ? null : new CommitStats(stats.total(), stats.additions(), stats.deletions()),
+				parents,
+				files,
+				filesTruncated);
+	}
+
+	private static boolean hasLinkHeader(HttpHeaders headers) {
+		if (headers == null) {
+			return false;
+		}
+		List<String> values = headers.get(HttpHeaders.LINK);
+		return values != null && !values.isEmpty();
+	}
+
+	private static boolean hasRelNext(HttpHeaders headers) {
+		if (headers == null) {
+			return false;
+		}
+		List<String> values = headers.get(HttpHeaders.LINK);
+		if (values == null || values.isEmpty()) {
+			return false;
+		}
+		for (String value : values) {
+			if (value == null) {
+				continue;
+			}
+			String lower = value.toLowerCase(Locale.ROOT);
+			if (lower.contains("rel=\"next\"") || lower.contains("rel='next'") || lower.contains("rel=next")) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static String firstNonBlank(String primary, String fallback) {
+		if (primary != null && !primary.isBlank()) {
+			return primary;
+		}
+		if (fallback != null && !fallback.isBlank()) {
+			return fallback;
+		}
+		return null;
+	}
+
+	private static IntegrationException mapGithubCommitFailure(RestClientResponseException ex) {
+		int status = ex.getStatusCode().value();
+		if (status == 403 || status == 429) {
+			return new IntegrationException(
+					IntegrationErrorCode.GITHUB_RATE_LIMITED,
+					HttpStatus.BAD_GATEWAY,
+					"GitHub rate limit prevented loading this commit.");
+		}
+		return commitUnavailable();
+	}
+
+	private static IntegrationException commitUnavailable() {
+		return new IntegrationException(
+				IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
+				HttpStatus.BAD_GATEWAY,
+				"GitHub commit could not be loaded.");
+	}
+
 	private static IntegrationException mapGithubListFailure(RestClientResponseException ex, String fallback) {
 		int status = ex.getStatusCode().value();
 		if (status == 403 || status == 429) {
@@ -314,6 +500,10 @@ public class GitHubOAuthClient {
 
 	/** Defensive only — malformed/infinite provider pagination, not a product data cap. */
 	static final int MAX_BRANCH_LIST_PAGES = 1_000;
+
+	static final int COMMIT_DETAIL_FILES_PER_PAGE = 100;
+	static final int MAX_COMMIT_DETAIL_FILE_PAGES = 3;
+	public static final int MAX_COMMIT_DETAIL_FILES = 300;
 
 	private static IntegrationException tokenExchangeFailed() {
 		return new IntegrationException(
@@ -384,4 +574,61 @@ public class GitHubOAuthClient {
 	public record GitHubCommitAuthorUser(Long id, String login) {}
 
 	public record CommitSummary(String sha, String message, String committedAt, Long authorId, String authorLogin) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record GitHubCommitDetailApiResponse(
+			String sha,
+			@JsonProperty("html_url") String htmlUrl,
+			GitHubCommitDetailBody commit,
+			GitHubCommitAuthorUser author,
+			GitHubCommitAuthorUser committer,
+			List<GitHubCommitParent> parents,
+			GitHubCommitStats stats,
+			List<GitHubCommitFile> files) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record GitHubCommitDetailBody(String message, GitHubCommitAuthorMeta author, GitHubCommitAuthorMeta committer) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record GitHubCommitParent(String sha) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record GitHubCommitStats(Integer total, Integer additions, Integer deletions) {}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record GitHubCommitFile(
+			String filename,
+			@JsonProperty("previous_filename") String previousFilename,
+			String status,
+			Integer additions,
+			Integer deletions,
+			Integer changes,
+			String patch) {}
+
+	public record CommitDetail(
+			String sha,
+			String htmlUrl,
+			String message,
+			String authorName,
+			String authorLogin,
+			String committedAt,
+			CommitStats stats,
+			List<CommitParent> parents,
+			List<CommitFileChange> files,
+			boolean filesTruncated) {}
+
+	public record CommitStats(Integer total, Integer additions, Integer deletions) {}
+
+	public record CommitParent(String sha) {}
+
+	public record CommitFileChange(
+			String filename,
+			String previousFilename,
+			String status,
+			Integer additions,
+			Integer deletions,
+			Integer changes,
+			String patch) {}
+
+	private record CommitPage(GitHubCommitDetailApiResponse body, boolean hasNext, boolean linkHeaderPresent) {}
 }

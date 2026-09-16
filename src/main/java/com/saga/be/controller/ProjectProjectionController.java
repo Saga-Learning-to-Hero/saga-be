@@ -4,6 +4,7 @@ import com.saga.be.dto.project.CreateProjectSprintRequest;
 import com.saga.be.dto.project.CreateProjectTaskRequest;
 import com.saga.be.dto.project.PatchProjectSprintRequest;
 import com.saga.be.dto.project.PatchProjectTaskRequest;
+import com.saga.be.dto.project.ProjectCommitDetailResponse;
 import com.saga.be.dto.project.ProjectCommitResponse;
 import com.saga.be.dto.project.ProjectGitBranchListResponse;
 import com.saga.be.dto.project.ProjectMemberProgressResponse;
@@ -19,6 +20,7 @@ import com.saga.be.dto.project.SprintActivityResponse;
 import com.saga.be.dto.project.TransitionProjectTaskRequest;
 import com.saga.be.integration.jira.JiraIssueWriteClient.TransitionOption;
 import com.saga.be.security.SagaUserPrincipal;
+import com.saga.be.service.projection.ProjectCommitDetailReadService;
 import com.saga.be.service.projection.ProjectGitBranchReadService;
 import com.saga.be.service.projection.ProjectJiraSprintCommandService;
 import com.saga.be.service.projection.ProjectJiraTaskCommandService;
@@ -62,6 +64,7 @@ public class ProjectProjectionController {
 	private final ProjectProgressService progress;
 	private final SprintActivityAnalyticsService sprintActivityAnalytics;
 	private final ProjectGitBranchReadService branches;
+	private final ProjectCommitDetailReadService commitDetails;
 	private final ProjectTaskCommitLinkReadService linkReads;
 
 	public ProjectProjectionController(
@@ -72,6 +75,7 @@ public class ProjectProjectionController {
 			ProjectProgressService progress,
 			SprintActivityAnalyticsService sprintActivityAnalytics,
 			ProjectGitBranchReadService branches,
+			ProjectCommitDetailReadService commitDetails,
 			ProjectTaskCommitLinkReadService linkReads) {
 		this.projections = projections;
 		this.taskCommands = taskCommands;
@@ -80,6 +84,7 @@ public class ProjectProjectionController {
 		this.progress = progress;
 		this.sprintActivityAnalytics = sprintActivityAnalytics;
 		this.branches = branches;
+		this.commitDetails = commitDetails;
 		this.linkReads = linkReads;
 	}
 
@@ -225,6 +230,23 @@ public class ProjectProjectionController {
 	public List<ProjectCommitResponse> commits(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
 		return projections.listCommits(principal.getUserId(), projectId);
+	}
+
+	@GetMapping("/commits/{gitCommitId}")
+	@Operation(
+			summary = "Live GitHub commit detail for a projected commit.",
+			description =
+					"""
+					Lookup is SAGA gitCommitId (graph node id commit:{gitCommitId}). Files are fetched
+					live from GitHub Get-a-commit, paginated at 100 and capped at 300.
+					filesTruncated=true means the UI is showing only the first bounded portion of a
+					very large commit. Missing GitHub patch text is returned as null.
+					""")
+	public ProjectCommitDetailResponse commitDetail(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@PathVariable UUID gitCommitId) {
+		return commitDetails.getDetail(principal.getUserId(), projectId, gitCommitId);
 	}
 
 	@GetMapping("/task-commit-links")
