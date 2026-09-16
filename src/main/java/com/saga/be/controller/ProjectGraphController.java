@@ -47,6 +47,7 @@ public class ProjectGraphController {
 			@RequestParam(required = false) Integer maxNodes,
 			@RequestParam(required = false) String cursor,
 			@RequestParam(required = false) String continuationToken,
+			@RequestParam(required = false) Boolean includeCommits,
 			@RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
 		return respond(
 				ifNoneMatch,
@@ -55,7 +56,16 @@ public class ProjectGraphController {
 						principal.getUserId(),
 						projectId,
 						sprintId,
-						view(focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken)));
+						view(
+								focusNodeId,
+								depth,
+								nodeTypes,
+								edgeTypes,
+								anomaliesOnly,
+								maxNodes,
+								cursor,
+								continuationToken,
+								includeCommits)));
 	}
 
 	@GetMapping("/students/{studentId}/graph/contribution")
@@ -99,6 +109,7 @@ public class ProjectGraphController {
 			@RequestParam(required = false) Integer maxNodes,
 			@RequestParam(required = false) String cursor,
 			@RequestParam(required = false) String continuationToken,
+			@RequestParam(required = false) Boolean includeCommits,
 			@RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
 		return respond(
 				ifNoneMatch,
@@ -107,7 +118,16 @@ public class ProjectGraphController {
 						principal.getUserId(),
 						projectId,
 						sprintId,
-						view(focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken)));
+						view(
+								focusNodeId,
+								depth,
+								nodeTypes,
+								edgeTypes,
+								anomaliesOnly,
+								maxNodes,
+								cursor,
+								continuationToken,
+								includeCommits)));
 	}
 
 	@GetMapping("/graph/attribution")
@@ -170,7 +190,29 @@ public class ProjectGraphController {
 			String cursor,
 			String continuationToken) {
 		return GraphViewQuery.parse(
-				focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken);
+				focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken, null);
+	}
+
+	private static GraphViewQuery view(
+			String focusNodeId,
+			Integer depth,
+			String nodeTypes,
+			String edgeTypes,
+			Boolean anomaliesOnly,
+			Integer maxNodes,
+			String cursor,
+			String continuationToken,
+			Boolean includeCommits) {
+		return GraphViewQuery.parse(
+				focusNodeId,
+				depth,
+				nodeTypes,
+				edgeTypes,
+				anomaliesOnly,
+				maxNodes,
+				cursor,
+				continuationToken,
+				includeCommits);
 	}
 
 	private static ResponseEntity<CytoscapeGraphResponse> respond(

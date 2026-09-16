@@ -40,7 +40,12 @@ public class ProjectGraphService {
 		if (sprintId != null) {
 			requireSprint(projectId, sprintId);
 		}
-		return read(projectId, scope("overview", sprintId, null), view, () -> reader.overview(projectId, sprintId));
+		return read(
+				projectId,
+				scope("overview", sprintId, null),
+				(view == null ? GraphViewQuery.none() : view)
+						.withDefaultCompact(GraphViewQuery.compactOverview()),
+				() -> reader.overview(projectId, sprintId));
 	}
 
 	public GraphRead contribution(
@@ -65,7 +70,11 @@ public class ProjectGraphService {
 	public GraphRead activity(UUID userId, UUID projectId, UUID sprintId, GraphViewQuery view) {
 		authorization.requireReader(userId, projectId);
 		requireSprint(projectId, sprintId);
-		return read(projectId, scope("activity", sprintId, null), view, () -> reader.activity(projectId, sprintId));
+		return read(
+				projectId,
+				scope("activity", sprintId, null),
+				view == null ? GraphViewQuery.compactActivity() : view.withDefaultCompact(GraphViewQuery.compactActivity()),
+				() -> reader.activity(projectId, sprintId));
 	}
 
 	public GraphRead attribution(UUID userId, UUID projectId, UUID sprintId, GraphViewQuery view) {

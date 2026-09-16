@@ -83,16 +83,31 @@ class ProjectGraphServiceTest {
 	}
 
 	@Test
-	void authorizedReaderGetsUnfilteredBodyWithoutMeta() {
+	void defaultOverviewOmitsCommitHairball() {
 		when(projector.ensureFresh(projectId)).thenReturn(4L);
-		when(reader.overview(projectId, null)).thenReturn(graph("task:own"));
+		when(reader.overview(projectId, null)).thenReturn(graph("student:1", "task:own", "commit:own"));
 		GraphRead read = service.overview(userId, projectId, null, GraphViewQuery.none());
-		assertThat(read.revision()).isEqualTo(4L);
-		assertThat(read.body().meta()).isNull();
-		assertThat(read.body().nodes()).extracting(node -> node.data().id()).containsExactly("task:own");
-		assertThat(read.etag(projectId)).isEqualTo("graph-" + projectId + "-4");
+		assertThat(read.body().nodes())
+				.extracting(node -> node.data().id())
+				.containsExactlyInAnyOrder("student:1", "task:own")
+				.doesNotContain("commit:own");
+		assertThat(read.body().meta()).isNotNull();
+		assertThat(read.body().meta().totalNodes()).isEqualTo(3);
+		assertThat(read.body().meta().returnedNodes()).isEqualTo(2);
+		assertThat(read.etag(projectId)).isNotEqualTo("graph-" + projectId + "-4");
 		verify(authorization).requireReader(userId, projectId);
 		verify(reader).overview(projectId, null);
+	}
+
+	@Test
+	void includeCommitsKeepsFullOverview() {
+		when(projector.ensureFresh(projectId)).thenReturn(4L);
+		when(reader.overview(projectId, null)).thenReturn(graph("student:1", "task:own", "commit:own"));
+		GraphRead read = service.overview(userId, projectId, null, GraphViewQuery.full());
+		assertThat(read.body().meta()).isNull();
+		assertThat(read.body().nodes())
+				.extracting(node -> node.data().id())
+				.containsExactlyInAnyOrder("student:1", "task:own", "commit:own");
 	}
 
 	@Test
@@ -116,6 +131,18 @@ class ProjectGraphServiceTest {
 		verify(projector).ensureFresh(projectId);
 		verify(reader).overview(projectId, sprintId);
 		verify(reader, never()).overview(any(), org.mockito.ArgumentMatchers.isNull());
+	}
+
+	@Test
+	void defaultActivityOmitsCommits() {
+		when(sprints.findActiveByIdAndProject_Id(sprintId, projectId)).thenReturn(Optional.of(new Sprint()));
+		when(projector.ensureFresh(projectId)).thenReturn(4L);
+		when(reader.activity(projectId, sprintId)).thenReturn(graph("task:own", "commit:own"));
+		GraphRead read = service.activity(userId, projectId, sprintId, GraphViewQuery.none());
+		assertThat(read.body().nodes())
+				.extracting(node -> node.data().id())
+				.containsExactly("task:own")
+				.doesNotContain("commit:own");
 	}
 
 	@Test

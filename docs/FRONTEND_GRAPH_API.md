@@ -140,18 +140,18 @@ Response headers: `ETag`, `X-Graph-Revision`. Cùng revision **và cùng query**
 | --- | --- | --- | --- |
 | `focusNodeId` | không | — | `task:{id}`, `student:{id}`, … đúng prefix mục 5.1. Phải nằm **trong** graph đã scoped (project + `sprintId` nếu có). Sai scope → `400 REQUEST_INVALID`. |
 | `depth` | không | `1` | Neighborhood vô hướng từ `focusNodeId` (hoặc từ anomaly). Chỉ `1`–`3`. **Chỉ có `depth` thì bị bỏ qua** — phải kèm focus / type / paging. |
-| `nodeTypes` | không | mọi type | CSV enum canonical: `STUDENT,TEAM,PROJECT,SPRINT,TASK,COMMIT,CRITERION,IDENTITY`. Sai enum → 400. |
+| `nodeTypes` | không | Overview/Activity: không COMMIT. Graph khác: mọi type | CSV enum canonical: `STUDENT,TEAM,PROJECT,SPRINT,TASK,COMMIT,CRITERION,IDENTITY`. Sai enum → 400. |
 | `edgeTypes` | không | mọi label | CSV: `MEMBER_OF,OWNS,HAS_SPRINT,CONTAINS,ASSIGNED_TO,EVIDENCED_BY,CLASSIFIED_AS,AUTHORED_BY,MAPS_TO,REVIEWED`. |
 | `anomaliesOnly` | không | `false` | `true` = anomaly **kèm neighborhood** (không trả node cô lập nếu chúng còn cạnh). |
 | `maxNodes` | không | — | `1`–`2000`. Cắt theo thứ tự ổn định trong cùng revision. |
 | `cursor` | không | — | Token `revision:lastNodeId` từ `meta.nextCursor`. Alias: `continuationToken`. Sai revision → 400. |
+| `includeCommits` | không | `false` trên Graph 1 và 3 | `true` = vẽ đủ SHA như trước (mạng nhện). Graph 2/4/5 không dùng default compact. |
 
-Ví dụ overview gọn + drill-down task:
+Ví dụ overview (mặc định đã gọn) + drill-down task:
 
 ```http
-GET /api/projects/{projectId}/graph/overview
-    ?sprintId={sprintId}
-    &nodeTypes=STUDENT,TEAM,PROJECT,SPRINT,TASK
+GET /api/projects/{projectId}/graph/overview?sprintId={sprintId}
+GET /api/projects/{projectId}/graph/overview?includeCommits=true
 GET /api/projects/{projectId}/graph/overview
     ?sprintId={sprintId}
     &focusNodeId=task:{taskId}
@@ -331,7 +331,7 @@ Không Criterion, không Identity, không `REVIEWED`.
 
 Không `sprintId`: cả project, **gồm task backlog** (task không nằm sprint). Có `sprintId`: chỉ sprint đó, **không** backlog.
 
-Mặc định **vẫn đủ COMMIT** (contract cũ). Overview gọn: `nodeTypes=STUDENT,TEAM,PROJECT,SPRINT,TASK` — loại COMMIT/IDENTITY phía server, không ẩn trên canvas. Drill-down: `focusNodeId=task:…&depth=1&nodeTypes=TASK,COMMIT,STUDENT`.
+Mặc định **không trả COMMIT** (đó là thứ làm canvas thành mạng nhện). Còn STUDENT / TEAM / PROJECT / SPRINT / TASK. `meta.totalNodes` vẫn đếm cả commit bị ẩn — click task rồi GET `focusNodeId=task:…&depth=1&nodeTypes=TASK,COMMIT,STUDENT`. Muốn bản cũ đủ SHA: `includeCommits=true`.
 
 ### Graph 2 — Contribution path
 
@@ -343,9 +343,7 @@ Drill-down evidence: `focusNodeId=task:{taskId}&depth=1&nodeTypes=TASK,COMMIT&ed
 
 ### Graph 3 — Sprint activity
 
-Mọi task trong sprint (mọi status) + Criterion + commit evidence + assignee.
-
-Commit theo task (tránh tải hết SHA một lần): `focusNodeId=task:{taskId}&depth=1&nodeTypes=TASK,COMMIT&edgeTypes=EVIDENCED_BY&maxNodes=200`, rồi `cursor` nếu `truncated`.
+Mọi task trong sprint (mọi status) + Criterion + assignee. **Commit mặc định không vẽ hết** — tải dần theo task: `focusNodeId=task:{taskId}&depth=1&nodeTypes=TASK,COMMIT&edgeTypes=EVIDENCED_BY&maxNodes=200`. Đủ SHA một lần: `includeCommits=true`.
 
 ### Graph 4 — Attribution
 
