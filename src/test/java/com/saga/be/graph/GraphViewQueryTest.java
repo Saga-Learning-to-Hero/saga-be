@@ -10,6 +10,14 @@ import org.junit.jupiter.api.Test;
 class GraphViewQueryTest {
 
 	@Test
+	void includeCommitsSkipsDefaultCompact() {
+		GraphViewQuery query = GraphViewQuery.parse(null, null, null, null, null, null, null, null, true);
+		assertThat(query.skipDefaultCompact()).isTrue();
+		assertThat(query.active()).isFalse();
+		assertThat(query.withDefaultCompact(GraphViewQuery.compactOverview())).isSameAs(query);
+	}
+
+	@Test
 	void absentParamsStayInactiveForOldContract() {
 		GraphViewQuery query = GraphViewQuery.parse(null, 2, null, null, false, null, null);
 		assertThat(query.active()).isFalse();
