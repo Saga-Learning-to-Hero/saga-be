@@ -80,4 +80,10 @@ public class AuthServiceTestConfiguration {
 	com.saga.be.service.notification.ManualNotificationService manualNotificationService() {
 		return Mockito.mock(com.saga.be.service.notification.ManualNotificationService.class);
 	}
+
+	@Bean
+	@Primary
+	com.saga.be.service.student.StudentProjectService studentProjectService() {
+		return Mockito.mock(com.saga.be.service.student.StudentProjectService.class);
+	}
 }

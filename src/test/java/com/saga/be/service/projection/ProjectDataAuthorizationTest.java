@@ -90,6 +90,30 @@ class ProjectDataAuthorizationTest {
 				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
 	}
 
+	@Test
+	void requireStudentLeader_lecturerAndAdminDenied() {
+		stubRole(AccountRole.LECTURER);
+		assertThatThrownBy(() -> authorization.requireStudentLeader(userId, projectId))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
+		stubRole(AccountRole.ADMIN);
+		assertThatThrownBy(() -> authorization.requireStudentLeader(userId, projectId))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
+	}
+
+	@Test
+	void requireStudentLeader_inactiveOrForeignDenied() {
+		stubRole(AccountRole.STUDENT);
+		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.empty());
+		assertThatThrownBy(() -> authorization.requireStudentLeader(userId, projectId))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.INTEGRATION_FORBIDDEN);
+	}
+
 	private void stubRole(AccountRole role) {
 		UserAccount account = new UserAccount();
 		account.setId(userId);

@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.saga.be.dto.project.CreateStudentProjectRequest;
+import com.saga.be.dto.project.PatchProjectRequest;
 import com.saga.be.dto.project.ProjectTypeResponse;
 import com.saga.be.dto.project.StudentProjectResponse;
 import com.saga.be.entity.account.StudentProfile;
@@ -30,17 +31,25 @@ import com.saga.be.entity.project.Team;
 import com.saga.be.entity.project.TeamMember;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
+import com.saga.be.exception.IntegrationException;
+import com.saga.be.integration.IntegrationErrorCode;
+import com.saga.be.realtime.ProjectRealtimeEventType;
+import com.saga.be.realtime.ProjectRealtimePublisher;
 import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.ProjectRepository;
 import com.saga.be.repository.ProjectTypeRepository;
 import com.saga.be.repository.StudentProfileRepository;
+import com.saga.be.repository.TeamByProjectRepository;
 import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.repository.TeamRepository;
+import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.audit.AuditService;
+import com.saga.be.service.projection.ProjectDataAuthorization;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -68,6 +77,14 @@ class StudentProjectServiceTest {
 	@Mock
 	private TeamRepository lockedTeams;
 	@Mock
+	private TeamByProjectRepository teamByProject;
+	@Mock
+	private UserAccountRepository users;
+	@Mock
+	private ProjectDataAuthorization authorization;
+	@Mock
+	private ProjectRealtimePublisher realtime;
+	@Mock
 	private AuditService audit;
 
 	private StudentProjectService service;
@@ -81,7 +98,8 @@ class StudentProjectServiceTest {
 	@BeforeEach
 	void setUp() {
 		StudentTeamService teamAccess = new StudentTeamService(students, enrollments, members);
-		service = new StudentProjectService(teamAccess, projects, projectTypes, lockedTeams, audit);
+		service = new StudentProjectService(
+				teamAccess, projects, projectTypes, lockedTeams, teamByProject, users, authorization, realtime, audit);
 		student = new UserAccount();
 		student.setId(UUID.randomUUID());
 		student.setEmail("leader@gmail.com");
@@ -383,6 +401,209 @@ class StudentProjectServiceTest {
 		AcademicException ex =
 				assertThrows(AcademicException.class, () -> service.getProject(student.getId(), course.getId()));
 		assertEquals(AcademicErrorCode.STUDENT_COURSE_FORBIDDEN, ex.getCode());
+	}
+
+	@Test
+	void leaderPatchesNameAndDescription() {
+		Project project = persistedProject();
+		project.setDescription("old body");
+		project.setRepositoryUrl(null);
+		ProjectType type = type("RESEARCH", "Research");
+		project.setProjectType(type);
+		team.setProject(project);
+		when(projects.findById(project.getId())).thenReturn(Optional.of(project));
+		when(teamByProject.findByProject_Id(project.getId())).thenReturn(Optional.of(team));
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(projects.save(project)).thenReturn(project);
+
+		StudentProjectResponse response = service.patch(
+				student.getId(),
+				project.getId(),
+				new PatchProjectRequest("  New Name  ", "  New body  "),
+				auditReq());
+
+		assertEquals("New Name", project.getName());
+		assertEquals("New body", project.getDescription());
+		assertEquals(type.getId(), project.getProjectType().getId());
+		assertEquals(course.getId(), project.getCourse().getId());
+		assertEquals(student.getId(), project.getCreatedBy().getId());
+		assertNull(project.getRepositoryUrl());
+		assertEquals("New Name", response.name());
+		assertEquals("New body", response.description());
+		assertEquals(type.getId(), response.projectType().id());
+		verify(authorization).requireStudentLeader(student.getId(), project.getId());
+		verify(realtime).publish(ProjectRealtimeEventType.PROJECT_METADATA_CHANGED, project.getId());
+		ArgumentCaptor<Map<String, Object>> before = ArgumentCaptor.forClass(Map.class);
+		ArgumentCaptor<Map<String, Object>> after = ArgumentCaptor.forClass(Map.class);
+		verify(audit)
+				.record(
+						eq(student),
+						eq(project),
+						eq(team),
+						eq(StudentProjectService.PROJECT_UPDATED),
+						eq("project"),
+						eq(project.getId()),
+						before.capture(),
+						after.capture(),
+						eq(Map.of()),
+						eq(AuditSource.API),
+						eq("req-1"),
+						eq("127.0.0.1"),
+						eq("test"));
+		assertEquals(Map.of("name", "SAGA Learning Platform", "description", "old body"), before.getValue());
+		assertEquals(Map.of("name", "New Name", "description", "New body"), after.getValue());
+	}
+
+	@Test
+	void omittedFieldsAreUnchangedAndEmptyPatchIsNoOp() {
+		Project project = persistedProject();
+		project.setDescription("keep me");
+		team.setProject(project);
+		when(projects.findById(project.getId())).thenReturn(Optional.of(project));
+		when(teamByProject.findByProject_Id(project.getId())).thenReturn(Optional.of(team));
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+
+		StudentProjectResponse omitted = service.patch(
+				student.getId(), project.getId(), new PatchProjectRequest(null, null), auditReq());
+		assertEquals("SAGA Learning Platform", omitted.name());
+		assertEquals("keep me", omitted.description());
+		StudentProjectResponse empty = service.patch(student.getId(), project.getId(), new PatchProjectRequest(null, null), auditReq());
+		assertEquals("keep me", empty.description());
+		service.patch(student.getId(), project.getId(), null, auditReq());
+		verify(projects, never()).save(any());
+		verify(audit, never())
+				.record(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+		verify(realtime, never()).publish(any(), any());
+	}
+
+	@Test
+	void descriptionOnlyDoesNotInvalidateGraphAndBlankClearsToNull() {
+		Project project = persistedProject();
+		project.setDescription("old");
+		team.setProject(project);
+		when(projects.findById(project.getId())).thenReturn(Optional.of(project));
+		when(teamByProject.findByProject_Id(project.getId())).thenReturn(Optional.of(team));
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		when(projects.save(project)).thenReturn(project);
+
+		service.patch(student.getId(), project.getId(), new PatchProjectRequest(null, "   "), auditReq());
+		assertEquals("SAGA Learning Platform", project.getName());
+		assertNull(project.getDescription());
+		project.setDescription("again");
+		service.patch(student.getId(), project.getId(), new PatchProjectRequest(null, ""), auditReq());
+		assertNull(project.getDescription());
+		verify(realtime, never()).publish(any(), any());
+		ArgumentCaptor<Map<String, Object>> before = ArgumentCaptor.forClass(Map.class);
+		ArgumentCaptor<Map<String, Object>> after = ArgumentCaptor.forClass(Map.class);
+		verify(audit, org.mockito.Mockito.times(2))
+				.record(
+						eq(student),
+						eq(project),
+						eq(team),
+						eq(StudentProjectService.PROJECT_UPDATED),
+						eq("project"),
+						eq(project.getId()),
+						before.capture(),
+						after.capture(),
+						eq(Map.of()),
+						eq(AuditSource.API),
+						eq("req-1"),
+						eq("127.0.0.1"),
+						eq("test"));
+		assertEquals(Map.of("description", "old"), before.getAllValues().get(0));
+		assertEquals(Map.of("description", "again"), before.getAllValues().get(1));
+		assertNull(after.getAllValues().get(0).get("description"));
+		assertNull(after.getAllValues().get(1).get("description"));
+		assertFalse(after.getAllValues().get(0).containsKey("name"));
+	}
+
+	@Test
+	void blankAndOversizedNameAreRejected() {
+		Project project = persistedProject();
+		team.setProject(project);
+		when(projects.findById(project.getId())).thenReturn(Optional.of(project));
+		when(teamByProject.findByProject_Id(project.getId())).thenReturn(Optional.of(team));
+		when(users.findById(student.getId())).thenReturn(Optional.of(student));
+		AcademicException blank = assertThrows(
+				AcademicException.class,
+				() -> service.patch(
+						student.getId(), project.getId(), new PatchProjectRequest("   ", null), auditReq()));
+		assertEquals(AcademicErrorCode.PROJECT_NAME_INVALID, blank.getCode());
+		AcademicException longName = assertThrows(
+				AcademicException.class,
+				() -> service.patch(
+						student.getId(),
+						project.getId(),
+						new PatchProjectRequest("x".repeat(256), null),
+						auditReq()));
+		assertEquals(AcademicErrorCode.PROJECT_NAME_INVALID, longName.getCode());
+		verify(projects, never()).save(any());
+		verify(realtime, never()).publish(any(), any());
+	}
+
+	@Test
+	void memberLecturerAdminAndForeignLeaderAreDeniedByRequireStudentLeader() {
+		UUID projectId = UUID.randomUUID();
+		doThrow(new IntegrationException(
+						IntegrationErrorCode.NOT_TEAM_LEADER, HttpStatus.FORBIDDEN, "Only the Team Leader can trigger project sync."))
+				.when(authorization)
+				.requireStudentLeader(student.getId(), projectId);
+		assertThrows(
+				IntegrationException.class,
+				() -> service.patch(student.getId(), projectId, new PatchProjectRequest("N", null), auditReq()));
+
+		UserAccount lecturer = new UserAccount();
+		lecturer.setId(UUID.randomUUID());
+		doThrow(new IntegrationException(IntegrationErrorCode.ACCESS_DENIED, HttpStatus.FORBIDDEN, "Access denied."))
+				.when(authorization)
+				.requireStudentLeader(lecturer.getId(), projectId);
+		IntegrationException lecturerDenied = assertThrows(
+				IntegrationException.class,
+				() -> service.patch(lecturer.getId(), projectId, new PatchProjectRequest("N", null), auditReq()));
+		assertEquals(IntegrationErrorCode.ACCESS_DENIED, lecturerDenied.getCode());
+
+		UserAccount admin = new UserAccount();
+		admin.setId(UUID.randomUUID());
+		doThrow(new IntegrationException(IntegrationErrorCode.ACCESS_DENIED, HttpStatus.FORBIDDEN, "Access denied."))
+				.when(authorization)
+				.requireStudentLeader(admin.getId(), projectId);
+		assertEquals(
+				IntegrationErrorCode.ACCESS_DENIED,
+				assertThrows(
+								IntegrationException.class,
+								() -> service.patch(admin.getId(), projectId, new PatchProjectRequest("N", null), auditReq()))
+						.getCode());
+
+		UserAccount foreign = new UserAccount();
+		foreign.setId(UUID.randomUUID());
+		doThrow(new IntegrationException(
+						IntegrationErrorCode.INTEGRATION_FORBIDDEN, HttpStatus.FORBIDDEN, "Not a member of this team."))
+				.when(authorization)
+				.requireStudentLeader(foreign.getId(), projectId);
+		assertEquals(
+				IntegrationErrorCode.INTEGRATION_FORBIDDEN,
+				assertThrows(
+								IntegrationException.class,
+								() -> service.patch(foreign.getId(), projectId, new PatchProjectRequest("N", null), auditReq()))
+						.getCode());
+		verify(projects, never()).findById(any());
+		verify(projects, never()).save(any());
+		verify(realtime, never()).publish(any(), any());
+	}
+
+	@Test
+	void unknownProjectFollowsRequireStudentLeaderSemantics() {
+		UUID missing = UUID.randomUUID();
+		doThrow(new IntegrationException(
+						IntegrationErrorCode.INTEGRATION_FORBIDDEN, HttpStatus.FORBIDDEN, "Not a member of this team."))
+				.when(authorization)
+				.requireStudentLeader(student.getId(), missing);
+		IntegrationException ex = assertThrows(
+				IntegrationException.class,
+				() -> service.patch(student.getId(), missing, new PatchProjectRequest("N", null), auditReq()));
+		assertEquals(IntegrationErrorCode.INTEGRATION_FORBIDDEN, ex.getCode());
+		verify(projects, never()).findById(any());
+		verify(projects, never()).save(any());
 	}
 
 	private void activeMembership() {

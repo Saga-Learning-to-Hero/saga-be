@@ -5,6 +5,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -351,6 +352,16 @@ class SecurityAuthorizationTest {
 						.with(authentication(auth(AccountRole.STUDENT, "hash")))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"codeWeight\":0.4,\"testWeight\":0.1,\"documentWeight\":0.15,\"researchWeight\":0.35}"))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void unauthenticatedCannotPatchProjectMetadata() throws Exception {
+		UUID projectId = UUID.fromString("00000000-0000-0000-0000-000000000044");
+		mockMvc.perform(patch("/api/projects/" + projectId)
+						.with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"name\":\"New Name\"}"))
 				.andExpect(status().isForbidden());
 	}
 

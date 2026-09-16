@@ -123,6 +123,25 @@ class ProjectGraphProjectorTest {
 		verify(writer, times(1)).rebuild(any());
 	}
 
+	@Test
+	void projectMetadataChangedInvalidatesGraph() {
+		when(client.projectExists(projectId)).thenReturn(true);
+		when(loader.load(projectId)).thenReturn(snapshot());
+		projector.ensureFresh(projectId);
+		projector.onProjectEvent(ProjectRealtimeEvent.of(ProjectRealtimeEventType.PROJECT_METADATA_CHANGED, projectId));
+		assertThat(projector.ensureFresh(projectId)).isEqualTo(1L);
+		verify(writer, times(1)).rebuild(any());
+	}
+
+	@Test
+	void syncStatusChangedDoesNotInvalidateGraph() {
+		when(client.projectExists(projectId)).thenReturn(true);
+		projector.ensureFresh(projectId);
+		projector.onProjectEvent(ProjectRealtimeEvent.of(ProjectRealtimeEventType.SYNC_STATUS_CHANGED, projectId));
+		assertThat(projector.ensureFresh(projectId)).isZero();
+		verify(writer, never()).rebuild(any());
+	}
+
 	private ProjectGraphSnapshot snapshot() {
 		return new ProjectGraphSnapshot(
 				projectId, "demo", null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
