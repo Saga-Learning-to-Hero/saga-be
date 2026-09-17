@@ -60,6 +60,26 @@ class GoogleAccountServiceTest {
 	}
 
 	@Test
+	void existingSubjectFillsMissingGoogleAvatar() {
+		UserAccount existing = account(AccountRole.STUDENT, "anvse170102@fpt.edu.vn", "sub-1");
+		when(users.findByGoogleSubject("sub-1")).thenReturn(Optional.of(existing));
+		when(users.save(existing)).thenReturn(existing);
+
+		UserAccount result = service.authenticateOrProvision(
+				new GoogleAccountService.GoogleOidcIdentity(
+						"sub-1",
+						"anvse170102@fpt.edu.vn",
+						true,
+						"fpt.edu.vn",
+						"A",
+						"https://lh3.googleusercontent.com/a/photo"),
+				allowed);
+
+		assertEquals("https://lh3.googleusercontent.com/a/photo", result.getAvatarUrl());
+		verify(users).save(existing);
+	}
+
+	@Test
 	void emailMatchLinksSubjectWhenNull() {
 		UserAccount existing = account(AccountRole.STUDENT, "anvse170102@fpt.edu.vn", null);
 		when(users.findByGoogleSubject("sub-2")).thenReturn(Optional.empty());
@@ -232,6 +252,7 @@ class GoogleAccountServiceTest {
 		account.setAccountRole(role);
 		account.setAccountStatus(AccountStatus.ACTIVE);
 		account.setGoogleSubject(subject);
+		account.setFullName("A");
 		return account;
 	}
 }

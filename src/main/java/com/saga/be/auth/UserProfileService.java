@@ -13,6 +13,8 @@ import java.util.Locale;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -41,10 +43,18 @@ public class UserProfileService {
 
 	private final UserAccountRepository users;
 	private final StudentProfileRepository students;
+	private final ApplicationEventPublisher events;
 
 	public UserProfileService(UserAccountRepository users, StudentProfileRepository students) {
+		this(users, students, null);
+	}
+
+	@Autowired
+	public UserProfileService(
+			UserAccountRepository users, StudentProfileRepository students, ApplicationEventPublisher events) {
 		this.users = users;
 		this.students = students;
+		this.events = events;
 	}
 
 	@Transactional(readOnly = true)
@@ -84,6 +94,9 @@ public class UserProfileService {
 			}
 		}
 		UserAccount saved = users.save(account);
+		if (events != null) {
+			events.publishEvent(new UserProfileUpdated(saved.getId()));
+		}
 		log.info("auth method=PROFILE_UPDATE result=success userId={}", saved.getId());
 		return SagaAuthentications.authenticated(saved);
 	}
