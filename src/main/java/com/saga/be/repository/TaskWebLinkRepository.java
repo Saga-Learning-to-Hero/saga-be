@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface TaskWebLinkRepository extends JpaRepository<TaskWebLink, UUID> {
 
@@ -23,4 +25,17 @@ public interface TaskWebLinkRepository extends JpaRepository<TaskWebLink, UUID> 
 	long countByTask_Project_Id(UUID projectId);
 
 	long countByTask_Project_IdAndCreatedBy_Id(UUID projectId, UUID userId);
+
+	/** Heatmap documents: {@code Object[]{UUID studentId, LocalDateTime createdAt}}. */
+	@Query(
+			"""
+			select coalesce(sp.id, t.assigneeStudent.id), w.createdAt
+			from TaskWebLink w
+			join w.task t
+			left join w.createdBy u
+			left join com.saga.be.entity.account.StudentProfile sp on sp.userAccount = u
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			""")
+	List<Object[]> findAuthorAndCreatedAtByProject(@Param("projectId") UUID projectId);
 }

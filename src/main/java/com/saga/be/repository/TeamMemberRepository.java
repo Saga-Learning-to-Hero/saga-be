@@ -108,6 +108,20 @@ public interface TeamMemberRepository extends JpaRepository<TeamMember, UUID> {
 
 	@Query(
 			"""
+			SELECT DISTINCT t.project.id
+			FROM TeamMember m
+			JOIN m.team t
+			JOIN m.courseEnrollment e
+			JOIN e.studentProfile p
+			JOIN p.userAccount u
+			WHERE u.id = :userId
+			  AND t.project.id IS NOT NULL
+			  AND e.enrollmentStatus = com.saga.be.entity.enums.EnrollmentStatus.ACTIVE
+			""")
+	List<UUID> findActiveProjectIdsByUserId(@Param("userId") UUID userId);
+
+	@Query(
+			"""
 			SELECT m FROM TeamMember m
 			JOIN FETCH m.team
 			JOIN FETCH m.courseEnrollment e

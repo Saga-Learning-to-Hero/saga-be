@@ -75,6 +75,16 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 	List<Object[]> findIdAndCommittedAtByProjectAndAuthor(
 			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
 
+	/** Heatmap: {@code Object[]{UUID studentId, LocalDateTime committedAt}}. */
+	@Query(
+			"""
+			select c.authorStudent.id, coalesce(c.committedAt, c.createdAt)
+			from GitCommit c
+			where c.repo.project.id = :projectId
+			  and c.authorStudent is not null
+			""")
+	List<Object[]> findAuthorAndCommittedAtByProject(@Param("projectId") UUID projectId);
+
 	/** Progress dashboard (Lecturer course overview): one row per project — {@code Object[]{UUID projectId, Long count, LocalDateTime lastCommittedAt}}. */
 	@Query(
 			"""

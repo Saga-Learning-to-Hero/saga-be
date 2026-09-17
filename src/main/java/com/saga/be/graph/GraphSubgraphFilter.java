@@ -67,6 +67,22 @@ public final class GraphSubgraphFilter {
 						"focusNodeId type is excluded by nodeTypes.");
 			}
 		}
+		if (query.usedCriteriaOnly()) {
+			Set<String> usedCriteria = new LinkedHashSet<>();
+			for (CytoscapeEdgeData edge : edges) {
+				if (!"CLASSIFIED_AS".equals(edge.label())) {
+					continue;
+				}
+				CytoscapeNodeData target = nodes.get(edge.target());
+				if (target != null && "CRITERION".equals(target.type())) {
+					usedCriteria.add(target.id());
+				}
+			}
+			keep.removeIf(id -> {
+				CytoscapeNodeData data = nodes.get(id);
+				return data != null && "CRITERION".equals(data.type()) && !usedCriteria.contains(id);
+			});
+		}
 		List<String> ordered = new ArrayList<>(keep);
 		if (query.focusNodeId() == null && !query.anomaliesOnly()) {
 			ordered.sort(String::compareTo);
