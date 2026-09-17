@@ -8,13 +8,17 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class WebMvcTimingConfiguration implements WebMvcConfigurer {
 
 	private final RequestPhaseInterceptor requestPhaseInterceptor;
+	private final WorkloadClassInterceptor workloadClassInterceptor;
 
-	public WebMvcTimingConfiguration(RequestPhaseInterceptor requestPhaseInterceptor) {
+	public WebMvcTimingConfiguration(
+			RequestPhaseInterceptor requestPhaseInterceptor, WorkloadClassInterceptor workloadClassInterceptor) {
 		this.requestPhaseInterceptor = requestPhaseInterceptor;
+		this.workloadClassInterceptor = workloadClassInterceptor;
 	}
 
 	@Override
 	public void addInterceptors(InterceptorRegistry registry) {
+		registry.addInterceptor(workloadClassInterceptor);
 		registry.addInterceptor(requestPhaseInterceptor);
 	}
 }

@@ -4,6 +4,8 @@ import com.saga.be.dto.project.BurndownChartResponse;
 import com.saga.be.dto.project.HeatmapResponse;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.projection.TeamActivityAnalyticsService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -20,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.HEAVY_READ)
 @RequestMapping("/api/courses/{courseId}/teams/{teamId}")
 @Tag(name = "Team activity analytics", description = "Heatmap and sprint burndown for a team's project.")
 @SecurityRequirement(name = "SAGA_SESSION")

@@ -29,6 +29,8 @@ import com.saga.be.service.projection.ProjectProjectionReadService;
 import com.saga.be.service.projection.ProjectTaskCommitLinkReadService;
 import com.saga.be.service.projection.SprintActivityAnalyticsService;
 import com.saga.be.service.sync.ProjectManualSyncService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -52,6 +54,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 @RequestMapping("/api/projects/{projectId}")
 @Tag(name = "Project projections", description = "Projected Jira tasks/sprints and GitHub commits for a SAGA project.")
 @SecurityRequirement(name = "SAGA_SESSION")
@@ -112,6 +115,7 @@ public class ProjectProjectionController {
 	}
 
 	@PostMapping("/tasks")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Create a Jira issue then reconcile local Task projection. Team Leader only.")
 	public ResponseEntity<ProjectTaskResponse> createTask(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -122,6 +126,7 @@ public class ProjectProjectionController {
 	}
 
 	@PatchMapping("/tasks/{taskId}")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Update Jira issue fields then reconcile projection. Team Leader only. Status via /transition.")
 	public ProjectTaskResponse patchTask(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -132,6 +137,7 @@ public class ProjectProjectionController {
 	}
 
 	@PutMapping("/tasks/{taskId}/sprint")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Move task to a Jira sprint or backlog (sprintId=null). Team Leader only.")
 	public ProjectTaskResponse putTaskSprint(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -142,6 +148,7 @@ public class ProjectProjectionController {
 	}
 
 	@PostMapping("/tasks/{taskId}/transition")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Transition Jira issue status via available transitions. Team Leader only.")
 	public ProjectTaskResponse transitionTask(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -161,6 +168,7 @@ public class ProjectProjectionController {
 	}
 
 	@DeleteMapping("/tasks/{taskId}")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Delete Jira issue then soft-delete local projection. Team Leader only.")
 	public ResponseEntity<Void> deleteTask(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -196,6 +204,7 @@ public class ProjectProjectionController {
 	}
 
 	@PostMapping("/sprints")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Create a Jira Software sprint then reconcile projection. Team Leader only.")
 	public ResponseEntity<ProjectSprintResponse> createSprint(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -206,6 +215,7 @@ public class ProjectProjectionController {
 	}
 
 	@PatchMapping("/sprints/{sprintId}")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Update a Jira Software sprint then reconcile projection. Team Leader only.")
 	public ProjectSprintResponse patchSprint(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -216,6 +226,7 @@ public class ProjectProjectionController {
 	}
 
 	@DeleteMapping("/sprints/{sprintId}")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Delete a Jira Software sprint then soft-delete projection. Team Leader only.")
 	public ResponseEntity<Void> deleteSprint(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -288,6 +299,7 @@ public class ProjectProjectionController {
 	}
 
 	@PostMapping("/sync")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Team Leader recovery enqueue for Jira/GitHub backfill. Does not wait for provider HTTP.")
 	public ResponseEntity<ProjectSyncEnqueueResponse> sync(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
@@ -295,6 +307,7 @@ public class ProjectProjectionController {
 	}
 
 	@GetMapping("/sync-status")
+	@Workload(WorkloadClass.INTERACTIVE_LIGHT)
 	@Operation(summary = "Latest sync_job_log status per provider for the project.")
 	public List<ProjectSyncStatusResponse> syncStatus(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
@@ -302,6 +315,7 @@ public class ProjectProjectionController {
 	}
 
 	@GetMapping("/progress")
+	@Workload(WorkloadClass.HEAVY_READ)
 	@Operation(
 			summary = "Factual Task/Sprint/Commit/evidence progress dashboard for the project.",
 			description =
@@ -316,6 +330,7 @@ public class ProjectProjectionController {
 	}
 
 	@GetMapping("/progress/members/{studentId}")
+	@Workload(WorkloadClass.HEAVY_READ)
 	@Operation(summary = "Factual per-member progress drill-down (assigned tasks, commit/evidence attribution).")
 	public ProjectMemberProgressResponse memberProgress(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -325,6 +340,7 @@ public class ProjectProjectionController {
 	}
 
 	@GetMapping("/analytics/sprint-activity")
+	@Workload(WorkloadClass.HEAVY_READ)
 	@Operation(
 			summary = "Per-sprint task and commit activity (personal for students; project-wide for lecturers).",
 			description =

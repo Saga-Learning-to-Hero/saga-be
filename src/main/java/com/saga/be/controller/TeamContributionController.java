@@ -8,6 +8,8 @@ import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.contribution.TeamContributionService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -41,6 +43,7 @@ public class TeamContributionController {
 	}
 
 	@GetMapping("/contribution-evaluation")
+	@Workload(WorkloadClass.HEAVY_READ)
 	@Operation(summary = "Evaluate team contribution percentages")
 	public ContributionEvaluationResponse evaluate(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID teamId) {
@@ -48,6 +51,7 @@ public class TeamContributionController {
 	}
 
 	@PostMapping("/contribution-override")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@ResponseStatus(HttpStatus.CREATED)
 	@Operation(summary = "Override a member contribution percentage")
 	public ContributionOverrideResponse override(

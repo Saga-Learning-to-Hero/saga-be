@@ -14,6 +14,8 @@ import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.identity.ProjectIntegrationService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -40,6 +42,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 @RequestMapping("/api/projects/{projectId}/integrations")
 @Tag(name = "Project integrations", description = "Team Leader GitHub App and Jira Cloud connections for a project.")
 @SecurityRequirement(name = "SAGA_SESSION")
@@ -60,6 +63,7 @@ public class ProjectIntegrationController {
 	}
 
 	@PostMapping("/github/connect")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(
 			summary = "Start GitHub App connect/reconnect for the project. Team Leader only.",
 			description =
@@ -90,6 +94,7 @@ public class ProjectIntegrationController {
 	}
 
 	@GetMapping("/github/setup/callback")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	public ResponseEntity<Void> githubSetup(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@RequestParam String state,
@@ -110,6 +115,7 @@ public class ProjectIntegrationController {
 	}
 
 	@PutMapping("/github/repositories")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Select GitHub repositories for the project. Team Leader only.")
 	@io.swagger.v3.oas.annotations.parameters.RequestBody(
 			required = true,
@@ -140,6 +146,7 @@ public class ProjectIntegrationController {
 	}
 
 	@DeleteMapping("/github")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	public ResponseEntity<Void> deleteGithub(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
 		integrations.disconnectGithub(principal.getUserId(), projectId);
@@ -147,6 +154,7 @@ public class ProjectIntegrationController {
 	}
 
 	@PostMapping("/jira/connect")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	public OAuthStartResponse jiraConnect(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
@@ -178,6 +186,7 @@ public class ProjectIntegrationController {
 	}
 
 	@PutMapping("/jira")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Save the selected Jira site, project, and optional board. Team Leader only.")
 	@io.swagger.v3.oas.annotations.parameters.RequestBody(
 			required = true,
@@ -209,6 +218,7 @@ public class ProjectIntegrationController {
 	}
 
 	@DeleteMapping("/jira")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	public ResponseEntity<Void> deleteJira(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
 		integrations.disconnectJira(principal.getUserId(), projectId);

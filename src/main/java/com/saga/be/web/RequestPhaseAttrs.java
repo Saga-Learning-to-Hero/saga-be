@@ -22,5 +22,8 @@ public final class RequestPhaseAttrs {
 	public static final String HIKARI_PENDING = "saga.timing.hikariPending";
 	public static final String HIKARI_ACQUIRE_MS = "saga.timing.hikariAcquireMs";
 
+	public static final String WORKLOAD_CLASS = "saga.workloadClass";
+	public static final String ROUTE_PATTERN = "saga.routePattern";
+
 	private RequestPhaseAttrs() {}
 }

@@ -3,6 +3,8 @@ package com.saga.be.controller;
 import com.saga.be.realtime.ProjectSseHub;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.projection.ProjectDataAuthorization;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -18,6 +20,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.REALTIME)
 @RequestMapping("/api/projects/{projectId}/events")
 @Tag(name = "Project realtime", description = "Project-scoped SSE invalidation stream.")
 @SecurityRequirement(name = "SAGA_SESSION")

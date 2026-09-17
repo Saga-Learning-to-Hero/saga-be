@@ -13,6 +13,8 @@ import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.team.LecturerTeamService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -41,6 +43,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 @RequestMapping("/api/lecturer/courses/{courseId}")
 @Tag(name = "Lecturer teams", description = "Desired-state and interactive team assignment for an assigned course.")
 @SecurityRequirement(name = "SAGA_SESSION")
@@ -78,6 +81,7 @@ public class LecturerTeamController {
 	}
 
 	@PostMapping(value = "/teams/import/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Validate a team assignment workbook without writing teams")
 	public TeamPreviewResponse preview(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -94,6 +98,7 @@ public class LecturerTeamController {
 	}
 
 	@PostMapping("/teams/import/confirm")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@ResponseStatus(HttpStatus.OK)
 	@Operation(summary = "Atomically apply a team assignment preview token")
 	public TeamConfirmResponse confirm(
@@ -105,6 +110,7 @@ public class LecturerTeamController {
 	}
 
 	@PutMapping("/teams/{teamId}/leader")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@ResponseStatus(HttpStatus.OK)
 	@Operation(summary = "Atomically replace the team Leader (old Leader becomes Member)")
 	public LecturerCourseTeamsResponse replaceLeader(
@@ -117,6 +123,7 @@ public class LecturerTeamController {
 	}
 
 	@PatchMapping("/team-members/{teamMemberId}/team")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@ResponseStatus(HttpStatus.OK)
 	@Operation(summary = "Move a team member to another team in the same course")
 	public LecturerCourseTeamsResponse moveMember(

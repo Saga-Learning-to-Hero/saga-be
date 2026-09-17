@@ -52,7 +52,7 @@ public class RequestLatencyFilter extends OncePerRequestFilter {
 		}
 	}
 
-	private void logSlow(
+	void logSlow(
 			HttpServletRequest request,
 			HttpServletResponse response,
 			long filterStartNanos,
@@ -78,10 +78,14 @@ public class RequestLatencyFilter extends OncePerRequestFilter {
 		Object hikariActive = request.getAttribute(RequestPhaseAttrs.HIKARI_ACTIVE);
 		Object hikariIdle = request.getAttribute(RequestPhaseAttrs.HIKARI_IDLE);
 		Object hikariPending = request.getAttribute(RequestPhaseAttrs.HIKARI_PENDING);
+		Object workloadClass = request.getAttribute(RequestPhaseAttrs.WORKLOAD_CLASS);
+		Object routePattern = request.getAttribute(RequestPhaseAttrs.ROUTE_PATTERN);
 
 		log.info(
-				"slow request method={} path={} status={} durationMs={} preServiceMs={} serviceMethod={} serviceDurationMs={} postServiceMs={} controllerMs={} sessionFindMs={} sessionFindCount={} sessionSaveMs={} sessionSaveCount={} hikariActive={} hikariIdle={} hikariPending={}",
+				"slow request method={} workloadClass={} routePattern={} path={} status={} durationMs={} preServiceMs={} serviceMethod={} serviceDurationMs={} postServiceMs={} controllerMs={} sessionFindMs={} sessionFindCount={} sessionSaveMs={} sessionSaveCount={} hikariActive={} hikariIdle={} hikariPending={}",
 				request.getMethod(),
+				workloadClass instanceof String classified ? classified : null,
+				routePattern instanceof String pattern ? pattern : null,
 				safePath(request),
 				response.getStatus(),
 				durationMs,

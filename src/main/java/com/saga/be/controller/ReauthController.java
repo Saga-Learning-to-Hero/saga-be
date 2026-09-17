@@ -8,6 +8,8 @@ import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import java.time.Instant;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.INTERACTIVE_WRITE)
 @RequestMapping("/api/auth")
 public class ReauthController {
 

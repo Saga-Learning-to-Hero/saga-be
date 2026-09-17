@@ -5,6 +5,8 @@ import com.saga.be.dto.project.StudentProjectResponse;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.student.StudentProjectService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 @RequestMapping("/api/student/courses/{courseId}/project")
 @Tag(name = "Student project", description = "Team Leader creates the course team project; members may read it.")
 @SecurityRequirement(name = "SAGA_SESSION")
@@ -43,6 +46,7 @@ public class StudentCourseProjectController {
 	}
 
 	@PostMapping
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@ResponseStatus(HttpStatus.CREATED)
 	@Operation(summary = "Create the team project. Team Leader only.")
 	public StudentProjectResponse create(

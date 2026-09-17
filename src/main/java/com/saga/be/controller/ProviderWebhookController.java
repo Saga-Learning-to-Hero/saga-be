@@ -9,13 +9,16 @@ import com.saga.be.integration.jira.JiraWebhookAuth;
 import com.saga.be.integration.webhook.WebhookReceiptService;
 import com.saga.be.repository.WebhookReceiptRepository;
 import com.saga.be.service.attribution.AttributionWarningService;
+import com.saga.be.service.jira.JiraEvidenceJobExecutor;
 import com.saga.be.service.jira.JiraIssueEvidenceSyncService;
 import com.saga.be.service.projection.ProviderWebhookProjectionService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.RejectedExecutionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
@@ -29,6 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @Profile("!test")
 @RequestMapping("/api/webhooks")
+@Workload(WorkloadClass.BACKGROUND_SYNC)
 public class ProviderWebhookController {
 
 	private static final Logger log = LoggerFactory.getLogger(ProviderWebhookController.class);
@@ -38,13 +42,15 @@ public class ProviderWebhookController {
 	private final AttributionWarningService warnings;
 	private final ProviderWebhookProjectionService projection;
 	private final JiraIssueEvidenceSyncService jiraEvidence;
+	private final JiraEvidenceJobExecutor jiraEvidenceJobs;
 
 	public ProviderWebhookController(
 			IntegrationProperties properties,
 			WebhookReceiptRepository receiptRepository,
 			AttributionWarningService warnings,
 			ProviderWebhookProjectionService projection,
-			JiraIssueEvidenceSyncService jiraEvidence) {
+			JiraIssueEvidenceSyncService jiraEvidence,
+			JiraEvidenceJobExecutor jiraEvidenceJobs) {
 		this.properties = properties;
 		this.receipts = new WebhookReceiptService(new WebhookReceiptService.Store() {
 			@Override
@@ -62,6 +68,7 @@ public class ProviderWebhookController {
 		this.warnings = warnings;
 		this.projection = projection;
 		this.jiraEvidence = jiraEvidence;
+		this.jiraEvidenceJobs = jiraEvidenceJobs;
 	}
 
 	@PostMapping("/github")
@@ -120,7 +127,15 @@ public class ProviderWebhookController {
 				IntegrationProvider.JIRA, deliveryId, "jira:issue", null, payload, null, LocalDateTime.now());
 		if (!result.duplicate()) {
 			projection.projectJira(result.receipt(), payload);
-			CompletableFuture.runAsync(() -> jiraEvidence.handleWebhook(payload));
+		}
+		try {
+			// Duplicate deliveries still enqueue so a prior 503 (queue full after ingest) is not lost.
+			jiraEvidenceJobs.submit(() -> jiraEvidence.handleWebhook(payload));
+		} catch (RejectedExecutionException ex) {
+			throw new IntegrationException(
+					IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
+					HttpStatus.SERVICE_UNAVAILABLE,
+					"Jira evidence backlog is full.");
 		}
 		return ResponseEntity.accepted().build();
 	}

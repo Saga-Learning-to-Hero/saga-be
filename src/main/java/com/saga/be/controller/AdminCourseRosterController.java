@@ -14,6 +14,8 @@ import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.roster.CourseRosterService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -41,6 +43,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 @RequestMapping("/api/admin/courses/{courseId}/roster")
 @Tag(name = "Admin course roster", description = "XLSX roster template, preview, confirm, and read. ADMIN only.")
 @SecurityRequirement(name = "SAGA_SESSION")
@@ -76,6 +79,7 @@ public class AdminCourseRosterController {
 	}
 
 	@PostMapping(value = "/import/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Validate an XLSX roster without mutating membership")
 	public RosterPreviewResponse preview(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -92,6 +96,7 @@ public class AdminCourseRosterController {
 	}
 
 	@PostMapping("/import/confirm")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@ResponseStatus(HttpStatus.OK)
 	@Operation(summary = "Atomically apply a roster preview token")
 	public RosterConfirmResponse confirm(
@@ -103,6 +108,7 @@ public class AdminCourseRosterController {
 	}
 
 	@PostMapping("/students")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@ResponseStatus(HttpStatus.OK)
 	@Operation(summary = "Add or invite one student using the same rules as roster import")
 	public AddRosterStudentResponse addStudent(
@@ -114,6 +120,7 @@ public class AdminCourseRosterController {
 	}
 
 	@DeleteMapping("/enrollments/{enrollmentId}")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@ResponseStatus(HttpStatus.OK)
 	@Operation(
 			summary = "Remove an actively-enrolled student from the roster",
@@ -135,6 +142,7 @@ public class AdminCourseRosterController {
 	}
 
 	@DeleteMapping("/invitations/{invitationId}")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@ResponseStatus(HttpStatus.OK)
 	@Operation(
 			summary = "Cancel a pending roster invitation",

@@ -10,14 +10,17 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 @EnableAsync
 public class IntegrationAsyncConfiguration {
 
+	static final int MAX_ACTIVE_BACKGROUND_SYNC = 1;
+	static final int QUEUE_CAPACITY = 200;
+
 	@Bean(name = "integrationSyncExecutor")
 	public Executor integrationSyncExecutor() {
 		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-		executor.setCorePoolSize(2);
-		executor.setMaxPoolSize(4);
-		executor.setQueueCapacity(200);
+		executor.setCorePoolSize(MAX_ACTIVE_BACKGROUND_SYNC);
+		executor.setMaxPoolSize(MAX_ACTIVE_BACKGROUND_SYNC);
+		executor.setQueueCapacity(QUEUE_CAPACITY);
 		executor.setThreadNamePrefix("integration-sync-");
-		// Reject on caller so manual sync can releaseEnqueue; never silently drop work.
+		// AbortPolicy: HTTP enqueue can releaseEnqueue; never silently drop work.
 		executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
 		executor.initialize();
 		return executor;

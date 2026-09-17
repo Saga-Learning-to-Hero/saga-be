@@ -5,6 +5,8 @@ import com.saga.be.graph.GraphRead;
 import com.saga.be.graph.GraphViewQuery;
 import com.saga.be.graph.ProjectGraphService;
 import com.saga.be.security.SagaUserPrincipal;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.HEAVY_READ)
 @RequestMapping("/api/projects/{projectId}")
 @Tag(name = "Project graphs", description = "Cytoscape.js graphs projected into Neo4j for a SAGA project.")
 @SecurityRequirement(name = "SAGA_SESSION")

@@ -31,6 +31,7 @@ import org.springframework.stereotype.Component;
 public class ProjectGraphProjector {
 
 	private static final Logger log = LoggerFactory.getLogger(ProjectGraphProjector.class);
+	static final int MAX_REBUILD_WORKERS = 1;
 	private static final Set<ProjectRealtimeEventType> INVALIDATING = Set.of(
 			ProjectRealtimeEventType.TASKS_CHANGED,
 			ProjectRealtimeEventType.SPRINTS_CHANGED,
@@ -55,7 +56,7 @@ public class ProjectGraphProjector {
 		thread.setDaemon(true);
 		return thread;
 	});
-	private final ExecutorService rebuilds = Executors.newFixedThreadPool(2, r -> {
+	private final ExecutorService rebuilds = Executors.newFixedThreadPool(MAX_REBUILD_WORKERS, r -> {
 		Thread thread = new Thread(r, "graph-rebuild");
 		thread.setDaemon(true);
 		return thread;

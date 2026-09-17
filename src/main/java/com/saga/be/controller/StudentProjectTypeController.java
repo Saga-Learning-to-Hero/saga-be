@@ -2,6 +2,8 @@ package com.saga.be.controller;
 
 import com.saga.be.dto.project.ProjectTypeResponse;
 import com.saga.be.service.student.StudentProjectService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 @RequestMapping("/api/student/project-types")
 @Tag(name = "Student project types", description = "Seeded ProjectType catalog for Team Leader project setup.")
 @SecurityRequirement(name = "SAGA_SESSION")

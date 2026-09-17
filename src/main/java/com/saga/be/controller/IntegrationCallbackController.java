@@ -5,6 +5,8 @@ import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.identity.ProjectIntegrationService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -15,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.INTERACTIVE_WRITE)
 @RequestMapping("/api/integrations")
 public class IntegrationCallbackController {
 

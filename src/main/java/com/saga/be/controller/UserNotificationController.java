@@ -8,6 +8,8 @@ import com.saga.be.dto.notification.UserNotificationResponse;
 import com.saga.be.exception.AuthException;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.notification.NotificationService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -23,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 @RequestMapping("/api/users/me/notifications")
 @SecurityRequirement(name = com.saga.be.config.OpenApiConfig.SESSION_COOKIE_SCHEME)
 @Tag(
@@ -47,6 +50,7 @@ public class UserNotificationController {
 	}
 
 	@GetMapping("/unread-count")
+	@Workload(WorkloadClass.INTERACTIVE_LIGHT)
 	@Operation(summary = "Count my unread notifications")
 	public UnreadNotificationCountResponse unreadCount(
 			@Parameter(hidden = true) @AuthenticationPrincipal SagaUserPrincipal principal) {
@@ -54,6 +58,7 @@ public class UserNotificationController {
 	}
 
 	@PatchMapping("/read-all")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Mark all my unread notifications as read")
 	public NotificationReadAllResponse markAllRead(
 			@Parameter(hidden = true) @AuthenticationPrincipal SagaUserPrincipal principal) {
@@ -61,6 +66,7 @@ public class UserNotificationController {
 	}
 
 	@PatchMapping("/{notificationId}/read")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Mark one of my notifications as read")
 	public UserNotificationResponse markRead(
 			@Parameter(hidden = true) @AuthenticationPrincipal SagaUserPrincipal principal,

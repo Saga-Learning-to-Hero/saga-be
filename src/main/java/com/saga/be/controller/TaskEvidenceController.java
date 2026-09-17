@@ -11,6 +11,8 @@ import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.evidence.TaskEvidenceService;
 import com.saga.be.service.evidence.TaskFileService;
 import com.saga.be.service.evidence.TaskWebLinkService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -41,6 +43,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 @RequestMapping("/api/tasks/{taskId}")
 @Tag(name = "Task evidence", description = "Work sessions, contribution confirmations, and student-submitted task links and files.")
 @SecurityRequirement(name = "SAGA_SESSION")
@@ -64,6 +67,7 @@ public class TaskEvidenceController {
 	}
 
 	@PostMapping("/work-sessions/start")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Start a work session, or return the existing OPEN session for this user+task")
 	public TaskWorkSessionResponse start(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID taskId) {
@@ -71,6 +75,7 @@ public class TaskEvidenceController {
 	}
 
 	@PostMapping("/work-sessions/{sessionId}/stop")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Stop the caller's work session. Closing a modal/tab must not call this.")
 	public TaskWorkSessionResponse stop(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -80,6 +85,7 @@ public class TaskEvidenceController {
 	}
 
 	@PostMapping("/contribution-confirmations")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	public ResponseEntity<Map<String, Object>> confirm(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID taskId,
@@ -104,6 +110,7 @@ public class TaskEvidenceController {
 	}
 
 	@PostMapping("/web-links")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@ResponseStatus(HttpStatus.CREATED)
 	@Operation(summary = "Attach an http(s) URL to a task as DOCUMENT/RESEARCH evidence")
 	public TaskWebLinkResponse addLink(
@@ -114,6 +121,7 @@ public class TaskEvidenceController {
 	}
 
 	@DeleteMapping("/web-links/{linkId}")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@ResponseStatus(HttpStatus.NO_CONTENT)
 	@Operation(summary = "Remove a URL from a task")
 	public void deleteLink(
@@ -131,6 +139,7 @@ public class TaskEvidenceController {
 	}
 
 	@PostMapping(value = "/files", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@ResponseStatus(HttpStatus.CREATED)
 	@Operation(summary = "Upload a document or image as DOCUMENT/RESEARCH evidence")
 	public TaskFileResponse addFile(
@@ -159,6 +168,7 @@ public class TaskEvidenceController {
 	}
 
 	@DeleteMapping("/files/{fileId}")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@ResponseStatus(HttpStatus.NO_CONTENT)
 	@Operation(summary = "Remove a student-uploaded file from a task")
 	public void deleteFile(

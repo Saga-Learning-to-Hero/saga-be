@@ -9,6 +9,8 @@ import com.saga.be.entity.account.UserAccount;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.peerreview.PeerReviewService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 @RequestMapping("/api/teams/{teamId}")
 @Tag(name = "Peer review", description = "Team/sprint peer review: rubric, candidates, upsert, list.")
 @SecurityRequirement(name = "SAGA_SESSION")
@@ -55,6 +58,7 @@ public class TeamPeerReviewController {
 	}
 
 	@PostMapping("/sprints/{sprintId}/peer-reviews")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Create or update a peer review for one teammate in this sprint. Student members only.")
 	public PeerReviewResponse submit(
 			@AuthenticationPrincipal SagaUserPrincipal principal,

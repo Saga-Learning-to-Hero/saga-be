@@ -7,6 +7,8 @@ import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.contribution.ProjectGroupWeightConfigService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 @RequestMapping("/api/projects/{projectId}/group-weights")
 @Tag(name = "Project group weights", description = "Per-project contribution weights when course mode is PROJECT_GROUP.")
 @SecurityRequirement(name = "SAGA_SESSION")
@@ -45,6 +48,7 @@ public class ProjectGroupWeightController {
 	}
 
 	@PutMapping
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(summary = "Create or replace project-group contribution weights")
 	public ProjectGroupWeightsResponse put(
 			@AuthenticationPrincipal SagaUserPrincipal principal,

@@ -5,6 +5,8 @@ import com.saga.be.dto.notification.NotificationSendResponse;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.notification.ManualNotificationService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -20,6 +22,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@Workload(WorkloadClass.INTERACTIVE_WRITE)
 @RequestMapping("/api/lecturer")
 @Tag(
 		name = "Lecturer notifications",

@@ -13,6 +13,8 @@ import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.identity.PersonalIntegrationService;
 import com.saga.be.service.identity.ProjectIntegrationService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.Map;
@@ -32,6 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.INTERACTIVE_WRITE)
 @RequestMapping("/api/integrations")
 @Tag(name = "Personal integrations", description = "User-level GitHub/Jira identity links. Not team resource connections.")
 public class PersonalIntegrationController {
@@ -56,6 +59,7 @@ public class PersonalIntegrationController {
 	}
 
 	@GetMapping("/me")
+	@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 	@Operation(summary = "List linked provider identities for the current user")
 	public MyIntegrationsResponse me(@AuthenticationPrincipal SagaUserPrincipal principal) {
 		return integrations.me(principal.getUserId());

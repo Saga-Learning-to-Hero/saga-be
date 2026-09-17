@@ -8,6 +8,8 @@ import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.lecturer.LecturerCourseService;
 import com.saga.be.service.lecturer.LecturerProgressService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 @RequestMapping("/api/lecturer/courses")
 @Tag(name = "Lecturer courses", description = "Courses assigned to the authenticated lecturer. ADMIN may access for support.")
 @SecurityRequirement(name = "SAGA_SESSION")
@@ -59,6 +62,7 @@ public class LecturerCourseController {
 	}
 
 	@GetMapping("/{courseId}/progress")
+	@Workload(WorkloadClass.HEAVY_READ)
 	@Operation(
 			summary = "Lightweight Task/Sprint/Commit progress summary per Team in this course, for dashboard cards.",
 			description =

@@ -24,6 +24,8 @@ import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.security.SessionEstablisher;
 import com.saga.be.service.roster.InvitationClaimService;
 import com.saga.be.web.RequestTiming;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -85,6 +87,7 @@ public class AuthController {
 	}
 
 	@GetMapping("/csrf")
+	@Workload(WorkloadClass.INTERACTIVE_LIGHT)
 	@Operation(
 			summary = "Issue CSRF token",
 			description =
@@ -99,6 +102,7 @@ public class AuthController {
 	}
 
 	@GetMapping("/me")
+	@Workload(WorkloadClass.INTERACTIVE_LIGHT)
 	@Operation(
 			summary = "Current session",
 			description =
@@ -140,6 +144,7 @@ public class AuthController {
 	}
 
 	@PostMapping("/login")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(
 			summary = "Local username/email login",
 			description =
@@ -199,6 +204,7 @@ public class AuthController {
 	}
 
 	@PostMapping("/register")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(
 			summary = "Public Student registration",
 			description =
@@ -265,6 +271,7 @@ public class AuthController {
 	}
 
 	@PostMapping("/password/forgot")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(
 			summary = "Request a password reset link",
 			description =
@@ -281,6 +288,7 @@ public class AuthController {
 	}
 
 	@PostMapping("/password/reset")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(
 			summary = "Reset password using an emailed one-time token",
 			description =
@@ -319,6 +327,7 @@ public class AuthController {
 	}
 
 	@PostMapping("/password/setup")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@SecurityRequirement(name = OpenApiConfig.SESSION_COOKIE_SCHEME)
 	@Operation(
 			summary = "Set first local password",
@@ -361,6 +370,7 @@ public class AuthController {
 	}
 
 	@PostMapping("/logout")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(
 			summary = "End session",
 			description =

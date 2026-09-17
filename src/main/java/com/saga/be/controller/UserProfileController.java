@@ -8,6 +8,8 @@ import com.saga.be.dto.auth.UserProfileResponse;
 import com.saga.be.exception.AuthException;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.security.SessionEstablisher;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -30,6 +32,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 @RequestMapping("/api/users/me/profile")
 @SecurityRequirement(name = com.saga.be.config.OpenApiConfig.SESSION_COOKIE_SCHEME)
 @Tag(name = "User Profile", description = "Self-service view/update of the authenticated user's own profile.")
@@ -68,6 +71,7 @@ public class UserProfileController {
 	}
 
 	@PatchMapping
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(
 			summary = "Update my profile",
 			description =

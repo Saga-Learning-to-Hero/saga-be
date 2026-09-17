@@ -3,6 +3,8 @@ package com.saga.be.controller;
 import com.saga.be.dto.student.StudentCourseResponse;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.student.StudentCourseService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -15,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @Profile("!test")
+@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 @RequestMapping("/api/student/courses")
 @Tag(name = "Student courses", description = "The authenticated student's enrolled courses.")
 @SecurityRequirement(name = "SAGA_SESSION")

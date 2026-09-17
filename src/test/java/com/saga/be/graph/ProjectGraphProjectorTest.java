@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -102,6 +103,38 @@ class ProjectGraphProjectorTest {
 		b.join(2000);
 		assertThat(seen.get()).isEqualTo(2);
 		verify(writer, times(1)).rebuild(any());
+	}
+
+	@Test
+	void distinctProjectsNeverRebuildConcurrently() throws Exception {
+		UUID other = UUID.randomUUID();
+		when(client.projectExists(any())).thenReturn(false);
+		when(loader.load(any())).thenReturn(snapshot());
+		CountDownLatch inRebuild = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		AtomicInteger concurrent = new AtomicInteger();
+		AtomicInteger max = new AtomicInteger();
+		doAnswer((Answer<Void>) invocation -> {
+			max.accumulateAndGet(concurrent.incrementAndGet(), Math::max);
+			inRebuild.countDown();
+			assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+			concurrent.decrementAndGet();
+			return null;
+		})
+				.when(writer)
+				.rebuild(any());
+		Thread first = new Thread(() -> projector.ensureFresh(projectId));
+		first.start();
+		assertThat(inRebuild.await(2, TimeUnit.SECONDS)).isTrue();
+		Thread second = new Thread(() -> projector.ensureFresh(other));
+		second.start();
+		verify(writer, timeout(400).times(1)).rebuild(any());
+		release.countDown();
+		first.join(2000);
+		second.join(2000);
+		verify(writer, times(2)).rebuild(any());
+		assertThat(max.get()).isEqualTo(1);
+		assertThat(ProjectGraphProjector.MAX_REBUILD_WORKERS).isEqualTo(1);
 	}
 
 	@Test
