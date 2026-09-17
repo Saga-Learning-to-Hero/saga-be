@@ -19,6 +19,7 @@ import com.saga.be.integration.jira.JiraIssueEvidenceParser.Attachment;
 import com.saga.be.integration.jira.JiraIssueEvidenceParser.IssueRef;
 import com.saga.be.integration.jira.JiraIssueEvidenceParser.RemoteLink;
 import com.saga.be.integration.jira.JiraTeamTokenService;
+import com.saga.be.persistence.JdbcTransactionGuard;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.TaskAttachmentRepository;
 import com.saga.be.repository.TaskFileRepository;
@@ -31,17 +32,26 @@ import com.saga.be.service.evidence.TaskWebLinkUrls;
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
+/**
+ * Jira evidence sync. Provider HTTP (search, issue GET, remote links, attachment download) never
+ * runs while a JDBC transaction is open. Each issue persists in a short TX; attachment bytes are
+ * downloaded outside TX and written after the file row commits.
+ */
 @Service
 @Profile("!test")
 public class JiraIssueEvidenceSyncService {
@@ -58,6 +68,7 @@ public class JiraIssueEvidenceSyncService {
 	private final TaskFileProperties fileProperties;
 	private final TaskFileStorage storage;
 	private final ObjectMapper mapper;
+	private final TransactionTemplate writes;
 
 	public JiraIssueEvidenceSyncService(
 			JiraIntegrationRepository integrations,
@@ -69,6 +80,21 @@ public class JiraIssueEvidenceSyncService {
 			TaskAttachmentRepository attachments,
 			TaskFileProperties fileProperties,
 			ObjectMapper mapper) {
+		this(integrations, tokens, jira, tasks, links, files, attachments, fileProperties, mapper, null);
+	}
+
+	@Autowired
+	public JiraIssueEvidenceSyncService(
+			JiraIntegrationRepository integrations,
+			JiraTeamTokenService tokens,
+			JiraCloudWorkClient jira,
+			TaskRepository tasks,
+			TaskWebLinkRepository links,
+			TaskFileRepository files,
+			TaskAttachmentRepository attachments,
+			TaskFileProperties fileProperties,
+			ObjectMapper mapper,
+			PlatformTransactionManager transactionManager) {
 		this.integrations = integrations;
 		this.tokens = tokens;
 		this.jira = jira;
@@ -79,6 +105,7 @@ public class JiraIssueEvidenceSyncService {
 		this.fileProperties = fileProperties;
 		this.storage = new TaskFileStorage(fileProperties.getDirectory());
 		this.mapper = mapper;
+		this.writes = transactionManager == null ? null : new TransactionTemplate(transactionManager);
 	}
 
 	public void handleWebhook(String rawJson) {
@@ -102,7 +129,6 @@ public class JiraIssueEvidenceSyncService {
 		}
 	}
 
-	@Transactional
 	public int syncIntegration(JiraIntegration integration) {
 		if (integration.getCloudId() == null || integration.getProjectKey() == null) {
 			return 0;
@@ -111,6 +137,7 @@ public class JiraIssueEvidenceSyncService {
 		int processed = 0;
 		String nextPageToken = null;
 		while (true) {
+			JdbcTransactionGuard.requireInactive("jira evidence search");
 			JiraCloudWorkClient.EvidenceSearchPage page =
 					jira.searchIssues(access, integration.getCloudId(), integration.getProjectKey(), nextPageToken, 50);
 			if (page.issues().isEmpty()) {
@@ -128,9 +155,9 @@ public class JiraIssueEvidenceSyncService {
 		return processed;
 	}
 
-	@Transactional
 	public void syncIssue(JiraIntegration integration, String issueIdOrKey) {
 		String access = tokens.accessToken(integration);
+		JdbcTransactionGuard.requireInactive("jira evidence issue get");
 		JsonNode issue = jira.getIssue(access, integration.getCloudId(), issueIdOrKey);
 		syncFetchedIssue(integration, access, issue);
 	}
@@ -140,12 +167,145 @@ public class JiraIssueEvidenceSyncService {
 		if (ref == null || ref.issueId() == null) {
 			return;
 		}
-		Task task = upsertTask(integration.getProject(), issue, ref);
+		JdbcTransactionGuard.requireInactive("jira evidence remote links");
 		JsonNode remote = jira.listRemoteLinks(access, integration.getCloudId(), ref.issueId());
-		syncLinks(task, JiraIssueEvidenceParser.remoteLinks(remote));
+		List<RemoteLink> remoteLinks = JiraIssueEvidenceParser.remoteLinks(remote);
 		List<Attachment> jiraFiles = JiraIssueEvidenceParser.attachments(issue);
+		IssuePersist persisted = inTx(() -> persistIssueCore(integration.getProject(), issue, ref, remoteLinks, jiraFiles));
+		if (persisted == null) {
+			return;
+		}
+		for (Attachment item : jiraFiles) {
+			if (persisted.skipDownloadIds().contains(item.id())) {
+				continue;
+			}
+			if (item.sizeBytes() > fileProperties.getMaxBytes()) {
+				log.info("jira attachment skipped size task={} attachment={}", persisted.taskId(), item.id());
+				continue;
+			}
+			byte[] content;
+			try {
+				JdbcTransactionGuard.requireInactive("jira evidence attachment download");
+				content = jira.downloadAttachment(access, integration.getCloudId(), item.id());
+			} catch (RuntimeException ex) {
+				log.warn(
+						"jira attachment download failed task={} attachment={}: {}",
+						persisted.taskId(),
+						item.id(),
+						ex.getMessage());
+				continue;
+			}
+			persistDownloadedFile(persisted.taskId(), item, content);
+		}
+		List<UUID> prunedFileIds = inTx(() -> pruneFileRows(persisted.taskId(), persisted.keepFileIds()));
+		for (UUID fileId : prunedFileIds) {
+			try {
+				storage.delete(persisted.taskId(), fileId);
+			} catch (IOException ignored) {
+				// orphan file is acceptable after the row is gone
+			}
+		}
+	}
+
+	private IssuePersist persistIssueCore(
+			Project project, JsonNode issue, IssueRef ref, List<RemoteLink> remoteLinks, List<Attachment> jiraFiles) {
+		Task task = upsertTask(project, issue, ref);
+		syncLinks(task, remoteLinks);
 		syncAttachmentMetadata(task, jiraFiles);
-		syncFiles(integration, access, task, jiraFiles);
+		Set<String> keep = new HashSet<>();
+		Set<String> skipDownload = new HashSet<>();
+		for (Attachment item : jiraFiles) {
+			keep.add(item.id());
+			TaskFile existing = files.findByTask_IdAndExternalId(task.getId(), item.id()).orElse(null);
+			if (existing != null
+					&& existing.getSizeBytes() == item.sizeBytes()
+					&& existing.getId() != null
+					&& storage.exists(task.getId(), existing.getId())) {
+				skipDownload.add(item.id());
+			}
+		}
+		return new IssuePersist(task.getId(), keep, skipDownload);
+	}
+
+	private void persistDownloadedFile(UUID taskId, Attachment item, byte[] content) {
+		if (content.length == 0 || startsWithMzOrElf(content)) {
+			return;
+		}
+		String sanitized;
+		try {
+			sanitized = TaskFileTypes.sanitizeFilename(item.filename());
+		} catch (RuntimeException ex) {
+			sanitized = "jira-attachment-" + item.id();
+		}
+		final String filename = sanitized;
+		final String mime =
+				item.mimeType() == null || item.mimeType().isBlank() ? "application/octet-stream" : item.mimeType();
+		final String hash = sha256(content);
+		UUID fileId = inTx(() -> {
+			Task task = tasks.findById(taskId).orElse(null);
+			if (task == null) {
+				return null;
+			}
+			if (files.findByTask_IdAndContentHash(task.getId(), hash).isPresent()
+					&& files.findByTask_IdAndExternalId(task.getId(), item.id()).isEmpty()) {
+				return null;
+			}
+			TaskFile existing = files.findByTask_IdAndExternalId(task.getId(), item.id()).orElse(null);
+			if (existing != null && existing.getId() != null) {
+				return existing.getId();
+			}
+			return UUID.randomUUID();
+		});
+		if (fileId == null) {
+			return;
+		}
+		try {
+			JdbcTransactionGuard.requireInactive("jira evidence attachment store");
+			storage.write(taskId, fileId, content);
+		} catch (IOException ex) {
+			log.warn("jira attachment store failed task={} attachment={}", taskId, item.id());
+			return;
+		}
+		try {
+			inTx(() -> {
+				Task task = tasks.findById(taskId).orElse(null);
+				if (task == null) {
+					throw new IllegalStateException("task missing after attachment store");
+				}
+				TaskFile row = files.findByTask_IdAndExternalId(task.getId(), item.id()).orElseGet(TaskFile::new);
+				if (row.getId() == null) {
+					row.setId(fileId);
+					row.setTask(task);
+					row.setExternalId(item.id());
+					row.setSource(EvidenceSource.JIRA);
+				}
+				row.setOriginalFilename(filename);
+				row.setMimeType(mime);
+				row.setSizeBytes(content.length);
+				row.setContentHash(hash);
+				row.setSource(EvidenceSource.JIRA);
+				files.save(row);
+				return null;
+			});
+		} catch (RuntimeException ex) {
+			try {
+				storage.delete(taskId, fileId);
+			} catch (IOException ignored) {
+				// orphan bytes are acceptable; no TaskFile row was committed
+			}
+			log.warn("jira attachment persist failed task={} attachment={}", taskId, item.id());
+		}
+	}
+
+	private List<UUID> pruneFileRows(UUID taskId, Set<String> keep) {
+		List<UUID> pruned = new ArrayList<>();
+		for (TaskFile row : files.findByTask_IdAndSource(taskId, EvidenceSource.JIRA)) {
+			if (row.getExternalId() == null || !keep.contains(row.getExternalId())) {
+				pruned.add(row.getId());
+				files.delete(row);
+			}
+		}
+		return pruned;
 	}
 
 	private Task upsertTask(Project project, JsonNode issue, IssueRef ref) {
@@ -225,68 +385,11 @@ public class JiraIssueEvidenceSyncService {
 		}
 	}
 
-	private void syncFiles(JiraIntegration integration, String access, Task task, List<Attachment> jiraFiles) {
-		Set<String> keep = new HashSet<>();
-		for (Attachment item : jiraFiles) {
-			keep.add(item.id());
-			TaskFile existing = files.findByTask_IdAndExternalId(task.getId(), item.id()).orElse(null);
-			if (existing != null && existing.getSizeBytes() == item.sizeBytes()) {
-				continue;
-			}
-			if (item.sizeBytes() > fileProperties.getMaxBytes()) {
-				log.info("jira attachment skipped size task={} attachment={}", task.getId(), item.id());
-				continue;
-			}
-			byte[] content;
-			try {
-				content = jira.downloadAttachment(access, integration.getCloudId(), item.id());
-			} catch (RuntimeException ex) {
-				log.warn("jira attachment download failed task={} attachment={}: {}", task.getId(), item.id(), ex.getMessage());
-				continue;
-			}
-			if (content.length == 0 || startsWithMzOrElf(content)) {
-				continue;
-			}
-			String filename;
-			try {
-				filename = TaskFileTypes.sanitizeFilename(item.filename());
-			} catch (RuntimeException ex) {
-				filename = "jira-attachment-" + item.id();
-			}
-			String mime = item.mimeType() == null || item.mimeType().isBlank() ? "application/octet-stream" : item.mimeType();
-			String hash = sha256(content);
-			if (files.findByTask_IdAndContentHash(task.getId(), hash).isPresent() && existing == null) {
-				continue;
-			}
-			if (existing == null) {
-				existing = new TaskFile();
-				existing.setTask(task);
-				existing.setExternalId(item.id());
-				existing.setSource(EvidenceSource.JIRA);
-			}
-			existing.setOriginalFilename(filename);
-			existing.setMimeType(mime);
-			existing.setSizeBytes(content.length);
-			existing.setContentHash(hash);
-			existing.setSource(EvidenceSource.JIRA);
-			existing = files.save(existing);
-			try {
-				storage.write(task.getId(), existing.getId(), content);
-			} catch (IOException ex) {
-				files.delete(existing);
-				log.warn("jira attachment store failed task={} attachment={}", task.getId(), item.id());
-			}
+	private <T> T inTx(java.util.function.Supplier<T> action) {
+		if (writes == null) {
+			return action.get();
 		}
-		for (TaskFile row : files.findByTask_IdAndSource(task.getId(), EvidenceSource.JIRA)) {
-			if (row.getExternalId() == null || !keep.contains(row.getExternalId())) {
-				try {
-					storage.delete(task.getId(), row.getId());
-				} catch (IOException ignored) {
-					// orphan file is acceptable; row must still go
-				}
-				files.delete(row);
-			}
-		}
+		return writes.execute(status -> action.get());
 	}
 
 	private static TaskStatus mapStatus(String category, String name) {
@@ -335,4 +438,6 @@ public class JiraIssueEvidenceSyncService {
 			throw new IllegalStateException("SHA-256 unavailable", ex);
 		}
 	}
+
+	private record IssuePersist(UUID taskId, Set<String> keepFileIds, Set<String> skipDownloadIds) {}
 }

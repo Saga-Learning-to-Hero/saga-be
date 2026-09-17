@@ -28,4 +28,15 @@ class TaskFileStorageTest {
 		storage.delete(taskId, fileId);
 		assertFalse(Files.exists(stored));
 	}
+
+	@Test
+	void existsIsFalseUntilWriteCompletes() throws Exception {
+		TaskFileStorage storage = new TaskFileStorage(temp);
+		UUID taskId = UUID.randomUUID();
+		UUID fileId = UUID.randomUUID();
+		assertFalse(storage.exists(taskId, fileId));
+		storage.write(taskId, fileId, new byte[] {9});
+		assertTrue(storage.exists(taskId, fileId));
+		assertFalse(Files.exists(temp.resolve(taskId.toString()).resolve(fileId + ".tmp")));
+	}
 }

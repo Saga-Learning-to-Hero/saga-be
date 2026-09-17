@@ -9,8 +9,6 @@ import com.saga.be.entity.enums.AuditSource;
 import com.saga.be.entity.enums.IdentityMappingStatus;
 import com.saga.be.entity.enums.IntegrationProvider;
 import com.saga.be.entity.enums.OAuthFlowType;
-import com.saga.be.entity.enums.WarningCategory;
-import com.saga.be.entity.enums.WarningSeverity;
 import com.saga.be.entity.integration.IdentityMap;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
@@ -22,6 +20,7 @@ import com.saga.be.integration.oauth.OAuthState;
 import com.saga.be.integration.oauth.OAuthStateService;
 import com.saga.be.integration.oauth.Pkce;
 import com.saga.be.messaging.OutboxPublisher;
+import com.saga.be.persistence.JdbcTransactionGuard;
 import com.saga.be.repository.IdentityMapRepository;
 import com.saga.be.repository.IdentityMappingHistoryRepository;
 import com.saga.be.repository.UserAccountRepository;
@@ -31,10 +30,13 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @Profile("!test")
@@ -51,6 +53,7 @@ public class PersonalIntegrationService {
 	private final AuditService audit;
 	private final AttributionWarningService warnings;
 	private final OutboxPublisher outbox;
+	private final TransactionTemplate writes;
 
 	public PersonalIntegrationService(
 			UserAccountRepository users,
@@ -63,6 +66,22 @@ public class PersonalIntegrationService {
 			AuditService audit,
 			AttributionWarningService warnings,
 			OutboxPublisher outbox) {
+		this(users, identities, history, oauthStates, properties, github, jira, audit, warnings, outbox, null);
+	}
+
+	@Autowired
+	public PersonalIntegrationService(
+			UserAccountRepository users,
+			IdentityMapRepository identities,
+			IdentityMappingHistoryRepository history,
+			OAuthStateService oauthStates,
+			IntegrationProperties properties,
+			GitHubOAuthClient github,
+			JiraOAuthClient jira,
+			AuditService audit,
+			AttributionWarningService warnings,
+			OutboxPublisher outbox,
+			PlatformTransactionManager transactionManager) {
 		this.users = users;
 		this.identities = identities;
 		this.history = history;
@@ -74,6 +93,7 @@ public class PersonalIntegrationService {
 		this.warnings = warnings;
 		this.outbox = outbox;
 		this.linking = new IdentityLinkingService(new JpaIdentityStore(users, identities, history));
+		this.writes = transactionManager == null ? null : new TransactionTemplate(transactionManager);
 	}
 
 	@Transactional(readOnly = true)
@@ -127,13 +147,11 @@ public class PersonalIntegrationService {
 		return new OAuthStartResponse(url, state.state());
 	}
 
-	@Transactional
 	public String completeGithub(UUID userId, String code, String rawState, UserAccount actor) {
 		OAuthState state = oauthStates.consumeForUser(rawState, userId, OAuthFlowType.GITHUB_USER_LINK);
 		return completeGithub(userId, code, state, actor);
 	}
 
-	@Transactional
 	public String completeGithub(UUID userId, String code, OAuthState state, UserAccount actor) {
 		if (state.flowType() != OAuthFlowType.GITHUB_USER_LINK) {
 			throw new IntegrationException(
@@ -143,12 +161,13 @@ public class PersonalIntegrationService {
 			throw new IntegrationException(
 					IntegrationErrorCode.OAUTH_STATE_INVALID, HttpStatus.BAD_REQUEST, "PKCE verifier is missing.");
 		}
+		JdbcTransactionGuard.requireInactive("github oauth exchange");
 		String token = github.exchangeUserToken(
 				code,
 				state.pkceVerifier(),
 				callbackOr(properties.getGithub().getOauthCallbackUrl(), "/api/integrations/github/oauth/callback"));
 		GitHubOAuthClient.GitHubUser profile = github.getAuthenticatedUser(token);
-		return link(
+		return persistLink(() -> link(
 				actor,
 				IntegrationProvider.GITHUB,
 				String.valueOf(profile.id()),
@@ -156,18 +175,17 @@ public class PersonalIntegrationService {
 				profile.name(),
 				profile.avatar_url(),
 				null,
-				state);
+				state));
 	}
 
-	@Transactional
 	public String completeJira(UUID userId, String code, String rawState, UserAccount actor) {
 		return completeJira(userId, code, rawState, null, actor);
 	}
 
-	@Transactional
 	public String completeJira(UUID userId, String code, String rawState, String error, UserAccount actor) {
 		OAuthState state = oauthStates.consumeForUser(rawState, userId, OAuthFlowType.JIRA_USER_LINK);
 		JiraOAuthCallbackSupport.requireAuthorizationCodeOrThrow(code, error);
+		JdbcTransactionGuard.requireInactive("jira oauth exchange");
 		JiraOAuthClient.TokenResponse tokens = jira.exchange(
 				code,
 				state.pkceVerifier(),
@@ -179,7 +197,23 @@ public class PersonalIntegrationService {
 		}
 		JiraOAuthClient.AccessibleResource site = resources.getFirst();
 		JiraOAuthClient.Myself me = jira.myself(tokens.accessToken(), site.id());
-		return link(actor, IntegrationProvider.JIRA, me.accountId(), me.displayName(), me.displayName(), null, site.id(), state);
+		return persistLink(() -> link(
+				actor,
+				IntegrationProvider.JIRA,
+				me.accountId(),
+				me.displayName(),
+				me.displayName(),
+				null,
+				site.id(),
+				state));
+	}
+
+	/** Programmatic {@link TransactionTemplate} so {@code completeGithub}/{@code completeJira} HTTP cannot join a self-invoked {@code @Transactional}. */
+	private String persistLink(java.util.function.Supplier<String> action) {
+		if (writes == null) {
+			return action.get();
+		}
+		return writes.execute(status -> action.get());
 	}
 
 	@Transactional

@@ -27,6 +27,7 @@ import com.saga.be.integration.jira.JiraOAuthClient;
 import com.saga.be.integration.oauth.OAuthState;
 import com.saga.be.integration.oauth.OAuthStateService;
 import com.saga.be.messaging.OutboxPublisher;
+import com.saga.be.persistence.TrackingPlatformTransactionManager;
 import com.saga.be.repository.IdentityMapRepository;
 import com.saga.be.repository.IdentityMappingHistoryRepository;
 import com.saga.be.repository.UserAccountRepository;
@@ -37,12 +38,14 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 class PersonalIntegrationServiceTest {
@@ -69,6 +72,7 @@ class PersonalIntegrationServiceTest {
 	private IntegrationProperties properties;
 	private PersonalIntegrationService service;
 	private UserAccount user;
+	private TrackingPlatformTransactionManager tm;
 
 	@BeforeEach
 	void setUp() {
@@ -78,13 +82,19 @@ class PersonalIntegrationServiceTest {
 		properties.setFailureUrl("http://localhost:3000/integrations/failure");
 		configureGithub(properties.getGithub());
 		configureJira(properties.getJira());
+		tm = new TrackingPlatformTransactionManager();
 		service = new PersonalIntegrationService(
-				users, identities, history, oauthStates, properties, github, jira, audit, warnings, outbox);
+				users, identities, history, oauthStates, properties, github, jira, audit, warnings, outbox, tm);
 		user = new UserAccount();
 		user.setId(UUID.randomUUID());
 		user.setEmail("student@gmail.com");
 		user.setAccountRole(AccountRole.STUDENT);
 		user.setAccountStatus(AccountStatus.ACTIVE);
+	}
+
+	@AfterEach
+	void clearTxFlag() {
+		TransactionSynchronizationManager.setActualTransactionActive(false);
 	}
 
 	@Test
@@ -212,6 +222,81 @@ class PersonalIntegrationServiceTest {
 		assertEquals(IntegrationProvider.JIRA, item.provider());
 		assertEquals(first, item.linkedAt());
 		assertEquals(last, item.lastVerifiedAt());
+	}
+
+	@Test
+	void completeGithub_providerHttpRunsOutsideJdbcTransaction() {
+		when(oauthStates.consumeForUser(eq("state"), eq(user.getId()), eq(OAuthFlowType.GITHUB_USER_LINK)))
+				.thenReturn(personalState(OAuthFlowType.GITHUB_USER_LINK, null));
+		when(github.exchangeUserToken(eq("code"), eq("verifier"), any())).thenAnswer(inv -> {
+			org.junit.jupiter.api.Assertions.assertFalse(
+					TransactionSynchronizationManager.isActualTransactionActive(),
+					"github oauth exchange must be outside JDBC TX");
+			org.junit.jupiter.api.Assertions.assertEquals(0, tm.openCount());
+			return "user-token";
+		});
+		when(github.getAuthenticatedUser("user-token")).thenAnswer(inv -> {
+			org.junit.jupiter.api.Assertions.assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+			return new GitHubOAuthClient.GitHubUser(99L, "octocat", "Octo", null);
+		});
+		when(users.findByIdForUpdate(user.getId())).thenAnswer(inv -> {
+			org.junit.jupiter.api.Assertions.assertTrue(
+					TransactionSynchronizationManager.isActualTransactionActive(),
+					"identity persist must be inside short TX");
+			return Optional.of(user);
+		});
+		when(identities.findByProviderAndExternalAccountIdAndMappingStatusIn(any(), any(), any()))
+				.thenReturn(Optional.empty());
+		when(identities.findByUserAccount_IdAndProvider(eq(user.getId()), any())).thenReturn(List.of());
+		when(identities.save(any(IdentityMap.class))).thenAnswer(invocation -> {
+			IdentityMap saved = invocation.getArgument(0);
+			if (saved.getId() == null) {
+				saved.setId(UUID.randomUUID());
+			}
+			return saved;
+		});
+		when(history.save(any(IdentityMappingHistory.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+		assertEquals("http://localhost:3000/integrations/success", service.completeGithub(user.getId(), "code", "state", user));
+		org.junit.jupiter.api.Assertions.assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+	}
+
+	@Test
+	void completeJira_providerHttpRunsOutsideJdbcTransaction() {
+		when(oauthStates.consumeForUser(eq("state"), eq(user.getId()), eq(OAuthFlowType.JIRA_USER_LINK)))
+				.thenReturn(personalState(OAuthFlowType.JIRA_USER_LINK, null));
+		when(jira.exchange(eq("code"), eq("verifier"), any())).thenAnswer(inv -> {
+			org.junit.jupiter.api.Assertions.assertFalse(
+					TransactionSynchronizationManager.isActualTransactionActive(),
+					"jira oauth exchange must be outside JDBC TX");
+			return new JiraOAuthClient.TokenResponse("access", "refresh", 3600, "read:jira-work");
+		});
+		when(jira.accessibleResources("access")).thenAnswer(inv -> {
+			org.junit.jupiter.api.Assertions.assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+			return List.of(new JiraOAuthClient.AccessibleResource("cloud", "https://ex.atlassian.net", "Ex"));
+		});
+		when(jira.myself("access", "cloud")).thenReturn(new JiraOAuthClient.Myself("acct-1", "User", "u@ex.com", null));
+		when(users.findByIdForUpdate(user.getId())).thenAnswer(inv -> {
+			org.junit.jupiter.api.Assertions.assertTrue(
+					TransactionSynchronizationManager.isActualTransactionActive(),
+					"jira identity persist must be inside TransactionTemplate");
+			org.junit.jupiter.api.Assertions.assertEquals(1, tm.openCount());
+			return Optional.of(user);
+		});
+		when(identities.findByProviderAndExternalAccountIdAndMappingStatusIn(any(), any(), any()))
+				.thenReturn(Optional.empty());
+		when(identities.findByUserAccount_IdAndProvider(eq(user.getId()), any())).thenReturn(List.of());
+		when(identities.save(any(IdentityMap.class))).thenAnswer(invocation -> {
+			IdentityMap saved = invocation.getArgument(0);
+			if (saved.getId() == null) {
+				saved.setId(UUID.randomUUID());
+			}
+			return saved;
+		});
+		when(history.save(any(IdentityMappingHistory.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+		assertEquals("http://localhost:3000/integrations/success", service.completeJira(user.getId(), "code", "state", user));
+		org.junit.jupiter.api.Assertions.assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
 	}
 
 	private void stubPersonalGithubLink(String returnPath) {

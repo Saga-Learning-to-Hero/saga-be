@@ -1,8 +1,10 @@
 package com.saga.be.service.evidence;
 
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.UUID;
 
 public final class TaskFileStorage {
@@ -21,10 +23,20 @@ public final class TaskFileStorage {
 		return path;
 	}
 
+	public boolean exists(UUID taskId, UUID fileId) {
+		return Files.isRegularFile(pathFor(taskId, fileId));
+	}
+
 	public void write(UUID taskId, UUID fileId, byte[] content) throws IOException {
 		Path path = pathFor(taskId, fileId);
 		Files.createDirectories(path.getParent());
-		Files.write(path, content);
+		Path staging = path.resolveSibling(fileId + ".tmp");
+		Files.write(staging, content);
+		try {
+			Files.move(staging, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+		} catch (AtomicMoveNotSupportedException ex) {
+			Files.move(staging, path, StandardCopyOption.REPLACE_EXISTING);
+		}
 	}
 
 	public byte[] read(UUID taskId, UUID fileId) throws IOException {
@@ -33,5 +45,6 @@ public final class TaskFileStorage {
 
 	public void delete(UUID taskId, UUID fileId) throws IOException {
 		Files.deleteIfExists(pathFor(taskId, fileId));
+		Files.deleteIfExists(pathFor(taskId, fileId).resolveSibling(fileId + ".tmp"));
 	}
 }

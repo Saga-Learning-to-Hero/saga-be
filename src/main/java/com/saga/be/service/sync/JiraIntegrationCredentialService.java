@@ -113,7 +113,8 @@ public class JiraIntegrationCredentialService {
 						"Jira refresh credential is unavailable.");
 			}
 			String aad = TokenEncryptor.aad(integrationId.toString(), "JIRA", connectedById.toString());
-			String refreshPlain = encryptor.decrypt(current.getEncryptedRefreshToken(), aad);
+			String refreshCipher = current.getEncryptedRefreshToken();
+			String refreshPlain = encryptor.decrypt(refreshCipher, aad);
 			TokenResponse tokens = jira.refresh(refreshPlain);
 			String nextRefresh = tokens.refreshToken() == null || tokens.refreshToken().isBlank()
 					? refreshPlain
@@ -122,15 +123,36 @@ public class JiraIntegrationCredentialService {
 			String encryptedRefresh = encryptor.encrypt(nextRefresh, aad);
 			LocalDateTime expiresAt =
 					LocalDateTime.now().plusSeconds(Math.max(60, tokens.expiresInSeconds() - EXPIRY_SKEW_SECONDS));
-			writes.executeWithoutResult(status -> {
+			String persisted = writes.execute(status -> {
 				JiraIntegration row = integrations.lockById(integrationId).orElseThrow();
+				String winner = decryptAccess(row);
+				if (skipIfFreshAccess) {
+					if (hasText(winner) && !isExpired(row.getTokenExpiresAt())) {
+						return winner;
+					}
+				} else if (rejectedAccess != null
+						&& hasText(winner)
+						&& !winner.equals(rejectedAccess)
+						&& !isExpired(row.getTokenExpiresAt())) {
+					return winner;
+				}
+				if (!java.util.Objects.equals(row.getEncryptedRefreshToken(), refreshCipher)) {
+					return hasText(winner) && !isExpired(row.getTokenExpiresAt()) ? winner : null;
+				}
 				row.setEncryptedAccessToken(encryptedAccess);
 				row.setEncryptedRefreshToken(encryptedRefresh);
 				row.setTokenExpiresAt(expiresAt);
 				integrations.save(row);
+				return tokens.accessToken();
 			});
+			if (!hasText(persisted)) {
+				throw new IntegrationException(
+						IntegrationErrorCode.JIRA_TOKEN_REFRESH_FAILED,
+						HttpStatus.BAD_GATEWAY,
+						"Jira access token could not be refreshed.");
+			}
 			log.info("jira credential refreshed projectId={} integrationIdPresent=true", projectId);
-			return tokens.accessToken();
+			return persisted;
 		}
 	}
 
