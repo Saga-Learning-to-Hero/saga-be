@@ -16,6 +16,7 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Profile;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -35,6 +36,7 @@ public class GoogleAccountService {
 	private final GoogleRoleResolver roleResolver;
 	private final AccountStatusGuard statusGuard;
 	private final InvitationClaimService invitationClaims;
+	private final ApplicationEventPublisher events;
 
 	public GoogleAccountService(
 			UserAccountRepository users,
@@ -42,7 +44,17 @@ public class GoogleAccountService {
 			LecturerProfileRepository lecturers,
 			GoogleRoleResolver roleResolver,
 			AccountStatusGuard statusGuard) {
-		this(users, students, lecturers, roleResolver, statusGuard, null);
+		this(users, students, lecturers, roleResolver, statusGuard, null, null);
+	}
+
+	public GoogleAccountService(
+			UserAccountRepository users,
+			StudentProfileRepository students,
+			LecturerProfileRepository lecturers,
+			GoogleRoleResolver roleResolver,
+			AccountStatusGuard statusGuard,
+			InvitationClaimService invitationClaims) {
+		this(users, students, lecturers, roleResolver, statusGuard, invitationClaims, null);
 	}
 
 	@Autowired
@@ -52,13 +64,15 @@ public class GoogleAccountService {
 			LecturerProfileRepository lecturers,
 			GoogleRoleResolver roleResolver,
 			AccountStatusGuard statusGuard,
-			InvitationClaimService invitationClaims) {
+			InvitationClaimService invitationClaims,
+			ApplicationEventPublisher events) {
 		this.users = users;
 		this.students = students;
 		this.lecturers = lecturers;
 		this.roleResolver = roleResolver;
 		this.statusGuard = statusGuard;
 		this.invitationClaims = invitationClaims;
+		this.events = events;
 	}
 
 	@Transactional
@@ -68,18 +82,24 @@ public class GoogleAccountService {
 		String email = identity.email().trim().toLowerCase(Locale.ROOT);
 
 		UserAccount account = users.findByGoogleSubject(sub)
-				.map(this::useExisting)
+				.map(existing -> useExisting(existing, identity))
 				.orElseGet(() -> users.findByEmail(email)
 						.map(existing -> linkSubject(existing, sub, allowedHostedDomains, identity))
 						.orElseGet(() -> createNew(identity, email, sub, allowedHostedDomains)));
 		if (account.getAccountRole() == AccountRole.STUDENT && invitationClaims != null) {
 			invitationClaims.claimQuietly(account);
 		}
+		if (account.getAccountRole() == AccountRole.STUDENT) {
+			publishProfileUpdated(account);
+		}
 		return account;
 	}
 
-	private UserAccount useExisting(UserAccount account) {
+	private UserAccount useExisting(UserAccount account, GoogleOidcIdentity identity) {
 		statusGuard.requireActive(account);
+		if (applyConservativeProfile(account, identity)) {
+			account = users.save(account);
+		}
 		log.info("auth method=GOOGLE result=success userId={} role={}", account.getId(), account.getAccountRole());
 		return account;
 	}
@@ -103,7 +123,8 @@ public class GoogleAccountService {
 		}
 		applyConservativeProfile(existing, identity);
 		log.info("auth method=GOOGLE result=linked userId={} role={}", existing.getId(), existing.getAccountRole());
-		return users.save(existing);
+		UserAccount saved = users.save(existing);
+		return saved;
 	}
 
 	private UserAccount createNew(GoogleOidcIdentity identity, String email, String sub, Set<String> allowedHostedDomains) {
@@ -145,18 +166,29 @@ public class GoogleAccountService {
 		} catch (DataIntegrityViolationException ex) {
 			return users.findByGoogleSubject(sub)
 					.or(() -> users.findByEmail(email))
-					.map(this::useExisting)
+					.map(existing -> useExisting(existing, identity))
 					.orElseThrow(() -> ex);
 		}
 	}
 
-	private void applyConservativeProfile(UserAccount existing, GoogleOidcIdentity identity) {
+	private boolean applyConservativeProfile(UserAccount existing, GoogleOidcIdentity identity) {
+		boolean changed = false;
 		if (!StringUtils.hasText(existing.getFullName()) && StringUtils.hasText(identity.name())) {
 			existing.setFullName(identity.name());
+			changed = true;
 		}
 		if (!StringUtils.hasText(existing.getAvatarUrl()) && StringUtils.hasText(identity.picture())) {
 			existing.setAvatarUrl(identity.picture());
+			changed = true;
 		}
+		return changed;
+	}
+
+	private void publishProfileUpdated(UserAccount account) {
+		if (events == null || account == null || account.getId() == null) {
+			return;
+		}
+		events.publishEvent(new UserProfileUpdated(account.getId()));
 	}
 
 	private void validateIdentity(GoogleOidcIdentity identity, Set<String> allowedHostedDomains) {
