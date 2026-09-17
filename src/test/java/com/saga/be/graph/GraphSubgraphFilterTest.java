@@ -115,6 +115,28 @@ class GraphSubgraphFilterTest {
 				.hasMessageContaining("focusNodeId");
 	}
 
+	@Test
+	void usedCriteriaOnlyHidesUnlinkedCriterionNodes() {
+		CytoscapeGraphBuilder builder = new CytoscapeGraphBuilder();
+		builder.node(node("student:1", "STUDENT", false));
+		builder.node(node("task:1", "TASK", false));
+		builder.node(node("crit_code", "CRITERION", false));
+		builder.node(node("crit_test", "CRITERION", false));
+		builder.node(node("crit_document", "CRITERION", false));
+		builder.node(node("crit_research", "CRITERION", false));
+		builder.edge(edge("student:1", "task:1", "ASSIGNED_TO"));
+		builder.edge(edge("task:1", "crit_code", "CLASSIFIED_AS"));
+		CytoscapeGraphResponse out = GraphSubgraphFilter.apply(
+				builder.build(),
+				GraphViewQuery.parse(null, null, null, null, null, null, null, null, null, true),
+				1L);
+		assertThat(ids(out)).containsExactlyInAnyOrder("student:1", "task:1", "crit_code");
+		assertThat(ids(out)).doesNotContain("crit_test", "crit_document", "crit_research");
+		assertNoDanglingEdges(out);
+		assertThat(out.meta().totalNodes()).isEqualTo(6);
+		assertThat(out.meta().returnedNodes()).isEqualTo(3);
+	}
+
 	private static CytoscapeGraphResponse sample() {
 		CytoscapeGraphBuilder builder = new CytoscapeGraphBuilder();
 		builder.node(node("student:1", "STUDENT", false));

@@ -146,6 +146,7 @@ Response headers: `ETag`, `X-Graph-Revision`. Cùng revision **và cùng query**
 | `maxNodes` | không | — | `1`–`2000`. Cắt theo thứ tự ổn định trong cùng revision. |
 | `cursor` | không | — | Token `revision:lastNodeId` từ `meta.nextCursor`. Alias: `continuationToken`. Sai revision → 400. |
 | `includeCommits` | không | `false` trên Graph 1 và 3 | `true` = vẽ đủ SHA như trước (mạng nhện). Graph 2/4/5 không dùng default compact. |
+| `usedCriteriaOnly` | không | `false` | Graph 2: `true` = chỉ Criterion có cạnh `CLASSIFIED_AS`. Mặc định vẫn đủ 4 CODE/TEST/DOCUMENT/RESEARCH. |
 
 Ví dụ overview (mặc định đã gọn) + drill-down task:
 
@@ -336,6 +337,8 @@ Mặc định **không trả COMMIT** (đó là thứ làm canvas thành mạng 
 ### Graph 2 — Contribution path
 
 Luôn trả **4 node Criterion** (kể cả chưa có cạnh). Chỉ task **DONE** đã gán sinh viên đó **và** đang thuộc một sprint. Backlog / task chưa DONE không vào graph này.
+
+Ẩn tiêu chí chưa dùng: `usedCriteriaOnly=true` — chỉ còn Criterion có `CLASSIFIED_AS`. Bỏ param = đủ 4 node như cũ.
 
 Drill-down evidence: `focusNodeId=task:{taskId}&depth=1&nodeTypes=TASK,COMMIT&edgeTypes=EVIDENCED_BY`.
 
