@@ -42,4 +42,16 @@ public interface PeerReviewRepository extends JpaRepository<PeerReview, UUID> {
 			""")
 	List<PeerReview> findFetchedByProjectAndSprint(
 			@Param("projectId") UUID projectId, @Param("sprintId") UUID sprintId);
+
+	/** Heatmap: {@code Object[]{UUID reviewerStudentId, LocalDateTime createdAt}} for submitted reviews. */
+	@Query(
+			"""
+			select pr.reviewerStudent.id, pr.createdAt
+			from PeerReview pr
+			join pr.sprint s
+			join s.jiraIntegration j
+			where j.project.id = :projectId
+			  and pr.starRating is not null
+			""")
+	List<Object[]> findReviewerAndCreatedAtByProject(@Param("projectId") UUID projectId);
 }
