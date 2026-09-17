@@ -18,7 +18,8 @@ public record GraphViewQuery(
 		Integer maxNodes,
 		String cursor,
 		boolean active,
-		boolean skipDefaultCompact) {
+		boolean skipDefaultCompact,
+		boolean usedCriteriaOnly) {
 
 	static final Set<String> NODE_TYPES = Set.of(
 			"STUDENT", "TEAM", "PROJECT", "SPRINT", "TASK", "COMMIT", "CRITERION", "IDENTITY");
@@ -41,19 +42,19 @@ public record GraphViewQuery(
 	static final int MAX_NODES_CAP = 2000;
 
 	public static GraphViewQuery none() {
-		return new GraphViewQuery(null, 1, Set.of(), Set.of(), false, null, null, false, false);
+		return new GraphViewQuery(null, 1, Set.of(), Set.of(), false, null, null, false, false, false);
 	}
 
 	public static GraphViewQuery full() {
-		return new GraphViewQuery(null, 1, Set.of(), Set.of(), false, null, null, false, true);
+		return new GraphViewQuery(null, 1, Set.of(), Set.of(), false, null, null, false, true, false);
 	}
 
 	public static GraphViewQuery compactOverview() {
-		return new GraphViewQuery(null, 1, OVERVIEW_COMPACT_TYPES, Set.of(), false, null, null, true, false);
+		return new GraphViewQuery(null, 1, OVERVIEW_COMPACT_TYPES, Set.of(), false, null, null, true, false, false);
 	}
 
 	public static GraphViewQuery compactActivity() {
-		return new GraphViewQuery(null, 1, ACTIVITY_COMPACT_TYPES, Set.of(), false, null, null, true, false);
+		return new GraphViewQuery(null, 1, ACTIVITY_COMPACT_TYPES, Set.of(), false, null, null, true, false, false);
 	}
 
 	public GraphViewQuery withDefaultCompact(GraphViewQuery compact) {
@@ -71,7 +72,7 @@ public record GraphViewQuery(
 			Boolean anomaliesOnly,
 			Integer maxNodes,
 			String cursor) {
-		return parse(focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, null, null);
+		return parse(focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, null, null, null);
 	}
 
 	public static GraphViewQuery parse(
@@ -92,6 +93,7 @@ public record GraphViewQuery(
 				maxNodes,
 				cursor,
 				continuationToken,
+				null,
 				null);
 	}
 
@@ -105,12 +107,37 @@ public record GraphViewQuery(
 			String cursor,
 			String continuationToken,
 			Boolean includeCommits) {
+		return parse(
+				focusNodeId,
+				depth,
+				nodeTypes,
+				edgeTypes,
+				anomaliesOnly,
+				maxNodes,
+				cursor,
+				continuationToken,
+				includeCommits,
+				null);
+	}
+
+	public static GraphViewQuery parse(
+			String focusNodeId,
+			Integer depth,
+			String nodeTypes,
+			String edgeTypes,
+			Boolean anomaliesOnly,
+			Integer maxNodes,
+			String cursor,
+			String continuationToken,
+			Boolean includeCommits,
+			Boolean usedCriteriaOnly) {
 		boolean hasFocus = focusNodeId != null && !focusNodeId.isBlank();
 		boolean hasTypes = (nodeTypes != null && !nodeTypes.isBlank()) || (edgeTypes != null && !edgeTypes.isBlank());
 		boolean hasAnomalies = Boolean.TRUE.equals(anomaliesOnly);
 		String token = firstNonBlank(cursor, continuationToken);
 		boolean hasPage = maxNodes != null || token != null;
-		boolean active = hasFocus || hasTypes || hasAnomalies || hasPage;
+		boolean hasUsedCriteria = Boolean.TRUE.equals(usedCriteriaOnly);
+		boolean active = hasFocus || hasTypes || hasAnomalies || hasPage || hasUsedCriteria;
 		if (!active) {
 			return Boolean.TRUE.equals(includeCommits) ? full() : none();
 		}
@@ -128,7 +155,7 @@ public record GraphViewQuery(
 		if (token != null && cap == null) {
 			cap = 200;
 		}
-		return new GraphViewQuery(focus, resolvedDepth, nodes, edges, hasAnomalies, cap, token, true, false);
+		return new GraphViewQuery(focus, resolvedDepth, nodes, edges, hasAnomalies, cap, token, true, false, hasUsedCriteria);
 	}
 
 	static String combine(String scope, GraphViewQuery query) {
@@ -150,6 +177,7 @@ public record GraphViewQuery(
 				String.join(",", new TreeSet<>(nodeTypes)),
 				String.join(",", new TreeSet<>(edgeTypes)),
 				Boolean.toString(anomaliesOnly),
+				Boolean.toString(usedCriteriaOnly),
 				maxNodes == null ? "" : maxNodes.toString(),
 				nullToEmpty(cursor));
 	}

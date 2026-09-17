@@ -83,6 +83,7 @@ public class ProjectGraphController {
 			@RequestParam(required = false) Integer maxNodes,
 			@RequestParam(required = false) String cursor,
 			@RequestParam(required = false) String continuationToken,
+			@RequestParam(required = false) Boolean usedCriteriaOnly,
 			@RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
 		return respond(
 				ifNoneMatch,
@@ -92,7 +93,17 @@ public class ProjectGraphController {
 						projectId,
 						studentId,
 						sprintId,
-						view(focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken)));
+						GraphViewQuery.parse(
+								focusNodeId,
+								depth,
+								nodeTypes,
+								edgeTypes,
+								anomaliesOnly,
+								maxNodes,
+								cursor,
+								continuationToken,
+								null,
+								usedCriteriaOnly)));
 	}
 
 	@GetMapping("/sprints/{sprintId}/graph/activity")

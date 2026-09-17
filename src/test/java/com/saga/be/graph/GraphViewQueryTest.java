@@ -18,6 +18,15 @@ class GraphViewQueryTest {
 	}
 
 	@Test
+	void usedCriteriaOnlyActivatesFilter() {
+		GraphViewQuery query = GraphViewQuery.parse(null, null, null, null, null, null, null, null, null, true);
+		assertThat(query.active()).isTrue();
+		assertThat(query.usedCriteriaOnly()).isTrue();
+		GraphViewQuery off = GraphViewQuery.parse(null, null, null, null, null, null, null, null, null, false);
+		assertThat(off.active()).isFalse();
+	}
+
+	@Test
 	void absentParamsStayInactiveForOldContract() {
 		GraphViewQuery query = GraphViewQuery.parse(null, 2, null, null, false, null, null);
 		assertThat(query.active()).isFalse();
