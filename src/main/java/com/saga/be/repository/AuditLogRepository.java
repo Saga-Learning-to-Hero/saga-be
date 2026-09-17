@@ -18,7 +18,8 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
 							a.id, actor.id, a.actorFullNameSnapshot, a.actorRoleSnapshot,
 							a.actorEmailSnapshot, a.actorStudentCodeSnapshot, a.contextClassId,
 							a.contextClassCodeSnapshot, a.contextClassNameSnapshot, a.contextCourseId,
-							a.contextTeamId, a.contextProjectId, a.action, a.entityType, a.entityId,
+							a.contextTeamId, a.contextTeamNoSnapshot, a.contextTeamNameSnapshot,
+							a.contextProjectId, a.contextProjectNameSnapshot, a.action, a.entityType, a.entityId,
 							a.beforeData, a.afterData, a.metadataJson, a.source, a.requestId,
 							a.ipAddress, a.userAgent, a.occurredAt)
 					from AuditLog a

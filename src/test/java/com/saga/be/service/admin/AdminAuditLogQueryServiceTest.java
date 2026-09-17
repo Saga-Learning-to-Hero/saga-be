@@ -61,6 +61,58 @@ class AdminAuditLogQueryServiceTest {
 		assertEquals("Ada", ((java.util.Map<?, ?>) page.items().getFirst().before()).get("fullName"));
 		assertNull(page.items().getFirst().after());
 		assertEquals(Boolean.TRUE, ((java.util.Map<?, ?>) page.items().getFirst().metadata()).get("ok"));
+		assertNull(page.items().getFirst().contextProjectId());
+		assertNull(page.items().getFirst().contextProjectNameSnapshot());
+		assertNull(page.items().getFirst().contextTeamId());
+		assertNull(page.items().getFirst().contextTeamNoSnapshot());
+		assertNull(page.items().getFirst().contextTeamNameSnapshot());
+	}
+
+	@Test
+	void listMapsStoredSnapshotsWithoutInventingCurrentNames() {
+		UUID id = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+		UUID actor = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+		UUID projectId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+		UUID teamId = UUID.fromString("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
+		when(auditLogs.searchAdminAuditLogs(
+						isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), eq(PageRequest.of(0, 50))))
+				.thenReturn(new PageImpl<>(
+						List.of(new AdminAuditLogQueryRow(
+								id,
+								actor,
+								"Ada",
+								"ADMIN",
+								"ada@saga.local",
+								null,
+								null,
+								null,
+								null,
+								null,
+								teamId,
+								2,
+								"Alpha",
+								projectId,
+								"SAGA V1",
+								"PROJECT_CREATED",
+								"project",
+								projectId,
+								null,
+								null,
+								"{\"note\":\"ok\"}",
+								AuditSource.API,
+								"req-1",
+								"127.0.0.1",
+								"test",
+								LocalDateTime.of(2026, 3, 4, 5, 6))),
+						PageRequest.of(0, 50),
+						1));
+		AdminAuditLogPageResponse page = service.list(null, null, null, null, null, null, null, null);
+		assertEquals(projectId, page.items().getFirst().contextProjectId());
+		assertEquals("SAGA V1", page.items().getFirst().contextProjectNameSnapshot());
+		assertEquals(teamId, page.items().getFirst().contextTeamId());
+		assertEquals(2, page.items().getFirst().contextTeamNoSnapshot());
+		assertEquals("Alpha", page.items().getFirst().contextTeamNameSnapshot());
+		assertEquals("ok", ((java.util.Map<?, ?>) page.items().getFirst().metadata()).get("note"));
 	}
 
 	@Test
@@ -102,6 +154,9 @@ class AdminAuditLogQueryServiceTest {
 				"Ada",
 				"ADMIN",
 				"ada@saga.local",
+				null,
+				null,
+				null,
 				null,
 				null,
 				null,

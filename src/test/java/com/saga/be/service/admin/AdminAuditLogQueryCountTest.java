@@ -103,6 +103,42 @@ class AdminAuditLogQueryCountTest {
 	}
 
 	@Test
+	void historicalIdsWithNullSnapshotsAreReturnedWithoutCurrentNameFallback() {
+		AdminAuditLogQueryService service = new AdminAuditLogQueryService(auditLogs, new ObjectMapper());
+		UserAccount actor = persistActor("legacy@saga.local");
+		UUID projectId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01");
+		UUID teamId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa02");
+		AuditLog legacy = persistLog(actor, "GITHUB_REPOSITORY_CONNECTED", "git_repo", LocalDateTime.of(2026, 2, 1, 10, 0), null);
+		legacy.setContextProjectId(projectId);
+		legacy.setContextTeamId(teamId);
+		auditLogs.save(legacy);
+		AuditLog current = persistLog(actor, "PROJECT_CREATED", "project", LocalDateTime.of(2026, 2, 2, 10, 0), "{\"ok\":true}");
+		current.setContextProjectId(projectId);
+		current.setContextProjectNameSnapshot("SAGA V1");
+		current.setContextTeamId(teamId);
+		current.setContextTeamNoSnapshot(2);
+		current.setContextTeamNameSnapshot("Alpha");
+		auditLogs.save(current);
+		entityManager.flush();
+		entityManager.clear();
+
+		Statistics stats = statistics();
+		stats.clear();
+		AdminAuditLogPageResponse page = service.list(null, null, null, null, null, null, 0, 50);
+		assertTrue(stats.getPrepareStatementCount() >= 1 && stats.getPrepareStatementCount() <= 2);
+		assertEquals("PROJECT_CREATED", page.items().get(0).action());
+		assertEquals("SAGA V1", page.items().get(0).contextProjectNameSnapshot());
+		assertEquals(2, page.items().get(0).contextTeamNoSnapshot());
+		assertEquals("Alpha", page.items().get(0).contextTeamNameSnapshot());
+		assertEquals("GITHUB_REPOSITORY_CONNECTED", page.items().get(1).action());
+		assertEquals(projectId, page.items().get(1).contextProjectId());
+		assertEquals(teamId, page.items().get(1).contextTeamId());
+		assertEquals(null, page.items().get(1).contextProjectNameSnapshot());
+		assertEquals(null, page.items().get(1).contextTeamNoSnapshot());
+		assertEquals(null, page.items().get(1).contextTeamNameSnapshot());
+	}
+
+	@Test
 	void filtersByActorActionEntityAndTimeRangeThenPaginates() {
 		AdminAuditLogQueryService service = new AdminAuditLogQueryService(auditLogs, new ObjectMapper());
 		UserAccount actor = persistActor("filter@saga.local");

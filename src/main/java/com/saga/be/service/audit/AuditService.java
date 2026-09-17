@@ -59,17 +59,22 @@ public class AuditService {
 			log.setActorEmailSnapshot(actor.getEmail());
 			students.findByUserAccount_Id(actor.getId()).map(StudentProfile::getStudentCode).ifPresent(log::setActorStudentCodeSnapshot);
 		}
-		if (project != null && project.getCourse() != null) {
-			log.setContextCourseId(project.getCourse().getId());
-			if (project.getCourse().getAcademicClass() != null) {
-				log.setContextClassId(project.getCourse().getAcademicClass().getId());
-				log.setContextClassCodeSnapshot(project.getCourse().getAcademicClass().getClassCode());
-				log.setContextClassNameSnapshot(project.getCourse().getAcademicClass().getName());
+		if (project != null) {
+			log.setContextProjectNameSnapshot(project.getName());
+			if (project.getCourse() != null) {
+				log.setContextCourseId(project.getCourse().getId());
+				if (project.getCourse().getAcademicClass() != null) {
+					log.setContextClassId(project.getCourse().getAcademicClass().getId());
+					log.setContextClassCodeSnapshot(project.getCourse().getAcademicClass().getClassCode());
+					log.setContextClassNameSnapshot(project.getCourse().getAcademicClass().getName());
+				}
+				log.setContextProjectId(project.getId());
 			}
-			log.setContextProjectId(project.getId());
 		}
 		if (team != null) {
 			log.setContextTeamId(team.getId());
+			log.setContextTeamNoSnapshot(team.getTeamNo());
+			log.setContextTeamNameSnapshot(team.getName());
 		}
 		log.setAction(action);
 		log.setEntityType(entityType);

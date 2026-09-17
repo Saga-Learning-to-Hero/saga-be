@@ -278,7 +278,12 @@ class StudentProjectPatchPersistTest {
 			assertEquals(1, logs.size());
 			assertEquals(StudentProjectService.PROJECT_UPDATED, logs.getFirst().getAction());
 			assertEquals(fixture.projectId, logs.getFirst().getContextProjectId());
+			assertEquals("Renamed Project", logs.getFirst().getContextProjectNameSnapshot());
 			assertEquals(fixture.teamId, logs.getFirst().getContextTeamId());
+			assertEquals(1, logs.getFirst().getContextTeamNoSnapshot());
+			assertEquals("Alpha", logs.getFirst().getContextTeamNameSnapshot());
+			assertTrue(logs.getFirst().getMetadataJson() == null
+					|| !logs.getFirst().getMetadataJson().contains("projectSnapshot"));
 			assertEquals(fixture.leaderId, logs.getFirst().getActorUser().getId());
 			JsonNode before = json(logs.getFirst().getBeforeData());
 			JsonNode after = json(logs.getFirst().getAfterData());

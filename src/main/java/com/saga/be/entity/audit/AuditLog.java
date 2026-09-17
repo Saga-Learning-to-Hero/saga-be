@@ -69,9 +69,18 @@ public class AuditLog extends BaseEntity {
 	@Column(name = "context_team_id", columnDefinition = "char(36)")
 	private UUID contextTeamId;
 
+	@Column(name = "context_team_no_snapshot")
+	private Integer contextTeamNoSnapshot;
+
+	@Column(name = "context_team_name_snapshot", length = 255)
+	private String contextTeamNameSnapshot;
+
 	@JdbcTypeCode(Types.CHAR)
 	@Column(name = "context_project_id", columnDefinition = "char(36)")
 	private UUID contextProjectId;
+
+	@Column(name = "context_project_name_snapshot", length = 255)
+	private String contextProjectNameSnapshot;
 
 	@Column(name = "action", length = 64, nullable = false)
 	private String action;
