@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface TaskFileRepository extends JpaRepository<TaskFile, UUID> {
 
@@ -27,4 +29,20 @@ public interface TaskFileRepository extends JpaRepository<TaskFile, UUID> {
 	long countByTask_Project_Id(UUID projectId);
 
 	long countByTask_Project_IdAndCreatedBy_Id(UUID projectId, UUID userId);
+
+	/**
+	 * Heatmap documents: {@code Object[]{UUID studentId, LocalDateTime createdAt}}. Prefers the
+	 * uploading student; falls back to the task assignee.
+	 */
+	@Query(
+			"""
+			select coalesce(sp.id, t.assigneeStudent.id), f.createdAt
+			from TaskFile f
+			join f.task t
+			left join f.createdBy u
+			left join com.saga.be.entity.account.StudentProfile sp on sp.userAccount = u
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			""")
+	List<Object[]> findAuthorAndCreatedAtByProject(@Param("projectId") UUID projectId);
 }

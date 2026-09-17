@@ -145,6 +145,32 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 	List<Object[]> countGroupedBySprintAndStatusForAssignee(
 			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
 
+	/** Heatmap: {@code Object[]{UUID studentId, LocalDateTime createdAt}} for assigned, non-deleted tasks. */
+	@Query(
+			"""
+			select t.assigneeStudent.id, t.createdAt
+			from Task t
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			  and t.assigneeStudent is not null
+			""")
+	List<Object[]> findAssigneeAndCreatedAtByProject(@Param("projectId") UUID projectId);
+
+	/**
+	 * Burndown: {@code Object[]{TaskStatus status, LocalDateTime completedAt, LocalDateTime resolvedAt,
+	 * LocalDateTime createdAt}} for non-deleted tasks in one sprint.
+	 */
+	@Query(
+			"""
+			select t.status, t.completedAt, t.resolvedAt, t.createdAt
+			from Task t
+			where t.project.id = :projectId
+			  and t.sprint.id = :sprintId
+			  and t.deletedAt is null
+			""")
+	List<Object[]> findBurndownRowsByProjectAndSprint(
+			@Param("projectId") UUID projectId, @Param("sprintId") UUID sprintId);
+
 	@Query(
 			"select max(coalesce(t.externalUpdatedAt, t.updatedAt)) from Task t where t.project.id = :projectId and t.deletedAt is null")
 	LocalDateTime findMaxUpdatedAtByProject_Id(@Param("projectId") UUID projectId);

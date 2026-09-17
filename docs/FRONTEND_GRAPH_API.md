@@ -255,7 +255,7 @@ interface CytoscapeNodeData {
   status?: string;      // TASK: TODO | IN_PROGRESS | IN_REVIEW | DONE | BLOCKED
   weightType?: "CODE" | "TEST" | "DOCUMENT" | "RESEARCH";
   isAnomaly?: boolean;
-  avatar?: string;
+  avatar?: string;      // STUDENT: URL ảnh. Không phải avatarUrl (đó là field /auth/me)
   role?: string;        // STUDENT: LEADER | MEMBER | …
   storyPoint?: number;  // TASK
 }
@@ -333,6 +333,14 @@ Không Criterion, không Identity, không `REVIEWED`.
 Không `sprintId`: cả project, **gồm task backlog** (task không nằm sprint). Có `sprintId`: chỉ sprint đó, **không** backlog.
 
 Mặc định **không trả COMMIT** (đó là thứ làm canvas thành mạng nhện). Còn STUDENT / TEAM / PROJECT / SPRINT / TASK. `meta.totalNodes` vẫn đếm cả commit bị ẩn — click task rồi GET `focusNodeId=task:…&depth=1&nodeTypes=TASK,COMMIT,STUDENT`. Muốn bản cũ đủ SHA: `includeCommits=true`.
+
+### Avatar trên node STUDENT
+
+FE đọc **`node.data.avatar`** (URL). Không đọc `avatarUrl` — field đó chỉ có trên `GET /api/auth/me` và `GET /api/users/me/profile`.
+
+Nguồn: Google OIDC `picture` → `user_account.avatar_url` → Neo4j. Lần login Google sau cũng **điền** nếu DB đang trống (không ghi đè ảnh user đã PATCH). `PATCH /api/users/me/profile` đổi avatar/tên → project dirty → SSE `GRAPH_CHANGED` → GET graph lại.
+
+`avatar` có thể `undefined`/`null`: roster chưa login Google, Google không trả `picture` (một số tài khoản FPT), hoặc user xoá avatar (`PATCH` `avatarUrl: ""`). Lúc đó hiện chữ cái / placeholder — **không** lấy avatar GitHub Identity. CORS `lh3.googleusercontent.com` đôi khi chặn canvas; dùng `<img>` / CSS `background-image`, đừng `cy.png()` nếu cần export.
 
 ### Graph 2 — Contribution path
 
@@ -421,3 +429,4 @@ CORS: origin FE phải nằm `SAGA_AUTH_FRONTEND_ORIGINS`. Local: `http://localh
 - Không đợi node Pull Request.
 - Không gọi 5 graph song song lúc mount nếu chưa cần.
 - Không tải full graph rồi gom/ẩn trên Cytoscape — dùng `nodeTypes` / `focusNodeId` / `maxNodes`.
+- Không map `data.avatarUrl` trên node graph — field là `data.avatar`. GitHub `provider_avatar_url` không phải ảnh sinh viên.
