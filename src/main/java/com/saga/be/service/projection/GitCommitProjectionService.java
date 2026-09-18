@@ -33,7 +33,23 @@ import org.springframework.transaction.annotation.Transactional;
 public class GitCommitProjectionService {
 
 	public record CommitDraft(
-			String sha, String message, LocalDateTime committedAt, String authorExternalId, String authorLogin, String headRef) {}
+			String sha,
+			String message,
+			LocalDateTime committedAt,
+			String authorExternalId,
+			String authorLogin,
+			String headRef,
+			Integer parentCount) {
+		public CommitDraft(
+				String sha,
+				String message,
+				LocalDateTime committedAt,
+				String authorExternalId,
+				String authorLogin,
+				String headRef) {
+			this(sha, message, committedAt, authorExternalId, authorLogin, headRef, null);
+		}
+	}
 
 	private static final List<IdentityMappingStatus> ACTIVE_STATUSES =
 			List.of(IdentityMappingStatus.ACTIVE, IdentityMappingStatus.VERIFIED, IdentityMappingStatus.PENDING);
@@ -112,6 +128,7 @@ public class GitCommitProjectionService {
 			String key = authorKey(draft);
 			commit.setAuthorStudent(key == null ? null : authors.get(key));
 			commit.setHeadRef(draft.headRef());
+			applyParentCount(commit, draft.parentCount());
 			saved.add(commit);
 		}
 		List<GitCommit> persisted;
@@ -130,6 +147,7 @@ public class GitCommitProjectionService {
 					row.setAuthorExternalId(candidate.getAuthorExternalId());
 					row.setAuthorStudent(candidate.getAuthorStudent());
 					row.setHeadRef(candidate.getHeadRef());
+					applyParentCount(row, candidate.getParentCount());
 					merged.add(row);
 				} else {
 					merged.add(candidate);
@@ -201,5 +219,17 @@ public class GitCommitProjectionService {
 			return draft.authorExternalId();
 		}
 		return draft.authorLogin() == null ? null : draft.authorLogin().toLowerCase(Locale.ROOT);
+	}
+
+	/**
+	 * Known {@code parentCount} (full sync) always replaces. UNKNOWN ({@code null}, webhook) is
+	 * written on insert and never overwrites a persisted known value.
+	 */
+	private static void applyParentCount(GitCommit commit, Integer incoming) {
+		if (incoming != null) {
+			commit.setParentCount(incoming);
+		} else if (commit.getId() == null) {
+			commit.setParentCount(null);
+		}
 	}
 }

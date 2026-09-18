@@ -45,6 +45,7 @@ import com.saga.be.service.projection.ProjectDataAuthorization;
 import com.saga.be.service.projection.ProjectTaskEvidenceReadService;
 import jakarta.persistence.EntityManager;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
@@ -235,6 +236,65 @@ class TaskEvidenceReadQueryCountTest {
 						service.list(student.getId(), project.getId(), task.getId(), "WEB_LINK", 0, 2));
 		assertThat(links.total()).isEqualTo(5);
 		assertThat(links.items()).hasSize(2);
+	}
+
+	@Test
+	void commitEvidenceOmitsKnownMergesAndKeepsUnknownAndMessageOnly() {
+		tx.executeWithoutResult(status -> {
+			seedEvidenceSet(1);
+			GitCommit merge = new GitCommit();
+			merge.setRepo(repo);
+			merge.setShaHash("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+			merge.setMessage("custom message");
+			merge.setCommittedAt(LocalDateTime.of(2026, 9, 3, 0, 0));
+			merge.setParentCount(2);
+			merge = commits.save(merge);
+			TaskGitCommitLink mergeLink = new TaskGitCommitLink();
+			mergeLink.setTask(task);
+			mergeLink.setGitCommit(merge);
+			mergeLink.setLinkSource(TraceLinkSource.COMMIT_MESSAGE);
+			commitLinks.save(mergeLink);
+			GitCommit messageOnly = new GitCommit();
+			messageOnly.setRepo(repo);
+			messageOnly.setShaHash("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+			messageOnly.setMessage("Merge branch 'feature'");
+			messageOnly.setCommittedAt(LocalDateTime.of(2026, 9, 3, 1, 0));
+			messageOnly.setParentCount(1);
+			messageOnly = commits.save(messageOnly);
+			TaskGitCommitLink messageLink = new TaskGitCommitLink();
+			messageLink.setTask(task);
+			messageLink.setGitCommit(messageOnly);
+			messageLink.setLinkSource(TraceLinkSource.COMMIT_MESSAGE);
+			commitLinks.save(messageLink);
+			GitCommit root = new GitCommit();
+			root.setRepo(repo);
+			root.setShaHash("0000000000000000000000000000000000000000");
+			root.setMessage("init");
+			root.setCommittedAt(LocalDateTime.of(2026, 8, 1, 0, 0));
+			root.setParentCount(0);
+			root = commits.save(root);
+			TaskGitCommitLink rootLink = new TaskGitCommitLink();
+			rootLink.setTask(task);
+			rootLink.setGitCommit(root);
+			rootLink.setLinkSource(TraceLinkSource.COMMIT_MESSAGE);
+			commitLinks.save(rootLink);
+			entityManager.flush();
+		});
+		TaskEvidenceGroupedResponse response = tx.execute(
+				status -> (TaskEvidenceGroupedResponse)
+						service.list(student.getId(), project.getId(), task.getId(), null, 0, 20));
+		assertThat(response.groups().COMMIT().items())
+				.extracting(item -> item.commit().message())
+				.contains("linked-0", "Merge branch 'feature'", "init")
+				.doesNotContain("custom message");
+		assertThat(commitLinks.countByTask_Id(task.getId())).isEqualTo(4);
+		assertThat(response.groups().COMMIT().total()).isEqualTo(3);
+		List<GitCommit> proof = tx.execute(
+				status -> commitLinks.findFetchedCommitsByProjectAndTask(project.getId(), task.getId()));
+		assertThat(proof)
+				.extracting(GitCommit::getMessage)
+				.contains("linked-0", "Merge branch 'feature'", "init")
+				.doesNotContain("custom message");
 	}
 
 	@Test

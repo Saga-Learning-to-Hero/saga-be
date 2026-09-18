@@ -48,6 +48,10 @@ public record ProjectTaskResponse(
 		 * Date set on this issue, or the site has no discoverable Start Date field at all.
 		 */
 		LocalDate startDate,
+		/**
+		 * Raw {@code task_git_commit_link} cardinality, including known merge commits. Task Evidence
+		 * COMMIT total excludes only known merges ({@code parent_count > 1}).
+		 */
 		long linkedCommitCount,
 		LocalDateTime externalUpdatedAt,
 		LocalDateTime createdAt,

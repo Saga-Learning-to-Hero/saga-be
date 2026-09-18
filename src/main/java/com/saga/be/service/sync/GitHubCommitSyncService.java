@@ -244,7 +244,8 @@ public class GitHubCommitSyncService {
 						ProjectionMappings.parseInstant(summary.committedAt()),
 						summary.authorId() == null ? null : String.valueOf(summary.authorId()),
 						summary.authorLogin(),
-						branch);
+						branch,
+						summary.parentCount());
 				if (GitRepoCommitClaimCutoff.isEligible(observed, repo, cutoffApplies)) {
 					memberships.computeIfAbsent(summary.sha(), ignored -> new LinkedHashSet<>()).add(branch);
 				}

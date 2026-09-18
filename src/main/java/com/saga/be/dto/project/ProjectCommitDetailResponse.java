@@ -16,6 +16,8 @@ public record ProjectCommitDetailResponse(
 		String htmlUrl,
 		Stats stats,
 		List<Parent> parents,
+		int parentCount,
+		Boolean isMerge,
 		boolean filesTruncated,
 		List<ChangedFile> files) {
 

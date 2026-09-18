@@ -51,6 +51,7 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			join l.task t
 			where t.id = :taskId
 			  and t.project.id = :projectId
+			  and (c.parentCount is null or c.parentCount <= 1)
 			order by coalesce(c.committedAt, c.createdAt) desc
 			""")
 	List<com.saga.be.entity.github.GitCommit> findFetchedCommitsByProjectAndTask(
@@ -65,13 +66,16 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 					from TaskGitCommitLink l
 					join l.gitCommit c
 					where l.task.id = :taskId
+					  and (c.parentCount is null or c.parentCount <= 1)
 					order by c.committedAt desc, c.id desc
 					""",
 			countQuery =
 					"""
 					select count(l.id)
 					from TaskGitCommitLink l
+					join l.gitCommit c
 					where l.task.id = :taskId
+					  and (c.parentCount is null or c.parentCount <= 1)
 					""")
 	Page<UUID> findLinkedCommitIdsByTaskId(@Param("taskId") UUID taskId, Pageable pageable);
 
@@ -90,6 +94,7 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			where t.project.id = :projectId
 			  and c.authorStudent is not null
 			  and t.deletedAt is null
+			  and (c.parentCount is null or c.parentCount <= 1)
 			group by c.authorStudent.id
 			""")
 	List<Object[]> countLinkedCommitsAndTasksGroupedByAuthorStudent(@Param("projectId") UUID projectId);
@@ -98,9 +103,11 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			"""
 			select count(distinct l.gitCommit.id)
 			from TaskGitCommitLink l
+			join l.gitCommit c
 			join l.task t
 			where t.project.id = :projectId
 			  and t.deletedAt is null
+			  and (c.parentCount is null or c.parentCount <= 1)
 			""")
 	long countDistinctLinkedCommitsByProject_Id(@Param("projectId") UUID projectId);
 
@@ -218,6 +225,7 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			where t.project.id = :projectId
 			  and t.deletedAt is null
 			  and t.sprint is not null
+			  and (c.parentCount is null or c.parentCount <= 1)
 			""")
 	List<Object[]> findLinkedCommitIdsBySprint(@Param("projectId") UUID projectId);
 
@@ -232,6 +240,7 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			  and t.deletedAt is null
 			  and t.sprint is not null
 			  and c.authorStudent.id = :studentId
+			  and (c.parentCount is null or c.parentCount <= 1)
 			""")
 	List<Object[]> findLinkedCommitIdsBySprintAndAuthor(
 			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);

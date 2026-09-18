@@ -147,6 +147,35 @@ class ProjectProjectionReadServiceTest {
 	}
 
 	@Test
+	void listCommits_exposesNullableMergeClassificationWithoutMessageHeuristic() {
+		stubStudent(RoleInTeam.MEMBER);
+		GitRepo repo = new GitRepo();
+		repo.setId(UUID.randomUUID());
+		repo.setFullName("org/saga");
+		GitCommit unknown = commit(repo, "u1", "init", null);
+		GitCommit root = commit(repo, "r1", "root", 0);
+		GitCommit normal = commit(repo, "n1", "Merge branch 'x'", 1);
+		GitCommit merge = commit(repo, "m1", "custom message", 2);
+		GitCommit octopus = commit(repo, "o1", "octopus", 3);
+		when(commits.findFetchedByProject_Id(projectId)).thenReturn(List.of(unknown, root, normal, merge, octopus));
+
+		List<ProjectCommitResponse> result = service.listCommits(userId, projectId);
+
+		assertThat(result).extracting(ProjectCommitResponse::parentCount).containsExactly(null, 0, 1, 2, 3);
+		assertThat(result).extracting(ProjectCommitResponse::isMerge).containsExactly(null, false, false, true, true);
+	}
+
+	private static GitCommit commit(GitRepo repo, String sha, String message, Integer parentCount) {
+		GitCommit commit = new GitCommit();
+		commit.setId(UUID.randomUUID());
+		commit.setRepo(repo);
+		commit.setShaHash(sha);
+		commit.setMessage(message);
+		commit.setParentCount(parentCount);
+		return commit;
+	}
+
+	@Test
 	void admin_denied() {
 		UserAccount admin = account(AccountRole.ADMIN);
 		when(users.findById(userId)).thenReturn(Optional.of(admin));

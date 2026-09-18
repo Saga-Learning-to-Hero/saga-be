@@ -549,6 +549,26 @@ class GitHubCommitSyncServiceTest {
 
 		verify(projection).upsertBatch(eq(repo), drafts.capture());
 		assertThat(drafts.getValue().getFirst().message()).contains("SAGA-123");
+		assertThat(drafts.getValue().getFirst().parentCount()).isNull();
+	}
+
+	@Test
+	void fullSyncForwardsListCommitsParentCount() {
+		GitRepo repo = activeRepo("org", "a");
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100)))
+				.thenReturn(List.of(new CommitSummary("deadbeef", "custom", "2026-06-01T12:00:00Z", 1L, "alice", 2)));
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<CommitDraft>> drafts = ArgumentCaptor.forClass(List.class);
+		when(projection.upsertBatch(eq(repo), any())).thenReturn(1);
+
+		service.initialSync(projectId);
+
+		verify(projection).upsertBatch(eq(repo), drafts.capture());
+		assertThat(drafts.getValue().getFirst().parentCount()).isEqualTo(2);
+		verify(github, never()).getCommit(any(), any(), any(), any());
 	}
 
 	@Test

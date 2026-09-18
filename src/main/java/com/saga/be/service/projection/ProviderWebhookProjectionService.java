@@ -134,7 +134,8 @@ public class ProviderWebhookProjectionService {
 						ProjectionMappings.parseInstant(text(node, "timestamp")),
 						null,
 						login,
-						headRef));
+						headRef,
+						null));
 			}
 			Set<UUID> commitChanged = new HashSet<>();
 			Set<UUID> linkChanged = new HashSet<>();

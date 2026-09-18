@@ -194,6 +194,31 @@ class GitHubOAuthClientTest {
 	}
 
 	@Test
+	void listCommits_mapsParentArraySizesIncludingEmptyAndOctopus() {
+		String body =
+				"""
+				[
+				  {"sha":"absent","commit":{"message":"no parents field","author":{"date":"2026-01-01T00:00:00Z"}}},
+				  {"sha":"jsonnull","commit":{"message":"parents json null","author":{"date":"2026-01-01T00:00:00Z"}},"parents":null},
+				  {"sha":"root","commit":{"message":"init","author":{"date":"2026-01-01T00:00:00Z"}},"parents":[]},
+				  {"sha":"one","commit":{"message":"Merge branch x","author":{"date":"2026-01-02T00:00:00Z"}},"parents":[{"sha":"a"}]},
+				  {"sha":"two","commit":{"message":"custom","author":{"date":"2026-01-03T00:00:00Z"}},"parents":[{"sha":"a"},{"sha":"b"}]},
+				  {"sha":"oct","commit":{"message":"octopus","author":{"date":"2026-01-04T00:00:00Z"}},"parents":[{"sha":"a"},{"sha":"b"},{"sha":"c"}]}
+				]
+				""";
+		server.expect(requestTo("https://api.github.com/repos/org/repo/commits?per_page=100&page=1&sha=main"))
+				.andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+
+		List<GitHubOAuthClient.CommitSummary> rows = client.listCommits("tok", "org", "repo", "main", 1, 100);
+
+		assertEquals(java.util.Arrays.asList(null, null, 0, 1, 2, 3), rows.stream().map(GitHubOAuthClient.CommitSummary::parentCount).toList());
+		assertEquals("absent", rows.getFirst().sha());
+		assertEquals("root", rows.get(2).sha());
+		assertEquals("Merge branch x", rows.get(3).message());
+		server.verify();
+	}
+
+	@Test
 	void listCommits_rateLimitMapsToTypedFailure() {
 		server.expect(requestTo("https://api.github.com/repos/org/repo/commits?per_page=100&page=1&sha=main"))
 				.andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(

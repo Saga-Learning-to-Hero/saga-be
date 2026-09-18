@@ -13,4 +13,6 @@ public record ProjectCommitResponse(
 		UUID authorStudentId,
 		String headRef,
 		LocalDateTime committedAt,
-		LocalDateTime createdAt) {}
+		LocalDateTime createdAt,
+		Integer parentCount,
+		Boolean isMerge) {}

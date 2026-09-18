@@ -226,6 +226,8 @@ public class ProjectProjectionReadService {
 				commit.getAuthorStudent() == null ? null : commit.getAuthorStudent().getId(),
 				commit.getHeadRef(),
 				commit.getCommittedAt(),
-				commit.getCreatedAt());
+				commit.getCreatedAt(),
+				commit.getParentCount(),
+				commit.isMerge());
 	}
 }

@@ -121,6 +121,8 @@ class ProjectCommitDetailReadServiceTest {
 		assertThat(response.message()).isEqualTo("fix: SAGA-1");
 		assertThat(response.parents()).extracting(ProjectCommitDetailResponse.Parent::sha)
 				.containsExactly("parent-one", "parent-two");
+		assertThat(response.parentCount()).isEqualTo(2);
+		assertThat(response.isMerge()).isTrue();
 	}
 
 	@Test

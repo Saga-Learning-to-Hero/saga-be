@@ -299,7 +299,8 @@ public class GitHubOAuthClient {
 									? null
 									: node.commit().author().date(),
 							node.author() == null ? null : node.author().id(),
-							node.author() == null ? null : node.author().login()))
+							node.author() == null ? null : node.author().login(),
+							parentCountOf(node.parents())))
 					.toList();
 		} catch (RestClientResponseException ex) {
 			throw mapGithubListFailure(ex, "GitHub commits could not be listed.");
@@ -429,6 +430,10 @@ public class GitHubOAuthClient {
 				parents,
 				files,
 				filesTruncated);
+	}
+
+	static Integer parentCountOf(List<GitHubCommitParent> parents) {
+		return parents == null ? null : parents.size();
 	}
 
 	private static boolean hasLinkHeader(HttpHeaders headers) {
@@ -562,7 +567,8 @@ public class GitHubOAuthClient {
 	public record GitHubBranchApiResponse(String name) {}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record GitHubCommitApiResponse(String sha, GitHubCommitBody commit, GitHubCommitAuthorUser author) {}
+	public record GitHubCommitApiResponse(
+			String sha, GitHubCommitBody commit, GitHubCommitAuthorUser author, List<GitHubCommitParent> parents) {}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record GitHubCommitBody(String message, GitHubCommitAuthorMeta author) {}
@@ -573,7 +579,12 @@ public class GitHubOAuthClient {
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record GitHubCommitAuthorUser(Long id, String login) {}
 
-	public record CommitSummary(String sha, String message, String committedAt, Long authorId, String authorLogin) {}
+	public record CommitSummary(
+			String sha, String message, String committedAt, Long authorId, String authorLogin, Integer parentCount) {
+		public CommitSummary(String sha, String message, String committedAt, Long authorId, String authorLogin) {
+			this(sha, message, committedAt, authorId, authorLogin, null);
+		}
+	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record GitHubCommitDetailApiResponse(

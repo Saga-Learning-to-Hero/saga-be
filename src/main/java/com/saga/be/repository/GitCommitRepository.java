@@ -43,10 +43,22 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			""")
 	List<GitCommit> findFetchedByProject_Id(@Param("projectId") UUID projectId);
 
-	long countByRepo_Project_Id(UUID projectId);
+	@Query(
+			"""
+			select count(c)
+			from GitCommit c
+			where c.repo.project.id = :projectId
+			  and (c.parentCount is null or c.parentCount <= 1)
+			""")
+	long countByRepo_Project_Id(@Param("projectId") UUID projectId);
 
 	@Query(
-			"select max(coalesce(c.committedAt, c.createdAt)) from GitCommit c where c.repo.project.id = :projectId")
+			"""
+			select max(coalesce(c.committedAt, c.createdAt))
+			from GitCommit c
+			where c.repo.project.id = :projectId
+			  and (c.parentCount is null or c.parentCount <= 1)
+			""")
 	LocalDateTime findMaxCommittedAtByProject_Id(@Param("projectId") UUID projectId);
 
 	/** Progress dashboard: one row per student — {@code Object[]{UUID studentId, Long count, LocalDateTime lastCommittedAt}}. */
@@ -56,6 +68,7 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			from GitCommit c
 			where c.repo.project.id = :projectId
 			  and c.authorStudent is not null
+			  and (c.parentCount is null or c.parentCount <= 1)
 			group by c.authorStudent.id
 			""")
 	List<Object[]> countAndMaxCommittedAtGroupedByAuthorStudent(@Param("projectId") UUID projectId);
@@ -69,6 +82,7 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			select c.id, coalesce(c.committedAt, c.createdAt)
 			from GitCommit c
 			where c.repo.project.id = :projectId
+			  and (c.parentCount is null or c.parentCount <= 1)
 			""")
 	List<Object[]> findIdAndCommittedAtByProject(@Param("projectId") UUID projectId);
 
@@ -79,6 +93,7 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			from GitCommit c
 			where c.repo.project.id = :projectId
 			  and c.authorStudent.id = :studentId
+			  and (c.parentCount is null or c.parentCount <= 1)
 			""")
 	List<Object[]> findIdAndCommittedAtByProjectAndAuthor(
 			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
@@ -90,6 +105,7 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			from GitCommit c
 			where c.repo.project.id = :projectId
 			  and c.authorStudent is not null
+			  and (c.parentCount is null or c.parentCount <= 1)
 			""")
 	List<Object[]> findAuthorAndCommittedAtByProject(@Param("projectId") UUID projectId);
 
@@ -99,6 +115,7 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			select c.repo.project.id, count(c), max(coalesce(c.committedAt, c.createdAt))
 			from GitCommit c
 			where c.repo.project.id in :projectIds
+			  and (c.parentCount is null or c.parentCount <= 1)
 			group by c.repo.project.id
 			""")
 	List<Object[]> countAndMaxCommittedAtGroupedByProjects(@Param("projectIds") Collection<UUID> projectIds);

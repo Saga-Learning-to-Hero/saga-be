@@ -113,6 +113,95 @@ class GitCommitProjectionAndLinkTest {
 	}
 
 	@Test
+	void webhookUnknownParentCountDoesNotOverwriteKnownMerge() {
+		GitCommit existing = new GitCommit();
+		existing.setId(UUID.randomUUID());
+		existing.setShaHash("abc123");
+		existing.setRepo(repo);
+		existing.setParentCount(2);
+		when(commits.findByRepo_IdAndShaHashIn(eq(repo.getId()), any())).thenReturn(List.of(existing));
+		when(identities.findFetchedByProviderAndExternalAccountIdInAndMappingStatusIn(any(), any(), any()))
+				.thenReturn(List.of());
+		when(identities.findFetchedByProviderAndExternalUsernameLowerInAndMappingStatusIn(any(), any(), any()))
+				.thenReturn(List.of());
+		when(commits.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(jiraIntegrations.findByProject_Id(project.getId())).thenReturn(Optional.empty());
+
+		CommitDraft webhookUnknown = new CommitDraft(
+				"abc123",
+				"Merge branch 'x'",
+				java.time.LocalDateTime.of(2026, 6, 1, 12, 0),
+				"99",
+				"alice",
+				"main",
+				null);
+
+		assertThat(commitsService.upsertBatch(repo, List.of(webhookUnknown))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<GitCommit>> captor = ArgumentCaptor.forClass(List.class);
+		verify(commits).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getParentCount()).isEqualTo(2);
+	}
+
+	@Test
+	void fullSyncKnownParentCountEnrichesUnknownRow() {
+		GitCommit existing = new GitCommit();
+		existing.setId(UUID.randomUUID());
+		existing.setShaHash("abc123");
+		existing.setRepo(repo);
+		existing.setParentCount(null);
+		when(commits.findByRepo_IdAndShaHashIn(eq(repo.getId()), any())).thenReturn(List.of(existing));
+		when(identities.findFetchedByProviderAndExternalAccountIdInAndMappingStatusIn(any(), any(), any()))
+				.thenReturn(List.of());
+		when(identities.findFetchedByProviderAndExternalUsernameLowerInAndMappingStatusIn(any(), any(), any()))
+				.thenReturn(List.of());
+		when(commits.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(jiraIntegrations.findByProject_Id(project.getId())).thenReturn(Optional.empty());
+
+		CommitDraft sync = new CommitDraft(
+				"abc123",
+				"custom message",
+				java.time.LocalDateTime.of(2026, 6, 1, 12, 0),
+				"99",
+				"alice",
+				"main",
+				2);
+
+		commitsService.upsertBatch(repo, List.of(sync));
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<GitCommit>> captor = ArgumentCaptor.forClass(List.class);
+		verify(commits).saveAll(captor.capture());
+		assertThat(captor.getValue().getFirst().getParentCount()).isEqualTo(2);
+	}
+
+	@Test
+	void insertWritesNullableParentCountsIncludingRootAndMerge() {
+		when(commits.findByRepo_IdAndShaHashIn(eq(repo.getId()), any())).thenReturn(List.of());
+		when(commits.saveAll(any())).thenAnswer(inv -> {
+			List<GitCommit> list = inv.getArgument(0);
+			list.forEach(c -> c.setId(UUID.randomUUID()));
+			return list;
+		});
+		when(jiraIntegrations.findByProject_Id(project.getId())).thenReturn(Optional.empty());
+
+		List<CommitDraft> drafts = List.of(
+				new CommitDraft("root", "init", java.time.LocalDateTime.now(), null, null, "main", 0),
+				new CommitDraft("one", "Merge branch x", java.time.LocalDateTime.now(), null, null, "main", 1),
+				new CommitDraft("two", "custom", java.time.LocalDateTime.now(), null, null, "main", 2),
+				new CommitDraft("unk", "later webhook", java.time.LocalDateTime.now(), null, null, "main", null));
+
+		commitsService.upsertBatch(repo, drafts);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<GitCommit>> captor = ArgumentCaptor.forClass(List.class);
+		verify(commits).saveAll(captor.capture());
+		assertThat(captor.getValue()).extracting(GitCommit::getParentCount).containsExactly(0, 1, 2, null);
+		assertThat(captor.getValue()).extracting(GitCommit::isMerge).containsExactly(false, false, true, null);
+	}
+
+	@Test
 	void autoLink_taskFirst_thenCommit() {
 		GitCommit commit = new GitCommit();
 		commit.setId(UUID.randomUUID());

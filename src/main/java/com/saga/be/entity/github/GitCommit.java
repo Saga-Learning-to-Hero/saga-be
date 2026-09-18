@@ -2,7 +2,6 @@ package com.saga.be.entity.github;
 
 import com.saga.be.entity.BaseEntity;
 import com.saga.be.entity.account.StudentProfile;
-import com.saga.be.entity.github.GitRepo;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -10,6 +9,7 @@ import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
 import lombok.Getter;
@@ -74,4 +74,13 @@ public class GitCommit extends BaseEntity {
 
 	@Column(name = "external_updated_at")
 	private LocalDateTime externalUpdatedAt;
+
+	/** Null = UNKNOWN. 0 = root, 1 = normal, &gt;1 = merge. Never inferred from message. */
+	@Column(name = "parent_count")
+	private Integer parentCount;
+
+	@Transient
+	public Boolean isMerge() {
+		return parentCount == null ? null : parentCount > 1;
+	}
 }

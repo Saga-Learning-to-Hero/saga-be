@@ -110,6 +110,7 @@ class TaskProgressSoftDeleteQueryTest {
 
 	private Project project;
 	private StudentProfile student;
+	private GitRepo repo;
 	private Task activeTask;
 	private Task deletedTask;
 
@@ -128,6 +129,7 @@ class TaskProgressSoftDeleteQueryTest {
 		deletedTask = tasks.save(task(project, student, TaskStatus.DONE, LocalDateTime.now()));
 
 		GitRepo repo = repos.save(gitRepo(project));
+		this.repo = repo;
 		GitCommit commitForActiveTask = commits.save(gitCommit(repo, student, "sha-active"));
 		GitCommit commitForDeletedTaskOnly = commits.save(gitCommit(repo, student, "sha-deleted-only"));
 		links.save(link(activeTask, commitForActiveTask));
@@ -221,6 +223,49 @@ class TaskProgressSoftDeleteQueryTest {
 		List<Object[]> rows = links.findLinkedCommitIdsBySprint(project.getId());
 		assertThat(rows).hasSize(1);
 		assertThat(rows.getFirst()[0]).isEqualTo(sprint.getId());
+	}
+
+	@Test
+	void knownMergeIsExcludedFromProgressHeatmapAndSprintButRawLinkCountUnchanged() {
+		GitCommit unknown = gitCommit(repo, student, "sha-unknown");
+		unknown.setParentCount(null);
+		unknown.setMessage("unknown historical");
+		unknown = commits.save(unknown);
+		GitCommit root = gitCommit(repo, student, "sha-root");
+		root.setParentCount(0);
+		root = commits.save(root);
+		GitCommit merge = gitCommit(repo, student, "sha-merge");
+		merge.setParentCount(2);
+		merge.setMessage("custom");
+		merge = commits.save(merge);
+		GitCommit messageOnly = gitCommit(repo, student, "sha-msg");
+		messageOnly.setParentCount(1);
+		messageOnly.setMessage("Merge branch 'x'");
+		messageOnly = commits.save(messageOnly);
+		links.save(link(activeTask, unknown));
+		links.save(link(activeTask, root));
+		links.save(link(activeTask, merge));
+		links.save(link(activeTask, messageOnly));
+
+		assertThat(commits.countByRepo_Project_Id(project.getId())).isEqualTo(5);
+		assertThat(commits.findAuthorAndCommittedAtByProject(project.getId())).hasSize(5);
+		assertThat(commits.findMaxCommittedAtByProject_Id(project.getId())).isNotNull();
+		assertThat(links.countDistinctLinkedCommitsByProject_Id(project.getId())).isEqualTo(4);
+		assertThat(links.countLinksByProjectGrouped(project.getId()).stream()
+						.mapToLong(row -> (Long) row[1])
+						.sum())
+				.isEqualTo(5);
+		assertThat(commits.findFetchedByProject_Id(project.getId()))
+				.extracting(GitCommit::getShaHash)
+				.contains("sha-merge");
+
+		Sprint sprint = persistSprint();
+		activeTask.setSprint(sprint);
+		tasks.save(activeTask);
+		assertThat(links.findLinkedCommitIdsBySprint(project.getId()))
+				.extracting(row -> row[1])
+				.doesNotContain(merge.getId())
+				.contains(unknown.getId(), root.getId(), messageOnly.getId());
 	}
 
 	@Test

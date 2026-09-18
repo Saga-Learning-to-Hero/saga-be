@@ -120,6 +120,7 @@ public class ProjectCommitDetailReadService {
 		List<Parent> parents = provider.parents() == null
 				? List.of()
 				: provider.parents().stream().map(parent -> new Parent(parent.sha())).toList();
+		int parentCount = parents.size();
 		List<ChangedFile> files = provider.files() == null
 				? List.of()
 				: provider.files().stream()
@@ -144,6 +145,8 @@ public class ProjectCommitDetailReadService {
 				provider.htmlUrl(),
 				stats,
 				parents,
+				parentCount,
+				parentCount > 1,
 				provider.filesTruncated(),
 				files);
 	}
