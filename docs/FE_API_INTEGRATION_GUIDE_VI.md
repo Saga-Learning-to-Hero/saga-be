@@ -794,7 +794,7 @@ Base: `/api/projects/{projectId}/tasks`. Phân quyền theo mục 15 (đọc: th
 | GET | `/tasks/{taskId}/transitions` | Danh sách transition khả dụng (mục 21) |
 | POST | `/tasks/{taskId}/transition` | Đổi trạng thái task (mục 21) |
 | PUT | `/tasks/{taskId}/sprint` | Gán/gỡ task khỏi sprint (mục 24) |
-| GET | `/tasks/{taskId}/commits` | Commit liên kết với task (mục 25) |
+| GET | `/tasks/{taskId}/commits` | Commit liên kết canonical với task — paged, loại known merges (mục 25) |
 
 **Task trong SAGA lấy Jira làm nguồn dữ liệu chuẩn (Jira-authoritative)**: mọi lệnh tạo/sửa/xoá/transition từ SAGA đều **gọi trực tiếp và đồng bộ (synchronous) sang Jira trước**, sau đó backend đọc lại kết quả chính thức từ Jira và lưu vào bảng chiếu (projection) của SAGA, rồi mới trả response cho FE. Nghĩa là: response của `PATCH`/`POST`/`transition` **luôn** là dữ liệu đã được Jira xác nhận — FE không cần refetch thêm sau các lệnh ghi thành công.
 
@@ -947,8 +947,8 @@ PUT /api/projects/{projectId}/tasks/{taskId}/sprint
 
 | Method | Path | Mục đích |
 |---|---|---|
-| GET | `/api/projects/{projectId}/commits` | Toàn bộ commit đã đồng bộ của project |
-| GET | `/api/projects/{projectId}/tasks/{taskId}/commits` | Commit đã liên kết với 1 task cụ thể (chi tiết 1 task, không dùng cho Audit Matrix) |
+| GET | `/api/projects/{projectId}/commits` | Raw commit history đã đồng bộ của project — **đã paged**, **bao gồm** known merges |
+| GET | `/api/projects/{projectId}/tasks/{taskId}/commits` | Commit đã liên kết canonical với 1 task (`task_git_commit_link`) — **đã paged**, **loại** known merges |
 | GET | `/api/projects/{projectId}/repos/{repoId}/branches` | Branch dropdown — inventory live từ GitHub cho 1 `GitRepo` ACTIVE |
 | GET | `/api/projects/{projectId}/task-commit-links` | **Canonical batch** Task ↔ Commit cho Pipeline / Audit Matrix |
 
@@ -1023,14 +1023,44 @@ Query params: `page` mặc định `0`, `size` mặc định `100`, tối đa `2
 
 Auth đọc: giống commits/tasks — Team Leader/Member ACTIVE, Lecturer được gán course; student ngoài team `403 INTEGRATION_FORBIDDEN`; ADMIN `403 ACCESS_DENIED`.
 
-### 25.2. ProjectCommitResponse (list commits / per-task commits)
+### 25.2. ProjectCommitResponse (raw project commits / per-task commits)
+
+Item DTO **không đổi**. Cả hai list dùng cùng `ProjectCommitResponse`:
 
 ```json
 {
   "id": "uuid", "repoId": "uuid", "repositoryFullName": "org/repo",
   "sha": "...", "message": "...", "authorExternalId": "github-login",
   "authorStudentId": "uuid-hoặc-null", "headRef": "main",
-  "committedAt": "...", "createdAt": "..."
+  "committedAt": "...", "createdAt": "...",
+  "parentCount": 1, "isMerge": false
+}
+```
+
+- `parentCount`: `null` = UNKNOWN, `0` = root, `1` = normal, `>1` = known merge. **Không** suy từ `message`.
+- `isMerge`: `null` khi `parentCount` null; `true` khi `parentCount > 1`.
+
+Hai endpoint **không cùng semantics**. Đừng dùng lẫn contract:
+
+| | `GET /api/projects/{projectId}/commits` | `GET /api/projects/{projectId}/tasks/{taskId}/commits` |
+|---|---|---|
+| Nguồn | Mọi `git_commit` thuộc repo của project | Chỉ hàng `task_git_commit_link` của **đúng task đó** |
+| Merge | **Include** known merges (`parent_count > 1`) | **Exclude** known merges. Predicate: `parent_count IS NULL OR parent_count <= 1` |
+| Paging | `{ items, page, size, total }` | `{ items, page, size, total }` — **breaking**; không còn trả array trần |
+| `page` | default `0`, min `0` | default `0`, min `0` |
+| `size` | default `50`, min `1`, max `200` | default `50`, min `1`, max `200` |
+| Invalid `page`/`size` | `400 REQUEST_INVALID` | `400 REQUEST_INVALID` |
+| HTTP provider | Local DB only | Local DB only (commit **detail** mới gọi GitHub) |
+| Order | `coalesce(committedAt, createdAt) DESC, id DESC` | `coalesce(committedAt, createdAt) DESC, id DESC` |
+
+Task-commit `total` = số **distinct** commit canonical đã link, sau V23 filter. Cùng predicate với Task Evidence `COMMIT` total (Evidence implementation không đổi trong slice này).
+
+```json
+{
+  "items": [ { "...ProjectCommitResponse..." } ],
+  "page": 0,
+  "size": 50,
+  "total": 123
 }
 ```
 

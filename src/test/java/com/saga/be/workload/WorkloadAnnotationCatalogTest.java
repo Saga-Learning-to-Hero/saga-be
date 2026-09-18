@@ -26,6 +26,7 @@ class WorkloadAnnotationCatalogTest {
 		assertClass(ProjectProjectionController.class, "tasks", WorkloadClass.INTERACTIVE_NORMAL);
 		assertClass(ProjectProjectionController.class, "parentOptions", WorkloadClass.INTERACTIVE_NORMAL);
 		assertClass(ProjectProjectionController.class, "taskEvidence", WorkloadClass.INTERACTIVE_NORMAL);
+		assertClass(ProjectProjectionController.class, "taskCommits", WorkloadClass.INTERACTIVE_NORMAL);
 		assertClass(ProjectProjectionController.class, "sync", WorkloadClass.INTERACTIVE_WRITE);
 		assertClass(ProjectProjectionController.class, "projectProgress", WorkloadClass.HEAVY_READ);
 		assertClass(LecturerCourseController.class, "roster", WorkloadClass.INTERACTIVE_NORMAL);

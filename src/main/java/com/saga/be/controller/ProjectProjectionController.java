@@ -216,12 +216,23 @@ public class ProjectProjectionController {
 	}
 
 	@GetMapping("/tasks/{taskId}/commits")
-	@Operation(summary = "List commits linked to a projected task via task_git_commit_link.")
-	public List<ProjectCommitResponse> taskCommits(
+	@Workload(WorkloadClass.INTERACTIVE_NORMAL)
+	@Operation(
+			summary = "Paged commits linked to a projected task via task_git_commit_link.",
+			description =
+					"""
+					Local DB only. Canonical task_git_commit_link rows only. Excludes known merges
+					(parent_count > 1); UNKNOWN, root, and normal remain. Distinct from GET /commits,
+					which is raw project history and includes known merges. page default 0, size
+					default 50, size max 200. Breaking wrapper: items/page/size/total.
+					""")
+	public ProjectCommitPageResponse taskCommits(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
-			@PathVariable UUID taskId) {
-		return projections.listTaskCommits(principal.getUserId(), projectId, taskId);
+			@PathVariable UUID taskId,
+			@RequestParam(required = false) Integer page,
+			@RequestParam(required = false) Integer size) {
+		return projections.listTaskCommits(principal.getUserId(), projectId, taskId, page, size);
 	}
 
 	@GetMapping("/sprints")

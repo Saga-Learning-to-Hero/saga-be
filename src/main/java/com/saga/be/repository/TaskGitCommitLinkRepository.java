@@ -57,6 +57,39 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 	List<com.saga.be.entity.github.GitCommit> findFetchedCommitsByProjectAndTask(
 			@Param("projectId") UUID projectId, @Param("taskId") UUID taskId);
 
+	/**
+	 * Task-commit list IDs through canonical {@code task_git_commit_link} only. Excludes known
+	 * merges ({@code parent_count > 1}); UNKNOWN/root/normal remain. Sort is in JPQL; callers must
+	 * pass an unsorted {@link Pageable}. Count is {@code count(distinct c.id)} so duplicate link
+	 * rows cannot inflate total.
+	 */
+	@Query(
+			value =
+					"""
+					select c.id
+					from TaskGitCommitLink l
+					join l.gitCommit c
+					join l.task t
+					where t.id = :taskId
+					  and t.project.id = :projectId
+					  and t.deletedAt is null
+					  and (c.parentCount is null or c.parentCount <= 1)
+					order by coalesce(c.committedAt, c.createdAt) desc, c.id desc
+					""",
+			countQuery =
+					"""
+					select count(distinct c.id)
+					from TaskGitCommitLink l
+					join l.gitCommit c
+					join l.task t
+					where t.id = :taskId
+					  and t.project.id = :projectId
+					  and t.deletedAt is null
+					  and (c.parentCount is null or c.parentCount <= 1)
+					""")
+	Page<UUID> findPageIdsByProjectAndTask(
+			@Param("projectId") UUID projectId, @Param("taskId") UUID taskId, Pageable pageable);
+
 	long countByTask_Id(UUID taskId);
 
 	@Query(

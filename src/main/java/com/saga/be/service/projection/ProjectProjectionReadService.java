@@ -129,12 +129,38 @@ public class ProjectProjectionReadService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<ProjectCommitResponse> listTaskCommits(UUID userId, UUID projectId, UUID taskId) {
+	public ProjectCommitPageResponse listTaskCommits(
+			UUID userId, UUID projectId, UUID taskId, Integer page, Integer size) {
 		authorization.requireReader(userId, projectId);
+		int pageNumber = page == null ? DEFAULT_PAGE : page;
+		int pageSize = size == null ? DEFAULT_SIZE : size;
+		if (pageNumber < 0 || pageSize < 1 || pageSize > MAX_SIZE) {
+			throw new AcademicException(
+					AcademicErrorCode.REQUEST_INVALID,
+					HttpStatus.BAD_REQUEST,
+					"page must be >= 0 and size must be between 1 and " + MAX_SIZE + ".");
+		}
 		tasks.findByIdAndProject_IdAndDeletedAtIsNull(taskId, projectId)
 				.orElseThrow(() -> new AcademicException(
 						AcademicErrorCode.PROJECT_NOT_FOUND, HttpStatus.NOT_FOUND, "Task was not found for this project."));
-		return links.findFetchedCommitsByProjectAndTask(projectId, taskId).stream().map(this::toCommit).toList();
+		Page<UUID> idPage = links.findPageIdsByProjectAndTask(projectId, taskId, PageRequest.of(pageNumber, pageSize));
+		List<UUID> orderedIds = idPage.getContent();
+		List<ProjectCommitResponse> items = List.of();
+		if (!orderedIds.isEmpty()) {
+			Map<UUID, GitCommit> byId = new HashMap<>();
+			for (GitCommit commit : commits.findFetchedByIdIn(orderedIds)) {
+				byId.put(commit.getId(), commit);
+			}
+			List<ProjectCommitResponse> reconstructed = new ArrayList<>(orderedIds.size());
+			for (UUID id : orderedIds) {
+				GitCommit commit = byId.get(id);
+				if (commit != null) {
+					reconstructed.add(toCommit(commit));
+				}
+			}
+			items = reconstructed;
+		}
+		return new ProjectCommitPageResponse(items, pageNumber, pageSize, idPage.getTotalElements());
 	}
 
 	private Map<UUID, Long> linkCounts(UUID projectId) {

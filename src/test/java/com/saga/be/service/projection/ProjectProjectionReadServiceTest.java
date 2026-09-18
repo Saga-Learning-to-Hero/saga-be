@@ -311,11 +311,38 @@ class ProjectProjectionReadServiceTest {
 		stubStudent(RoleInTeam.MEMBER);
 		UUID taskId = UUID.randomUUID();
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(taskId, projectId)).thenReturn(Optional.empty());
-		assertThatThrownBy(() -> service.listTaskCommits(userId, projectId, taskId))
+		assertThatThrownBy(() -> service.listTaskCommits(userId, projectId, taskId, null, null))
 				.isInstanceOf(AcademicException.class)
 				.extracting(ex -> ((AcademicException) ex).getCode())
 				.isEqualTo(AcademicErrorCode.PROJECT_NOT_FOUND);
+		verify(links, never()).findPageIdsByProjectAndTask(any(), any(), any());
 		verify(links, never()).findFetchedCommitsByProjectAndTask(any(), any());
+		verify(commits, never()).findFetchedByIdIn(any());
+	}
+
+	@Test
+	void taskCommits_adminDeniedUnchanged() {
+		UserAccount admin = account(AccountRole.ADMIN);
+		when(users.findById(userId)).thenReturn(Optional.of(admin));
+		assertThatThrownBy(() -> service.listTaskCommits(userId, projectId, UUID.randomUUID(), 0, 50))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
+		verify(tasks, never()).findByIdAndProject_IdAndDeletedAtIsNull(any(), any());
+		verify(links, never()).findPageIdsByProjectAndTask(any(), any(), any());
+	}
+
+	@Test
+	void taskCommits_outsiderDeniedUnchanged() {
+		UserAccount student = account(AccountRole.STUDENT);
+		when(users.findById(userId)).thenReturn(Optional.of(student));
+		when(members.existsActiveByProjectIdAndUserId(projectId, userId)).thenReturn(false);
+		assertThatThrownBy(() -> service.listTaskCommits(userId, projectId, UUID.randomUUID(), 0, 50))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.INTEGRATION_FORBIDDEN);
+		verify(tasks, never()).findByIdAndProject_IdAndDeletedAtIsNull(any(), any());
+		verify(links, never()).findPageIdsByProjectAndTask(any(), any(), any());
 	}
 
 	@Test
@@ -334,13 +361,20 @@ class ProjectProjectionReadServiceTest {
 		commit.setMessage("SAGA-1");
 		commit.setRepo(repo);
 		commit.setHeadRef("main");
-		when(links.findFetchedCommitsByProjectAndTask(projectId, taskId)).thenReturn(List.of(commit));
+		when(links.findPageIdsByProjectAndTask(eq(projectId), eq(taskId), eq(PageRequest.of(0, 50))))
+				.thenReturn(new PageImpl<>(List.of(commit.getId()), PageRequest.of(0, 50), 1));
+		when(commits.findFetchedByIdIn(List.of(commit.getId()))).thenReturn(List.of(commit));
 
-		List<ProjectCommitResponse> result = service.listTaskCommits(userId, projectId, taskId);
-		assertThat(result).hasSize(1);
-		assertThat(result.getFirst().sha()).isEqualTo("abc");
-		assertThat(result.getFirst().headRef()).isEqualTo("main");
-		verify(links, times(1)).findFetchedCommitsByProjectAndTask(projectId, taskId);
+		ProjectCommitPageResponse result = service.listTaskCommits(userId, projectId, taskId, null, null);
+		assertThat(result.items()).hasSize(1);
+		assertThat(result.page()).isZero();
+		assertThat(result.size()).isEqualTo(50);
+		assertThat(result.total()).isEqualTo(1);
+		assertThat(result.items().getFirst().sha()).isEqualTo("abc");
+		assertThat(result.items().getFirst().headRef()).isEqualTo("main");
+		verify(links, times(1)).findPageIdsByProjectAndTask(eq(projectId), eq(taskId), eq(PageRequest.of(0, 50)));
+		verify(links, never()).findFetchedCommitsByProjectAndTask(any(), any());
+		verify(commits, never()).findPageIdsByProject(any(), any());
 	}
 
 	@Test
@@ -361,14 +395,101 @@ class ProjectProjectionReadServiceTest {
 		commit.setMessage("SAGA-2");
 		commit.setRepo(repo);
 		commit.setHeadRef(null);
-		when(links.findFetchedCommitsByProjectAndTask(projectId, taskId)).thenReturn(List.of(commit));
+		when(links.findPageIdsByProjectAndTask(eq(projectId), eq(taskId), eq(PageRequest.of(0, 50))))
+				.thenReturn(new PageImpl<>(List.of(commit.getId()), PageRequest.of(0, 50), 1));
+		when(commits.findFetchedByIdIn(List.of(commit.getId()))).thenReturn(List.of(commit));
 
-		List<ProjectCommitResponse> result = service.listTaskCommits(userId, projectId, taskId);
-		assertThat(result).hasSize(1);
-		assertThat(result.getFirst().headRef()).isNull();
-		assertThat(result.getFirst().sha()).isEqualTo("def");
-		assertThat(result.getFirst().repoId()).isEqualTo(repo.getId());
-		assertThat(result.getFirst().repositoryFullName()).isEqualTo("org/saga");
+		ProjectCommitPageResponse result = service.listTaskCommits(userId, projectId, taskId, null, null);
+		assertThat(result.items()).hasSize(1);
+		assertThat(result.items().getFirst().headRef()).isNull();
+		assertThat(result.items().getFirst().sha()).isEqualTo("def");
+		assertThat(result.items().getFirst().repoId()).isEqualTo(repo.getId());
+		assertThat(result.items().getFirst().repositoryFullName()).isEqualTo("org/saga");
+	}
+
+	@Test
+	void taskCommits_reconstructsExactIdPageOrderAfterShuffledInFetch() {
+		stubStudent(RoleInTeam.MEMBER);
+		UUID taskId = UUID.randomUUID();
+		Task task = new Task();
+		task.setId(taskId);
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(taskId, projectId)).thenReturn(Optional.of(task));
+		GitRepo repo = new GitRepo();
+		repo.setId(UUID.randomUUID());
+		repo.setFullName("org/saga");
+		GitCommit first = commit(repo, "aaa", "first", 1);
+		GitCommit second = commit(repo, "bbb", "second", 1);
+		GitCommit third = commit(repo, "ccc", "third", 0);
+		List<UUID> ordered = List.of(first.getId(), second.getId(), third.getId());
+		when(links.findPageIdsByProjectAndTask(eq(projectId), eq(taskId), eq(PageRequest.of(0, 50))))
+				.thenReturn(new PageImpl<>(ordered, PageRequest.of(0, 50), 3));
+		when(commits.findFetchedByIdIn(ordered)).thenReturn(List.of(third, first, second));
+
+		ProjectCommitPageResponse page = service.listTaskCommits(userId, projectId, taskId, 0, 50);
+
+		assertThat(page.items())
+				.extracting(ProjectCommitResponse::id)
+				.containsExactly(first.getId(), second.getId(), third.getId());
+		assertThat(page.items()).extracting(ProjectCommitResponse::sha).containsExactly("aaa", "bbb", "ccc");
+	}
+
+	@Test
+	void taskCommits_pagesEdgesAndInvalid() {
+		stubStudent(RoleInTeam.MEMBER);
+		UUID taskId = UUID.randomUUID();
+		Task task = new Task();
+		task.setId(taskId);
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(taskId, projectId)).thenReturn(Optional.of(task));
+		when(links.findPageIdsByProjectAndTask(eq(projectId), eq(taskId), eq(PageRequest.of(0, 50))))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 50), 0));
+		when(links.findPageIdsByProjectAndTask(eq(projectId), eq(taskId), eq(PageRequest.of(1, 50))))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(1, 50), 3));
+		when(links.findPageIdsByProjectAndTask(eq(projectId), eq(taskId), eq(PageRequest.of(9, 50))))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(9, 50), 3));
+		when(links.findPageIdsByProjectAndTask(eq(projectId), eq(taskId), eq(PageRequest.of(0, 1))))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 1), 0));
+		when(links.findPageIdsByProjectAndTask(eq(projectId), eq(taskId), eq(PageRequest.of(0, 200))))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 200), 0));
+
+		ProjectCommitPageResponse defaults = service.listTaskCommits(userId, projectId, taskId, null, null);
+		assertThat(defaults.page()).isZero();
+		assertThat(defaults.size()).isEqualTo(50);
+		assertThat(defaults.total()).isZero();
+		assertThat(defaults.items()).isEmpty();
+		verify(commits, never()).findFetchedByIdIn(any());
+
+		ProjectCommitPageResponse explicit = service.listTaskCommits(userId, projectId, taskId, 0, 50);
+		assertThat(explicit.page()).isZero();
+		assertThat(explicit.size()).isEqualTo(50);
+
+		ProjectCommitPageResponse second = service.listTaskCommits(userId, projectId, taskId, 1, 50);
+		assertThat(second.page()).isEqualTo(1);
+		assertThat(second.items()).isEmpty();
+		assertThat(second.total()).isEqualTo(3);
+
+		ProjectCommitPageResponse beyond = service.listTaskCommits(userId, projectId, taskId, 9, 50);
+		assertThat(beyond.items()).isEmpty();
+		assertThat(beyond.page()).isEqualTo(9);
+		assertThat(beyond.total()).isEqualTo(3);
+
+		assertThat(service.listTaskCommits(userId, projectId, taskId, 0, 1).size()).isEqualTo(1);
+		assertThat(service.listTaskCommits(userId, projectId, taskId, 0, 200).size()).isEqualTo(200);
+
+		assertThatThrownBy(() -> service.listTaskCommits(userId, projectId, taskId, -1, 50))
+				.isInstanceOf(AcademicException.class)
+				.satisfies(this::assertTaskCommitInvalid);
+		assertThatThrownBy(() -> service.listTaskCommits(userId, projectId, taskId, 0, 0))
+				.isInstanceOf(AcademicException.class)
+				.satisfies(this::assertTaskCommitInvalid);
+		assertThatThrownBy(() -> service.listTaskCommits(userId, projectId, taskId, 0, 201))
+				.isInstanceOf(AcademicException.class)
+				.satisfies(this::assertTaskCommitInvalid);
+	}
+
+	private void assertTaskCommitInvalid(Throwable ex) {
+		AcademicException academic = (AcademicException) ex;
+		assertThat(academic.getCode()).isEqualTo(AcademicErrorCode.REQUEST_INVALID);
+		assertThat(academic.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
 	}
 
 	@Test
