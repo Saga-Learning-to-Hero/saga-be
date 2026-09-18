@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.saga.be.dto.academic.LecturerDirectoryPageResponse;
 import com.saga.be.dto.academic.LecturerDirectoryResponse;
 import com.saga.be.service.academic.AdminLecturerService;
 import java.util.List;
@@ -45,5 +46,24 @@ class AdminLecturerControllerWebTest {
 				.andExpect(jsonPath("$[0].email").value("lan@fe.edu.vn"))
 				.andExpect(jsonPath("$[0].active").value(true))
 				.andExpect(jsonPath("$[0].id").doesNotExist());
+	}
+
+	@Test
+	void pagedListUsesItemsEnvelope() throws Exception {
+		UUID profileId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+		UUID userId = UUID.fromString("22222222-2222-2222-2222-222222222222");
+		when(lecturers.listPaged(isNull(), isNull(), isNull(), isNull()))
+				.thenReturn(new LecturerDirectoryPageResponse(
+						List.of(new LecturerDirectoryResponse(profileId, userId, "Lan", "lan@fe.edu.vn", true)),
+						0,
+						50,
+						1));
+		mockMvc.perform(get("/api/admin/lecturers/paged"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.page").value(0))
+				.andExpect(jsonPath("$.size").value(50))
+				.andExpect(jsonPath("$.total").value(1))
+				.andExpect(jsonPath("$.items[0].lecturerProfileId").value(profileId.toString()))
+				.andExpect(jsonPath("$[0].lecturerProfileId").doesNotExist());
 	}
 }

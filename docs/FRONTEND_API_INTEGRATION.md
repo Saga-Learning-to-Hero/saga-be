@@ -501,6 +501,8 @@ Breaking change phải được nêu rõ.
 | GET | `/api/admin/courses` | Session | ADMIN | Academic runtime V1; paged `{items, page, size, total}` | `AdminCourseController` |
 | GET | `/api/admin/courses/{courseId}` | Session | ADMIN | Academic runtime V1 | `AdminCourseController` |
 | PATCH | `/api/admin/courses/{courseId}` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminCourseController` |
+| GET | `/api/admin/lecturers` | Session | ADMIN | Academic runtime V1; unpaged dropdown array | `AdminLecturerController` |
+| GET | `/api/admin/lecturers/paged` | Session | ADMIN | Academic runtime V1; paged `{items, page, size, total}` | `AdminLecturerController` |
 | GET | `/api/admin/courses/{courseId}/roster/template` | Session | ADMIN | Course roster V1 | `AdminCourseRosterController` |
 | GET | `/api/admin/courses/{courseId}/roster` | Session | ADMIN | Course roster V1 | `AdminCourseRosterController` |
 | POST | `/api/admin/courses/{courseId}/roster/import/preview` | Session + CSRF | ADMIN | Course roster V1 | `AdminCourseRosterController` |
@@ -730,6 +732,43 @@ GET /api/admin/courses
 `page` default 0. `size` default 50, max 200. Invalid `page`/`size` → `REQUEST_INVALID`. FE must read `response.items` instead of a root array. `GET /api/lecturer/courses` is unchanged and still returns an unbounded array.
 
 `PATCH /api/admin/courses/{courseId}` may change name, courseCode, lecturer (`COURSE_LECTURER_CHANGED`), or syllabus pin. Syllabus change is rejected with `COURSE_SYLLABUS_IMMUTABLE` if enrollments or projects exist. DRAFT → `COURSE_SYLLABUS_NOT_PUBLISHED`. ARCHIVED → `COURSE_SYLLABUS_ARCHIVED`. Wrong subject → `COURSE_SYLLABUS_SUBJECT_MISMATCH`. Inactive subject → `SUBJECT_STATUS_INVALID`.
+
+Lecturer directory is two endpoints so the Course assignment dropdown keeps today's array contract.
+
+Dropdown / assignment (unpaged array). Default / omitted `active` is assignable only (`account_role=LECTURER` and `account_status=ACTIVE`). `active=false` lists non-assignable profiles. `search` is case-insensitive infix on email and fullName. `%`, `_`, and `\` are literal. Use `lecturerProfileId` as `CreateCourseRequest.lecturerId`, never `userId`.
+
+```
+GET /api/admin/lecturers
+    ?active=true
+    &search=
+```
+
+```json
+[ { "lecturerProfileId": "...", "userId": "...", "fullName": "Lan", "email": "lan@fe.edu.vn", "active": true } ]
+```
+
+This list is unbounded. Typical assignment UI should keep `active=true` (or omit `active`, which is the same). Do not send `page`/`size` here; extra paging params are ignored.
+
+Management paging:
+
+```
+GET /api/admin/lecturers/paged
+    ?active=
+    &search=
+    &page=0
+    &size=50
+```
+
+```json
+{
+  "items": [ ...LecturerDirectoryResponse ],
+  "page": 0,
+  "size": 50,
+  "total": 123
+}
+```
+
+`page` default 0. `size` default 50, max 200. Invalid `page`/`size` → `REQUEST_INVALID`. Same `active`/`search` semantics as the dropdown. FE must read `response.items`.
 
 No DELETE in this contract. Team and Graph are out of scope. Course roster import is section 14.
 

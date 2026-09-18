@@ -14,6 +14,7 @@ import com.saga.be.dto.academic.CourseResponse;
 import com.saga.be.dto.academic.CreateAcademicClassRequest;
 import com.saga.be.dto.academic.CreateCourseRequest;
 import com.saga.be.dto.academic.CreateSemesterRequest;
+import com.saga.be.dto.academic.LecturerDirectoryPageResponse;
 import com.saga.be.dto.academic.LecturerDirectoryResponse;
 import com.saga.be.entity.academic.Subject;
 import com.saga.be.entity.academic.SubjectSyllabusVersion;
@@ -36,6 +37,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
 class AdminLecturerServiceTest {
@@ -101,10 +105,67 @@ class AdminLecturerServiceTest {
 	}
 
 	@Test
+	void searchEscapesLikeWildcards() {
+		when(lecturers.searchDirectory(eq(true), eq(AccountRole.LECTURER), eq(AccountStatus.ACTIVE), eq("\\%")))
+				.thenReturn(List.of());
+		assertTrue(directory.list(true, "%").isEmpty());
+		verify(lecturers).searchDirectory(true, AccountRole.LECTURER, AccountStatus.ACTIVE, "\\%");
+	}
+
+	@Test
 	void emptyDirectoryIsEmptyList() {
 		when(lecturers.searchDirectory(eq(true), eq(AccountRole.LECTURER), eq(AccountStatus.ACTIVE), isNull()))
 				.thenReturn(List.of());
 		assertEquals(List.of(), directory.list(null, null));
+	}
+
+	@Test
+	void listPagedDefaultsAndRejectsInvalidPaging() {
+		LecturerProfile active = lecturer("Lan", "lan@fe.edu.vn", AccountRole.LECTURER, AccountStatus.ACTIVE);
+		when(lecturers.searchDirectoryPage(
+						eq(true),
+						eq(AccountRole.LECTURER),
+						eq(AccountStatus.ACTIVE),
+						isNull(),
+						eq(PageRequest.of(0, 50))))
+				.thenReturn(new PageImpl<>(List.of(active), PageRequest.of(0, 50), 1));
+		LecturerDirectoryPageResponse defaults = directory.listPaged(null, null, null, null);
+		assertEquals(0, defaults.page());
+		assertEquals(50, defaults.size());
+		assertEquals(1, defaults.total());
+		assertEquals(active.getId(), defaults.items().getFirst().lecturerProfileId());
+
+		when(lecturers.searchDirectoryPage(
+						eq(true),
+						eq(AccountRole.LECTURER),
+						eq(AccountStatus.ACTIVE),
+						isNull(),
+						eq(PageRequest.of(2, 50))))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(2, 50), 1));
+		LecturerDirectoryPageResponse pageOnly = directory.listPaged(null, null, 2, null);
+		assertEquals(2, pageOnly.page());
+		assertEquals(50, pageOnly.size());
+
+		when(lecturers.searchDirectoryPage(
+						eq(true),
+						eq(AccountRole.LECTURER),
+						eq(AccountStatus.ACTIVE),
+						isNull(),
+						eq(PageRequest.of(0, 1))))
+				.thenReturn(new PageImpl<>(List.of(active), PageRequest.of(0, 1), 1));
+		LecturerDirectoryPageResponse sizeOnly = directory.listPaged(null, null, null, 1);
+		assertEquals(0, sizeOnly.page());
+		assertEquals(1, sizeOnly.size());
+
+		AcademicException pageEx = assertThrows(AcademicException.class, () -> directory.listPaged(null, null, -1, 50));
+		assertEquals(AcademicErrorCode.REQUEST_INVALID, pageEx.getCode());
+		assertEquals(HttpStatus.BAD_REQUEST, pageEx.getStatus());
+		assertEquals(
+				AcademicErrorCode.REQUEST_INVALID,
+				assertThrows(AcademicException.class, () -> directory.listPaged(null, null, 0, 0)).getCode());
+		assertEquals(
+				AcademicErrorCode.REQUEST_INVALID,
+				assertThrows(AcademicException.class, () -> directory.listPaged(null, null, 0, 201)).getCode());
 	}
 
 	@Test

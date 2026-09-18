@@ -77,6 +77,39 @@ class SecurityAuthorizationTest {
 	}
 
 	@Test
+	void adminIsNotDeniedListAdminLecturers() throws Exception {
+		mockMvc.perform(get("/api/admin/lecturers").with(authentication(auth(AccountRole.ADMIN, "hash"))))
+				.andExpect(status().isNotFound());
+	}
+
+	@Test
+	void unauthenticatedCannotListAdminLecturersPaged() throws Exception {
+		mockMvc.perform(get("/api/admin/lecturers/paged"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(content().json("{\"code\":\"INVALID_CREDENTIALS\",\"message\":\"Authentication failed.\"}"));
+	}
+
+	@Test
+	void studentCannotListAdminLecturersPaged() throws Exception {
+		mockMvc.perform(get("/api/admin/lecturers/paged").with(authentication(auth(AccountRole.STUDENT, "hash"))))
+				.andExpect(status().isForbidden())
+				.andExpect(content().json("{\"code\":\"ACCESS_DENIED\",\"message\":\"Access denied.\"}"));
+	}
+
+	@Test
+	void lecturerCannotListAdminLecturersPaged() throws Exception {
+		mockMvc.perform(get("/api/admin/lecturers/paged").with(authentication(auth(AccountRole.LECTURER, "hash"))))
+				.andExpect(status().isForbidden())
+				.andExpect(content().json("{\"code\":\"ACCESS_DENIED\",\"message\":\"Access denied.\"}"));
+	}
+
+	@Test
+	void adminIsNotDeniedListAdminLecturersPaged() throws Exception {
+		mockMvc.perform(get("/api/admin/lecturers/paged").with(authentication(auth(AccountRole.ADMIN, "hash"))))
+				.andExpect(status().isNotFound());
+	}
+
+	@Test
 	void unauthenticatedCannotWriteAdminSubjects() throws Exception {
 		mockMvc.perform(post("/api/admin/subjects")
 						.with(csrf())

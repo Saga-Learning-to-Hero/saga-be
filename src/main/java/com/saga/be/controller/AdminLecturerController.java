@@ -1,7 +1,10 @@
 package com.saga.be.controller;
 
+import com.saga.be.dto.academic.LecturerDirectoryPageResponse;
 import com.saga.be.dto.academic.LecturerDirectoryResponse;
 import com.saga.be.service.academic.AdminLecturerService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -28,13 +31,30 @@ public class AdminLecturerController {
 	}
 
 	@GetMapping
+	@Workload(WorkloadClass.INTERACTIVE_NORMAL)
 	@Operation(
-			summary = "List lecturers for Admin management and Course lecturer dropdown",
+			summary = "Lecturer dropdown / assignment list. Unpaged array.",
 			description =
 					"Default list is assignable lecturers only (LECTURER + ACTIVE), matching COURSE_LECTURER_INVALID. "
-							+ "Use lecturerProfileId as CreateCourseRequest.lecturerId. Do not send userId.")
+							+ "Use lecturerProfileId as CreateCourseRequest.lecturerId. Do not send userId. "
+							+ "Filters: active, search. Management paging is GET /api/admin/lecturers/paged.")
 	public List<LecturerDirectoryResponse> list(
 			@RequestParam(required = false) Boolean active, @RequestParam(required = false) String search) {
 		return lecturers.list(active, search);
+	}
+
+	@GetMapping("/paged")
+	@Workload(WorkloadClass.INTERACTIVE_NORMAL)
+	@Operation(
+			summary = "Paged lecturer directory for Admin management. ADMIN only.",
+			description =
+					"page default 0, size default 50, size max 200. Filters: active, search. "
+							+ "Same assignable semantics as the unpaged dropdown.")
+	public LecturerDirectoryPageResponse listPaged(
+			@RequestParam(required = false) Boolean active,
+			@RequestParam(required = false) String search,
+			@RequestParam(required = false) Integer page,
+			@RequestParam(required = false) Integer size) {
+		return lecturers.listPaged(active, search, page, size);
 	}
 }

@@ -389,7 +389,8 @@ Nếu gọi tạo Course khi Syllabus chưa `PUBLISHED` → `COURSE_SYLLABUS_NOT
 | POST | `/api/admin/courses` | 201, body: `academicClassId, subjectId, syllabusVersionId, lecturerId, courseCode, name` |
 | GET | `/api/admin/courses?semesterId&academicClassId&subjectId&lecturerId&page&size` | paged `{items, page, size, total}`; **đọc `items`**, không phải root array; filter cũ giữ nguyên; **không có `q`**; `page` default 0, `size` default 50, max 200; invalid → `REQUEST_INVALID` |
 | GET/PATCH | `/api/admin/courses/{courseId}` | PATCH không cho đổi `syllabusVersionId` nếu course đã có enrollment/project (`409 COURSE_SYLLABUS_IMMUTABLE`) |
-| GET | `/api/admin/lecturers?active&search` | trả `lecturerProfileId` + `userId` **riêng biệt** — dùng **`lecturerProfileId`** khi gửi `CreateCourseRequest.lecturerId`, KHÔNG dùng `userId` |
+| GET | `/api/admin/lecturers?active&search` | dropdown: root array; `lecturerProfileId` + `userId` **riêng biệt** — dùng **`lecturerProfileId`** khi gửi `CreateCourseRequest.lecturerId`, KHÔNG dùng `userId`. Default/`active=true` = assignable (LECTURER + ACTIVE). **Không phân trang.** |
+| GET | `/api/admin/lecturers/paged?active&search&page&size` | management paged `{items, page, size, total}`; **đọc `items`**; `page` default 0, `size` default 50, max 200; invalid → `REQUEST_INVALID`; filter `active`/`search` giữ nguyên |
 
 `GET /api/admin/subjects`, `GET /api/admin/classes` và `GET /api/admin/courses` trả object phân trang, **không** còn root array. FE đọc `items`. `GET /api/lecturer/courses` **không** đổi — vẫn là mảng `CourseResponse` không phân trang.
 
@@ -1577,6 +1578,7 @@ export function subscribeProjectEvents(
 | POST/GET/PATCH | `/api/admin/classes`, `/{classId}` | ADMIN |
 | POST/GET/PATCH | `/api/admin/courses`, `/{courseId}` | ADMIN |
 | GET | `/api/admin/lecturers` | ADMIN |
+| GET | `/api/admin/lecturers/paged` | ADMIN |
 
 ### ROSTER
 | Method | Path | Role |
