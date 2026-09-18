@@ -10,6 +10,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.saga.be.dto.project.ProjectCommitPageResponse;
 import com.saga.be.dto.project.ProjectCommitResponse;
 import com.saga.be.dto.project.ProjectTaskResponse;
 import com.saga.be.entity.account.UserAccount;
@@ -40,6 +41,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
 class ProjectProjectionReadServiceTest {
@@ -140,10 +144,58 @@ class ProjectProjectionReadServiceTest {
 		UserAccount lecturer = account(AccountRole.LECTURER);
 		when(users.findById(userId)).thenReturn(Optional.of(lecturer));
 		when(projects.existsAssignedToLecturerUser(projectId, userId)).thenReturn(false);
-		assertThatThrownBy(() -> service.listCommits(userId, projectId))
+		assertThatThrownBy(() -> service.listCommits(userId, projectId, null, null))
 				.isInstanceOf(AcademicException.class)
 				.extracting(ex -> ((AcademicException) ex).getCode())
 				.isEqualTo(AcademicErrorCode.LECTURER_COURSE_FORBIDDEN);
+		verify(commits, never()).findPageIdsByProject(any(), any());
+	}
+
+	@Test
+	void listCommits_adminDeniedUnchanged() {
+		UserAccount admin = account(AccountRole.ADMIN);
+		when(users.findById(userId)).thenReturn(Optional.of(admin));
+		assertThatThrownBy(() -> service.listCommits(userId, projectId, 0, 50))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
+		verify(commits, never()).findPageIdsByProject(any(), any());
+	}
+
+	@Test
+	void listCommits_outsiderDeniedUnchanged() {
+		UserAccount student = account(AccountRole.STUDENT);
+		when(users.findById(userId)).thenReturn(Optional.of(student));
+		when(members.existsActiveByProjectIdAndUserId(projectId, userId)).thenReturn(false);
+		assertThatThrownBy(() -> service.listCommits(userId, projectId, 0, 50))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.INTEGRATION_FORBIDDEN);
+		verify(commits, never()).findPageIdsByProject(any(), any());
+	}
+
+	@Test
+	void listCommits_memberCanRead() {
+		stubStudent(RoleInTeam.MEMBER);
+		when(commits.findPageIdsByProject(eq(projectId), eq(PageRequest.of(0, 50))))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 50), 0));
+		ProjectCommitPageResponse result = service.listCommits(userId, projectId, null, null);
+		assertThat(result.items()).isEmpty();
+		assertThat(result.page()).isZero();
+		assertThat(result.size()).isEqualTo(50);
+		assertThat(result.total()).isZero();
+		verify(commits, never()).findFetchedByIdIn(any());
+		verify(commits, never()).findFetchedByProject_Id(any());
+	}
+
+	@Test
+	void listCommits_assignedLecturerCanRead() {
+		UserAccount lecturer = account(AccountRole.LECTURER);
+		when(users.findById(userId)).thenReturn(Optional.of(lecturer));
+		when(projects.existsAssignedToLecturerUser(projectId, userId)).thenReturn(true);
+		when(commits.findPageIdsByProject(eq(projectId), eq(PageRequest.of(0, 50))))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 50), 0));
+		assertThat(service.listCommits(userId, projectId, 0, 50).total()).isZero();
 	}
 
 	@Test
@@ -157,12 +209,79 @@ class ProjectProjectionReadServiceTest {
 		GitCommit normal = commit(repo, "n1", "Merge branch 'x'", 1);
 		GitCommit merge = commit(repo, "m1", "custom message", 2);
 		GitCommit octopus = commit(repo, "o1", "octopus", 3);
-		when(commits.findFetchedByProject_Id(projectId)).thenReturn(List.of(unknown, root, normal, merge, octopus));
+		List<UUID> ordered = List.of(unknown.getId(), root.getId(), normal.getId(), merge.getId(), octopus.getId());
+		when(commits.findPageIdsByProject(eq(projectId), eq(PageRequest.of(0, 50))))
+				.thenReturn(new PageImpl<>(ordered, PageRequest.of(0, 50), 5));
+		when(commits.findFetchedByIdIn(ordered)).thenReturn(List.of(octopus, merge, normal, root, unknown));
 
-		List<ProjectCommitResponse> result = service.listCommits(userId, projectId);
+		ProjectCommitPageResponse page = service.listCommits(userId, projectId, null, null);
 
-		assertThat(result).extracting(ProjectCommitResponse::parentCount).containsExactly(null, 0, 1, 2, 3);
-		assertThat(result).extracting(ProjectCommitResponse::isMerge).containsExactly(null, false, false, true, true);
+		assertThat(page.items()).extracting(ProjectCommitResponse::parentCount).containsExactly(null, 0, 1, 2, 3);
+		assertThat(page.items()).extracting(ProjectCommitResponse::isMerge).containsExactly(null, false, false, true, true);
+		assertThat(page.total()).isEqualTo(5);
+		verify(commits, never()).findFetchedByProject_Id(any());
+	}
+
+	@Test
+	void listCommits_reconstructsExactIdPageOrderAfterShuffledInFetch() {
+		stubStudent(RoleInTeam.MEMBER);
+		GitRepo repo = new GitRepo();
+		repo.setId(UUID.randomUUID());
+		repo.setFullName("org/saga");
+		GitCommit first = commit(repo, "aaa", "first", 1);
+		GitCommit second = commit(repo, "bbb", "second", 1);
+		List<UUID> ordered = List.of(first.getId(), second.getId());
+		when(commits.findPageIdsByProject(eq(projectId), eq(PageRequest.of(0, 50))))
+				.thenReturn(new PageImpl<>(ordered, PageRequest.of(0, 50), 2));
+		when(commits.findFetchedByIdIn(ordered)).thenReturn(List.of(second, first));
+
+		ProjectCommitPageResponse page = service.listCommits(userId, projectId, 0, 50);
+
+		assertThat(page.items()).extracting(ProjectCommitResponse::id).containsExactly(first.getId(), second.getId());
+		assertThat(page.items()).extracting(ProjectCommitResponse::sha).containsExactly("aaa", "bbb");
+	}
+
+	@Test
+	void listCommits_pageBeyondLast_returnsEmptyItemsWithRequestedPage() {
+		stubStudent(RoleInTeam.MEMBER);
+		when(commits.findPageIdsByProject(eq(projectId), eq(PageRequest.of(9, 50))))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(9, 50), 3));
+		ProjectCommitPageResponse page = service.listCommits(userId, projectId, 9, 50);
+		assertThat(page.items()).isEmpty();
+		assertThat(page.page()).isEqualTo(9);
+		assertThat(page.size()).isEqualTo(50);
+		assertThat(page.total()).isEqualTo(3);
+		verify(commits, never()).findFetchedByIdIn(any());
+	}
+
+	@Test
+	void listCommits_rejectsInvalidPageAndSize() {
+		stubStudent(RoleInTeam.MEMBER);
+		assertInvalidPage(-1, 50);
+		assertInvalidPage(0, 0);
+		assertInvalidPage(0, 201);
+		verify(commits, never()).findPageIdsByProject(any(), any());
+	}
+
+	@Test
+	void listCommits_acceptsSizeBounds() {
+		stubStudent(RoleInTeam.MEMBER);
+		when(commits.findPageIdsByProject(eq(projectId), eq(PageRequest.of(0, 1))))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 1), 0));
+		when(commits.findPageIdsByProject(eq(projectId), eq(PageRequest.of(0, 200))))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 200), 0));
+		assertThat(service.listCommits(userId, projectId, 0, 1).size()).isEqualTo(1);
+		assertThat(service.listCommits(userId, projectId, 0, 200).size()).isEqualTo(200);
+	}
+
+	private void assertInvalidPage(Integer page, Integer size) {
+		assertThatThrownBy(() -> service.listCommits(userId, projectId, page, size))
+				.isInstanceOf(AcademicException.class)
+				.satisfies(ex -> {
+					AcademicException academic = (AcademicException) ex;
+					assertThat(academic.getCode()).isEqualTo(AcademicErrorCode.REQUEST_INVALID);
+					assertThat(academic.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+				});
 	}
 
 	private static GitCommit commit(GitRepo repo, String sha, String message, Integer parentCount) {

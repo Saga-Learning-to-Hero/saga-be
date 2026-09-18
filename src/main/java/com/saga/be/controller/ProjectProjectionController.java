@@ -5,6 +5,7 @@ import com.saga.be.dto.project.CreateProjectTaskRequest;
 import com.saga.be.dto.project.PatchProjectSprintRequest;
 import com.saga.be.dto.project.PatchProjectTaskRequest;
 import com.saga.be.dto.project.ProjectCommitDetailResponse;
+import com.saga.be.dto.project.ProjectCommitPageResponse;
 import com.saga.be.dto.project.ProjectCommitResponse;
 import com.saga.be.dto.project.ProjectGitBranchListResponse;
 import com.saga.be.dto.project.ProjectMemberProgressResponse;
@@ -273,10 +274,20 @@ public class ProjectProjectionController {
 	}
 
 	@GetMapping("/commits")
-	@Operation(summary = "List projected GitHub commits. Owning team students and assigned lecturer.")
-	public List<ProjectCommitResponse> commits(
-			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
-		return projections.listCommits(principal.getUserId(), projectId);
+	@Workload(WorkloadClass.INTERACTIVE_NORMAL)
+	@Operation(
+			summary = "Paged raw projected GitHub commits. Owning team students and assigned lecturer.",
+			description =
+					"""
+					Local DB only. Includes normal, root, known-merge, and UNKNOWN parentCount rows.
+					page default 0, size default 50, size max 200. Breaking wrapper: items/page/size/total.
+					""")
+	public ProjectCommitPageResponse commits(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@RequestParam(required = false) Integer page,
+			@RequestParam(required = false) Integer size) {
+		return projections.listCommits(principal.getUserId(), projectId, page, size);
 	}
 
 	@GetMapping("/commits/{gitCommitId}")

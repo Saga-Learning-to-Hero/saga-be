@@ -1,5 +1,6 @@
 package com.saga.be.service.projection;
 
+import com.saga.be.dto.project.ProjectCommitPageResponse;
 import com.saga.be.dto.project.ProjectCommitResponse;
 import com.saga.be.dto.project.ProjectSprintResponse;
 import com.saga.be.dto.project.ProjectTaskResponse;
@@ -14,11 +15,14 @@ import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.SprintRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +30,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @Profile("!test")
 public class ProjectProjectionReadService {
+
+	static final int DEFAULT_PAGE = 0;
+	static final int DEFAULT_SIZE = 50;
+	static final int MAX_SIZE = 200;
 
 	private final TaskRepository tasks;
 	private final GitCommitRepository commits;
@@ -90,9 +98,34 @@ public class ProjectProjectionReadService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<ProjectCommitResponse> listCommits(UUID userId, UUID projectId) {
+	public ProjectCommitPageResponse listCommits(UUID userId, UUID projectId, Integer page, Integer size) {
 		authorization.requireReader(userId, projectId);
-		return commits.findFetchedByProject_Id(projectId).stream().map(this::toCommit).toList();
+		int pageNumber = page == null ? DEFAULT_PAGE : page;
+		int pageSize = size == null ? DEFAULT_SIZE : size;
+		if (pageNumber < 0 || pageSize < 1 || pageSize > MAX_SIZE) {
+			throw new AcademicException(
+					AcademicErrorCode.REQUEST_INVALID,
+					HttpStatus.BAD_REQUEST,
+					"page must be >= 0 and size must be between 1 and " + MAX_SIZE + ".");
+		}
+		Page<UUID> idPage = commits.findPageIdsByProject(projectId, PageRequest.of(pageNumber, pageSize));
+		List<UUID> orderedIds = idPage.getContent();
+		List<ProjectCommitResponse> items = List.of();
+		if (!orderedIds.isEmpty()) {
+			Map<UUID, GitCommit> byId = new HashMap<>();
+			for (GitCommit commit : commits.findFetchedByIdIn(orderedIds)) {
+				byId.put(commit.getId(), commit);
+			}
+			List<ProjectCommitResponse> reconstructed = new ArrayList<>(orderedIds.size());
+			for (UUID id : orderedIds) {
+				GitCommit commit = byId.get(id);
+				if (commit != null) {
+					reconstructed.add(toCommit(commit));
+				}
+			}
+			items = reconstructed;
+		}
+		return new ProjectCommitPageResponse(items, pageNumber, pageSize, idPage.getTotalElements());
 	}
 
 	@Transactional(readOnly = true)

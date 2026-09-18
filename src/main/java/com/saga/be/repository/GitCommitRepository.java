@@ -6,6 +6,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -27,6 +29,7 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			"""
 			select c from GitCommit c
 			join fetch c.repo
+			left join fetch c.authorStudent
 			where c.id in :ids
 			""")
 	List<GitCommit> findFetchedByIdIn(@Param("ids") Collection<UUID> ids);
@@ -42,6 +45,26 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			order by coalesce(c.committedAt, c.createdAt) desc
 			""")
 	List<GitCommit> findFetchedByProject_Id(@Param("projectId") UUID projectId);
+
+	/**
+	 * Raw project history IDs (includes known merges and UNKNOWN parentCount). Sort is in JPQL;
+	 * callers must pass an unsorted {@link Pageable}.
+	 */
+	@Query(
+			value =
+					"""
+					select c.id
+					from GitCommit c
+					where c.repo.project.id = :projectId
+					order by coalesce(c.committedAt, c.createdAt) desc, c.id desc
+					""",
+			countQuery =
+					"""
+					select count(c.id)
+					from GitCommit c
+					where c.repo.project.id = :projectId
+					""")
+	Page<UUID> findPageIdsByProject(@Param("projectId") UUID projectId, Pageable pageable);
 
 	@Query(
 			"""

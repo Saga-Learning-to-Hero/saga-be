@@ -1,7 +1,9 @@
 package com.saga.be.service.projection;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.saga.be.dto.project.ProjectCommitPageResponse;
 import com.saga.be.dto.project.ProjectCommitResponse;
 import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.account.UserAccount;
@@ -24,6 +26,8 @@ import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
 import com.saga.be.entity.project.TeamMember;
+import com.saga.be.exception.AcademicErrorCode;
+import com.saga.be.exception.AcademicException;
 import com.saga.be.repository.AcademicClassRepository;
 import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.CourseRepository;
@@ -52,7 +56,10 @@ import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.persistence.autoconfigure.EntityScan;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -61,8 +68,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Proves GET /commits read path query count does not grow with commit cardinality (no per-commit
- * lazy loads of repo / authorStudent / linked tasks).
+ * GET /commits two-step paging: query count is independent of page cardinality, order is
+ * coalesce(committedAt, createdAt) DESC, id DESC, and raw history includes UNKNOWN/root/merge.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.ANY)
@@ -155,34 +162,161 @@ class ProjectCommitListQueryCountTest {
 	}
 
 	@Test
-	void listCommits_queryCountStableFor10And100() {
-		seedCommits(10);
-		long queriesFor10 = measureListCommits(10);
-		seedCommits(90);
-		long queriesFor100 = measureListCommits(100);
-		assertThat(queriesFor10).as("exact query count for 10 commits").isEqualTo(3L);
-		assertThat(queriesFor100).as("exact query count for 100 commits").isEqualTo(3L);
-		assertThat(queriesFor100).isEqualTo(queriesFor10);
-	}
+	void listCommits_queryCountStableForEmptyOneAndFifty() {
+		Measured empty = measure(0, 50);
+		assertThat(empty.page.items()).isEmpty();
+		assertThat(empty.page.total()).isZero();
+		assertThat(empty.queries).as("empty page: auth + id page, count skipped, fetch skipped").isEqualTo(3L);
 
-	private long measureListCommits(int expectedSize) {
-		tx.executeWithoutResult(status -> entityManager.clear());
-		Statistics stats = statistics();
-		stats.clear();
-		List<ProjectCommitResponse> rows = tx.execute(status -> readService.listCommits(student.getId(), project.getId()));
-		assertThat(rows).hasSize(expectedSize);
-		rows.forEach(row -> {
-			assertThat(row.repoId()).isNotNull();
+		seedCommits(1);
+		Measured one = measure(0, 50);
+		assertThat(one.page.items()).hasSize(1);
+		assertThat(one.page.total()).isEqualTo(1);
+		assertThat(one.queries).as("1-row short page: auth + id page + fetch, count skipped").isEqualTo(4L);
+		one.page.items().forEach(row -> {
+			assertThat(row.repoId()).isEqualTo(repo.getId());
+			assertThat(row.repositoryFullName()).isEqualTo("org/demo");
+			assertThat(row.authorStudentId()).isEqualTo(author.getId());
+		});
+
+		seedCommits(49);
+		Measured fiftyFull = measure(0, 50);
+		assertThat(fiftyFull.page.items()).hasSize(50);
+		assertThat(fiftyFull.page.total()).isEqualTo(50);
+		assertThat(fiftyFull.queries)
+				.as("full page of 50: auth + id page + count + fetch")
+				.isEqualTo(5L);
+		fiftyFull.page.items().forEach(row -> {
+			assertThat(row.repoId()).isEqualTo(repo.getId());
 			assertThat(row.repositoryFullName()).isEqualTo("org/demo");
 			assertThat(row.authorStudentId()).isEqualTo(author.getId());
 			assertThat(row.sha()).doesNotContain("token");
 		});
-		return stats.getPrepareStatementCount();
+
+		Measured fiftyShort = measure(0, 200);
+		assertThat(fiftyShort.page.items()).hasSize(50);
+		assertThat(fiftyShort.page.size()).isEqualTo(200);
+		assertThat(fiftyShort.queries).as("50-row short page matches 1-row short page").isEqualTo(one.queries);
+
+		seedCommits(50);
+		Measured hundredShort = measure(0, 200);
+		assertThat(hundredShort.page.items()).hasSize(100);
+		assertThat(hundredShort.queries).as("100-row short page does not add per-row queries").isEqualTo(one.queries);
+	}
+
+	@Test
+	void listCommits_pagesEdgesAndDefaults() {
+		seedOrderedHistory();
+		ProjectCommitPageResponse first = list(0, 50);
+		assertThat(first.items()).extracting(ProjectCommitResponse::sha).containsExactly("D", "C", "B", "A", "E");
+		assertThat(first.page()).isZero();
+		assertThat(first.size()).isEqualTo(50);
+		assertThat(first.total()).isEqualTo(5);
+
+		ProjectCommitPageResponse defaults = list(null, null);
+		assertThat(defaults.page()).isZero();
+		assertThat(defaults.size()).isEqualTo(50);
+		assertThat(defaults.items()).extracting(ProjectCommitResponse::sha).containsExactly("D", "C", "B", "A", "E");
+
+		ProjectCommitPageResponse second = list(1, 2);
+		assertThat(second.items()).extracting(ProjectCommitResponse::sha).containsExactly("B", "A");
+		assertThat(second.page()).isEqualTo(1);
+		assertThat(second.size()).isEqualTo(2);
+		assertThat(second.total()).isEqualTo(5);
+
+		ProjectCommitPageResponse lastPartial = list(2, 2);
+		assertThat(lastPartial.items()).extracting(ProjectCommitResponse::sha).containsExactly("E");
+		assertThat(lastPartial.page()).isEqualTo(2);
+		assertThat(lastPartial.size()).isEqualTo(2);
+		assertThat(lastPartial.total()).isEqualTo(5);
+
+		ProjectCommitPageResponse beyond = list(9, 50);
+		assertThat(beyond.items()).isEmpty();
+		assertThat(beyond.page()).isEqualTo(9);
+		assertThat(beyond.size()).isEqualTo(50);
+		assertThat(beyond.total()).isEqualTo(5);
+
+		ProjectCommitPageResponse sizeOne = list(0, 1);
+		assertThat(sizeOne.items()).extracting(ProjectCommitResponse::sha).containsExactly("D");
+		assertThat(sizeOne.size()).isEqualTo(1);
+
+		ProjectCommitPageResponse size200 = list(0, 200);
+		assertThat(size200.items()).hasSize(5);
+		assertThat(size200.size()).isEqualTo(200);
+	}
+
+	@Test
+	void listCommits_orderIsCoalesceThenIdDesc_andInFetchCannotReorder() {
+		seedOrderedHistory();
+		Page<UUID> idPage = tx.execute(
+				status -> commits.findPageIdsByProject(project.getId(), PageRequest.of(0, 50)));
+		assertThat(idPage.getContent())
+				.extracting(id -> shaOf(id))
+				.containsExactly("D", "C", "B", "A", "E");
+
+		List<GitCommit> fetched = tx.execute(status -> commits.findFetchedByIdIn(idPage.getContent()));
+		List<String> fetchShas = fetched.stream().map(GitCommit::getShaHash).toList();
+		assertThat(fetchShas).containsExactlyInAnyOrder("D", "C", "B", "A", "E");
+
+		ProjectCommitPageResponse page = list(0, 50);
+		assertThat(page.items()).extracting(ProjectCommitResponse::sha).containsExactly("D", "C", "B", "A", "E");
+		assertThat(page.items())
+				.extracting(ProjectCommitResponse::id)
+				.containsExactlyElementsOf(idPage.getContent());
+	}
+
+	@Test
+	void listCommits_includesUnknownRootNormalAndMerge() {
+		tx.executeWithoutResult(status -> {
+			persistCommit("A", null, LocalDateTime.of(2026, 6, 4, 0, 0), null);
+			persistCommit("B", 0, LocalDateTime.of(2026, 6, 3, 0, 0), null);
+			persistCommit("C", 1, LocalDateTime.of(2026, 6, 2, 0, 0), null);
+			persistCommit("D", 2, LocalDateTime.of(2026, 6, 1, 0, 0), null);
+		});
+		ProjectCommitPageResponse page = list(0, 50);
+		assertThat(page.items()).extracting(ProjectCommitResponse::sha).containsExactly("A", "B", "C", "D");
+		assertThat(page.items()).extracting(ProjectCommitResponse::parentCount).containsExactly(null, 0, 1, 2);
+		assertThat(page.items()).extracting(ProjectCommitResponse::isMerge).containsExactly(null, false, false, true);
+		assertThat(page.total()).isEqualTo(4);
+	}
+
+	@Test
+	void listCommits_rejectsInvalidPaging() {
+		assertThatThrownBy(() -> list(-1, 50))
+				.isInstanceOf(AcademicException.class)
+				.satisfies(ex -> assertInvalid((AcademicException) ex));
+		assertThatThrownBy(() -> list(0, 0))
+				.isInstanceOf(AcademicException.class)
+				.satisfies(ex -> assertInvalid((AcademicException) ex));
+		assertThatThrownBy(() -> list(0, 201))
+				.isInstanceOf(AcademicException.class)
+				.satisfies(ex -> assertInvalid((AcademicException) ex));
+	}
+
+	private static void assertInvalid(AcademicException ex) {
+		assertThat(ex.getCode()).isEqualTo(AcademicErrorCode.REQUEST_INVALID);
+		assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	private Measured measure(Integer page, Integer size) {
+		tx.executeWithoutResult(status -> entityManager.clear());
+		Statistics stats = statistics();
+		stats.clear();
+		ProjectCommitPageResponse response = list(page, size);
+		return new Measured(response, stats.getPrepareStatementCount());
+	}
+
+	private ProjectCommitPageResponse list(Integer page, Integer size) {
+		return tx.execute(status -> readService.listCommits(student.getId(), project.getId(), page, size));
+	}
+
+	private String shaOf(UUID id) {
+		return tx.execute(status -> commits.findById(id).orElseThrow().getShaHash());
 	}
 
 	private void seedCommits(int count) {
 		tx.executeWithoutResult(status -> {
-			long existing = commits.countByRepo_Project_Id(project.getId());
+			long existing = commits.count();
 			for (int i = 0; i < count; i++) {
 				GitCommit commit = new GitCommit();
 				commit.setRepo(repo);
@@ -190,11 +324,53 @@ class ProjectCommitListQueryCountTest {
 				commit.setShaHash(String.format("%040d", existing + i + 1));
 				commit.setMessage("SAGA-" + (existing + i + 1) + " work");
 				commit.setAuthorExternalId("gh-" + (existing + i));
-				commit.setCommittedAt(LocalDateTime.now().minusMinutes(existing + i));
+				commit.setCommittedAt(LocalDateTime.of(2026, 5, 1, 0, 0).minusMinutes(existing + i));
 				commits.save(commit);
 			}
 			entityManager.flush();
 		});
+	}
+
+	private void seedOrderedHistory() {
+		tx.executeWithoutResult(status -> {
+			UUID idD = UUID.fromString("00000000-0000-4000-8000-00000000000d");
+			UUID idC = UUID.fromString("00000000-0000-4000-8000-00000000000c");
+			UUID idB = UUID.fromString("00000000-0000-4000-8000-00000000000b");
+			UUID idA = UUID.fromString("00000000-0000-4000-8000-00000000000a");
+			UUID idE = UUID.fromString("00000000-0000-4000-8000-00000000000e");
+			persistCommit(idD, "D", 1, null, LocalDateTime.of(2026, 6, 4, 12, 0));
+			persistCommit(idC, "C", 1, LocalDateTime.of(2026, 6, 3, 0, 0), LocalDateTime.of(2026, 1, 1, 0, 0));
+			persistCommit(idB, "B", 1, LocalDateTime.of(2026, 6, 2, 0, 0), LocalDateTime.of(2026, 1, 1, 0, 0));
+			persistCommit(idA, "A", 1, LocalDateTime.of(2026, 6, 2, 0, 0), LocalDateTime.of(2026, 1, 1, 0, 0));
+			persistCommit(idE, "E", 1, null, LocalDateTime.of(2026, 6, 1, 0, 0));
+		});
+	}
+
+	private GitCommit persistCommit(String sha, Integer parentCount, LocalDateTime committedAt, LocalDateTime createdAt) {
+		return persistCommit(UUID.randomUUID(), sha, parentCount, committedAt, createdAt);
+	}
+
+	private GitCommit persistCommit(
+			UUID id, String sha, Integer parentCount, LocalDateTime committedAt, LocalDateTime createdAt) {
+		GitCommit commit = new GitCommit();
+		commit.setId(id);
+		commit.setRepo(repo);
+		commit.setAuthorStudent(author);
+		commit.setShaHash(sha);
+		commit.setMessage(sha);
+		commit.setParentCount(parentCount);
+		commit.setCommittedAt(committedAt);
+		commit = commits.save(commit);
+		entityManager.flush();
+		if (createdAt != null) {
+			entityManager
+					.createNativeQuery("update git_commit set created_at = :ts where id = :id")
+					.setParameter("ts", createdAt)
+					.setParameter("id", commit.getId().toString())
+					.executeUpdate();
+			entityManager.refresh(commit);
+		}
+		return commit;
 	}
 
 	private void seedGraph() {
@@ -288,4 +464,6 @@ class ProjectCommitListQueryCountTest {
 		stats.setStatisticsEnabled(true);
 		return stats;
 	}
+
+	private record Measured(ProjectCommitPageResponse page, long queries) {}
 }
