@@ -16,7 +16,6 @@ import com.saga.be.entity.project.Team;
 import com.saga.be.entity.project.TeamMember;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
-import com.saga.be.repository.CommentRepository;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.PeerReviewRepository;
 import com.saga.be.repository.SprintRepository;
@@ -48,11 +47,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Profile("!test")
 public class TeamActivityAnalyticsService {
 
-	static final int SCORE_COMMIT = 3;
-	static final int SCORE_PEER_REVIEW = 2;
-	static final int SCORE_COMMENT = 1;
-	static final int SCORE_DOCUMENT = 1;
-	static final int SCORE_TASK = 2;
 	static final int MAX_HEATMAP_DAYS = 366;
 
 	private final TeamRepository teams;
@@ -60,7 +54,6 @@ public class TeamActivityAnalyticsService {
 	private final SprintRepository sprints;
 	private final GitCommitRepository commits;
 	private final PeerReviewRepository peerReviews;
-	private final CommentRepository comments;
 	private final TaskFileRepository files;
 	private final TaskWebLinkRepository webLinks;
 	private final TaskAttachmentRepository attachments;
@@ -73,7 +66,6 @@ public class TeamActivityAnalyticsService {
 			SprintRepository sprints,
 			GitCommitRepository commits,
 			PeerReviewRepository peerReviews,
-			CommentRepository comments,
 			TaskFileRepository files,
 			TaskWebLinkRepository webLinks,
 			TaskAttachmentRepository attachments,
@@ -84,7 +76,6 @@ public class TeamActivityAnalyticsService {
 		this.sprints = sprints;
 		this.commits = commits;
 		this.peerReviews = peerReviews;
-		this.comments = comments;
 		this.files = files;
 		this.webLinks = webLinks;
 		this.attachments = attachments;
@@ -115,7 +106,6 @@ public class TeamActivityAnalyticsService {
 				Kind.PEER_REVIEW,
 				startDate,
 				endDate);
-		addEvents(byStudent, comments.findAuthorAndCreatedAtByProject(ctx.projectId()), Kind.COMMENT, startDate, endDate);
 		addEvents(byStudent, files.findAuthorAndCreatedAtByProject(ctx.projectId()), Kind.DOCUMENT, startDate, endDate);
 		addEvents(byStudent, webLinks.findAuthorAndCreatedAtByProject(ctx.projectId()), Kind.DOCUMENT, startDate, endDate);
 		addEvents(
@@ -180,18 +170,15 @@ public class TeamActivityAnalyticsService {
 			}
 		}
 		List<LocalDate> days = enumerateDays(startDate, endDate);
-		int lastIndex = days.size() - 1;
 		List<BurndownPoint> points = new ArrayList<>();
-		for (int i = 0; i < days.size(); i++) {
-			LocalDate day = days.get(i);
+		for (LocalDate day : days) {
 			int doneCount = 0;
 			for (LocalDate done : doneDates) {
 				if (!done.isAfter(day)) {
 					doneCount++;
 				}
 			}
-			int ideal = lastIndex == 0 ? 0 : totalScope * (lastIndex - i) / lastIndex;
-			points.add(new BurndownPoint(day, ideal, totalScope - doneCount, doneCount));
+			points.add(new BurndownPoint(day, totalScope - doneCount, doneCount));
 		}
 		return new BurndownChartResponse(
 				courseId, teamId, sprint.getId(), sprint.getName(), startDate, endDate, totalScope, points);
@@ -326,11 +313,9 @@ public class TeamActivityAnalyticsService {
 				row.fullName(),
 				totals.commits,
 				totals.peerReviews,
-				totals.comments,
 				totals.documents,
 				totals.tasks,
 				totals.activities(),
-				totals.score(),
 				cells);
 	}
 
@@ -339,11 +324,9 @@ public class TeamActivityAnalyticsService {
 				day,
 				counts.commits,
 				counts.peerReviews,
-				counts.comments,
 				counts.documents,
 				counts.tasks,
-				counts.activities(),
-				counts.score());
+				counts.activities());
 	}
 
 	private static String nullToEmpty(String value) {
@@ -357,7 +340,6 @@ public class TeamActivityAnalyticsService {
 	enum Kind {
 		COMMIT,
 		PEER_REVIEW,
-		COMMENT,
 		DOCUMENT,
 		TASK
 	}
@@ -365,7 +347,6 @@ public class TeamActivityAnalyticsService {
 	static final class Counts {
 		long commits;
 		long peerReviews;
-		long comments;
 		long documents;
 		long tasks;
 
@@ -373,7 +354,6 @@ public class TeamActivityAnalyticsService {
 			switch (kind) {
 				case COMMIT -> commits++;
 				case PEER_REVIEW -> peerReviews++;
-				case COMMENT -> comments++;
 				case DOCUMENT -> documents++;
 				case TASK -> tasks++;
 			}
@@ -382,21 +362,12 @@ public class TeamActivityAnalyticsService {
 		void add(Counts other) {
 			commits += other.commits;
 			peerReviews += other.peerReviews;
-			comments += other.comments;
 			documents += other.documents;
 			tasks += other.tasks;
 		}
 
 		long activities() {
-			return commits + peerReviews + comments + documents + tasks;
-		}
-
-		long score() {
-			return commits * SCORE_COMMIT
-					+ peerReviews * SCORE_PEER_REVIEW
-					+ comments * SCORE_COMMENT
-					+ documents * SCORE_DOCUMENT
-					+ tasks * SCORE_TASK;
+			return commits + peerReviews + documents + tasks;
 		}
 	}
 }

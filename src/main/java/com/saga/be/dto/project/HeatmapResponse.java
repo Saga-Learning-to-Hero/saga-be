@@ -22,21 +22,17 @@ public record HeatmapResponse(
 			String fullName,
 			long commits,
 			long peerReviews,
-			long comments,
 			long documents,
 			long tasks,
 			long totalActivities,
-			long totalScore,
 			List<HeatmapCell> cells) {}
 
-	@Schema(description = "One calendar day of activity counts and weighted score.")
+	@Schema(description = "One calendar day of activity counts.")
 	public record HeatmapCell(
 			LocalDate date,
 			long commits,
 			long peerReviews,
-			long comments,
 			long documents,
 			long tasks,
-			long totalActivities,
-			long totalScore) {}
+			long totalActivities) {}
 }
