@@ -174,6 +174,48 @@ class TeamActivityAnalyticsServiceTest {
 		assertThat(student.cells().get(1).totalActivities()).isEqualTo(student.totalActivities());
 		assertThat(student.cells().getFirst().totalActivities()).isZero();
 		assertThat(response.days().get(1).commits()).isEqualTo(2);
+		assertThat(response.days().get(1).actors()).extracting(HeatmapResponse.HeatmapActor::studentId).containsExactly(studentId);
+		assertThat(response.days().getFirst().actors()).isEmpty();
+		assertThat(student.avatar()).isEqualTo("https://lh3.googleusercontent.com/a/se1");
+		assertThat(response.days().get(1).actors().getFirst().avatar()).isEqualTo("https://lh3.googleusercontent.com/a/se1");
+		assertThat(student.cells().get(1).actors()).isEmpty();
+	}
+
+	@Test
+	void heatmapDayListsAvatarsOfStudentsWhoWorked() {
+		stubAssignedLecturer();
+		UUID binh = UUID.randomUUID();
+		UUID chi = UUID.randomUUID();
+		when(members.findFetchedByTeam_Id(teamId))
+				.thenReturn(List.of(
+						activeMember(studentId, "SE1", "An", "https://example.com/an.png"),
+						activeMember(binh, "SE2", "Binh", "https://example.com/binh.png"),
+						activeMember(chi, "SE3", "Chi", "https://example.com/chi.png")));
+		LocalDate day = LocalDate.of(2026, 8, 2);
+		when(commits.findAuthorAndCommittedAtByProject(projectId))
+				.thenReturn(List.<Object[]>of(
+						event(studentId, day.atTime(9, 0)),
+						event(binh, day.atTime(10, 0)),
+						event(chi, day.atTime(11, 0))));
+		when(peerReviews.findReviewerAndCreatedAtByProject(projectId)).thenReturn(List.of());
+		when(files.findAuthorAndCreatedAtByProject(projectId)).thenReturn(List.of());
+		when(webLinks.findAuthorAndCreatedAtByProject(projectId)).thenReturn(List.of());
+		when(attachments.findAssigneeAndCreatedAtByProject(projectId)).thenReturn(List.of());
+		when(tasks.findAssigneeAndCreatedAtByProject(projectId)).thenReturn(List.of());
+
+		HeatmapResponse response =
+				service.heatmap(userId, courseId, teamId, LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 2), null);
+
+		assertThat(response.days().getFirst().actors()).isEmpty();
+		assertThat(response.days().get(1).actors())
+				.extracting(HeatmapResponse.HeatmapActor::studentId)
+				.containsExactly(studentId, binh, chi);
+		assertThat(response.days().get(1).actors())
+				.extracting(HeatmapResponse.HeatmapActor::avatar)
+				.containsExactly(
+						"https://example.com/an.png",
+						"https://example.com/binh.png",
+						"https://example.com/chi.png");
 	}
 
 	@Test
@@ -272,8 +314,13 @@ class TeamActivityAnalyticsServiceTest {
 	}
 
 	private TeamMember activeMember(UUID profileId, String code, String name) {
+		return activeMember(profileId, code, name, "https://lh3.googleusercontent.com/a/" + code.toLowerCase());
+	}
+
+	private TeamMember activeMember(UUID profileId, String code, String name, String avatar) {
 		UserAccount account = new UserAccount();
 		account.setFullName(name);
+		account.setAvatarUrl(avatar);
 		StudentProfile profile = new StudentProfile();
 		profile.setId(profileId);
 		profile.setStudentCode(code);
