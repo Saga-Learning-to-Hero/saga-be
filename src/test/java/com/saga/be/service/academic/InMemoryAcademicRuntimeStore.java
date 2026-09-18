@@ -8,6 +8,8 @@ import com.saga.be.entity.academic.Subject;
 import com.saga.be.entity.academic.SubjectSyllabusVersion;
 import com.saga.be.entity.account.LecturerProfile;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -15,6 +17,9 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 final class InMemoryAcademicRuntimeStore implements AcademicRuntimeStore {
 
@@ -147,8 +152,9 @@ final class InMemoryAcademicRuntimeStore implements AcademicRuntimeStore {
 	}
 
 	@Override
-	public List<Course> listCourses(UUID semesterId, UUID academicClassId, UUID subjectId, UUID lecturerId) {
-		return courses.values().stream()
+	public Page<UUID> listCoursePageIds(
+			UUID semesterId, UUID academicClassId, UUID subjectId, UUID lecturerId, Pageable pageable) {
+		List<UUID> ids = courses.values().stream()
 				.filter(row -> row.getDeletedAt() == null)
 				.filter(row -> semesterId == null
 						|| (row.getSemester() != null && semesterId.equals(row.getSemester().getId())))
@@ -158,8 +164,26 @@ final class InMemoryAcademicRuntimeStore implements AcademicRuntimeStore {
 						|| (row.getSubject() != null && subjectId.equals(row.getSubject().getId())))
 				.filter(row -> lecturerId == null
 						|| (row.getInstructor() != null && lecturerId.equals(row.getInstructor().getId())))
-				.sorted(Comparator.comparing(Course::getName, Comparator.nullsLast(String::compareTo)))
+				.sorted(Comparator.comparing(Course::getName, Comparator.nullsLast(String::compareTo))
+						.thenComparing(course -> course.getId().toString()))
+				.map(Course::getId)
 				.toList();
+		int from = (int) pageable.getOffset();
+		int to = Math.min(from + pageable.getPageSize(), ids.size());
+		List<UUID> slice = from >= ids.size() ? List.of() : ids.subList(from, to);
+		return new PageImpl<>(slice, pageable, ids.size());
+	}
+
+	@Override
+	public List<Course> findCoursesFetchedByIdIn(Collection<UUID> ids) {
+		List<Course> found = new ArrayList<>();
+		for (UUID id : ids) {
+			Course row = courses.get(id);
+			if (row != null && row.getDeletedAt() == null) {
+				found.add(row);
+			}
+		}
+		return found;
 	}
 
 	@Override

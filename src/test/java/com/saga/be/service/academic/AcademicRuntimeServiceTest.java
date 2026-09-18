@@ -9,9 +9,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.saga.be.dto.academic.AcademicClassResponse;
+import com.saga.be.dto.academic.CoursePageResponse;
 import com.saga.be.dto.academic.CourseResponse;
 import com.saga.be.dto.academic.CreateAcademicClassRequest;
 import com.saga.be.dto.academic.CreateCourseRequest;
@@ -19,6 +22,9 @@ import com.saga.be.dto.academic.CreateSemesterRequest;
 import com.saga.be.dto.academic.PatchCourseRequest;
 import com.saga.be.dto.academic.SemesterResponse;
 import com.saga.be.dto.academic.SetActiveSemesterRequest;
+import com.saga.be.entity.academic.AcademicClass;
+import com.saga.be.entity.academic.Course;
+import com.saga.be.entity.academic.Semester;
 import com.saga.be.entity.academic.Subject;
 import com.saga.be.entity.academic.SubjectSyllabusVersion;
 import com.saga.be.entity.account.LecturerProfile;
@@ -33,12 +39,17 @@ import com.saga.be.exception.AcademicException;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.audit.AuditService;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.Comparator;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
@@ -235,6 +246,140 @@ class AcademicRuntimeServiceTest {
 						any(),
 						any(),
 						any());
+	}
+
+	@Test
+	void listCoursesPagesFiltersAndOmitsDeleted() {
+		Fixture fx = fixture();
+		UUID firstClass = fx.classId;
+		UUID secondClass = service.createClass(new CreateAcademicClassRequest(fx.semesterId, "SE1706", "SE1706"), admin, auditReq())
+				.id();
+		UUID thirdClass = service.createClass(new CreateAcademicClassRequest(fx.semesterId, "SE1707", "SE1707"), admin, auditReq())
+				.id();
+		UUID otherSemester = service.createSemester(
+						new CreateSemesterRequest("SP27", "Spring 2027", LocalDate.of(2027, 1, 1), LocalDate.of(2027, 4, 30)),
+						admin,
+						auditReq())
+				.id();
+		UUID otherClass = service.createClass(new CreateAcademicClassRequest(otherSemester, "SE1801", "SE1801"), admin, auditReq())
+				.id();
+		Subject otherSubject = subject("SWT301", SubjectStatus.ACTIVE);
+		SubjectSyllabusVersion otherSyllabus = syllabus(otherSubject, "2026-v1", SyllabusStatus.PUBLISHED);
+		LecturerProfile otherLecturer = lecturer(AccountRole.LECTURER, AccountStatus.ACTIVE);
+
+		CourseResponse zebra = service.createCourse(
+				new CreateCourseRequest(firstClass, fx.subjectId, fx.syllabusId, fx.lecturerId, "C1", "Zebra"),
+				admin,
+				auditReq());
+		CourseResponse alphaHigh = service.createCourse(
+				new CreateCourseRequest(secondClass, fx.subjectId, fx.syllabusId, fx.lecturerId, "C2", "Alpha"),
+				admin,
+				auditReq());
+		CourseResponse alphaLow = service.createCourse(
+				new CreateCourseRequest(thirdClass, otherSubject.getId(), otherSyllabus.getId(), otherLecturer.getId(), "C3", "Alpha"),
+				admin,
+				auditReq());
+		CourseResponse spring = service.createCourse(
+				new CreateCourseRequest(otherClass, fx.subjectId, fx.syllabusId, fx.lecturerId, "C4", "Beta"),
+				admin,
+				auditReq());
+		store.courses.get(spring.id()).setDeletedAt(LocalDateTime.now());
+
+		List<UUID> alphaOrder = List.of(alphaLow, alphaHigh).stream()
+				.sorted(Comparator.comparing((CourseResponse row) -> row.id().toString()))
+				.map(CourseResponse::id)
+				.toList();
+		List<UUID> expectedAll = List.of(alphaOrder.get(0), alphaOrder.get(1), zebra.id());
+
+		CoursePageResponse defaults = service.listCourses(null, null, null, null, null, null);
+		assertEquals(0, defaults.page());
+		assertEquals(50, defaults.size());
+		assertEquals(3, defaults.total());
+		assertEquals(List.of("Alpha", "Alpha", "Zebra"), defaults.items().stream().map(CourseResponse::name).toList());
+		assertEquals(expectedAll, defaults.items().stream().map(CourseResponse::id).toList());
+
+		CoursePageResponse page0 = service.listCourses(null, null, null, null, 0, 2);
+		CoursePageResponse page1 = service.listCourses(null, null, null, null, 1, 2);
+		assertEquals(alphaOrder, page0.items().stream().map(CourseResponse::id).toList());
+		assertEquals(List.of(zebra.id()), page1.items().stream().map(CourseResponse::id).toList());
+		assertEquals(1, page1.page());
+		assertEquals(2, page1.size());
+		assertEquals(3, page1.total());
+
+		CoursePageResponse beyond = service.listCourses(null, null, null, null, 9, 50);
+		assertTrue(beyond.items().isEmpty());
+		assertEquals(9, beyond.page());
+		assertEquals(50, beyond.size());
+		assertEquals(3, beyond.total());
+
+		assertEquals(3, service.listCourses(fx.semesterId, null, null, null, 0, 50).total());
+		assertEquals(expectedAll, service.listCourses(fx.semesterId, null, null, null, 0, 50)
+				.items()
+				.stream()
+				.map(CourseResponse::id)
+				.toList());
+		assertEquals(List.of(zebra.id()), service.listCourses(null, firstClass, null, null, 0, 50)
+				.items()
+				.stream()
+				.map(CourseResponse::id)
+				.toList());
+		assertEquals(2, service.listCourses(null, null, fx.subjectId, null, 0, 50).total());
+		assertEquals(2, service.listCourses(null, null, null, fx.lecturerId, 0, 50).total());
+		assertEquals(2, service.listCourses(fx.semesterId, null, fx.subjectId, null, 0, 50).total());
+		assertEquals(1, service.listCourses(fx.semesterId, firstClass, null, null, 0, 50).total());
+		assertEquals(2, service.listCourses(null, null, fx.subjectId, fx.lecturerId, 0, 50).total());
+		assertEquals(0, service.listCourses(null, null, UUID.randomUUID(), null, 0, 50).total());
+		assertEquals(0, service.listCourses(null, null, null, UUID.randomUUID(), 0, 50).total());
+
+		assertEquals(1, service.listCourses(null, null, null, null, 0, 1).items().size());
+		assertEquals(3, service.listCourses(null, null, null, null, 0, 200).items().size());
+		assertEquals(200, service.listCourses(null, null, null, null, 0, 200).size());
+	}
+
+	@Test
+	void listCoursesRejectsMissingSemesterOrClassAndInvalidPaging() {
+		AcademicException missingSemester = assertThrows(
+				AcademicException.class,
+				() -> service.listCourses(UUID.randomUUID(), null, null, null, 0, 50));
+		assertEquals(AcademicErrorCode.SEMESTER_NOT_FOUND, missingSemester.getCode());
+		AcademicException missingClass = assertThrows(
+				AcademicException.class,
+				() -> service.listCourses(null, UUID.randomUUID(), null, null, 0, 50));
+		assertEquals(AcademicErrorCode.ACADEMIC_CLASS_NOT_FOUND, missingClass.getCode());
+		AcademicException pageEx =
+				assertThrows(AcademicException.class, () -> service.listCourses(null, null, null, null, -1, 50));
+		assertEquals(AcademicErrorCode.REQUEST_INVALID, pageEx.getCode());
+		assertEquals(HttpStatus.BAD_REQUEST, pageEx.getStatus());
+		assertEquals(
+				AcademicErrorCode.REQUEST_INVALID,
+				assertThrows(AcademicException.class, () -> service.listCourses(null, null, null, null, 0, 0)).getCode());
+		assertEquals(
+				AcademicErrorCode.REQUEST_INVALID,
+				assertThrows(AcademicException.class, () -> service.listCourses(null, null, null, null, 0, 201)).getCode());
+		assertEquals(
+				AcademicErrorCode.REQUEST_INVALID,
+				assertThrows(
+								AcademicException.class,
+								() -> service.listCourses(UUID.randomUUID(), null, null, null, -1, 50))
+						.getCode());
+	}
+
+	@Test
+	void listCoursesReconstructsExactIdPageOrderAfterShuffledFetch() {
+		UUID firstId = UUID.fromString("00000000-0000-4000-8000-000000000001");
+		UUID secondId = UUID.fromString("00000000-0000-4000-8000-000000000002");
+		Course first = populatedCourse(firstId, "Alpha");
+		Course second = populatedCourse(secondId, "Alpha");
+		AcademicRuntimeStore mockStore = mock(AcademicRuntimeStore.class);
+		when(mockStore.listCoursePageIds(isNull(), isNull(), isNull(), isNull(), eq(PageRequest.of(0, 50))))
+				.thenReturn(new PageImpl<>(List.of(firstId, secondId), PageRequest.of(0, 50), 2));
+		when(mockStore.findCoursesFetchedByIdIn(List.of(firstId, secondId))).thenReturn(List.of(second, first));
+		AcademicRuntimeService isolated = new AcademicRuntimeService(mockStore, audit);
+
+		CoursePageResponse page = isolated.listCourses(null, null, null, null, 0, 50);
+
+		assertEquals(List.of(firstId, secondId), page.items().stream().map(CourseResponse::id).toList());
+		assertEquals(2, page.total());
 	}
 
 	@Test
@@ -448,6 +593,28 @@ class AcademicRuntimeServiceTest {
 						courseId, new PatchCourseRequest(null, next.getId(), null, null), admin, auditReq()));
 		assertEquals(AcademicErrorCode.COURSE_SYLLABUS_IMMUTABLE, ex.getCode());
 		assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+	}
+
+	private Course populatedCourse(UUID id, String name) {
+		Course course = new Course();
+		course.setId(id);
+		course.setName(name);
+		AcademicClass academicClass = new AcademicClass();
+		academicClass.setId(UUID.randomUUID());
+		academicClass.setClassCode("SE1");
+		academicClass.setName("SE1");
+		course.setAcademicClass(academicClass);
+		Semester semester = new Semester();
+		semester.setId(UUID.randomUUID());
+		semester.setCode("FA26");
+		semester.setName("Fall");
+		course.setSemester(semester);
+		Subject subject = new Subject();
+		subject.setId(UUID.randomUUID());
+		subject.setSubjectCode("SWP391");
+		subject.setName("Software");
+		course.setSubject(subject);
+		return course;
 	}
 
 	private Fixture fixture() {

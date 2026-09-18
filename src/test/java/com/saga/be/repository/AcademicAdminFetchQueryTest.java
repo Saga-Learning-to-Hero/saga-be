@@ -12,17 +12,23 @@ class AcademicAdminFetchQueryTest {
 	void courseSearchFetchesGraphUsedByToCourse() throws Exception {
 		String repository = Files.readString(Path.of("src/main/java/com/saga/be/repository/CourseRepository.java"));
 		assertTrue(repository.contains("List<Course> search("));
+		assertTrue(repository.contains("Page<UUID> findPageIds("));
+		assertTrue(repository.contains("findFetchedByIdIn"));
 		assertTrue(repository.contains("LEFT JOIN FETCH c.academicClass"));
 		assertTrue(repository.contains("LEFT JOIN FETCH c.semester"));
 		assertTrue(repository.contains("LEFT JOIN FETCH c.subject"));
 		assertTrue(repository.contains("LEFT JOIN FETCH c.syllabusVersion"));
 		assertTrue(repository.contains("LEFT JOIN FETCH c.instructor i"));
 		assertTrue(repository.contains("LEFT JOIN FETCH i.userAccount"));
+		assertTrue(repository.contains("order by c.name asc, c.id asc"));
 		String store = Files.readString(Path.of("src/main/java/com/saga/be/service/academic/JpaAcademicRuntimeStore.java"));
 		assertTrue(store.contains("findActiveFetchedById"));
+		assertTrue(store.contains("listCoursePageIds"));
+		assertTrue(store.contains("findCoursesFetchedByIdIn"));
 		String service = Files.readString(Path.of("src/main/java/com/saga/be/service/academic/AcademicRuntimeService.java"));
-		assertTrue(service.contains("store.listCourses"));
-		assertTrue(service.contains("this::toCourse"));
+		assertTrue(service.contains("store.listCoursePageIds"));
+		assertTrue(service.contains("store.findCoursesFetchedByIdIn"));
+		assertTrue(service.contains("this::toCourse") || service.contains("toCourse(course)"));
 	}
 
 	@Test

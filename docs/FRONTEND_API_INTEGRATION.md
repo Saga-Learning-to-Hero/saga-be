@@ -477,7 +477,7 @@ Breaking change phải được nêu rõ.
 | GET | `/oauth2/authorization/google` | Public | — | Auth V1 (if Google configured) | Spring Security OAuth2 |
 | GET | `/login/oauth2/code/google` | Public (callback) | — | Auth V1 (if Google configured) | Spring Security OAuth2 |
 | POST | `/api/admin/subjects` | Session + CSRF | ADMIN | Academic foundation V1 | `AdminSubjectController` |
-| GET | `/api/admin/subjects` | Session | ADMIN | Academic foundation V1 | `AdminSubjectController` |
+| GET | `/api/admin/subjects` | Session | ADMIN | Academic foundation V1; paged `{items, page, size, total}` | `AdminSubjectController` |
 | GET | `/api/admin/subjects/{subjectId}` | Session | ADMIN | Academic foundation V1 | `AdminSubjectController` |
 | PATCH | `/api/admin/subjects/{subjectId}` | Session + CSRF | ADMIN | Academic foundation V1 | `AdminSubjectController` |
 | POST | `/api/admin/subjects/{subjectId}/syllabi` | Session + CSRF | ADMIN | Academic foundation V1 | `AdminSubjectController` |
@@ -498,7 +498,7 @@ Breaking change phải được nêu rõ.
 | GET | `/api/admin/classes/{classId}` | Session | ADMIN | Academic runtime V1 | `AdminAcademicClassController` |
 | PATCH | `/api/admin/classes/{classId}` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminAcademicClassController` |
 | POST | `/api/admin/courses` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminCourseController` |
-| GET | `/api/admin/courses` | Session | ADMIN | Academic runtime V1 | `AdminCourseController` |
+| GET | `/api/admin/courses` | Session | ADMIN | Academic runtime V1; paged `{items, page, size, total}` | `AdminCourseController` |
 | GET | `/api/admin/courses/{courseId}` | Session | ADMIN | Academic runtime V1 | `AdminCourseController` |
 | PATCH | `/api/admin/courses/{courseId}` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminCourseController` |
 | GET | `/api/admin/courses/{courseId}/roster/template` | Session | ADMIN | Course roster V1 | `AdminCourseRosterController` |
@@ -562,7 +562,29 @@ POST /api/admin/subjects
 }
 ```
 
-`code` is trimmed and uppercased. Duplicate code → `SUBJECT_CODE_DUPLICATE` (409). Status is `ACTIVE` / `INACTIVE` catalog lifecycle (not deletion). Legacy `deleted_at` is separate; a deleted subject cannot be `ACTIVE`. List query params: `code`, `status`, `q`.
+`code` is trimmed and uppercased. Duplicate code → `SUBJECT_CODE_DUPLICATE` (409). Status is `ACTIVE` / `INACTIVE` catalog lifecycle (not deletion). Legacy `deleted_at` is separate; a deleted subject cannot be `ACTIVE`.
+
+List is paged (not a root array). Filters keep existing semantics: exact `code`, `status`, infix `q`. Omitted params do not constrain the list.
+
+```
+GET /api/admin/subjects
+    ?code=
+    &status=
+    &q=
+    &page=0
+    &size=50
+```
+
+```json
+{
+  "items": [ ...SubjectResponse ],
+  "page": 0,
+  "size": 50,
+  "total": 123
+}
+```
+
+`page` default 0. `size` default 50, max 200. Invalid `page`/`size` → `REQUEST_INVALID`. FE must read `response.items` instead of a root array.
 
 Create syllabus version (always `DRAFT`):
 
@@ -664,7 +686,30 @@ POST /api/admin/courses
 }
 ```
 
-Optional `courseCode`, `name` (default `{subjectCode} · {classCode}`). List filters: `semesterId`, `academicClassId`, `subjectId`, `lecturerId`. GET returns class, semester, subject, syllabus pin, and lecturer.
+Optional `courseCode`, `name` (default `{subjectCode} · {classCode}`).
+
+List is paged (not a root array). Filters keep existing semantics: `semesterId`, `academicClassId`, `subjectId`, `lecturerId`. Omitted params do not constrain the list. There is **no** `q` filter. Each item is the existing `CourseResponse` (class, semester, subject, syllabus pin, lecturer).
+
+```
+GET /api/admin/courses
+    ?semesterId=
+    &academicClassId=
+    &subjectId=
+    &lecturerId=
+    &page=0
+    &size=50
+```
+
+```json
+{
+  "items": [ ...CourseResponse ],
+  "page": 0,
+  "size": 50,
+  "total": 123
+}
+```
+
+`page` default 0. `size` default 50, max 200. Invalid `page`/`size` → `REQUEST_INVALID`. FE must read `response.items` instead of a root array. `GET /api/lecturer/courses` is unchanged and still returns an unbounded array.
 
 `PATCH /api/admin/courses/{courseId}` may change name, courseCode, lecturer (`COURSE_LECTURER_CHANGED`), or syllabus pin. Syllabus change is rejected with `COURSE_SYLLABUS_IMMUTABLE` if enrollments or projects exist. DRAFT → `COURSE_SYLLABUS_NOT_PUBLISHED`. ARCHIVED → `COURSE_SYLLABUS_ARCHIVED`. Wrong subject → `COURSE_SYLLABUS_SUBJECT_MISMATCH`. Inactive subject → `SUBJECT_STATUS_INVALID`.
 

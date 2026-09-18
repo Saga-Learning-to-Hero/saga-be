@@ -1,6 +1,7 @@
 package com.saga.be.service.academic;
 
 import com.saga.be.dto.academic.AcademicClassResponse;
+import com.saga.be.dto.academic.CoursePageResponse;
 import com.saga.be.dto.academic.CourseResponse;
 import com.saga.be.dto.academic.CreateAcademicClassRequest;
 import com.saga.be.dto.academic.CreateCourseRequest;
@@ -26,15 +27,20 @@ import com.saga.be.entity.enums.SyllabusStatus;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
+import com.saga.be.service.admin.AdminPaging;
 import com.saga.be.service.audit.AuditService;
 import com.saga.be.web.RequestTiming;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -278,17 +284,36 @@ public class AcademicRuntimeService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<CourseResponse> listCourses(UUID semesterId, UUID academicClassId, UUID subjectId, UUID lecturerId) {
+	public CoursePageResponse listCourses(
+			UUID semesterId, UUID academicClassId, UUID subjectId, UUID lecturerId, Integer page, Integer size) {
 		return RequestTiming.record("listCourses", () -> {
+			int pageNumber = AdminPaging.page(page);
+			int pageSize = AdminPaging.size(size);
 			if (semesterId != null) {
 				requireSemester(semesterId);
 			}
 			if (academicClassId != null) {
 				requireClass(academicClassId);
 			}
-			return store.listCourses(semesterId, academicClassId, subjectId, lecturerId).stream()
-					.map(this::toCourse)
-					.toList();
+			Page<UUID> idPage = store.listCoursePageIds(
+					semesterId, academicClassId, subjectId, lecturerId, PageRequest.of(pageNumber, pageSize));
+			List<UUID> orderedIds = idPage.getContent();
+			List<CourseResponse> items = List.of();
+			if (!orderedIds.isEmpty()) {
+				Map<UUID, Course> byId = new HashMap<>();
+				for (Course course : store.findCoursesFetchedByIdIn(orderedIds)) {
+					byId.put(course.getId(), course);
+				}
+				List<CourseResponse> reconstructed = new ArrayList<>(orderedIds.size());
+				for (UUID id : orderedIds) {
+					Course course = byId.get(id);
+					if (course != null) {
+						reconstructed.add(toCourse(course));
+					}
+				}
+				items = reconstructed;
+			}
+			return new CoursePageResponse(items, pageNumber, pageSize, idPage.getTotalElements());
 		});
 	}
 

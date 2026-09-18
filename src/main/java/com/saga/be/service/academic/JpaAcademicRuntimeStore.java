@@ -17,10 +17,13 @@ import com.saga.be.repository.SemesterRepository;
 import com.saga.be.repository.SubjectRepository;
 import com.saga.be.repository.SubjectSyllabusVersionRepository;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -155,8 +158,14 @@ public class JpaAcademicRuntimeStore implements AcademicRuntimeStore {
 	}
 
 	@Override
-	public List<Course> listCourses(UUID semesterId, UUID academicClassId, UUID subjectId, UUID lecturerId) {
-		return courses.search(semesterId, academicClassId, subjectId, lecturerId);
+	public Page<UUID> listCoursePageIds(
+			UUID semesterId, UUID academicClassId, UUID subjectId, UUID lecturerId, Pageable pageable) {
+		return courses.findPageIds(semesterId, academicClassId, subjectId, lecturerId, pageable);
+	}
+
+	@Override
+	public List<Course> findCoursesFetchedByIdIn(Collection<UUID> ids) {
+		return courses.findFetchedByIdIn(ids);
 	}
 
 	@Override

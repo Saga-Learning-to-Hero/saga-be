@@ -7,9 +7,12 @@ import com.saga.be.entity.academic.Semester;
 import com.saga.be.entity.academic.Subject;
 import com.saga.be.entity.academic.SubjectSyllabusVersion;
 import com.saga.be.entity.account.LecturerProfile;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 public interface AcademicRuntimeStore {
 
@@ -45,7 +48,10 @@ public interface AcademicRuntimeStore {
 
 	boolean courseOfferingTaken(UUID academicClassId, UUID subjectId);
 
-	List<Course> listCourses(UUID semesterId, UUID academicClassId, UUID subjectId, UUID lecturerId);
+	Page<UUID> listCoursePageIds(
+			UUID semesterId, UUID academicClassId, UUID subjectId, UUID lecturerId, Pageable pageable);
+
+	List<Course> findCoursesFetchedByIdIn(Collection<UUID> ids);
 
 	Course saveCourse(Course course);
 

@@ -1,5 +1,6 @@
 package com.saga.be.controller;
 
+import com.saga.be.dto.academic.CoursePageResponse;
 import com.saga.be.dto.academic.CourseResponse;
 import com.saga.be.dto.academic.CreateCourseRequest;
 import com.saga.be.dto.academic.PatchCourseRequest;
@@ -8,12 +9,13 @@ import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.academic.AcademicRuntimeService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
-import java.util.List;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
@@ -56,13 +58,18 @@ public class AdminCourseController {
 	}
 
 	@GetMapping
-	@Operation(summary = "List courses")
-	public List<CourseResponse> list(
+	@Workload(WorkloadClass.INTERACTIVE_NORMAL)
+	@Operation(
+			summary = "Paged course offerings. ADMIN only.",
+			description = "page default 0, size default 50, size max 200. Filters: semesterId, academicClassId, subjectId, lecturerId.")
+	public CoursePageResponse list(
 			@RequestParam(required = false) UUID semesterId,
 			@RequestParam(required = false) UUID academicClassId,
 			@RequestParam(required = false) UUID subjectId,
-			@RequestParam(required = false) UUID lecturerId) {
-		return runtime.listCourses(semesterId, academicClassId, subjectId, lecturerId);
+			@RequestParam(required = false) UUID lecturerId,
+			@RequestParam(required = false) Integer page,
+			@RequestParam(required = false) Integer size) {
+		return runtime.listCourses(semesterId, academicClassId, subjectId, lecturerId, page, size);
 	}
 
 	@GetMapping("/{courseId}")
