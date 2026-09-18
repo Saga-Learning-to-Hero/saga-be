@@ -39,6 +39,8 @@ public enum IntegrationErrorCode {
 	JIRA_DELETE_BLOCKED_BY_EVIDENCE,
 	/** Preferred alias when protected task evidence blocks issue delete. */
 	TASK_DELETE_BLOCKED_BY_EVIDENCE,
+	/** Active native SAGA children block delete; no cascade and no silent detach. */
+	TASK_DELETE_BLOCKED_BY_SUBTASKS,
 	JIRA_WEBHOOK_REGISTER_FAILED,
 	JIRA_WEBHOOK_REFRESH_FAILED,
 	JIRA_FIELD_INVALID,

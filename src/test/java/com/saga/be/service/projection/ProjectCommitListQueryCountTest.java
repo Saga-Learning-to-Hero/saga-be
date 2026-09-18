@@ -145,7 +145,8 @@ class ProjectCommitListQueryCountTest {
 		tx = new TransactionTemplate(transactionManager);
 		ProjectDataAuthorization authorization = new ProjectDataAuthorization(users, members, projects);
 		readService = new ProjectProjectionReadService(
-				tasks, commits, links, sprintRepository(), authorization);
+				tasks, commits, links, sprintRepository(), authorization,
+				new TaskHierarchyService(projects, tasks, transactionManager));
 		tx.executeWithoutResult(status -> seedGraph());
 	}
 

@@ -8,6 +8,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -30,6 +32,7 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			left join fetch t.sprint
 			left join fetch t.assigneeStudent ass
 			left join fetch ass.userAccount
+			left join fetch t.parentTask
 			where t.project.id = :projectId
 			  and t.deletedAt is null
 			order by coalesce(t.externalUpdatedAt, t.updatedAt) desc
@@ -46,6 +49,7 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			left join fetch t.sprint
 			left join fetch t.assigneeStudent ass
 			left join fetch ass.userAccount
+			left join fetch t.parentTask
 			where t.id = :id and t.project.id = :projectId and t.deletedAt is null
 			""")
 	Optional<Task> findActiveFetchedByIdAndProject_Id(@Param("id") UUID id, @Param("projectId") UUID projectId);
@@ -185,6 +189,57 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			group by t.project.id
 			""")
 	List<Object[]> findMaxUpdatedAtGroupedByProjects(@Param("projectIds") Collection<UUID> projectIds);
+
+	@Query("select t.parentTask.id from Task t where t.id = :id")
+	Optional<UUID> findParentTaskIdById(@Param("id") UUID id);
+
+	@Query(
+			"""
+			select t.id as id, t.project.id as projectId, t.deletedAt as deletedAt
+			from Task t
+			where t.id = :id
+			""")
+	Optional<TaskParentIdentity> findParentIdentity(@Param("id") UUID id);
+
+	@Query("select t.id from Task t where t.parentTask.id in :parentIds and t.deletedAt is null")
+	List<UUID> findActiveChildIdsByParentIds(@Param("parentIds") Collection<UUID> parentIds);
+
+	boolean existsByParentTask_IdAndDeletedAtIsNull(UUID parentTaskId);
+
+	@Query(
+			"""
+			select t.id, t.title, t.status
+			from Task t
+			where t.parentTask.id = :parentId
+			  and t.deletedAt is null
+			order by t.title
+			""")
+	List<Object[]> findActiveDirectChildSummaries(@Param("parentId") UUID parentId);
+
+	@Query(
+			"""
+			select t.id, t.title, t.status, t.parentTask.id, t.externalKey
+			from Task t
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			  and t.id not in :excludedIds
+			  and (
+			    :qBlank = true
+			    or lower(t.title) like concat(:qPrefix, '%')
+			    or lower(coalesce(t.externalKey, '')) like concat(:qPrefix, '%')
+			  )
+			order by t.title
+			""")
+	Page<Object[]> findParentOptions(
+			@Param("projectId") UUID projectId,
+			@Param("excludedIds") Collection<UUID> excludedIds,
+			@Param("qBlank") boolean qBlank,
+			@Param("qPrefix") String qPrefix,
+			Pageable pageable);
+
+	@Modifying(clearAutomatically = true, flushAutomatically = true)
+	@Query("update Task t set t.parentTask = null where t.project.id = :projectId")
+	int clearParentTaskReferencesByProjectId(@Param("projectId") UUID projectId);
 
 	@Modifying(clearAutomatically = true, flushAutomatically = true)
 	@Query("update Task t set t.blocksTask = null where t.project.id = :projectId")

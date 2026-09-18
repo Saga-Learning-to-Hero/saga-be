@@ -47,6 +47,7 @@ public class JiraTaskProjectionHardReset {
 	 * surface as integrity violations that roll the replacement transaction back.
 	 */
 	public void hardDeleteAllTasksForProject(UUID projectId) {
+		tasks.clearParentTaskReferencesByProjectId(projectId);
 		tasks.clearBlocksTaskReferencesByProjectId(projectId);
 		tasks.deleteByProject_Id(projectId);
 	}

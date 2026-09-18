@@ -3,6 +3,7 @@ package com.saga.be.service.projection;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -66,7 +67,8 @@ class ProjectProjectionReadServiceTest {
 	@BeforeEach
 	void setUp() {
 		authorization = new ProjectDataAuthorization(users, members, projects);
-		service = new ProjectProjectionReadService(tasks, commits, links, sprints, authorization);
+		service = new ProjectProjectionReadService(
+				tasks, commits, links, sprints, authorization, new TaskHierarchyService(projects, tasks, org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class)));
 		projectId = UUID.randomUUID();
 		userId = UUID.randomUUID();
 	}
@@ -356,6 +358,163 @@ class ProjectProjectionReadServiceTest {
 	}
 
 	@Test
+	void listTasks_nativeParent_isLightweightAndDoesNotQueryPerRow() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task parent = new Task();
+		parent.setId(UUID.randomUUID());
+		parent.setTitle("Parent story");
+		Task child = new Task();
+		child.setId(UUID.randomUUID());
+		child.setExternalKey("SAGA-50");
+		child.setTitle("Child");
+		child.setParentTask(parent);
+		child.setParentExternalId("10049");
+		child.setParentExternalKey("SAGA-49");
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(child));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.parent()).isNotNull();
+		assertThat(response.parent().externalId()).isEqualTo("10049");
+		assertThat(response.parent().externalKey()).isEqualTo("SAGA-49");
+		assertThat(response.parentTask()).isNotNull();
+		assertThat(response.parentTask().id()).isEqualTo(parent.getId());
+		assertThat(response.parentTask().title()).isEqualTo("Parent story");
+		assertThat(response.subtasks()).isNull();
+		verify(tasks, never()).findById(any());
+		verify(tasks, never()).findActiveDirectChildSummaries(any());
+	}
+
+	@Test
+	void listTasks_softDeletedNativeParent_isAbsent() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task parent = new Task();
+		parent.setId(UUID.randomUUID());
+		parent.setTitle("Deleted parent");
+		parent.setDeletedAt(java.time.LocalDateTime.now());
+		Task child = new Task();
+		child.setId(UUID.randomUUID());
+		child.setExternalKey("SAGA-50");
+		child.setTitle("Child");
+		child.setParentTask(parent);
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(child));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.parentTask()).isNull();
+		verify(tasks, never()).findById(any());
+		verify(tasks, times(1)).findActiveFetchedByProject_Id(projectId);
+		verify(tasks, never()).findActiveDirectChildSummaries(any());
+	}
+
+	@Test
+	void listTasks_nativeParent_queryCountIndependentOfRowCount() {
+		stubStudent(RoleInTeam.MEMBER);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(tasksWithNativeParents(10));
+		service.listTasks(userId, projectId);
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(tasksWithNativeParents(100));
+		service.listTasks(userId, projectId);
+
+		verify(tasks, times(2)).findActiveFetchedByProject_Id(projectId);
+		verify(links, times(2)).countLinksByProjectGrouped(projectId);
+		verify(tasks, never()).findById(any());
+		verify(tasks, never()).findActiveDirectChildSummaries(any());
+	}
+
+	@Test
+	void getTask_exposesDirectSubtasksOnly() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task parent = new Task();
+		parent.setId(UUID.randomUUID());
+		parent.setTitle("Parent");
+		parent.setStatus(TaskStatus.TODO);
+		when(tasks.findActiveFetchedByIdAndProject_Id(parent.getId(), projectId)).thenReturn(Optional.of(parent));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+		UUID childId = UUID.randomUUID();
+		when(tasks.findActiveDirectChildSummaries(parent.getId()))
+				.thenReturn(java.util.List.<Object[]>of(new Object[] {childId, "Child", TaskStatus.IN_PROGRESS}));
+
+		ProjectTaskResponse response = service.getTask(userId, projectId, parent.getId());
+
+		assertThat(response.subtasks()).containsExactly(new ProjectTaskResponse.Subtask(childId, "Child", "IN_PROGRESS"));
+		assertThat(response.parentTask()).isNull();
+		verify(tasks, times(1)).findActiveDirectChildSummaries(parent.getId());
+		verify(tasks, never()).findById(any());
+	}
+
+	@Test
+	void getTask_softDeletedNativeParent_isAbsent() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task parent = new Task();
+		parent.setId(UUID.randomUUID());
+		parent.setTitle("Deleted parent");
+		parent.setDeletedAt(java.time.LocalDateTime.now());
+		Task child = new Task();
+		child.setId(UUID.randomUUID());
+		child.setTitle("Child");
+		child.setStatus(TaskStatus.TODO);
+		child.setParentTask(parent);
+		when(tasks.findActiveFetchedByIdAndProject_Id(child.getId(), projectId)).thenReturn(Optional.of(child));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+		when(tasks.findActiveDirectChildSummaries(child.getId())).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.getTask(userId, projectId, child.getId());
+
+		assertThat(response.parentTask()).isNull();
+		verify(tasks, times(1)).findActiveFetchedByIdAndProject_Id(child.getId(), projectId);
+		verify(tasks, times(1)).findActiveDirectChildSummaries(child.getId());
+		verify(tasks, never()).findById(any());
+	}
+
+	@Test
+	void getTask_omitsSoftDeletedDirectChildren() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task parent = new Task();
+		parent.setId(UUID.randomUUID());
+		parent.setTitle("Parent");
+		parent.setStatus(TaskStatus.TODO);
+		when(tasks.findActiveFetchedByIdAndProject_Id(parent.getId(), projectId)).thenReturn(Optional.of(parent));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+		UUID activeChildId = UUID.randomUUID();
+		when(tasks.findActiveDirectChildSummaries(parent.getId()))
+				.thenReturn(java.util.List.<Object[]>of(new Object[] {activeChildId, "C1", TaskStatus.TODO}));
+
+		ProjectTaskResponse response = service.getTask(userId, projectId, parent.getId());
+
+		assertThat(response.subtasks()).containsExactly(new ProjectTaskResponse.Subtask(activeChildId, "C1", "TODO"));
+		verify(tasks, times(1)).findActiveDirectChildSummaries(parent.getId());
+		verify(tasks, never()).findById(any());
+	}
+
+	@Test
+	void listParentOptions_adminDenied() {
+		UserAccount admin = account(AccountRole.ADMIN);
+		when(users.findById(userId)).thenReturn(Optional.of(admin));
+		assertThatThrownBy(() -> service.listParentOptions(userId, projectId, null, 0, 20, null))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
+		verify(tasks, never()).findParentOptions(any(), any(), anyBoolean(), any(), any());
+	}
+
+	@Test
+	void listParentOptions_lecturerAssignedAllowed() {
+		UserAccount lecturer = account(AccountRole.LECTURER);
+		when(users.findById(userId)).thenReturn(Optional.of(lecturer));
+		when(projects.existsAssignedToLecturerUser(projectId, userId)).thenReturn(true);
+		when(tasks.findParentOptions(eq(projectId), any(), eq(true), eq(""), any()))
+				.thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(), org.springframework.data.domain.PageRequest.of(0, 20), 0));
+
+		var response = service.listParentOptions(userId, projectId, null, 0, 20, null);
+
+		assertThat(response.items()).isEmpty();
+		assertThat(response.total()).isZero();
+	}
+
+	@Test
 	void listTasks_withLabels_exposesLabelList() {
 		stubStudent(RoleInTeam.MEMBER);
 		Task task = new Task();
@@ -508,6 +667,23 @@ class ProjectProjectionReadServiceTest {
 			task.setExternalKey("SAGA-" + i);
 			task.setTitle("T" + i);
 			task.setStatus(TaskStatus.TODO);
+			rows.add(task);
+		}
+		return rows;
+	}
+
+	private List<Task> tasksWithNativeParents(int n) {
+		List<Task> rows = new ArrayList<>(n);
+		for (int i = 0; i < n; i++) {
+			Task parent = new Task();
+			parent.setId(UUID.randomUUID());
+			parent.setTitle("P" + i);
+			Task task = new Task();
+			task.setId(UUID.randomUUID());
+			task.setExternalKey("SAGA-" + i);
+			task.setTitle("T" + i);
+			task.setStatus(TaskStatus.TODO);
+			task.setParentTask(parent);
 			rows.add(task);
 		}
 		return rows;

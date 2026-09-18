@@ -4,6 +4,7 @@ import com.saga.be.dto.project.ProjectCommitResponse;
 import com.saga.be.dto.project.ProjectSprintResponse;
 import com.saga.be.dto.project.ProjectTaskResponse;
 import com.saga.be.dto.project.ProjectTaskSprintResponse;
+import com.saga.be.dto.project.TaskParentOptionsResponse;
 import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.jira.Sprint;
 import com.saga.be.entity.jira.Task;
@@ -31,18 +32,21 @@ public class ProjectProjectionReadService {
 	private final TaskGitCommitLinkRepository links;
 	private final SprintRepository sprints;
 	private final ProjectDataAuthorization authorization;
+	private final TaskHierarchyService hierarchy;
 
 	public ProjectProjectionReadService(
 			TaskRepository tasks,
 			GitCommitRepository commits,
 			TaskGitCommitLinkRepository links,
 			SprintRepository sprints,
-			ProjectDataAuthorization authorization) {
+			ProjectDataAuthorization authorization,
+			TaskHierarchyService hierarchy) {
 		this.tasks = tasks;
 		this.commits = commits;
 		this.links = links;
 		this.sprints = sprints;
 		this.authorization = authorization;
+		this.hierarchy = hierarchy;
 	}
 
 	@Transactional(readOnly = true)
@@ -60,7 +64,14 @@ public class ProjectProjectionReadService {
 				.orElseThrow(() -> new AcademicException(
 						AcademicErrorCode.PROJECT_NOT_FOUND, HttpStatus.NOT_FOUND, "Task was not found for this project."));
 		Map<UUID, Long> counts = linkCounts(projectId);
-		return toTask(task, counts.getOrDefault(task.getId(), 0L));
+		return toTask(task, counts.getOrDefault(task.getId(), 0L), directSubtasks(task.getId()));
+	}
+
+	@Transactional(readOnly = true)
+	public TaskParentOptionsResponse listParentOptions(
+			UUID userId, UUID projectId, String q, int page, int size, UUID excludeTaskId) {
+		authorization.requireReader(userId, projectId);
+		return hierarchy.listParentOptions(projectId, q, page, size, excludeTaskId);
 	}
 
 	@Transactional(readOnly = true)
@@ -102,6 +113,11 @@ public class ProjectProjectionReadService {
 	}
 
 	static ProjectTaskResponse toTask(Task task, long linkedCommitCount) {
+		return toTask(task, linkedCommitCount, null);
+	}
+
+	static ProjectTaskResponse toTask(
+			Task task, long linkedCommitCount, List<ProjectTaskResponse.Subtask> subtasks) {
 		String assigneeDisplay = null;
 		if (task.getAssigneeStudent() != null
 				&& task.getAssigneeStudent().getUserAccount() != null
@@ -130,6 +146,12 @@ public class ProjectProjectionReadService {
 		ProjectTaskResponse.Parent parent = task.getParentExternalId() == null
 				? null
 				: new ProjectTaskResponse.Parent(task.getParentExternalId(), task.getParentExternalKey());
+		// JOIN FETCH may load a soft-deleted parent via parent_task_id; treat that as absent so
+		// list/detail never expose a deleted title/id as an active hierarchy relation.
+		ProjectTaskResponse.ParentTask parentTask = null;
+		if (task.getParentTask() != null && task.getParentTask().getDeletedAt() == null) {
+			parentTask = new ProjectTaskResponse.ParentTask(task.getParentTask().getId(), task.getParentTask().getTitle());
+		}
 		// Reuses the same reader the contribution/peer-review label-marker feature already relies
 		// on (com.saga.be.service.contribution.TaskLabelParser) -- one canonical parse of
 		// labelsJson, not a second divergent implementation.
@@ -166,7 +188,19 @@ public class ProjectProjectionReadService {
 				linkedCommitCount,
 				task.getExternalUpdatedAt(),
 				task.getCreatedAt(),
-				task.getUpdatedAt());
+				task.getUpdatedAt(),
+				parentTask,
+				subtasks);
+	}
+
+	private List<ProjectTaskResponse.Subtask> directSubtasks(UUID parentId) {
+		List<ProjectTaskResponse.Subtask> children = new java.util.ArrayList<>();
+		for (Object[] row : tasks.findActiveDirectChildSummaries(parentId)) {
+			com.saga.be.entity.enums.TaskStatus status = (com.saga.be.entity.enums.TaskStatus) row[2];
+			children.add(new ProjectTaskResponse.Subtask(
+					(UUID) row[0], (String) row[1], status == null ? null : status.name()));
+		}
+		return children;
 	}
 
 	private ProjectSprintResponse toSprint(Sprint sprint) {

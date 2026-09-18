@@ -4,6 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 
 public record CreateProjectTaskRequest(
 		@NotBlank @Size(max = 255) String summary,
@@ -26,7 +27,9 @@ public record CreateProjectTaskRequest(
 		 * com.saga.be.integration.jira.JiraIssueWriteClient#resolveStartDateFieldId}). Null = no
 		 * start date set on create (Jira's own default).
 		 */
-		LocalDate startDate) {
+		LocalDate startDate,
+		/** Optional native SAGA parent. Null = no native parent. Never written to Jira fields.parent. */
+		UUID parentTaskId) {
 
 	/** Legacy overload (no labels/dueDate/startDate) for existing callers/tests. */
 	public CreateProjectTaskRequest(
@@ -40,7 +43,7 @@ public record CreateProjectTaskRequest(
 			String sprintExternalId) {
 		this(
 				summary, description, issueTypeId, assigneeAccountId, priorityId, storyPoints, sprintId,
-				sprintExternalId, null, null, null);
+				sprintExternalId, null, null, null, null);
 	}
 
 	/** Legacy overload (no dueDate/startDate) for existing callers/tests. */
@@ -56,7 +59,7 @@ public record CreateProjectTaskRequest(
 			List<String> labels) {
 		this(
 				summary, description, issueTypeId, assigneeAccountId, priorityId, storyPoints, sprintId,
-				sprintExternalId, labels, null, null);
+				sprintExternalId, labels, null, null, null);
 	}
 
 	/** Legacy overload (no startDate) for existing callers/tests -- equivalent to {@code startDate=null}. */
@@ -73,7 +76,25 @@ public record CreateProjectTaskRequest(
 			LocalDate dueDate) {
 		this(
 				summary, description, issueTypeId, assigneeAccountId, priorityId, storyPoints, sprintId,
-				sprintExternalId, labels, dueDate, null);
+				sprintExternalId, labels, dueDate, null, null);
+	}
+
+	/** Legacy overload (no native parent) for existing callers/tests. */
+	public CreateProjectTaskRequest(
+			String summary,
+			String description,
+			String issueTypeId,
+			String assigneeAccountId,
+			String priorityId,
+			Integer storyPoints,
+			Long sprintId,
+			String sprintExternalId,
+			List<String> labels,
+			LocalDate dueDate,
+			LocalDate startDate) {
+		this(
+				summary, description, issueTypeId, assigneeAccountId, priorityId, storyPoints, sprintId,
+				sprintExternalId, labels, dueDate, startDate, null);
 	}
 
 	/** Prefer sprintId; sprintExternalId kept for compatibility. */

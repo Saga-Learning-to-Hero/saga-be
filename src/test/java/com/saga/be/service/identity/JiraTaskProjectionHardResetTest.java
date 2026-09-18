@@ -63,6 +63,7 @@ class JiraTaskProjectionHardResetTest {
 	void hardDeleteClearsBlocksThenDeletesTasksAndNeverTouchesProtectedEvidence() {
 		UUID projectId = UUID.randomUUID();
 		reset.hardDeleteAllTasksForProject(projectId);
+		verify(tasks).clearParentTaskReferencesByProjectId(projectId);
 		verify(tasks).clearBlocksTaskReferencesByProjectId(projectId);
 		verify(tasks).deleteByProject_Id(projectId);
 		verify(workSessions, never()).deleteAll();

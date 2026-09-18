@@ -51,11 +51,23 @@ public record ProjectTaskResponse(
 		long linkedCommitCount,
 		LocalDateTime externalUpdatedAt,
 		LocalDateTime createdAt,
-		LocalDateTime updatedAt) {
+		LocalDateTime updatedAt,
+		/** Native SAGA parent (id + title). Null when unset or the parent row is deleted. Distinct from {@link #parent()}. */
+		ParentTask parentTask,
+		/**
+		 * Direct active children only. Null on list/create/patch (omitted from JSON). Populated on
+		 * detail. Never recursive.
+		 */
+		@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+		List<Subtask> subtasks) {
 
 	public record Assignee(String accountId, String displayName, UUID studentId) {}
 
 	public record PriorityDetail(String id, String name) {}
 
 	public record Parent(String externalId, String externalKey) {}
+
+	public record ParentTask(UUID id, String title) {}
+
+	public record Subtask(UUID id, String title, String status) {}
 }

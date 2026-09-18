@@ -480,6 +480,38 @@ class JiraTaskProjectionServiceTest {
 	}
 
 	@Test
+	void upsertBatch_doesNotModifyNativeParentTask() {
+		Task nativeParent = new Task();
+		nativeParent.setId(UUID.randomUUID());
+		nativeParent.setTitle("SAGA parent");
+		Task child = new Task();
+		child.setId(UUID.randomUUID());
+		child.setExternalId("10050");
+		child.setExternalKey("SAGA-50");
+		child.setProject(project);
+		child.setParentTask(nativeParent);
+		child.setParentExternalId("10049");
+		child.setParentExternalKey("SAGA-49");
+		child.setExternalUpdatedAt(LocalDateTime.of(2026, 1, 2, 9, 0));
+		when(tasks.findByProject_IdAndExternalIdIn(eq(project.getId()), any())).thenReturn(List.of(child));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		IssueSummary updated = new IssueSummary(
+				"10050", "SAGA-50", "Still a subtask", "1", "To Do", "new", "Subtask", "10003", null, null, null, null,
+				null, null, null, null, null, null, "2026-01-02T10:05:00Z", false, false, "10099", "SAGA-99", true,
+				List.of(), false, null, false, null, false);
+		assertThat(service.upsertBatch(project, "SAGA", List.of(updated))).isEqualTo(1);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> nativeCaptor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(nativeCaptor.capture());
+		Task saved = nativeCaptor.getValue().getFirst();
+		assertThat(saved.getParentTask()).isSameAs(nativeParent);
+		assertThat(saved.getParentExternalId()).isEqualTo("10099");
+		assertThat(saved.getParentExternalKey()).isEqualTo("SAGA-99");
+	}
+
+	@Test
 	void upsertBatch_webhookPayloadOmittingFields_preservesExistingStoryPointAndSprint() {
 		// Regression: a full sync sets storyPoint=5 and Sprint X; a later partial webhook that
 		// never carries those custom fields (storyPointsProvided/sprintProvided=false) must leave

@@ -6,9 +6,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.saga.be.dto.JiraWriteIncompleteDetails;
 import com.saga.be.dto.project.CreateProjectTaskRequest;
 import com.saga.be.dto.project.PatchProjectTaskRequest;
 import com.saga.be.dto.project.ProjectTaskResponse;
@@ -21,6 +23,8 @@ import com.saga.be.entity.enums.RoleInTeam;
 import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
+import com.saga.be.exception.AcademicErrorCode;
+import com.saga.be.exception.AcademicException;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.jira.JiraIssueWriteClient;
@@ -35,6 +39,7 @@ import com.saga.be.repository.ContributionConfirmationRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.ProjectRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
+import com.saga.be.repository.TaskParentIdentity;
 import com.saga.be.repository.TaskRepository;
 import com.saga.be.repository.TaskWorkSessionRepository;
 import com.saga.be.repository.TeamMemberRepository;
@@ -112,10 +117,16 @@ class ProjectJiraTaskCommandServiceTest {
 				jiraWrite,
 				projection,
 				realtime,
+				new TaskHierarchyService(projects, tasks, transactionManager),
 				transactionManager);
 		userId = UUID.randomUUID();
 		projectId = UUID.randomUUID();
 		lastEvent.set(null);
+		org.mockito.Mockito.lenient().when(projects.lockById(any())).thenAnswer(inv -> {
+			Project locked = new Project();
+			locked.setId(inv.getArgument(0));
+			return Optional.of(locked);
+		});
 	}
 
 	@Test
@@ -1123,6 +1134,385 @@ class ProjectJiraTaskCommandServiceTest {
 		verify(jiraWrite, never()).deleteIssue(any(), any(), any());
 	}
 
+	@Test
+	void create_withoutParent_doesNotAssignNativeParent() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(taskRow());
+
+		ProjectTaskResponse response = service.create(
+				userId, projectId, new CreateProjectTaskRequest("Login", null, null, null, null, null, null, null));
+
+		assertThat(response.parentTask()).isNull();
+		verify(tasks, never()).save(any());
+		verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+	}
+
+	@Test
+	void create_invalidParent_failsBeforeJiraCreateIssue() {
+		stubLeader();
+		UUID parentId = UUID.randomUUID();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(activeJira()));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
+		when(tasks.findParentIdentity(parentId)).thenReturn(Optional.empty());
+
+		assertThatThrownBy(() -> service.create(
+						userId,
+						projectId,
+						new CreateProjectTaskRequest(
+								"Login", null, null, null, null, null, null, null, null, null, null, parentId)))
+				.isInstanceOf(AcademicException.class)
+				.extracting(ex -> ((AcademicException) ex).getCode())
+				.isEqualTo(AcademicErrorCode.TASK_PARENT_INVALID);
+		verify(jiraWrite, never())
+				.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+		verify(tokens, never()).accessToken(any());
+	}
+
+	@Test
+	void create_withParent_assignsAfterLocalUpsert() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		UUID parentId = UUID.randomUUID();
+		Task parent = new Task();
+		parent.setId(parentId);
+		parent.setTitle("Parent");
+		parent.setProject(project);
+		Task saved = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findParentIdentity(parentId)).thenReturn(Optional.of(identity(parentId, projectId, null)));
+		when(tasks.findParentIdentity(saved.getId())).thenReturn(Optional.of(identity(saved.getId(), projectId, null)));
+		when(tasks.findParentTaskIdById(parentId)).thenReturn(Optional.empty());
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(saved.getId(), projectId)).thenReturn(Optional.of(saved));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(parentId, projectId)).thenReturn(Optional.of(parent));
+		when(tasks.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(saved);
+
+		ProjectTaskResponse response = service.create(
+				userId,
+				projectId,
+				new CreateProjectTaskRequest(
+						"Login", null, null, null, null, null, null, null, null, null, null, parentId));
+
+		assertThat(response.parentTask()).isNotNull();
+		assertThat(response.parentTask().id()).isEqualTo(parentId);
+		verify(jiraWrite)
+				.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+		verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+	}
+
+	@Test
+	void create_jiraSucceeds_finalParentValidationFails_commitsProjectionWithoutParent() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		UUID parentId = UUID.randomUUID();
+		Task saved = taskRow();
+		Task parent = new Task();
+		parent.setId(parentId);
+		parent.setTitle("Parent");
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findParentIdentity(parentId))
+				.thenReturn(Optional.of(identity(parentId, projectId, null)))
+				.thenReturn(Optional.of(identity(parentId, projectId, java.time.LocalDateTime.now())));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(saved.getId(), projectId)).thenReturn(Optional.of(saved));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(saved);
+
+		IntegrationException thrown = org.assertj.core.api.Assertions.catchThrowableOfType(
+				() -> service.create(
+						userId,
+						projectId,
+						new CreateProjectTaskRequest(
+								"Login", null, null, null, null, null, null, null, null, null, null, parentId)),
+				IntegrationException.class);
+
+		assertThat(thrown.getCode()).isEqualTo(IntegrationErrorCode.JIRA_WRITE_INCOMPLETE);
+		assertThat(thrown.getStatus()).isEqualTo(org.springframework.http.HttpStatus.BAD_GATEWAY);
+		assertThat(thrown.getMessage()).contains("Local Task already exists");
+		assertThat(thrown.getMessage()).contains("do not retry create");
+		assertThat(thrown.getDetails()).isEqualTo(JiraWriteIncompleteDetails.nativeParentNotApplied(saved.getId()));
+		verify(jiraWrite, times(1))
+				.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+		verify(projection, times(1)).upsertOne(project, "SAGA", canonical);
+		verify(tasks, never()).save(any());
+		assertThat(saved.getParentTask()).isNull();
+
+		when(tasks.findParentIdentity(parentId)).thenReturn(Optional.of(identity(parentId, projectId, null)));
+		when(tasks.findParentIdentity(saved.getId())).thenReturn(Optional.of(identity(saved.getId(), projectId, null)));
+		when(tasks.findParentTaskIdById(parentId)).thenReturn(Optional.empty());
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(parentId, projectId)).thenReturn(Optional.of(parent));
+		when(tasks.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		UUID recoveredTaskId = ((JiraWriteIncompleteDetails) thrown.getDetails()).taskId();
+		ProjectTaskResponse recovered = service.patch(
+				userId,
+				projectId,
+				recoveredTaskId,
+				new PatchProjectTaskRequest(
+						null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+						parentId, null));
+
+		assertThat(recovered.parentTask()).isNotNull();
+		assertThat(recovered.parentTask().id()).isEqualTo(parentId);
+		verify(jiraWrite, times(1))
+				.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+		verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+		verify(tokens, times(1)).accessToken(any());
+	}
+
+	@Test
+	void patch_parentOnly_performsZeroJiraCalls() {
+		stubLeader();
+		Task task = taskRow();
+		UUID parentId = UUID.randomUUID();
+		Task parent = new Task();
+		parent.setId(parentId);
+		parent.setTitle("Parent");
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(parentId, projectId)).thenReturn(Optional.of(parent));
+		when(tasks.findParentIdentity(parentId)).thenReturn(Optional.of(identity(parentId, projectId, null)));
+		when(tasks.findParentIdentity(task.getId())).thenReturn(Optional.of(identity(task.getId(), projectId, null)));
+		when(tasks.findParentTaskIdById(parentId)).thenReturn(Optional.empty());
+		when(tasks.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(
+						null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+						parentId, null));
+
+		verifyZeroProviderInteraction();
+		verify(jiraIntegrations, never()).findByProject_Id(any());
+		verify(projection, never()).upsertOne(any(), any(), any());
+		verify(projects).lockById(projectId);
+		verify(tasks).save(task);
+	}
+
+	@Test
+	void patch_clearParent_clearsNativeParentWithoutJira() {
+		stubLeader();
+		Task task = taskRow();
+		Task parent = new Task();
+		parent.setId(UUID.randomUUID());
+		task.setParentTask(parent);
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tasks.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(
+						null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+						null, true));
+
+		assertThat(response.parentTask()).isNull();
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void patch_mixed_validatesNativeParentBeforeProviderUpdate() {
+		stubLeader();
+		Task task = taskRow();
+		UUID parentId = UUID.randomUUID();
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tasks.findParentIdentity(parentId)).thenReturn(Optional.empty());
+
+		assertThatThrownBy(() -> service.patch(
+						userId,
+						projectId,
+						task.getId(),
+						new PatchProjectTaskRequest(
+								"New title",
+								null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+								parentId,
+								null)))
+				.isInstanceOf(AcademicException.class)
+				.extracting(ex -> ((AcademicException) ex).getCode())
+				.isEqualTo(AcademicErrorCode.TASK_PARENT_INVALID);
+		verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+		verify(tokens, never()).accessToken(any());
+	}
+
+	@Test
+	void patch_mixed_jiraSucceeds_finalParentValidationFails_commitsProjectionWithoutParent() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		UUID parentId = UUID.randomUUID();
+		Task parent = new Task();
+		parent.setId(parentId);
+		parent.setTitle("Parent");
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tasks.findParentIdentity(parentId))
+				.thenReturn(Optional.of(identity(parentId, projectId, null)))
+				.thenReturn(Optional.of(identity(parentId, projectId, java.time.LocalDateTime.now())));
+		when(tasks.findParentIdentity(task.getId())).thenReturn(Optional.of(identity(task.getId(), projectId, null)));
+		when(tasks.findParentTaskIdById(parentId)).thenReturn(Optional.empty());
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "New title");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+
+		IntegrationException thrown = org.assertj.core.api.Assertions.catchThrowableOfType(
+				() -> service.patch(
+						userId,
+						projectId,
+						task.getId(),
+						new PatchProjectTaskRequest(
+								"New title",
+								null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+								parentId,
+								null)),
+				IntegrationException.class);
+
+		assertThat(thrown.getCode()).isEqualTo(IntegrationErrorCode.JIRA_WRITE_INCOMPLETE);
+		assertThat(thrown.getStatus()).isEqualTo(org.springframework.http.HttpStatus.BAD_GATEWAY);
+		assertThat(thrown.getDetails()).isEqualTo(JiraWriteIncompleteDetails.nativeParentNotApplied(task.getId()));
+		verify(jiraWrite, times(1)).updateIssueFields(any(), any(), any(), any());
+		verify(jiraWrite, never())
+				.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+		verify(projection, times(1)).upsertOne(project, "SAGA", canonical);
+		verify(tasks, never()).save(any());
+		assertThat(task.getParentTask()).isNull();
+
+		when(tasks.findParentIdentity(parentId)).thenReturn(Optional.of(identity(parentId, projectId, null)));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(parentId, projectId)).thenReturn(Optional.of(parent));
+		when(tasks.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse recovered = service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(
+						null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+						parentId, null));
+
+		assertThat(recovered.parentTask()).isNotNull();
+		assertThat(recovered.parentTask().id()).isEqualTo(parentId);
+		verify(jiraWrite, times(1)).updateIssueFields(any(), any(), any(), any());
+		verify(jiraWrite, never())
+				.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+		verify(tokens, times(1)).accessToken(any());
+	}
+
+	@Test
+	void patch_contradictoryParentInputRejected() {
+		stubLeader();
+		UUID taskId = UUID.randomUUID();
+		assertThatThrownBy(() -> service.patch(
+						userId,
+						projectId,
+						taskId,
+						new PatchProjectTaskRequest(
+								null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+								UUID.randomUUID(),
+								true)))
+				.isInstanceOf(AcademicException.class)
+				.extracting(ex -> ((AcademicException) ex).getCode())
+				.isEqualTo(AcademicErrorCode.REQUEST_INVALID);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void delete_blockedByActiveNativeChildren_beforeJiraDelete() {
+		stubLeader();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(activeJira()));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(workSessions.existsByTask_Id(task.getId())).thenReturn(false);
+		when(confirmations.existsByTask_Id(task.getId())).thenReturn(false);
+		when(tasks.existsByParentTask_IdAndDeletedAtIsNull(task.getId())).thenReturn(true);
+
+		assertThatThrownBy(() -> service.delete(userId, projectId, task.getId()))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_DELETE_BLOCKED_BY_SUBTASKS);
+		verify(jiraWrite, never()).deleteIssue(any(), any(), any());
+	}
+
+	@Test
+	void delete_softDeletedNativeChildDoesNotBlock() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		Task task = taskRow();
+		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(workSessions.existsByTask_Id(task.getId())).thenReturn(false);
+		when(confirmations.existsByTask_Id(task.getId())).thenReturn(false);
+		when(tasks.existsByParentTask_IdAndDeletedAtIsNull(task.getId())).thenReturn(false);
+		when(tokens.accessToken(integration)).thenReturn("token");
+
+		service.delete(userId, projectId, task.getId());
+
+		verify(tasks).existsByParentTask_IdAndDeletedAtIsNull(task.getId());
+		verify(jiraWrite).deleteIssue("token", "cloud", "10001");
+		verify(projection).softDelete(eq(project), eq("10001"), any());
+	}
+
+	@Test
+	void lecturer_cannotPatchNativeParent() {
+		stubLecturer();
+		assertThatThrownBy(() -> service.patch(
+						userId,
+						projectId,
+						UUID.randomUUID(),
+						new PatchProjectTaskRequest(
+								null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+								UUID.randomUUID(),
+								null)))
+				.isInstanceOf(IntegrationException.class);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void admin_cannotPatchNativeParent() {
+		stubAdmin();
+		assertThatThrownBy(() -> service.patch(
+						userId,
+						projectId,
+						UUID.randomUUID(),
+						new PatchProjectTaskRequest(
+								null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+								UUID.randomUUID(),
+								null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
+	}
+
 	private void verifyZeroProviderInteraction() {
 		verify(tokens, never()).accessToken(any());
 		verify(jiraWrite, never())
@@ -1195,6 +1585,25 @@ class ProjectJiraTaskCommandServiceTest {
 		task.setExternalKey("SAGA-1");
 		task.setTitle("Login");
 		return task;
+	}
+
+	private static TaskParentIdentity identity(UUID id, UUID projectId, java.time.LocalDateTime deletedAt) {
+		return new TaskParentIdentity() {
+			@Override
+			public UUID getId() {
+				return id;
+			}
+
+			@Override
+			public UUID getProjectId() {
+				return projectId;
+			}
+
+			@Override
+			public java.time.LocalDateTime getDeletedAt() {
+				return deletedAt;
+			}
+		};
 	}
 
 	private static IssueSummary summary(String id, String key, String title) {

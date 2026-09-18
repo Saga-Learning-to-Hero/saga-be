@@ -235,6 +235,7 @@ public class JiraTaskProjectionService {
 		// local parent Task row here -- parentExternalId/parentExternalKey are stored verbatim as
 		// Jira's own identity, so a parent that hasn't synced yet (or never will) is not a blocker,
 		// and a parent that syncs later needs no backfill on this row.
+		// Native SAGA parent_task_id is never populated, cleared, or overwritten here.
 		if (issue.parentProvided()) {
 			task.setParentExternalId(issue.parentExternalId());
 			task.setParentExternalKey(issue.parentExternalKey());

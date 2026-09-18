@@ -223,6 +223,34 @@ class TaskProgressSoftDeleteQueryTest {
 		assertThat(rows.getFirst()[0]).isEqualTo(sprint.getId());
 	}
 
+	@Test
+	void findActiveDirectChildSummaries_excludesSoftDeletedChildren() {
+		Task parent = tasks.save(task(project, student, TaskStatus.TODO, null));
+		Task activeChild = task(project, student, TaskStatus.IN_PROGRESS, null);
+		activeChild.setTitle("C1");
+		activeChild.setParentTask(parent);
+		activeChild = tasks.save(activeChild);
+		Task deletedChild = task(project, student, TaskStatus.TODO, LocalDateTime.now());
+		deletedChild.setTitle("C2");
+		deletedChild.setParentTask(parent);
+		tasks.save(deletedChild);
+
+		List<Object[]> rows = tasks.findActiveDirectChildSummaries(parent.getId());
+		assertThat(rows).hasSize(1);
+		assertThat(rows.getFirst()[0]).isEqualTo(activeChild.getId());
+		assertThat(rows.getFirst()[1]).isEqualTo("C1");
+	}
+
+	@Test
+	void existsByParentTask_ignoresSoftDeletedChildren() {
+		Task parent = tasks.save(task(project, student, TaskStatus.TODO, null));
+		Task deletedChild = task(project, student, TaskStatus.TODO, LocalDateTime.now());
+		deletedChild.setParentTask(parent);
+		tasks.save(deletedChild);
+
+		assertThat(tasks.existsByParentTask_IdAndDeletedAtIsNull(parent.getId())).isFalse();
+	}
+
 	private Sprint persistSprint() {
 		JiraIntegration integration = new JiraIntegration();
 		integration.setProject(project);

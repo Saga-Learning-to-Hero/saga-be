@@ -31,7 +31,8 @@ public class GlobalExceptionHandler {
 	@ExceptionHandler(IntegrationException.class)
 	public ResponseEntity<ApiErrorResponse> handleIntegration(IntegrationException ex) {
 		log.info("integration result=failure category={}", ex.getCode());
-		return ResponseEntity.status(ex.getStatus()).body(new ApiErrorResponse(ex.getCode().name(), ex.getMessage()));
+		return ResponseEntity.status(ex.getStatus())
+				.body(new ApiErrorResponse(ex.getCode().name(), ex.getMessage(), ex.getDetails()));
 	}
 
 	@ExceptionHandler(AcademicException.class)

@@ -17,6 +17,7 @@ import com.saga.be.dto.project.ProjectTaskOptionsResponse;
 import com.saga.be.dto.project.ProjectTaskResponse;
 import com.saga.be.dto.project.PutProjectTaskSprintRequest;
 import com.saga.be.dto.project.SprintActivityResponse;
+import com.saga.be.dto.project.TaskParentOptionsResponse;
 import com.saga.be.dto.project.TransitionProjectTaskRequest;
 import com.saga.be.integration.jira.JiraIssueWriteClient.TransitionOption;
 import com.saga.be.security.SagaUserPrincipal;
@@ -103,6 +104,18 @@ public class ProjectProjectionController {
 	public ProjectTaskOptionsResponse taskOptions(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
 		return taskCommands.options(principal.getUserId(), projectId);
+	}
+
+	@GetMapping("/tasks/parent-options")
+	@Operation(summary = "Paged native parent candidates for this project. Owning team students and assigned lecturer.")
+	public TaskParentOptionsResponse parentOptions(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@RequestParam(required = false) String q,
+			@RequestParam(defaultValue = "0") int page,
+			@RequestParam(defaultValue = "20") int size,
+			@RequestParam(required = false) UUID excludeTaskId) {
+		return projections.listParentOptions(principal.getUserId(), projectId, q, page, size, excludeTaskId);
 	}
 
 	@GetMapping("/tasks/{taskId}")

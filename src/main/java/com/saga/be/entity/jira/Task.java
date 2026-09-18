@@ -1,5 +1,6 @@
 package com.saga.be.entity.jira;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.saga.be.entity.BaseEntity;
 import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.enums.Priority;
@@ -37,7 +38,8 @@ import lombok.Setter;
 		@Index(name = "ix_task_project_sprint", columnList = "project_id, sprint_id"),
 		@Index(name = "ix_task_assignee", columnList = "assignee_student_id"),
 		@Index(name = "ix_task_due_date", columnList = "due_date"),
-		@Index(name = "ix_task_external_key", columnList = "external_key")
+		@Index(name = "ix_task_external_key", columnList = "external_key"),
+		@Index(name = "ix_task_parent_task_id", columnList = "parent_task_id")
 	}
 )
 public class Task extends BaseEntity {
@@ -86,6 +88,16 @@ public class Task extends BaseEntity {
 
 	@Column(name = "parent_external_key", length = 64)
 	private String parentExternalKey;
+
+	/**
+	 * SAGA-owned native parent. Distinct from Jira {@link #parentExternalId}/{@link
+	 * #parentExternalKey} (provider metadata) and from {@link #blocksTask} (dependency). Not
+	 * populated or cleared by Jira sync. {@link JsonIgnore} avoids recursive Task serialization.
+	 */
+	@JsonIgnore
+	@ManyToOne(fetch = FetchType.LAZY, optional = true)
+	@JoinColumn(name = "parent_task_id", nullable = true)
+	private Task parentTask;
 
 	@Column(name = "title", length = 500)
 	private String title;
