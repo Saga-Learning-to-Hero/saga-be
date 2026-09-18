@@ -18,6 +18,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.util.StringUtils;
 
 final class InMemoryAcademicCatalogStore implements AcademicCatalogStore {
@@ -49,16 +52,20 @@ final class InMemoryAcademicCatalogStore implements AcademicCatalogStore {
 	}
 
 	@Override
-	public List<Subject> listSubjects(String code, SubjectStatus status, String search) {
-		return subjects.values().stream()
+	public Page<Subject> listSubjects(String code, SubjectStatus status, String search, Pageable pageable) {
+		List<Subject> filtered = subjects.values().stream()
 				.filter(s -> code == null || code.equals(s.getSubjectCode()))
 				.filter(s -> status == null || status == s.getStatus())
 				.filter(s -> !StringUtils.hasText(search)
 						|| containsIgnoreCase(s.getSubjectCode(), search)
 						|| containsIgnoreCase(s.getName(), search)
 						|| containsIgnoreCase(s.getNameVietnamese(), search))
-				.sorted(Comparator.comparing(Subject::getSubjectCode))
+				.sorted(Comparator.comparing(Subject::getSubjectCode).thenComparing(Subject::getId))
 				.toList();
+		int from = (int) pageable.getOffset();
+		int to = Math.min(from + pageable.getPageSize(), filtered.size());
+		List<Subject> slice = from >= filtered.size() ? List.of() : filtered.subList(from, to);
+		return new PageImpl<>(slice, pageable, filtered.size());
 	}
 
 	@Override

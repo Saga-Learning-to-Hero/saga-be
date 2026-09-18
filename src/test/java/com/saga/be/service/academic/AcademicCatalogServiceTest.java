@@ -21,6 +21,7 @@ import com.saga.be.dto.academic.LearningUnitInput;
 import com.saga.be.dto.academic.PatchSubjectRequest;
 import com.saga.be.dto.academic.PatchSyllabusRequest;
 import com.saga.be.dto.academic.PhaseInput;
+import com.saga.be.dto.academic.SubjectPageResponse;
 import com.saga.be.dto.academic.SubjectResponse;
 import com.saga.be.dto.academic.SyllabusDetailResponse;
 import com.saga.be.dto.academic.SyllabusStructureRequest;
@@ -99,6 +100,81 @@ class AcademicCatalogServiceTest {
 		assertEquals(AcademicErrorCode.SUBJECT_CODE_DUPLICATE, ex.getCode());
 		assertEquals(HttpStatus.CONFLICT, ex.getStatus());
 		assertEquals(1, store.subjects.size());
+	}
+
+	@Test
+	void listSubjectsPagesAndFiltersWithoutChangingSemantics() {
+		service.createSubject(new CreateSubjectRequest("SWT301", "Software Testing", "Kiểm thử"), admin, auditReq());
+		SubjectResponse swp = service.createSubject(
+				new CreateSubjectRequest("SWP391", "Software Development Project", "Dự án phần mềm"), admin, auditReq());
+		service.updateSubject(swp.id(), new PatchSubjectRequest(null, null, null, SubjectStatus.INACTIVE), admin, auditReq());
+		service.createSubject(new CreateSubjectRequest("SWE201", "Intro to Software", null), admin, auditReq());
+
+		SubjectPageResponse defaults = service.listSubjects(null, null, null, null, null);
+		assertEquals(0, defaults.page());
+		assertEquals(50, defaults.size());
+		assertEquals(3, defaults.total());
+		assertEquals(List.of("SWE201", "SWP391", "SWT301"), defaults.items().stream().map(SubjectResponse::code).toList());
+		assertTrue(defaults.items().stream().allMatch(row -> row.syllabi().isEmpty()));
+
+		SubjectPageResponse page0 = service.listSubjects(null, null, null, 0, 2);
+		SubjectPageResponse page1 = service.listSubjects(null, null, null, 1, 2);
+		SubjectPageResponse lastPartial = service.listSubjects(null, null, null, 1, 2);
+		assertEquals(List.of("SWE201", "SWP391"), page0.items().stream().map(SubjectResponse::code).toList());
+		assertEquals(List.of("SWT301"), page1.items().stream().map(SubjectResponse::code).toList());
+		assertEquals(1, lastPartial.items().size());
+		assertEquals(3, page1.total());
+		assertEquals(1, page1.page());
+		assertEquals(2, page1.size());
+
+		SubjectPageResponse beyond = service.listSubjects(null, null, null, 9, 50);
+		assertTrue(beyond.items().isEmpty());
+		assertEquals(9, beyond.page());
+		assertEquals(50, beyond.size());
+		assertEquals(3, beyond.total());
+
+		SubjectPageResponse empty = service.listSubjects("NOPE", null, null, 0, 50);
+		assertEquals(0, empty.total());
+		assertTrue(empty.items().isEmpty());
+
+		SubjectPageResponse sizeOne = service.listSubjects(null, null, null, 0, 1);
+		assertEquals(List.of("SWE201"), sizeOne.items().stream().map(SubjectResponse::code).toList());
+		assertEquals(1, sizeOne.size());
+		SubjectPageResponse size200 = service.listSubjects(null, null, null, 0, 200);
+		assertEquals(3, size200.items().size());
+		assertEquals(200, size200.size());
+
+		SubjectPageResponse byCode = service.listSubjects(" swp391 ", null, null, 0, 50);
+		assertEquals(List.of("SWP391"), byCode.items().stream().map(SubjectResponse::code).toList());
+		assertEquals(1, byCode.total());
+
+		SubjectPageResponse byStatus = service.listSubjects(null, SubjectStatus.INACTIVE, null, 0, 50);
+		assertEquals(List.of("SWP391"), byStatus.items().stream().map(SubjectResponse::code).toList());
+
+		SubjectPageResponse byQ = service.listSubjects(null, null, "kiểm", 0, 50);
+		assertEquals(List.of("SWT301"), byQ.items().stream().map(SubjectResponse::code).toList());
+
+		SubjectPageResponse codeAndStatus = service.listSubjects("SWP391", SubjectStatus.INACTIVE, null, 0, 50);
+		assertEquals(1, codeAndStatus.total());
+		SubjectPageResponse codeWrongStatus = service.listSubjects("SWP391", SubjectStatus.ACTIVE, null, 0, 50);
+		assertEquals(0, codeWrongStatus.total());
+
+		SubjectPageResponse qAndStatus = service.listSubjects(null, SubjectStatus.ACTIVE, "soft", 0, 50);
+		assertEquals(List.of("SWE201", "SWT301"), qAndStatus.items().stream().map(SubjectResponse::code).toList());
+	}
+
+	@Test
+	void listSubjectsRejectsInvalidPageAndSize() {
+		AcademicException pageEx =
+				assertThrows(AcademicException.class, () -> service.listSubjects(null, null, null, -1, 50));
+		assertEquals(AcademicErrorCode.REQUEST_INVALID, pageEx.getCode());
+		assertEquals(HttpStatus.BAD_REQUEST, pageEx.getStatus());
+		AcademicException sizeZero =
+				assertThrows(AcademicException.class, () -> service.listSubjects(null, null, null, 0, 0));
+		assertEquals(AcademicErrorCode.REQUEST_INVALID, sizeZero.getCode());
+		AcademicException sizeHigh =
+				assertThrows(AcademicException.class, () -> service.listSubjects(null, null, null, 0, 201));
+		assertEquals(AcademicErrorCode.REQUEST_INVALID, sizeHigh.getCode());
 	}
 
 	@Test

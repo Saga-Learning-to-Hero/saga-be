@@ -4,6 +4,7 @@ import com.saga.be.dto.academic.CreateSubjectRequest;
 import com.saga.be.dto.academic.CreateSyllabusRequest;
 import com.saga.be.dto.academic.PatchSubjectRequest;
 import com.saga.be.dto.academic.PatchSyllabusRequest;
+import com.saga.be.dto.academic.SubjectPageResponse;
 import com.saga.be.dto.academic.SubjectResponse;
 import com.saga.be.dto.academic.SyllabusDetailResponse;
 import com.saga.be.dto.academic.SyllabusStructureRequest;
@@ -14,6 +15,8 @@ import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.academic.AcademicCatalogService;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -61,12 +64,17 @@ public class AdminSubjectController {
 	}
 
 	@GetMapping
-	@Operation(summary = "List subjects")
-	public List<SubjectResponse> list(
+	@Workload(WorkloadClass.INTERACTIVE_NORMAL)
+	@Operation(
+			summary = "Paged subject catalog. ADMIN only.",
+			description = "page default 0, size default 50, size max 200. Filters: exact code, status, infix q.")
+	public SubjectPageResponse list(
 			@RequestParam(required = false) String code,
 			@RequestParam(required = false) SubjectStatus status,
-			@RequestParam(required = false) String q) {
-		return catalog.listSubjects(code, status, q);
+			@RequestParam(required = false) String q,
+			@RequestParam(required = false) Integer page,
+			@RequestParam(required = false) Integer size) {
+		return catalog.listSubjects(code, status, q, page, size);
 	}
 
 	@GetMapping("/{subjectId}")

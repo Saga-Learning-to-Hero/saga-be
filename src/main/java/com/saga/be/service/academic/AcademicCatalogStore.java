@@ -14,6 +14,8 @@ import com.saga.be.entity.enums.SubjectStatus;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 public interface AcademicCatalogStore {
 
@@ -23,7 +25,7 @@ public interface AcademicCatalogStore {
 
 	boolean existsSubjectCode(String code);
 
-	List<Subject> listSubjects(String code, SubjectStatus status, String search);
+	Page<Subject> listSubjects(String code, SubjectStatus status, String search, Pageable pageable);
 
 	Subject saveSubject(Subject subject);
 

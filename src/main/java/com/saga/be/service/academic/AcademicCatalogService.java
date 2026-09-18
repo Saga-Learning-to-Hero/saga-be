@@ -14,6 +14,7 @@ import com.saga.be.dto.academic.PatchSubjectRequest;
 import com.saga.be.dto.academic.PatchSyllabusRequest;
 import com.saga.be.dto.academic.PhaseInput;
 import com.saga.be.dto.academic.PhaseResponse;
+import com.saga.be.dto.academic.SubjectPageResponse;
 import com.saga.be.dto.academic.SubjectResponse;
 import com.saga.be.dto.academic.SyllabusDetailResponse;
 import com.saga.be.dto.academic.SyllabusStructureRequest;
@@ -34,6 +35,7 @@ import com.saga.be.entity.enums.SubjectStatus;
 import com.saga.be.entity.enums.SyllabusStatus;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
+import com.saga.be.service.admin.AdminPaging;
 import com.saga.be.service.audit.AuditService;
 import com.saga.be.web.RequestTiming;
 import java.time.LocalDateTime;
@@ -49,6 +51,8 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -106,12 +110,19 @@ public class AcademicCatalogService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<SubjectResponse> listSubjects(String code, SubjectStatus status, String search) {
+	public SubjectPageResponse listSubjects(
+			String code, SubjectStatus status, String search, Integer page, Integer size) {
 		return RequestTiming.record("listSubjects", () -> {
+			int pageNumber = AdminPaging.page(page);
+			int pageSize = AdminPaging.size(size);
 			String normalized = StringUtils.hasText(code) ? normalizeSubjectCode(code) : null;
-			return store.listSubjects(normalized, status, blankToNull(search)).stream()
-					.map(subject -> toSubjectResponse(subject, List.of()))
-					.toList();
+			Page<Subject> result =
+					store.listSubjects(normalized, status, blankToNull(search), PageRequest.of(pageNumber, pageSize));
+			return new SubjectPageResponse(
+					result.getContent().stream().map(subject -> toSubjectResponse(subject, List.of())).toList(),
+					pageNumber,
+					pageSize,
+					result.getTotalElements());
 		});
 	}
 

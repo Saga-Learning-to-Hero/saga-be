@@ -96,6 +96,33 @@ class SecurityAuthorizationTest {
 	}
 
 	@Test
+	void unauthenticatedCannotListAdminSubjects() throws Exception {
+		mockMvc.perform(get("/api/admin/subjects"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(content().json("{\"code\":\"INVALID_CREDENTIALS\",\"message\":\"Authentication failed.\"}"));
+	}
+
+	@Test
+	void studentCannotListAdminSubjects() throws Exception {
+		mockMvc.perform(get("/api/admin/subjects").with(authentication(auth(AccountRole.STUDENT, "hash"))))
+				.andExpect(status().isForbidden())
+				.andExpect(content().json("{\"code\":\"ACCESS_DENIED\",\"message\":\"Access denied.\"}"));
+	}
+
+	@Test
+	void lecturerCannotListAdminSubjects() throws Exception {
+		mockMvc.perform(get("/api/admin/subjects").with(authentication(auth(AccountRole.LECTURER, "hash"))))
+				.andExpect(status().isForbidden())
+				.andExpect(content().json("{\"code\":\"ACCESS_DENIED\",\"message\":\"Access denied.\"}"));
+	}
+
+	@Test
+	void adminIsNotDeniedListAdminSubjects() throws Exception {
+		mockMvc.perform(get("/api/admin/subjects").with(authentication(auth(AccountRole.ADMIN, "hash"))))
+				.andExpect(status().isNotFound());
+	}
+
+	@Test
 	void passwordSetupRequiredBlocksBusinessApi() throws Exception {
 		mockMvc.perform(get("/api/student/anything").with(authentication(auth(AccountRole.STUDENT, null, "google-sub"))))
 				.andExpect(status().isForbidden())

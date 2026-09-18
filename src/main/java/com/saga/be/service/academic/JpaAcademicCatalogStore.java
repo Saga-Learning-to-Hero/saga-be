@@ -26,6 +26,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -87,9 +89,13 @@ public class JpaAcademicCatalogStore implements AcademicCatalogStore {
 	}
 
 	@Override
-	public List<Subject> listSubjects(String code, SubjectStatus status, String search) {
-		String q = StringUtils.hasText(search) ? search.trim() : null;
-		return subjects.search(code, status, q);
+	public Page<Subject> listSubjects(String code, SubjectStatus status, String search, Pageable pageable) {
+		String q = StringUtils.hasText(search) ? escapeLike(search.trim()) : null;
+		return subjects.search(code, status, q, pageable);
+	}
+
+	static String escapeLike(String value) {
+		return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
 	}
 
 	@Override
