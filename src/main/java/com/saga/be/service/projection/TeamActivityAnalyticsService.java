@@ -3,6 +3,7 @@ package com.saga.be.service.projection;
 import com.saga.be.dto.project.BurndownChartResponse;
 import com.saga.be.dto.project.BurndownChartResponse.BurndownPoint;
 import com.saga.be.dto.project.HeatmapResponse;
+import com.saga.be.dto.project.HeatmapResponse.HeatmapActor;
 import com.saga.be.dto.project.HeatmapResponse.HeatmapCell;
 import com.saga.be.dto.project.HeatmapResponse.StudentHeatmap;
 import com.saga.be.entity.account.StudentProfile;
@@ -118,21 +119,26 @@ public class TeamActivityAnalyticsService {
 
 		List<StudentHeatmap> students = new ArrayList<>();
 		Map<LocalDate, Counts> teamDays = emptyDayMap(startDate, endDate);
+		Map<LocalDate, List<HeatmapActor>> actorsByDay = emptyActorMap(startDate, endDate);
 		for (RosterStudent row : roster) {
 			Map<LocalDate, Counts> days = byStudent.get(row.id());
 			List<HeatmapCell> cells = new ArrayList<>();
 			Counts totals = new Counts();
+			HeatmapActor actor = toActor(row);
 			for (LocalDate day = startDate; !day.isAfter(endDate); day = day.plusDays(1)) {
 				Counts cell = days.get(day);
-				cells.add(toCell(day, cell));
+				cells.add(toCell(day, cell, List.of()));
 				totals.add(cell);
 				teamDays.get(day).add(cell);
+				if (cell.activities() > 0) {
+					actorsByDay.get(day).add(actor);
+				}
 			}
 			students.add(toStudent(row, totals, cells));
 		}
 		List<HeatmapCell> days = new ArrayList<>();
 		for (LocalDate day = startDate; !day.isAfter(endDate); day = day.plusDays(1)) {
-			days.add(toCell(day, teamDays.get(day)));
+			days.add(toCell(day, teamDays.get(day), List.copyOf(actorsByDay.get(day))));
 		}
 		return new HeatmapResponse(courseId, teamId, studentId, startDate, endDate, students, days);
 	}
@@ -215,7 +221,8 @@ public class TeamActivityAnalyticsService {
 			roster.add(new RosterStudent(
 					profile.getId(),
 					profile.getStudentCode(),
-					account == null ? null : account.getFullName()));
+					account == null ? null : account.getFullName(),
+					account == null ? null : account.getAvatarUrl()));
 		}
 		roster.sort(Comparator.comparing((RosterStudent row) -> nullToEmpty(row.studentCode()))
 				.thenComparing(row -> nullToEmpty(row.fullName()))
@@ -257,6 +264,14 @@ public class TeamActivityAnalyticsService {
 		Map<LocalDate, Counts> days = new LinkedHashMap<>();
 		for (LocalDate day = startDate; !day.isAfter(endDate); day = day.plusDays(1)) {
 			days.put(day, new Counts());
+		}
+		return days;
+	}
+
+	private static Map<LocalDate, List<HeatmapActor>> emptyActorMap(LocalDate startDate, LocalDate endDate) {
+		Map<LocalDate, List<HeatmapActor>> days = new LinkedHashMap<>();
+		for (LocalDate day = startDate; !day.isAfter(endDate); day = day.plusDays(1)) {
+			days.put(day, new ArrayList<>());
 		}
 		return days;
 	}
@@ -311,6 +326,7 @@ public class TeamActivityAnalyticsService {
 				row.id(),
 				row.studentCode(),
 				row.fullName(),
+				row.avatar(),
 				totals.commits,
 				totals.peerReviews,
 				totals.documents,
@@ -319,14 +335,19 @@ public class TeamActivityAnalyticsService {
 				cells);
 	}
 
-	private static HeatmapCell toCell(LocalDate day, Counts counts) {
+	private static HeatmapActor toActor(RosterStudent row) {
+		return new HeatmapActor(row.id(), row.studentCode(), row.fullName(), row.avatar());
+	}
+
+	private static HeatmapCell toCell(LocalDate day, Counts counts, List<HeatmapActor> actors) {
 		return new HeatmapCell(
 				day,
 				counts.commits,
 				counts.peerReviews,
 				counts.documents,
 				counts.tasks,
-				counts.activities());
+				counts.activities(),
+				actors);
 	}
 
 	private static String nullToEmpty(String value) {
@@ -335,7 +356,7 @@ public class TeamActivityAnalyticsService {
 
 	private record ProjectContext(UUID projectId) {}
 
-	private record RosterStudent(UUID id, String studentCode, String fullName) {}
+	private record RosterStudent(UUID id, String studentCode, String fullName, String avatar) {}
 
 	enum Kind {
 		COMMIT,

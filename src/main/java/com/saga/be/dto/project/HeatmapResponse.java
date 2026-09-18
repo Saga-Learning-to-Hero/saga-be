@@ -20,6 +20,7 @@ public record HeatmapResponse(
 			UUID studentId,
 			String studentCode,
 			String fullName,
+			String avatar,
 			long commits,
 			long peerReviews,
 			long documents,
@@ -27,12 +28,16 @@ public record HeatmapResponse(
 			long totalActivities,
 			List<HeatmapCell> cells) {}
 
-	@Schema(description = "One calendar day of activity counts.")
+	@Schema(description = "Student who had at least one mapped activity on a calendar day.")
+	public record HeatmapActor(UUID studentId, String studentCode, String fullName, String avatar) {}
+
+	@Schema(description = "One calendar day of activity counts. Team `days` also lists actors for stacked avatars.")
 	public record HeatmapCell(
 			LocalDate date,
 			long commits,
 			long peerReviews,
 			long documents,
 			long tasks,
-			long totalActivities) {}
+			long totalActivities,
+			List<HeatmapActor> actors) {}
 }

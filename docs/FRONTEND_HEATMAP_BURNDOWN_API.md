@@ -139,12 +139,20 @@ interface StudentHeatmap {
   studentId: string;
   studentCode: string | null;
   fullName: string | null;
+  avatar: string | null;    // URL Google / profile; null = placeholder
   commits: number;
   peerReviews: number;
   documents: number;
   tasks: number;
   totalActivities: number;
   cells: HeatmapCell[];     // cùng số phần tử với số ngày trong range
+}
+
+interface HeatmapActor {
+  studentId: string;
+  studentCode: string | null;
+  fullName: string | null;
+  avatar: string | null;
 }
 
 interface HeatmapCell {
@@ -154,10 +162,13 @@ interface HeatmapCell {
   documents: number;
   tasks: number;
   totalActivities: number;
+  actors: HeatmapActor[];   // team `days`: SV có hoạt động ngày đó (chồng avatar). `students[].cells` luôn []
 }
 ```
 
-`days[i]` cùng `date` với `students[*].cells[i]`. Filter `studentId` → `students` 1 phần tử, `days` = cells của người đó, root `studentId` = UUID đó.
+`days[i]` cùng `date` với `students[*].cells[i]`. Filter `studentId` → `students` 1 phần tử, `days` = cells của người đó **kèm** `actors` (0 hoặc 1 người).
+
+Lịch cả nhóm: vẽ `days`. Ô ngày có 3 SV làm việc → `days[i].actors.length === 3`. Chồng `actors[].avatar` lên ô (không có URL thì chữ cái `fullName`/`studentCode`). Hàng từng người: `students[].avatar` bên trái, đừng lấy avatar từ `cells` (`actors` rỗng).
 
 ### Count trên ô
 
@@ -277,9 +288,14 @@ Vẽ heatmap:
 ```js
 const rows = data.students.map((s) => ({
   label: s.fullName || s.studentCode,
+  avatar: s.avatar,
   scores: s.cells.map((c) => c.totalActivities),
 }));
-const dates = data.days.map((d) => d.date);
+const dates = data.days.map((d) => ({
+  date: d.date,
+  score: d.totalActivities,
+  avatars: d.actors.map((a) => ({ studentId: a.studentId, url: a.avatar, name: a.fullName })),
+}));
 ```
 
 Vẽ burndown:
@@ -301,6 +317,7 @@ const chartData = data.points.map((p) => ({
 - Không dùng `/api/v1/courses/...`.
 - Không pad ngày trống — BE đã trả đủ `cells`.
 - Không bịa `comments` / `totalScore` — heatmap không có hai field đó.
+- Không lấy avatar GitHub Identity — dùng `students[].avatar` / `days[].actors[].avatar` (`user_account.avatar_url`).
 - Không bịa đường `idealRemaining` — burndown chỉ có `actualRemaining` + `doneCount`.
 - Không lấy `user.id` làm `studentId`.
 - Không thay heatmap bằng graph Cytoscape, hoặc ngược lại.
