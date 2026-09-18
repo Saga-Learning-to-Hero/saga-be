@@ -47,7 +47,7 @@ public class TeamActivityAnalyticsController {
 	}
 
 	@GetMapping("/sprints/{sprintId}/burndown")
-	@Operation(summary = "Sprint burndown (ideal vs actual remaining tasks).")
+	@Operation(summary = "Sprint burndown (actual remaining tasks).")
 	public BurndownChartResponse burndown(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID courseId,

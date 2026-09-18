@@ -22,7 +22,6 @@ import com.saga.be.entity.project.TeamMember;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.exception.IntegrationException;
-import com.saga.be.repository.CommentRepository;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.PeerReviewRepository;
 import com.saga.be.repository.ProjectRepository;
@@ -59,8 +58,6 @@ class TeamActivityAnalyticsServiceTest {
 	@Mock
 	private PeerReviewRepository peerReviews;
 	@Mock
-	private CommentRepository comments;
-	@Mock
 	private TaskFileRepository files;
 	@Mock
 	private TaskWebLinkRepository webLinks;
@@ -89,7 +86,6 @@ class TeamActivityAnalyticsServiceTest {
 				sprints,
 				commits,
 				peerReviews,
-				comments,
 				files,
 				webLinks,
 				attachments,
@@ -146,7 +142,7 @@ class TeamActivityAnalyticsServiceTest {
 	}
 
 	@Test
-	void heatmapScoresCommitPeerReviewCommentDocumentAndTask() {
+	void heatmapCountsCommitPeerReviewDocumentAndTask() {
 		stubActiveMember();
 		when(members.findFetchedByTeam_Id(teamId)).thenReturn(List.of(activeMember(studentId, "SE1", "An")));
 		LocalDate day = LocalDate.of(2026, 8, 2);
@@ -155,7 +151,6 @@ class TeamActivityAnalyticsServiceTest {
 				.thenReturn(List.<Object[]>of(event(studentId, at), event(studentId, at)));
 		when(peerReviews.findReviewerAndCreatedAtByProject(projectId))
 				.thenReturn(List.<Object[]>of(event(studentId, at)));
-		when(comments.findAuthorAndCreatedAtByProject(projectId)).thenReturn(List.<Object[]>of(event(studentId, at)));
 		when(files.findAuthorAndCreatedAtByProject(projectId)).thenReturn(List.<Object[]>of(event(studentId, at)));
 		when(webLinks.findAuthorAndCreatedAtByProject(projectId)).thenReturn(List.of());
 		when(attachments.findAssigneeAndCreatedAtByProject(projectId)).thenReturn(List.of());
@@ -171,17 +166,56 @@ class TeamActivityAnalyticsServiceTest {
 		HeatmapResponse.StudentHeatmap student = response.students().getFirst();
 		assertThat(student.commits()).isEqualTo(2);
 		assertThat(student.peerReviews()).isEqualTo(1);
-		assertThat(student.comments()).isEqualTo(1);
 		assertThat(student.documents()).isEqualTo(1);
 		assertThat(student.tasks()).isEqualTo(1);
-		assertThat(student.totalActivities()).isEqualTo(6);
-		assertThat(student.totalScore())
-				.isEqualTo(2 * 3 + 2 + 1 + 1 + 2);
+		assertThat(student.totalActivities()).isEqualTo(5);
 		assertThat(student.cells()).hasSize(3);
 		assertThat(student.cells().get(1).date()).isEqualTo(day);
-		assertThat(student.cells().get(1).totalScore()).isEqualTo(student.totalScore());
-		assertThat(student.cells().getFirst().totalScore()).isZero();
+		assertThat(student.cells().get(1).totalActivities()).isEqualTo(student.totalActivities());
+		assertThat(student.cells().getFirst().totalActivities()).isZero();
 		assertThat(response.days().get(1).commits()).isEqualTo(2);
+		assertThat(response.days().get(1).actors()).extracting(HeatmapResponse.HeatmapActor::studentId).containsExactly(studentId);
+		assertThat(response.days().getFirst().actors()).isEmpty();
+		assertThat(student.avatar()).isEqualTo("https://lh3.googleusercontent.com/a/se1");
+		assertThat(response.days().get(1).actors().getFirst().avatar()).isEqualTo("https://lh3.googleusercontent.com/a/se1");
+		assertThat(student.cells().get(1).actors()).isEmpty();
+	}
+
+	@Test
+	void heatmapDayListsAvatarsOfStudentsWhoWorked() {
+		stubAssignedLecturer();
+		UUID binh = UUID.randomUUID();
+		UUID chi = UUID.randomUUID();
+		when(members.findFetchedByTeam_Id(teamId))
+				.thenReturn(List.of(
+						activeMember(studentId, "SE1", "An", "https://example.com/an.png"),
+						activeMember(binh, "SE2", "Binh", "https://example.com/binh.png"),
+						activeMember(chi, "SE3", "Chi", "https://example.com/chi.png")));
+		LocalDate day = LocalDate.of(2026, 8, 2);
+		when(commits.findAuthorAndCommittedAtByProject(projectId))
+				.thenReturn(List.<Object[]>of(
+						event(studentId, day.atTime(9, 0)),
+						event(binh, day.atTime(10, 0)),
+						event(chi, day.atTime(11, 0))));
+		when(peerReviews.findReviewerAndCreatedAtByProject(projectId)).thenReturn(List.of());
+		when(files.findAuthorAndCreatedAtByProject(projectId)).thenReturn(List.of());
+		when(webLinks.findAuthorAndCreatedAtByProject(projectId)).thenReturn(List.of());
+		when(attachments.findAssigneeAndCreatedAtByProject(projectId)).thenReturn(List.of());
+		when(tasks.findAssigneeAndCreatedAtByProject(projectId)).thenReturn(List.of());
+
+		HeatmapResponse response =
+				service.heatmap(userId, courseId, teamId, LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 2), null);
+
+		assertThat(response.days().getFirst().actors()).isEmpty();
+		assertThat(response.days().get(1).actors())
+				.extracting(HeatmapResponse.HeatmapActor::studentId)
+				.containsExactly(studentId, binh, chi);
+		assertThat(response.days().get(1).actors())
+				.extracting(HeatmapResponse.HeatmapActor::avatar)
+				.containsExactly(
+						"https://example.com/an.png",
+						"https://example.com/binh.png",
+						"https://example.com/chi.png");
 	}
 
 	@Test
@@ -194,7 +228,6 @@ class TeamActivityAnalyticsServiceTest {
 		when(commits.findAuthorAndCommittedAtByProject(projectId))
 				.thenReturn(List.<Object[]>of(event(studentId, day.atTime(9, 0)), event(other, day.atTime(11, 0))));
 		when(peerReviews.findReviewerAndCreatedAtByProject(projectId)).thenReturn(List.of());
-		when(comments.findAuthorAndCreatedAtByProject(projectId)).thenReturn(List.of());
 		when(files.findAuthorAndCreatedAtByProject(projectId)).thenReturn(List.of());
 		when(webLinks.findAuthorAndCreatedAtByProject(projectId)).thenReturn(List.of());
 		when(attachments.findAssigneeAndCreatedAtByProject(projectId)).thenReturn(List.of());
@@ -209,7 +242,7 @@ class TeamActivityAnalyticsServiceTest {
 	}
 
 	@Test
-	void burndownUsesIntegerIdealLineAndCompletedAt() {
+	void burndownCountsDoneByCompletedAt() {
 		stubActiveMember();
 		Sprint sprint = sprint(
 				LocalDateTime.of(2026, 8, 1, 0, 0),
@@ -226,14 +259,11 @@ class TeamActivityAnalyticsServiceTest {
 		assertThat(chart.totalScope()).isEqualTo(3);
 		assertThat(chart.points()).hasSize(7);
 		assertThat(chart.points().getFirst().date()).isEqualTo(LocalDate.of(2026, 8, 1));
-		assertThat(chart.points().getFirst().idealRemaining()).isEqualTo(3);
 		assertThat(chart.points().getFirst().actualRemaining()).isEqualTo(3);
 		assertThat(chart.points().getFirst().doneCount()).isZero();
-		assertThat(chart.points().get(1).idealRemaining()).isEqualTo(2);
 		assertThat(chart.points().get(1).doneCount()).isEqualTo(1);
 		assertThat(chart.points().get(1).actualRemaining()).isEqualTo(2);
 		assertThat(chart.points().get(2).doneCount()).isEqualTo(2);
-		assertThat(chart.points().getLast().idealRemaining()).isZero();
 		assertThat(chart.points().getLast().actualRemaining()).isEqualTo(1);
 	}
 
@@ -284,8 +314,13 @@ class TeamActivityAnalyticsServiceTest {
 	}
 
 	private TeamMember activeMember(UUID profileId, String code, String name) {
+		return activeMember(profileId, code, name, "https://lh3.googleusercontent.com/a/" + code.toLowerCase());
+	}
+
+	private TeamMember activeMember(UUID profileId, String code, String name, String avatar) {
 		UserAccount account = new UserAccount();
 		account.setFullName(name);
+		account.setAvatarUrl(avatar);
 		StudentProfile profile = new StudentProfile();
 		profile.setId(profileId);
 		profile.setStudentCode(code);
