@@ -16,6 +16,6 @@ public record BurndownChartResponse(
 		int totalScope,
 		List<BurndownPoint> points) {
 
-	@Schema(description = "One calendar day of remaining vs ideal remaining tasks.")
-	public record BurndownPoint(LocalDate date, int idealRemaining, int actualRemaining, int doneCount) {}
+	@Schema(description = "One calendar day of remaining tasks.")
+	public record BurndownPoint(LocalDate date, int actualRemaining, int doneCount) {}
 }

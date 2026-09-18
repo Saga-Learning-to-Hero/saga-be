@@ -2,7 +2,7 @@
 
 File này là **contract tích hợp Backend ↔ Frontend có hiệu lực** khi public API đã được implement.
 
-> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim) đã chốt. Lecturer Team Management V1 (assigned courses, ACTIVE roster, team XLSX preview/confirm, student my-team) đã chốt. Student My Courses V1 (`GET /api/student/courses`) đã chốt. Team Leader Project Setup V1 (project-type catalog, student team project create/read, then existing GitHub/Jira project integrations) đã chốt. Team Contribution Evaluation V1 (DEC-092 formula on V2 schema) đã chốt. Graph Cytoscape V1 đã chốt (`docs/FRONTEND_GRAPH_API.md`). Heatmap + sprint burndown đã chốt (`docs/HEATMAP_BURNDOWN_API_GUIDE.md`). SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
+> **Trạng thái hiện tại:** Auth V1 + V1.1 public contract đã chốt bên dưới. Admin Subject + versioned syllabus catalog V1 đã chốt. Admin Semester / Academic Class / Course runtime V1 đã chốt. Admin Course Roster V1 (template → preview → confirm + auto-claim) đã chốt. Lecturer Team Management V1 (assigned courses, ACTIVE roster, team XLSX preview/confirm, student my-team) đã chốt. Student My Courses V1 (`GET /api/student/courses`) đã chốt. Team Leader Project Setup V1 (project-type catalog, student team project create/read, then existing GitHub/Jira project integrations) đã chốt. Team Contribution Evaluation V1 (DEC-092 formula on V2 schema) đã chốt. Graph Cytoscape V1 đã chốt (`docs/FRONTEND_GRAPH_API.md`). Heatmap + sprint burndown đã chốt (`docs/FRONTEND_HEATMAP_BURNDOWN_API.md`). SSE vẫn TBD. Email ownership verification for personal registration is a possible future enhancement (not in this contract).
 
 ---
 
@@ -19,7 +19,7 @@ docs/FRONTEND_CONTRIBUTION_API.md      (playbook luồng % đóng góp)
 docs/FRONTEND_TASK_EVIDENCE_API.md     (playbook gắn URL + file vào task)
 docs/FRONTEND_PEER_REVIEW_API.md       (playbook chấm đồng đội theo sprint)
 docs/FRONTEND_GRAPH_API.md             (playbook 5 graph Cytoscape)
-docs/HEATMAP_BURNDOWN_API_GUIDE.md      (heatmap ngày + burndown sprint)
+docs/FRONTEND_HEATMAP_BURNDOWN_API.md   (playbook heatmap ngày + burndown sprint)
 ```
 
 OpenAPI YAML: `http://localhost:8080/v3/api-docs.yaml`.
