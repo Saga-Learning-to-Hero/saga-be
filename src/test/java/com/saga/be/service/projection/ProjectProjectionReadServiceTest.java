@@ -770,6 +770,30 @@ class ProjectProjectionReadServiceTest {
 	}
 
 	@Test
+	void listParentOptions_outsiderDenied() {
+		UserAccount student = account(AccountRole.STUDENT);
+		when(users.findById(userId)).thenReturn(Optional.of(student));
+		when(members.existsActiveByProjectIdAndUserId(projectId, userId)).thenReturn(false);
+		assertThatThrownBy(() -> service.listParentOptions(userId, projectId, null, 0, 20, null))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.INTEGRATION_FORBIDDEN);
+		verify(tasks, never()).findParentOptions(any(), any(), anyBoolean(), any(), any());
+	}
+
+	@Test
+	void listParentOptions_memberAllowed() {
+		stubStudent(RoleInTeam.MEMBER);
+		when(tasks.findParentOptions(eq(projectId), any(), eq(true), eq(""), any()))
+				.thenReturn(new org.springframework.data.domain.PageImpl<>(
+						List.of(), org.springframework.data.domain.PageRequest.of(0, 20), 0));
+		var response = service.listParentOptions(userId, projectId, null, 0, 20, null);
+		assertThat(response.items()).isEmpty();
+		assertThat(response.page()).isZero();
+		assertThat(response.size()).isEqualTo(20);
+	}
+
+	@Test
 	void listParentOptions_lecturerAssignedAllowed() {
 		UserAccount lecturer = account(AccountRole.LECTURER);
 		when(users.findById(userId)).thenReturn(Optional.of(lecturer));

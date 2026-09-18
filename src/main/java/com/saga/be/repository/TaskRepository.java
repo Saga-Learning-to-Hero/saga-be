@@ -228,7 +228,7 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			    or lower(t.title) like concat(:qPrefix, '%')
 			    or lower(coalesce(t.externalKey, '')) like concat(:qPrefix, '%')
 			  )
-			order by t.title
+			order by t.title asc, t.id asc
 			""")
 	Page<Object[]> findParentOptions(
 			@Param("projectId") UUID projectId,

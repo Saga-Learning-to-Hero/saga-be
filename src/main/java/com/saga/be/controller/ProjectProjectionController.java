@@ -113,7 +113,14 @@ public class ProjectProjectionController {
 	}
 
 	@GetMapping("/tasks/parent-options")
-	@Operation(summary = "Paged native parent candidates for this project. Owning team students and assigned lecturer.")
+	@Operation(
+			summary = "Paged native parent candidates for this project. Owning team students and assigned lecturer.",
+			description =
+					"""
+					Local DB only. page default 0, size default 20, size max 50. page < 0 or size
+					outside 1..50 is 400 REQUEST_INVALID (not clamped). Order is title ASC, id ASC.
+					q is prefix search on title and externalKey.
+					""")
 	public TaskParentOptionsResponse parentOptions(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,

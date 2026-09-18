@@ -3,6 +3,7 @@ package com.saga.be.service.projection;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -157,7 +158,7 @@ class TaskHierarchyServiceTest {
 	}
 
 	@Test
-	void parentOptionsCapsSizeAndExcludesSelfAndDescendants() {
+	void parentOptionsExcludesSelfAndDescendants() {
 		UUID grandchild = UUID.randomUUID();
 		when(tasks.findActiveChildIdsByParentIds(any())).thenAnswer(inv -> {
 			java.util.Collection<?> ids = inv.getArgument(0);
@@ -172,7 +173,7 @@ class TaskHierarchyServiceTest {
 		when(tasks.findParentOptions(eq(projectId), any(), eq(true), eq(""), eq(PageRequest.of(0, 50))))
 				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 50), 0));
 
-		TaskParentOptionsResponse response = service.listParentOptions(projectId, "  ", 0, 99, childId);
+		TaskParentOptionsResponse response = service.listParentOptions(projectId, "  ", 0, 50, childId);
 
 		assertThat(response.size()).isEqualTo(50);
 		assertThat(response.page()).isEqualTo(0);
@@ -180,6 +181,34 @@ class TaskHierarchyServiceTest {
 		ArgumentCaptor<Set<UUID>> excluded = ArgumentCaptor.forClass(Set.class);
 		verify(tasks).findParentOptions(eq(projectId), excluded.capture(), eq(true), eq(""), eq(PageRequest.of(0, 50)));
 		assertThat(excluded.getValue()).containsExactlyInAnyOrder(childId, parentId, grandchild);
+	}
+
+	@Test
+	void parentOptionsRejectsInvalidPageAndSizeWithoutClamping() {
+		assertThatThrownBy(() -> service.listParentOptions(projectId, null, -1, 20, null))
+				.isInstanceOf(AcademicException.class)
+				.satisfies(this::assertInvalidPage);
+		assertThatThrownBy(() -> service.listParentOptions(projectId, null, 0, 0, null))
+				.isInstanceOf(AcademicException.class)
+				.satisfies(this::assertInvalidPage);
+		assertThatThrownBy(() -> service.listParentOptions(projectId, null, 0, 51, null))
+				.isInstanceOf(AcademicException.class)
+				.satisfies(this::assertInvalidPage);
+		assertThatThrownBy(() -> service.listParentOptions(projectId, null, 0, 99, null))
+				.isInstanceOf(AcademicException.class)
+				.satisfies(this::assertInvalidPage);
+		verify(tasks, never()).findParentOptions(any(), any(), anyBoolean(), any(), any());
+		verify(tasks, never()).findActiveChildIdsByParentIds(any());
+	}
+
+	@Test
+	void parentOptionsAcceptsSizeBounds() {
+		when(tasks.findParentOptions(eq(projectId), any(), eq(true), eq(""), eq(PageRequest.of(0, 1))))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 1), 0));
+		when(tasks.findParentOptions(eq(projectId), any(), eq(true), eq(""), eq(PageRequest.of(0, 50))))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 50), 0));
+		assertThat(service.listParentOptions(projectId, null, 0, 1, null).size()).isEqualTo(1);
+		assertThat(service.listParentOptions(projectId, null, 0, 50, null).size()).isEqualTo(50);
 	}
 
 	@Test
@@ -194,7 +223,15 @@ class TaskHierarchyServiceTest {
 		TaskParentOptionsResponse response = service.listParentOptions(projectId, "LOG", 1, 20, null);
 
 		assertThat(response.total()).isEqualTo(42);
+		assertThat(response.page()).isEqualTo(1);
+		assertThat(response.size()).isEqualTo(20);
 		assertThat(response.items()).containsExactly(new TaskParentOptionItem(optionId, "Login", "TODO", parentId, "SAGA-1"));
+	}
+
+	private void assertInvalidPage(Throwable ex) {
+		AcademicException academic = (AcademicException) ex;
+		assertThat(academic.getCode()).isEqualTo(AcademicErrorCode.REQUEST_INVALID);
+		assertThat(academic.getStatus()).isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST);
 	}
 
 	@Test

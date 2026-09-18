@@ -124,8 +124,12 @@ public class TaskHierarchyService {
 
 	public TaskParentOptionsResponse listParentOptions(
 			UUID projectId, String q, int page, int size, UUID excludeTaskId) {
-		int pageIndex = Math.max(page, 0);
-		int pageSize = size <= 0 ? PARENT_OPTIONS_DEFAULT_SIZE : Math.min(size, PARENT_OPTIONS_MAX_SIZE);
+		if (page < 0 || size < 1 || size > PARENT_OPTIONS_MAX_SIZE) {
+			throw new AcademicException(
+					AcademicErrorCode.REQUEST_INVALID,
+					HttpStatus.BAD_REQUEST,
+					"page must be >= 0 and size must be between 1 and " + PARENT_OPTIONS_MAX_SIZE + ".");
+		}
 		Set<UUID> excluded = descendantIdsIncludingSelf(excludeTaskId);
 		if (excluded.isEmpty()) {
 			excluded.add(SENTINEL_EXCLUDE);
@@ -133,7 +137,7 @@ public class TaskHierarchyService {
 		boolean qBlank = q == null || q.isBlank();
 		String qPrefix = qBlank ? "" : q.trim().toLowerCase();
 		Page<Object[]> result = tasks.findParentOptions(
-				projectId, excluded, qBlank, qPrefix, PageRequest.of(pageIndex, pageSize));
+				projectId, excluded, qBlank, qPrefix, PageRequest.of(page, size));
 		List<TaskParentOptionItem> items = new ArrayList<>(result.getNumberOfElements());
 		for (Object[] row : result.getContent()) {
 			TaskStatus status = (TaskStatus) row[2];
@@ -144,7 +148,7 @@ public class TaskHierarchyService {
 					(UUID) row[3],
 					(String) row[4]));
 		}
-		return new TaskParentOptionsResponse(items, pageIndex, pageSize, result.getTotalElements());
+		return new TaskParentOptionsResponse(items, page, size, result.getTotalElements());
 	}
 
 	private Set<UUID> descendantIdsIncludingSelf(UUID excludeTaskId) {
