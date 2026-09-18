@@ -34,9 +34,15 @@ class AcademicAdminFetchQueryTest {
 	@Test
 	void classListFetchesSemesterUsedByToClass() throws Exception {
 		String repository = Files.readString(Path.of("src/main/java/com/saga/be/repository/AcademicClassRepository.java"));
-		assertTrue(repository.contains("LEFT JOIN FETCH c.semester"));
-		assertTrue(repository.contains("findByDeletedAtIsNullOrderByClassCodeAsc"));
-		assertTrue(repository.contains("findBySemester_IdAndDeletedAtIsNullOrderByClassCodeAsc"));
+		assertTrue(repository.contains("LEFT JOIN FETCH c.semester") || repository.contains("left join fetch c.semester"));
+		assertTrue(repository.contains("Page<AcademicClass> findPage("));
+		assertTrue(repository.contains("order by c.classCode asc, c.id asc"));
+		assertTrue(repository.contains("select count(c.id)"));
+		String store = Files.readString(Path.of("src/main/java/com/saga/be/service/academic/JpaAcademicRuntimeStore.java"));
+		assertTrue(store.contains("listClassPage"));
+		String service = Files.readString(Path.of("src/main/java/com/saga/be/service/academic/AcademicRuntimeService.java"));
+		assertTrue(service.contains("store.listClassPage"));
+		assertTrue(service.contains("this::toClass") || service.contains("toClass"));
 	}
 
 	@Test

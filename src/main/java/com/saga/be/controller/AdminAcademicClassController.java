@@ -1,5 +1,6 @@
 package com.saga.be.controller;
 
+import com.saga.be.dto.academic.AcademicClassPageResponse;
 import com.saga.be.dto.academic.AcademicClassResponse;
 import com.saga.be.dto.academic.CreateAcademicClassRequest;
 import com.saga.be.dto.academic.PatchAcademicClassRequest;
@@ -8,12 +9,13 @@ import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.academic.AcademicRuntimeService;
+import com.saga.be.workload.Workload;
+import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
-import java.util.List;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
@@ -54,9 +56,15 @@ public class AdminAcademicClassController {
 	}
 
 	@GetMapping
-	@Operation(summary = "List academic classes, optionally filtered by semester")
-	public List<AcademicClassResponse> list(@RequestParam(required = false) UUID semesterId) {
-		return runtime.listClasses(semesterId);
+	@Workload(WorkloadClass.INTERACTIVE_NORMAL)
+	@Operation(
+			summary = "Paged academic classes. ADMIN only.",
+			description = "page default 0, size default 50, size max 200. Filter: semesterId.")
+	public AcademicClassPageResponse list(
+			@RequestParam(required = false) UUID semesterId,
+			@RequestParam(required = false) Integer page,
+			@RequestParam(required = false) Integer size) {
+		return runtime.listClasses(semesterId, page, size);
 	}
 
 	@GetMapping("/{classId}")

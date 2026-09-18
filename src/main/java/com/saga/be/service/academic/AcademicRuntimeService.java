@@ -1,5 +1,6 @@
 package com.saga.be.service.academic;
 
+import com.saga.be.dto.academic.AcademicClassPageResponse;
 import com.saga.be.dto.academic.AcademicClassResponse;
 import com.saga.be.dto.academic.CoursePageResponse;
 import com.saga.be.dto.academic.CourseResponse;
@@ -194,12 +195,16 @@ public class AcademicRuntimeService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<AcademicClassResponse> listClasses(UUID semesterId) {
+	public AcademicClassPageResponse listClasses(UUID semesterId, Integer page, Integer size) {
 		return RequestTiming.record("listClasses", () -> {
+			int pageNumber = AdminPaging.page(page);
+			int pageSize = AdminPaging.size(size);
 			if (semesterId != null) {
 				requireSemester(semesterId);
 			}
-			return store.listClasses(semesterId).stream().map(this::toClass).toList();
+			Page<AcademicClass> result = store.listClassPage(semesterId, PageRequest.of(pageNumber, pageSize));
+			List<AcademicClassResponse> items = result.getContent().stream().map(this::toClass).toList();
+			return new AcademicClassPageResponse(items, pageNumber, pageSize, result.getTotalElements());
 		});
 	}
 

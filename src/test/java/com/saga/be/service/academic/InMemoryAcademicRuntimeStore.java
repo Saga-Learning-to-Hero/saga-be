@@ -119,13 +119,18 @@ final class InMemoryAcademicRuntimeStore implements AcademicRuntimeStore {
 	}
 
 	@Override
-	public List<AcademicClass> listClasses(UUID semesterId) {
-		return classes.values().stream()
+	public Page<AcademicClass> listClassPage(UUID semesterId, Pageable pageable) {
+		List<AcademicClass> rows = classes.values().stream()
 				.filter(row -> row.getDeletedAt() == null)
 				.filter(row -> semesterId == null
 						|| (row.getSemester() != null && semesterId.equals(row.getSemester().getId())))
-				.sorted(Comparator.comparing(AcademicClass::getClassCode))
+				.sorted(Comparator.comparing(AcademicClass::getClassCode, Comparator.nullsLast(String::compareTo))
+						.thenComparing(row -> row.getId().toString()))
 				.toList();
+		int from = (int) pageable.getOffset();
+		int to = Math.min(from + pageable.getPageSize(), rows.size());
+		List<AcademicClass> slice = from >= rows.size() ? List.of() : rows.subList(from, to);
+		return new PageImpl<>(slice, pageable, rows.size());
 	}
 
 	@Override

@@ -384,14 +384,14 @@ Nếu gọi tạo Course khi Syllabus chưa `PUBLISHED` → `COURSE_SYLLABUS_NOT
 | GET/PUT | `/api/admin/semesters/active` | PUT body: `{ semesterId }` — chọn kỳ hiện hành |
 | GET/PATCH | `/api/admin/semesters/{semesterId}` | |
 | POST | `/api/admin/classes` | 201, body: `semesterId, classCode, name` |
-| GET | `/api/admin/classes?semesterId` | |
+| GET | `/api/admin/classes?semesterId&page&size` | paged `{items, page, size, total}`; **đọc `items`**, không phải root array; filter `semesterId` giữ nguyên; **không có `q`**; `page` default 0, `size` default 50, max 200; invalid → `REQUEST_INVALID` |
 | GET/PATCH | `/api/admin/classes/{classId}` | |
 | POST | `/api/admin/courses` | 201, body: `academicClassId, subjectId, syllabusVersionId, lecturerId, courseCode, name` |
 | GET | `/api/admin/courses?semesterId&academicClassId&subjectId&lecturerId&page&size` | paged `{items, page, size, total}`; **đọc `items`**, không phải root array; filter cũ giữ nguyên; **không có `q`**; `page` default 0, `size` default 50, max 200; invalid → `REQUEST_INVALID` |
 | GET/PATCH | `/api/admin/courses/{courseId}` | PATCH không cho đổi `syllabusVersionId` nếu course đã có enrollment/project (`409 COURSE_SYLLABUS_IMMUTABLE`) |
 | GET | `/api/admin/lecturers?active&search` | trả `lecturerProfileId` + `userId` **riêng biệt** — dùng **`lecturerProfileId`** khi gửi `CreateCourseRequest.lecturerId`, KHÔNG dùng `userId` |
 
-`GET /api/admin/subjects` và `GET /api/admin/courses` trả object phân trang, **không** còn root array. FE đọc `items`. `GET /api/lecturer/courses` **không** đổi — vẫn là mảng `CourseResponse` không phân trang.
+`GET /api/admin/subjects`, `GET /api/admin/classes` và `GET /api/admin/courses` trả object phân trang, **không** còn root array. FE đọc `items`. `GET /api/lecturer/courses` **không** đổi — vẫn là mảng `CourseResponse` không phân trang.
 
 ```
 GET /api/admin/courses
@@ -413,6 +413,24 @@ GET /api/admin/courses
 ```
 
 `page` default 0. `size` default 50, max 200. `page < 0` / `size < 1` / `size > 200` → `400 REQUEST_INVALID`. Filter `semesterId`, `academicClassId`, `subjectId`, `lecturerId` giữ semantics cũ (omit = không ràng). **Không có `q`.**
+
+```
+GET /api/admin/classes
+    ?semesterId=
+    &page=0
+    &size=50
+```
+
+```json
+{
+  "items": [ ...AcademicClassResponse ],
+  "page": 0,
+  "size": 50,
+  "total": 123
+}
+```
+
+Filter `semesterId` giữ semantics cũ. Semester không tồn tại / đã xóa → `SEMESTER_NOT_FOUND`. **Không có `q`.**
 
 ---
 

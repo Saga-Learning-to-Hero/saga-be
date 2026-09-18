@@ -13,6 +13,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.saga.be.dto.academic.AcademicClassPageResponse;
 import com.saga.be.dto.academic.AcademicClassResponse;
 import com.saga.be.dto.academic.CoursePageResponse;
 import com.saga.be.dto.academic.CourseResponse;
@@ -210,6 +211,86 @@ class AcademicRuntimeServiceTest {
 		assertEquals("SE1705", later.classCode());
 		assertEquals(sp27, later.semesterId());
 		assertEquals(2, store.classes.size());
+	}
+
+	@Test
+	void listClassesPagesFiltersAndOmitsDeleted() {
+		UUID fa26 = service.createSemester(fa26(), admin, auditReq()).id();
+		UUID sp27 = service.createSemester(
+						new CreateSemesterRequest("SP27", "Spring 2027", LocalDate.of(2027, 1, 1), LocalDate.of(2027, 4, 30)),
+						admin,
+						auditReq())
+				.id();
+		UUID emptySemester = service.createSemester(
+						new CreateSemesterRequest("SU27", "Summer 2027", LocalDate.of(2027, 5, 1), LocalDate.of(2027, 8, 31)),
+						admin,
+						auditReq())
+				.id();
+		AcademicClassResponse se1706 = service.createClass(new CreateAcademicClassRequest(fa26, "SE1706", "SE1706"), admin, auditReq());
+		AcademicClassResponse se1705Fa = service.createClass(new CreateAcademicClassRequest(fa26, "SE1705", "SE1705"), admin, auditReq());
+		AcademicClassResponse se1705Sp = service.createClass(new CreateAcademicClassRequest(sp27, "SE1705", "SE1705"), admin, auditReq());
+		AcademicClassResponse deleted = service.createClass(new CreateAcademicClassRequest(fa26, "SE1799", "SE1799"), admin, auditReq());
+		store.classes.get(deleted.id()).setDeletedAt(LocalDateTime.now());
+
+		List<UUID> se1705Order = List.of(se1705Fa, se1705Sp).stream()
+				.sorted(Comparator.comparing((AcademicClassResponse row) -> row.id().toString()))
+				.map(AcademicClassResponse::id)
+				.toList();
+		List<UUID> expectedAll = List.of(se1705Order.get(0), se1705Order.get(1), se1706.id());
+
+		AcademicClassPageResponse defaults = service.listClasses(null, null, null);
+		assertEquals(0, defaults.page());
+		assertEquals(50, defaults.size());
+		assertEquals(3, defaults.total());
+		assertEquals(List.of("SE1705", "SE1705", "SE1706"), defaults.items().stream().map(AcademicClassResponse::classCode).toList());
+		assertEquals(expectedAll, defaults.items().stream().map(AcademicClassResponse::id).toList());
+
+		AcademicClassPageResponse page0 = service.listClasses(null, 0, 2);
+		AcademicClassPageResponse page1 = service.listClasses(null, 1, 2);
+		assertEquals(se1705Order, page0.items().stream().map(AcademicClassResponse::id).toList());
+		assertEquals(List.of(se1706.id()), page1.items().stream().map(AcademicClassResponse::id).toList());
+		assertEquals(1, page1.page());
+		assertEquals(2, page1.size());
+		assertEquals(3, page1.total());
+
+		AcademicClassPageResponse beyond = service.listClasses(null, 9, 50);
+		assertTrue(beyond.items().isEmpty());
+		assertEquals(9, beyond.page());
+		assertEquals(50, beyond.size());
+		assertEquals(3, beyond.total());
+
+		AcademicClassPageResponse fa26Page = service.listClasses(fa26, 0, 50);
+		assertEquals(2, fa26Page.total());
+		assertEquals("FA26", fa26Page.items().getFirst().semesterCode());
+		assertEquals(
+				List.of(se1705Fa.id(), se1706.id()),
+				fa26Page.items().stream().map(AcademicClassResponse::id).toList());
+		assertEquals(1, service.listClasses(sp27, 0, 50).total());
+		assertEquals(0, service.listClasses(emptySemester, 0, 50).total());
+		assertTrue(service.listClasses(emptySemester, 0, 50).items().isEmpty());
+
+		assertEquals(1, service.listClasses(null, 0, 1).items().size());
+		assertEquals(3, service.listClasses(null, 0, 200).items().size());
+		assertEquals(200, service.listClasses(null, 0, 200).size());
+	}
+
+	@Test
+	void listClassesRejectsMissingSemesterAndInvalidPaging() {
+		AcademicException missingSemester = assertThrows(
+				AcademicException.class, () -> service.listClasses(UUID.randomUUID(), 0, 50));
+		assertEquals(AcademicErrorCode.SEMESTER_NOT_FOUND, missingSemester.getCode());
+		AcademicException pageEx = assertThrows(AcademicException.class, () -> service.listClasses(null, -1, 50));
+		assertEquals(AcademicErrorCode.REQUEST_INVALID, pageEx.getCode());
+		assertEquals(HttpStatus.BAD_REQUEST, pageEx.getStatus());
+		assertEquals(
+				AcademicErrorCode.REQUEST_INVALID,
+				assertThrows(AcademicException.class, () -> service.listClasses(null, 0, 0)).getCode());
+		assertEquals(
+				AcademicErrorCode.REQUEST_INVALID,
+				assertThrows(AcademicException.class, () -> service.listClasses(null, 0, 201)).getCode());
+		assertEquals(
+				AcademicErrorCode.REQUEST_INVALID,
+				assertThrows(AcademicException.class, () -> service.listClasses(UUID.randomUUID(), -1, 50)).getCode());
 	}
 
 	@Test

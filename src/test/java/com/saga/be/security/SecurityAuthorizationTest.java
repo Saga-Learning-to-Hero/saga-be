@@ -186,6 +186,33 @@ class SecurityAuthorizationTest {
 	}
 
 	@Test
+	void unauthenticatedCannotListAdminClasses() throws Exception {
+		mockMvc.perform(get("/api/admin/classes"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(content().json("{\"code\":\"INVALID_CREDENTIALS\",\"message\":\"Authentication failed.\"}"));
+	}
+
+	@Test
+	void studentCannotListAdminClasses() throws Exception {
+		mockMvc.perform(get("/api/admin/classes").with(authentication(auth(AccountRole.STUDENT, "hash"))))
+				.andExpect(status().isForbidden())
+				.andExpect(content().json("{\"code\":\"ACCESS_DENIED\",\"message\":\"Access denied.\"}"));
+	}
+
+	@Test
+	void lecturerCannotListAdminClasses() throws Exception {
+		mockMvc.perform(get("/api/admin/classes").with(authentication(auth(AccountRole.LECTURER, "hash"))))
+				.andExpect(status().isForbidden())
+				.andExpect(content().json("{\"code\":\"ACCESS_DENIED\",\"message\":\"Access denied.\"}"));
+	}
+
+	@Test
+	void adminIsNotDeniedListAdminClasses() throws Exception {
+		mockMvc.perform(get("/api/admin/classes").with(authentication(auth(AccountRole.ADMIN, "hash"))))
+				.andExpect(status().isNotFound());
+	}
+
+	@Test
 	void studentCannotExportOrImportCourseRoster() throws Exception {
 		UUID courseId = UUID.fromString("00000000-0000-0000-0000-000000000099");
 		mockMvc.perform(get("/api/admin/courses/" + courseId + "/roster/template")

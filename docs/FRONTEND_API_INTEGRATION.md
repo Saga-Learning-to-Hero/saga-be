@@ -494,7 +494,7 @@ Breaking change phải được nêu rõ.
 | GET | `/api/admin/semesters/{semesterId}` | Session | ADMIN | Academic runtime V1 | `AdminSemesterController` |
 | PATCH | `/api/admin/semesters/{semesterId}` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminSemesterController` |
 | POST | `/api/admin/classes` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminAcademicClassController` |
-| GET | `/api/admin/classes` | Session | ADMIN | Academic runtime V1 | `AdminAcademicClassController` |
+| GET | `/api/admin/classes` | Session | ADMIN | Academic runtime V1; paged `{items, page, size, total}` | `AdminAcademicClassController` |
 | GET | `/api/admin/classes/{classId}` | Session | ADMIN | Academic runtime V1 | `AdminAcademicClassController` |
 | PATCH | `/api/admin/classes/{classId}` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminAcademicClassController` |
 | POST | `/api/admin/courses` | Session + CSRF | ADMIN | Academic runtime V1 | `AdminCourseController` |
@@ -672,7 +672,25 @@ POST /api/admin/classes
 }
 ```
 
-`GET /api/admin/classes?semesterId=` filters by semester.
+`GET /api/admin/classes` is paged (not a root array). The only filter is `semesterId` and it keeps existing semantics: omitted does not constrain the list; a supplied id must exist and not be deleted (`SEMESTER_NOT_FOUND`). There is **no** `q` filter. Each item is the existing `AcademicClassResponse` (class + semester id/code).
+
+```
+GET /api/admin/classes
+    ?semesterId=
+    &page=0
+    &size=50
+```
+
+```json
+{
+  "items": [ ...AcademicClassResponse ],
+  "page": 0,
+  "size": 50,
+  "total": 123
+}
+```
+
+`page` default 0. `size` default 50, max 200. Invalid `page`/`size` → `REQUEST_INVALID`. FE must read `response.items` instead of a root array.
 
 Create course. Pins a **PUBLISHED** syllabus of the same subject. Lecturer must be an active `lecturer_profile` with role `LECTURER`. Duplicate `(academicClassId, subjectId)` → `COURSE_DUPLICATE` (409).
 

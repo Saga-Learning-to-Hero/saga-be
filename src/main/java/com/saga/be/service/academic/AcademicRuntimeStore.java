@@ -40,7 +40,7 @@ public interface AcademicRuntimeStore {
 
 	boolean classHasCourses(UUID classId);
 
-	List<AcademicClass> listClasses(UUID semesterId);
+	Page<AcademicClass> listClassPage(UUID semesterId, Pageable pageable);
 
 	AcademicClass saveClass(AcademicClass academicClass);
 

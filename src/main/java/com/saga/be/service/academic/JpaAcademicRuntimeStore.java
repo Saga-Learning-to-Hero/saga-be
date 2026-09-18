@@ -135,11 +135,8 @@ public class JpaAcademicRuntimeStore implements AcademicRuntimeStore {
 	}
 
 	@Override
-	public List<AcademicClass> listClasses(UUID semesterId) {
-		if (semesterId == null) {
-			return classes.findByDeletedAtIsNullOrderByClassCodeAsc();
-		}
-		return classes.findBySemester_IdAndDeletedAtIsNullOrderByClassCodeAsc(semesterId);
+	public Page<AcademicClass> listClassPage(UUID semesterId, Pageable pageable) {
+		return classes.findPage(semesterId, pageable);
 	}
 
 	@Override
