@@ -23,6 +23,14 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			""")
 	Optional<GitCommit> findFetchedById(@Param("id") UUID id);
 
+	@Query(
+			"""
+			select c from GitCommit c
+			join fetch c.repo
+			where c.id in :ids
+			""")
+	List<GitCommit> findFetchedByIdIn(@Param("ids") Collection<UUID> ids);
+
 	List<GitCommit> findByRepo_IdAndShaHashIn(UUID repoId, Collection<String> shaHashes);
 
 	@Query(

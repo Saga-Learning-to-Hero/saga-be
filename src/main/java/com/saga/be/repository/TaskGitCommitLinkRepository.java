@@ -56,6 +56,25 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 	List<com.saga.be.entity.github.GitCommit> findFetchedCommitsByProjectAndTask(
 			@Param("projectId") UUID projectId, @Param("taskId") UUID taskId);
 
+	long countByTask_Id(UUID taskId);
+
+	@Query(
+			value =
+					"""
+					select c.id
+					from TaskGitCommitLink l
+					join l.gitCommit c
+					where l.task.id = :taskId
+					order by c.committedAt desc, c.id desc
+					""",
+			countQuery =
+					"""
+					select count(l.id)
+					from TaskGitCommitLink l
+					where l.task.id = :taskId
+					""")
+	Page<UUID> findLinkedCommitIdsByTaskId(@Param("taskId") UUID taskId, Pageable pageable);
+
 	/**
 	 * Progress dashboard: per-student linked-commit attribution for a project — {@code Object[]{UUID
 	 * studentId, Long distinctLinkedCommitCount, Long distinctLinkedTaskCount}}. Distinct-counts both

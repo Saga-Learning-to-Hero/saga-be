@@ -14,6 +14,11 @@ public interface TaskWebLinkRepository extends JpaRepository<TaskWebLink, UUID> 
 
 	List<TaskWebLink> findByTask_IdOrderByCreatedAtAsc(UUID taskId);
 
+	org.springframework.data.domain.Page<TaskWebLink> findByTask_Id(
+			UUID taskId, org.springframework.data.domain.Pageable pageable);
+
+	long countByTask_Id(UUID taskId);
+
 	List<TaskWebLink> findByTask_IdIn(Collection<UUID> taskIds);
 
 	Optional<TaskWebLink> findByTask_IdAndUrlHash(UUID taskId, String urlHash);

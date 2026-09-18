@@ -63,6 +63,18 @@ class AccountStatusEnforcementWebTest {
 	}
 
 	@Test
+	void inactiveStudentCannotReadGenericTaskEvidence() throws Exception {
+		UserAccount account = student(AccountStatus.INACTIVE);
+		when(users.findById(account.getId())).thenReturn(Optional.of(account));
+		UUID projectId = UUID.fromString("00000000-0000-0000-0000-000000000066");
+		UUID taskId = UUID.fromString("00000000-0000-0000-0000-000000000055");
+		mockMvc.perform(get("/api/projects/" + projectId + "/tasks/" + taskId + "/evidence")
+						.with(authentication(SagaAuthentications.authenticated(account))))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.code").value("ACCOUNT_DISABLED"));
+	}
+
+	@Test
 	void leftoverAuthenticatedSessionIsForbiddenWithAccountDisabled() throws Exception {
 		UserAccount account = student(AccountStatus.INACTIVE);
 		when(users.findById(account.getId())).thenReturn(Optional.of(account));

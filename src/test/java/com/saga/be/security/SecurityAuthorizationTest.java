@@ -366,6 +366,14 @@ class SecurityAuthorizationTest {
 	}
 
 	@Test
+	void unauthenticatedCannotReadGenericTaskEvidence() throws Exception {
+		UUID projectId = UUID.fromString("00000000-0000-0000-0000-000000000066");
+		UUID taskId = UUID.fromString("00000000-0000-0000-0000-000000000055");
+		mockMvc.perform(get("/api/projects/" + projectId + "/tasks/" + taskId + "/evidence"))
+				.andExpect(status().isUnauthorized());
+	}
+
+	@Test
 	void unauthenticatedCannotReadOrWriteTaskWebLinks() throws Exception {
 		UUID taskId = UUID.fromString("00000000-0000-0000-0000-000000000055");
 		mockMvc.perform(get("/api/tasks/" + taskId + "/web-links")).andExpect(status().isUnauthorized());

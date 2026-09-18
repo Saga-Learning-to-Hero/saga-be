@@ -17,6 +17,7 @@ import com.saga.be.dto.project.ProjectTaskOptionsResponse;
 import com.saga.be.dto.project.ProjectTaskResponse;
 import com.saga.be.dto.project.PutProjectTaskSprintRequest;
 import com.saga.be.dto.project.SprintActivityResponse;
+import com.saga.be.dto.project.TaskEvidenceResponse;
 import com.saga.be.dto.project.TaskParentOptionsResponse;
 import com.saga.be.dto.project.TransitionProjectTaskRequest;
 import com.saga.be.integration.jira.JiraIssueWriteClient.TransitionOption;
@@ -28,6 +29,7 @@ import com.saga.be.service.projection.ProjectJiraTaskCommandService;
 import com.saga.be.service.projection.ProjectProgressService;
 import com.saga.be.service.projection.ProjectProjectionReadService;
 import com.saga.be.service.projection.ProjectTaskCommitLinkReadService;
+import com.saga.be.service.projection.ProjectTaskEvidenceReadService;
 import com.saga.be.service.projection.SprintActivityAnalyticsService;
 import com.saga.be.service.sync.ProjectManualSyncService;
 import com.saga.be.workload.Workload;
@@ -70,6 +72,7 @@ public class ProjectProjectionController {
 	private final ProjectGitBranchReadService branches;
 	private final ProjectCommitDetailReadService commitDetails;
 	private final ProjectTaskCommitLinkReadService linkReads;
+	private final ProjectTaskEvidenceReadService evidence;
 
 	public ProjectProjectionController(
 			ProjectProjectionReadService projections,
@@ -80,7 +83,8 @@ public class ProjectProjectionController {
 			SprintActivityAnalyticsService sprintActivityAnalytics,
 			ProjectGitBranchReadService branches,
 			ProjectCommitDetailReadService commitDetails,
-			ProjectTaskCommitLinkReadService linkReads) {
+			ProjectTaskCommitLinkReadService linkReads,
+			ProjectTaskEvidenceReadService evidence) {
 		this.projections = projections;
 		this.taskCommands = taskCommands;
 		this.sprintCommands = sprintCommands;
@@ -90,6 +94,7 @@ public class ProjectProjectionController {
 		this.branches = branches;
 		this.commitDetails = commitDetails;
 		this.linkReads = linkReads;
+		this.evidence = evidence;
 	}
 
 	@GetMapping("/tasks")
@@ -125,6 +130,24 @@ public class ProjectProjectionController {
 			@PathVariable UUID projectId,
 			@PathVariable UUID taskId) {
 		return projections.getTask(principal.getUserId(), projectId, taskId);
+	}
+
+	@GetMapping("/tasks/{taskId}/evidence")
+	@Operation(
+			summary = "Read-only Task Evidence from local commit links, files, and web links.",
+			description =
+					"""
+					Grouped preview when type is omitted (size is LIMIT per type, page must be 0).
+					Typed paging when type=COMMIT|FILE|WEB_LINK. Local DB only; no GitHub/Jira HTTP.
+					""")
+	public TaskEvidenceResponse taskEvidence(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@PathVariable UUID taskId,
+			@RequestParam(required = false) String type,
+			@RequestParam(required = false) Integer page,
+			@RequestParam(required = false) Integer size) {
+		return evidence.list(principal.getUserId(), projectId, taskId, type, page, size);
 	}
 
 	@PostMapping("/tasks")

@@ -14,6 +14,8 @@ public interface TaskFileRepository extends JpaRepository<TaskFile, UUID> {
 
 	List<TaskFile> findByTask_IdOrderByCreatedAtAsc(UUID taskId);
 
+	org.springframework.data.domain.Page<TaskFile> findByTask_Id(UUID taskId, org.springframework.data.domain.Pageable pageable);
+
 	List<TaskFile> findByTask_IdIn(Collection<UUID> taskIds);
 
 	Optional<TaskFile> findByTask_IdAndContentHash(UUID taskId, String contentHash);
