@@ -40,6 +40,7 @@ import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.GitRepoRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
+import com.saga.be.repository.PeerReviewRepository;
 import com.saga.be.repository.SprintRepository;
 import com.saga.be.repository.StudentDashboardAnomalyCandidateRow;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
@@ -81,6 +82,8 @@ class StudentDashboardServiceTest {
 	private GitCommitRepository commits;
 	@Mock
 	private TaskGitCommitLinkRepository commitLinks;
+	@Mock
+	private PeerReviewRepository peerReviews;
 
 	private static final Clock UTC_SUNDAY = Clock.fixed(Instant.parse("2026-09-20T12:00:00Z"), ZoneOffset.UTC);
 
@@ -93,7 +96,16 @@ class StudentDashboardServiceTest {
 	@BeforeEach
 	void setUp() {
 		service = new StudentDashboardService(
-				enrollments, members, jiraIntegrations, repos, sprints, tasks, commits, commitLinks, UTC_SUNDAY);
+				enrollments,
+				members,
+				jiraIntegrations,
+				repos,
+				sprints,
+				tasks,
+				commits,
+				commitLinks,
+				peerReviews,
+				UTC_SUNDAY);
 		account = new UserAccount();
 		account.setId(UUID.randomUUID());
 		account.setEmail("member@gmail.com");
@@ -145,6 +157,7 @@ class StudentDashboardServiceTest {
 		assertEquals(LocalDate.of(2026, 8, 31), response.weeklyCommits().getFirst().startDate());
 		assertEquals(LocalDate.of(2026, 9, 20), response.weeklyCommits().get(2).endDate());
 		assertEquals(0L, response.weeklyCommits().getFirst().commits());
+		assertTrue(response.actionableAlerts().isEmpty());
 	}
 
 	@Test
@@ -190,6 +203,7 @@ class StudentDashboardServiceTest {
 		assertTrue(response.myActiveTasks().isEmpty());
 		assertTrue(response.recentCommits().isEmpty());
 		assertTrue(response.weeklyCommits().isEmpty());
+		assertTrue(response.actionableAlerts().isEmpty());
 		verify(members, never()).countActiveByTeam_Id(any());
 		verify(jiraIntegrations, never()).findByProject_Id(any());
 		verify(repos, never()).countAndMaxLastSyncedAtGroupedByStatus(any());
@@ -197,6 +211,7 @@ class StudentDashboardServiceTest {
 		verify(tasks, never()).countStatusAndStoryPointsForAssignee(any(), any());
 		verify(commits, never()).countAndMaxCommittedAtByProjectAndAuthor(any(), any());
 		verify(commits, never()).findWeeklyCommittedAtByProjectAndAuthor(any(), any(), any(), any());
+		verify(peerReviews, never()).countRemainingPeers(any(), any(), any());
 	}
 
 	@Test
@@ -220,10 +235,12 @@ class StudentDashboardServiceTest {
 		assertTrue(response.myActiveTasks().isEmpty());
 		assertTrue(response.recentCommits().isEmpty());
 		assertTrue(response.weeklyCommits().isEmpty());
+		assertTrue(response.actionableAlerts().isEmpty());
 		verify(jiraIntegrations, never()).findByProject_Id(any());
 		verify(tasks, never()).countStatusAndStoryPointsForAssignee(any(), any());
 		verify(commits, never()).countAndMaxCommittedAtByProjectAndAuthor(any(), any());
 		verify(commits, never()).findWeeklyCommittedAtByProjectAndAuthor(any(), any(), any(), any());
+		verify(peerReviews, never()).countRemainingPeers(any(), any(), any());
 	}
 
 	@Test
@@ -521,7 +538,8 @@ class StudentDashboardServiceTest {
 						new Object[] {open.getId(), 2L, 1L},
 						new Object[] {anomaly.getId(), 1L, 0L}));
 
-		var preview = service.get(account.getId(), course.getId()).myActiveTasks();
+		var response = service.get(account.getId(), course.getId());
+		var preview = response.myActiveTasks();
 		assertEquals(2, preview.size());
 		assertEquals(anomaly.getId(), preview.getFirst().id());
 		assertTrue(preview.getFirst().hasAnomaly());
@@ -529,6 +547,11 @@ class StudentDashboardServiceTest {
 		assertEquals(0L, preview.getFirst().evidenceCommitCount());
 		assertEquals(open.getId(), preview.get(1).id());
 		assertFalse(preview.get(1).hasAnomaly());
+		assertEquals(1, response.actionableAlerts().size());
+		assertEquals("MSR:" + anomaly.getId(), response.actionableAlerts().getFirst().id());
+		assertEquals("MSR_ANOMALY", response.actionableAlerts().getFirst().type());
+		assertEquals(anomaly.getId(), response.actionableAlerts().getFirst().targetIds().taskId());
+		verify(peerReviews, never()).countRemainingPeers(any(), any(), any());
 	}
 
 	@Test
@@ -625,6 +648,7 @@ class StudentDashboardServiceTest {
 				tasks,
 				commits,
 				commitLinks,
+				peerReviews,
 				Clock.fixed(Instant.parse("2026-09-20T17:00:00Z"), ZoneId.of("Asia/Ho_Chi_Minh")));
 		Team team = team(project());
 		UUID projectId = team.getProject().getId();
@@ -652,6 +676,7 @@ class StudentDashboardServiceTest {
 				tasks,
 				commits,
 				commitLinks,
+				peerReviews,
 				Clock.fixed(Instant.parse("2026-03-11T16:00:00Z"), ZoneId.of("America/New_York")));
 		Team team = team(project());
 		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
@@ -665,6 +690,91 @@ class StudentDashboardServiceTest {
 		assertEquals(LocalDate.of(2026, 2, 23), weeks.get(0).startDate());
 		assertEquals(LocalDate.of(2026, 3, 9), weeks.get(2).startDate());
 		assertEquals(LocalDate.of(2026, 3, 15), weeks.get(2).endDate());
+	}
+
+	@Test
+	void noCurrentSprintYieldsMsrAlertsButNoPeerAlert() {
+		Team team = team(project());
+		UUID projectId = team.getProject().getId();
+		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
+				.thenReturn(Optional.of(enrollment));
+		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
+				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
+		when(members.countActiveByTeam_Id(team.getId())).thenReturn(5L);
+		stubEmptyIntegrations(projectId);
+		Task anomaly = assignedTask(TaskStatus.DONE, Priority.HIGH, LocalDateTime.of(2026, 9, 2, 0, 0), "[\"saga:code\"]");
+		when(tasks.findDoneWithoutV23EvidenceCandidates(projectId, profile.getId()))
+				.thenReturn(List.of(candidate(anomaly)));
+
+		var alerts = service.get(account.getId(), course.getId()).actionableAlerts();
+		assertEquals(1, alerts.size());
+		assertEquals("MSR_ANOMALY", alerts.getFirst().type());
+		verify(peerReviews, never()).countRemainingPeers(any(), any(), any());
+	}
+
+	@Test
+	void peerPendingUsesCurrentSprintAndRemainingPeers() {
+		Team team = team(project());
+		UUID projectId = team.getProject().getId();
+		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
+				.thenReturn(Optional.of(enrollment));
+		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
+				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
+		when(members.countActiveByTeam_Id(team.getId())).thenReturn(5L);
+		stubEmptyIntegrations(projectId);
+		Sprint active = sprint("active");
+		active.setName("Sprint 3");
+		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of(active));
+		when(tasks.countGroupedByStatusForProjectAndSprint(projectId, active.getId())).thenReturn(List.of());
+		when(peerReviews.countRemainingPeers(team.getId(), active.getId(), profile.getId())).thenReturn(4L);
+
+		var first = service.get(account.getId(), course.getId()).actionableAlerts();
+		assertEquals(1, first.size());
+		assertEquals("PEER_REVIEW_PENDING:" + active.getId(), first.getFirst().id());
+		assertEquals("PEER_REVIEW_PENDING", first.getFirst().type());
+		assertEquals("INFO", first.getFirst().severity());
+		assertEquals("PEER_REVIEW_PENDING", first.getFirst().actionType());
+		assertEquals(4, first.getFirst().remainingPeers());
+		assertEquals(course.getId(), first.getFirst().targetIds().courseId());
+		assertEquals(team.getId(), first.getFirst().targetIds().teamId());
+		assertEquals(projectId, first.getFirst().targetIds().projectId());
+		assertEquals(active.getId(), first.getFirst().targetIds().sprintId());
+		assertNull(first.getFirst().targetIds().taskId());
+		assertEquals("You still have 4 teammate reviews to complete for Sprint 3.", first.getFirst().message());
+
+		when(peerReviews.countRemainingPeers(team.getId(), active.getId(), profile.getId())).thenReturn(0L);
+		assertTrue(service.get(account.getId(), course.getId()).actionableAlerts().isEmpty());
+	}
+
+	@Test
+	void msrAlertsStayInAnomalyOrderThenPeer() {
+		Team team = team(project());
+		UUID projectId = team.getProject().getId();
+		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
+				.thenReturn(Optional.of(enrollment));
+		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
+				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
+		when(members.countActiveByTeam_Id(team.getId())).thenReturn(3L);
+		stubEmptyIntegrations(projectId);
+		Sprint active = sprint("active");
+		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of(active));
+		when(tasks.countGroupedByStatusForProjectAndSprint(projectId, active.getId())).thenReturn(List.of());
+		when(peerReviews.countRemainingPeers(team.getId(), active.getId(), profile.getId())).thenReturn(2L);
+		Task later = assignedTask(TaskStatus.DONE, Priority.HIGHEST, LocalDateTime.of(2026, 9, 10, 0, 0), "[\"saga:code\"]");
+		Task earlier = assignedTask(TaskStatus.DONE, Priority.LOW, LocalDateTime.of(2026, 9, 1, 0, 0), "[\"saga:test\"]");
+		Task noDueHigh = assignedTask(TaskStatus.DONE, Priority.HIGHEST, null, "[\"saga:code\"]");
+		Task noDueLow = assignedTask(TaskStatus.DONE, Priority.LOW, null, "[\"saga:test\"]");
+		when(tasks.findDoneWithoutV23EvidenceCandidates(projectId, profile.getId()))
+				.thenReturn(List.of(candidate(later), candidate(noDueLow), candidate(earlier), candidate(noDueHigh)));
+
+		var alerts = service.get(account.getId(), course.getId()).actionableAlerts();
+		assertEquals(5, alerts.size());
+		assertEquals("MSR:" + earlier.getId(), alerts.get(0).id());
+		assertEquals("MSR:" + later.getId(), alerts.get(1).id());
+		assertEquals("MSR:" + noDueHigh.getId(), alerts.get(2).id());
+		assertEquals("MSR:" + noDueLow.getId(), alerts.get(3).id());
+		assertEquals("PEER_REVIEW_PENDING:" + active.getId(), alerts.get(4).id());
+		assertEquals(2, alerts.get(4).remainingPeers());
 	}
 
 	private void stubEmptyIntegrations(UUID projectId) {

@@ -1,6 +1,8 @@
 package com.saga.be.service.student;
 
 import com.saga.be.dto.student.dashboard.StudentDashboardActiveTaskResponse;
+import com.saga.be.dto.student.dashboard.StudentDashboardAlertResponse;
+import com.saga.be.dto.student.dashboard.StudentDashboardAlertTargetIds;
 import com.saga.be.dto.student.dashboard.StudentDashboardCommitMetricsResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardCourseResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardGithubIntegrationResponse;
@@ -38,6 +40,7 @@ import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.GitRepoRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
+import com.saga.be.repository.PeerReviewRepository;
 import com.saga.be.repository.SprintRepository;
 import com.saga.be.repository.StudentDashboardAnomalyCandidateRow;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
@@ -66,9 +69,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Phase A+B1+B2 student personal dashboard. Course-scoped identity/team/project/integrations/current
- * sprint plus personal task/commit metrics, previews, and last-3 ISO weekly commits. Ordinary MEMBER
- * is allowed; this path does not reuse lecturer/leader project-data gates or contribution evaluation.
+ * Phase A+B1+B2+D1 student personal dashboard. Course-scoped identity/team/project/integrations/current
+ * sprint plus personal task/commit metrics, previews, last-3 ISO weekly commits, and local MSR /
+ * peer-review pending alerts. Ordinary MEMBER is allowed; this path does not reuse lecturer/leader
+ * project-data gates, contribution evaluation, or the graph.
  */
 @Service
 @Profile("!test")
@@ -77,6 +81,8 @@ public class StudentDashboardService {
 	static final int ACTIVE_TASK_PREVIEW_LIMIT = 10;
 	static final int RECENT_COMMIT_LIMIT = 5;
 	static final int WEEKLY_COMMIT_WEEKS = 3;
+	static final String MSR_ANOMALY = "MSR_ANOMALY";
+	static final String PEER_REVIEW_PENDING = "PEER_REVIEW_PENDING";
 
 	private final CourseEnrollmentRepository enrollments;
 	private final TeamMemberRepository members;
@@ -86,6 +92,7 @@ public class StudentDashboardService {
 	private final TaskRepository tasks;
 	private final GitCommitRepository commits;
 	private final TaskGitCommitLinkRepository commitLinks;
+	private final PeerReviewRepository peerReviews;
 	private final Clock clock;
 
 	public StudentDashboardService(
@@ -97,8 +104,19 @@ public class StudentDashboardService {
 			TaskRepository tasks,
 			GitCommitRepository commits,
 			TaskGitCommitLinkRepository commitLinks,
+			PeerReviewRepository peerReviews,
 			DashboardProperties dashboard) {
-		this(enrollments, members, jiraIntegrations, repos, sprints, tasks, commits, commitLinks, dashboard.clock());
+		this(
+				enrollments,
+				members,
+				jiraIntegrations,
+				repos,
+				sprints,
+				tasks,
+				commits,
+				commitLinks,
+				peerReviews,
+				dashboard.clock());
 	}
 
 	StudentDashboardService(
@@ -110,6 +128,7 @@ public class StudentDashboardService {
 			TaskRepository tasks,
 			GitCommitRepository commits,
 			TaskGitCommitLinkRepository commitLinks,
+			PeerReviewRepository peerReviews,
 			Clock clock) {
 		this.enrollments = enrollments;
 		this.members = members;
@@ -119,6 +138,7 @@ public class StudentDashboardService {
 		this.tasks = tasks;
 		this.commits = commits;
 		this.commitLinks = commitLinks;
+		this.peerReviews = peerReviews;
 		this.clock = clock;
 	}
 
@@ -148,7 +168,7 @@ public class StudentDashboardService {
 
 		if (team == null) {
 			return new StudentDashboardResponse(
-					student, courseDto, null, null, null, null, List.of(), List.of(), List.of());
+					student, courseDto, null, null, null, null, List.of(), List.of(), List.of(), List.of());
 		}
 
 		Project project = team.getProject();
@@ -161,21 +181,24 @@ public class StudentDashboardService {
 				members.countActiveByTeam_Id(team.getId()));
 		if (project == null) {
 			return new StudentDashboardResponse(
-					student, courseDto, teamDto, null, null, null, List.of(), List.of(), List.of());
+					student, courseDto, teamDto, null, null, null, List.of(), List.of(), List.of(), List.of());
 		}
 
 		UUID projectId = project.getId();
 		UUID studentId = profile.getId();
+		Sprint current = selectCurrentSprint(projectId);
+		List<AttentionRow> anomalies = classifyAnomalies(projectId, studentId);
 		return new StudentDashboardResponse(
 				student,
 				courseDto,
 				teamDto,
 				new StudentDashboardIntegrationsResponse(jiraSummary(projectId), githubSummary(projectId)),
-				currentSprint(projectId),
+				current == null ? null : toSprintDto(current, projectId),
 				new StudentDashboardMetricsResponse(taskMetrics(projectId, studentId), commitMetrics(projectId, studentId)),
-				activeTasks(projectId, studentId),
+				activeTasks(projectId, studentId, anomalies),
 				recentCommits(projectId, studentId),
-				weeklyCommits(projectId, studentId));
+				weeklyCommits(projectId, studentId),
+				actionableAlerts(course.getId(), team.getId(), projectId, current, studentId, anomalies));
 	}
 
 	private static StudentDashboardCourseResponse toCourse(Course course) {
@@ -249,14 +272,14 @@ public class StudentDashboardService {
 	 * Jira {@code state} is {@code "active"} ignore-case; {@code findActiveByProject_Id} order
 	 * (coalesce(startDate, createdAt) DESC) is preserved, first match wins.
 	 */
-	private StudentDashboardSprintResponse currentSprint(UUID projectId) {
-		Sprint active = sprints.findActiveByProject_Id(projectId).stream()
+	private Sprint selectCurrentSprint(UUID projectId) {
+		return sprints.findActiveByProject_Id(projectId).stream()
 				.filter(sprint -> sprint.getState() != null && sprint.getState().equalsIgnoreCase("active"))
 				.findFirst()
 				.orElse(null);
-		if (active == null) {
-			return null;
-		}
+	}
+
+	private StudentDashboardSprintResponse toSprintDto(Sprint active, UUID projectId) {
 		long total = 0;
 		long completed = 0;
 		for (Object[] row : tasks.countGroupedByStatusForProjectAndSprint(projectId, active.getId())) {
@@ -331,11 +354,20 @@ public class StudentDashboardService {
 		return new StudentDashboardCommitMetricsResponse(total, linked, unlinked, traceability, lastAt);
 	}
 
-	private List<StudentDashboardActiveTaskResponse> activeTasks(UUID projectId, UUID studentId) {
-		List<AttentionRow> anomalies = tasks.findDoneWithoutV23EvidenceCandidates(projectId, studentId).stream()
+	/**
+	 * Same local CODE/TEST + zero V23 evidence rule used by {@code myActiveTasks.hasAnomaly} and
+	 * {@code MSR_ANOMALY} alerts. Classified once per request.
+	 */
+	private List<AttentionRow> classifyAnomalies(UUID projectId, UUID studentId) {
+		return tasks.findDoneWithoutV23EvidenceCandidates(projectId, studentId).stream()
 				.filter(row -> isCodeOrTest(row.labelsJson()))
 				.map(StudentDashboardService::toAnomalyRow)
+				.sorted(ANOMALY_ORDER)
 				.toList();
+	}
+
+	private List<StudentDashboardActiveTaskResponse> activeTasks(
+			UUID projectId, UUID studentId, List<AttentionRow> anomalies) {
 		List<AttentionRow> open = tasks
 				.findAttentionNonDoneByProjectAndAssignee(
 						projectId, studentId, PageRequest.of(0, ACTIVE_TASK_PREVIEW_LIMIT))
@@ -373,6 +405,74 @@ public class StudentDashboardService {
 					row.anomaly()));
 		}
 		return rows;
+	}
+
+	private List<StudentDashboardAlertResponse> actionableAlerts(
+			UUID courseId,
+			UUID teamId,
+			UUID projectId,
+			Sprint current,
+			UUID studentId,
+			List<AttentionRow> anomalies) {
+		List<StudentDashboardAlertResponse> alerts = new ArrayList<>(anomalies.size() + 1);
+		for (AttentionRow row : anomalies) {
+			alerts.add(msrAlert(courseId, teamId, projectId, row));
+		}
+		if (current != null) {
+			long remaining = peerReviews.countRemainingPeers(teamId, current.getId(), studentId);
+			if (remaining > 0) {
+				alerts.add(peerAlert(courseId, teamId, projectId, current, remaining));
+			}
+		}
+		return alerts;
+	}
+
+	private static StudentDashboardAlertResponse msrAlert(
+			UUID courseId, UUID teamId, UUID projectId, AttentionRow row) {
+		return new StudentDashboardAlertResponse(
+				"MSR:" + row.id(),
+				MSR_ANOMALY,
+				"WARNING",
+				"Missing coding evidence",
+				msrMessage(row),
+				MSR_ANOMALY,
+				new StudentDashboardAlertTargetIds(courseId, teamId, projectId, row.id(), null),
+				null);
+	}
+
+	private static StudentDashboardAlertResponse peerAlert(
+			UUID courseId, UUID teamId, UUID projectId, Sprint sprint, long remaining) {
+		int remainingPeers = remaining > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) remaining;
+		return new StudentDashboardAlertResponse(
+				PEER_REVIEW_PENDING + ":" + sprint.getId(),
+				PEER_REVIEW_PENDING,
+				"INFO",
+				"Peer reviews pending",
+				peerMessage(sprint, remainingPeers),
+				PEER_REVIEW_PENDING,
+				new StudentDashboardAlertTargetIds(courseId, teamId, projectId, null, sprint.getId()),
+				remainingPeers);
+	}
+
+	private static String msrMessage(AttentionRow row) {
+		String key = row.externalKey();
+		String title = row.title() == null ? "" : row.title();
+		if (key != null && !key.isBlank()) {
+			if (!title.isBlank() && !title.equals(key)) {
+				return "DONE task " + key + " (" + title + ") has no coding evidence.";
+			}
+			return "DONE task " + key + " has no coding evidence.";
+		}
+		if (!title.isBlank()) {
+			return "DONE task " + title + " has no coding evidence.";
+		}
+		return "DONE task has no coding evidence.";
+	}
+
+	private static String peerMessage(Sprint sprint, int remaining) {
+		String name = sprint.getName() == null || sprint.getName().isBlank() ? "the current sprint" : sprint.getName();
+		String noun = remaining == 1 ? "teammate review" : "teammate reviews";
+		return "You still have " + remaining + " " + noun + " to complete for " + name + ".";
 	}
 
 	private Map<UUID, long[]> linkCounts(List<UUID> taskIds) {
@@ -489,12 +589,14 @@ public class StudentDashboardService {
 				false);
 	}
 
-	private static final Comparator<AttentionRow> ATTENTION_ORDER =
-			Comparator.comparing((AttentionRow row) -> row.anomaly() ? 0 : 1)
-					.thenComparing((AttentionRow row) -> row.dueDate() == null ? 1 : 0)
+	private static final Comparator<AttentionRow> ANOMALY_ORDER =
+			Comparator.comparing((AttentionRow row) -> row.dueDate() == null ? 1 : 0)
 					.thenComparing(AttentionRow::dueDate, Comparator.nullsLast(Comparator.naturalOrder()))
 					.thenComparing(row -> -priorityRank(row.priority()))
 					.thenComparing(AttentionRow::id);
+
+	private static final Comparator<AttentionRow> ATTENTION_ORDER =
+			Comparator.comparing((AttentionRow row) -> row.anomaly() ? 0 : 1).thenComparing(ANOMALY_ORDER);
 
 	private record AttentionRow(
 			UUID id,

@@ -807,11 +807,11 @@ Dùng `myRole` để quyết định UI: hiện nút "Tạo Project"/"Cấu hìn
 - `403 STUDENT_COURSE_FORBIDDEN`: chưa ghi danh ACTIVE course này.
 - `404 TEAM_NOT_FOUND`: đã ghi danh nhưng Lecturer chưa gán nhóm.
 
-### `GET /api/student/courses/{courseId}/dashboard` — Phase A+B1+B2
+### `GET /api/student/courses/{courseId}/dashboard` — Phase A+B1+B2+D1
 
 Personal cockpit của **chính** sinh viên đang gọi API. **MEMBER / LEADER / MENTOR** đều gọi được — không dùng gate của `/progress` (leader-only).
 
-Không team / không project **không** phải 404: trả **200** với `team` / `integrations` / `currentSprint` / `myMetrics` = `null`, `myActiveTasks` = `[]`, `recentCommits` = `[]`. Không bịa personal metrics khi chưa có Project.
+Không team / không project **không** phải 404: trả **200** với `team` / `integrations` / `currentSprint` / `myMetrics` = `null`, `myActiveTasks` = `[]`, `recentCommits` = `[]`, `weeklyCommits` = `[]`, `actionableAlerts` = `[]`. Không bịa personal metrics khi chưa có Project.
 
 ```json
 {
@@ -888,6 +888,39 @@ Không team / không project **không** phải 404: trả **200** với `team` /
     { "startDate": "2026-08-31", "endDate": "2026-09-06", "commits": 4 },
     { "startDate": "2026-09-07", "endDate": "2026-09-13", "commits": 7 },
     { "startDate": "2026-09-14", "endDate": "2026-09-20", "commits": 2 }
+  ],
+  "actionableAlerts": [
+    {
+      "id": "MSR:<taskId>",
+      "type": "MSR_ANOMALY",
+      "severity": "WARNING",
+      "title": "Missing coding evidence",
+      "message": "DONE task SAGA-1 (Fix login) has no coding evidence.",
+      "actionType": "MSR_ANOMALY",
+      "targetIds": {
+        "courseId": "...",
+        "teamId": "...",
+        "projectId": "...",
+        "taskId": "...",
+        "sprintId": null
+      }
+    },
+    {
+      "id": "PEER_REVIEW_PENDING:<sprintId>",
+      "type": "PEER_REVIEW_PENDING",
+      "severity": "INFO",
+      "title": "Peer reviews pending",
+      "message": "You still have 2 teammate reviews to complete for Sprint 1.",
+      "actionType": "PEER_REVIEW_PENDING",
+      "targetIds": {
+        "courseId": "...",
+        "teamId": "...",
+        "projectId": "...",
+        "taskId": null,
+        "sprintId": "..."
+      },
+      "remainingPeers": 2
+    }
   ]
 }
 ```
@@ -947,7 +980,23 @@ Không team / không Project: `weeklyCommits = []`.
 
 Có Project nhưng không có commit đủ điều kiện (kể cả chỉ merge / chỉ `committedAt` null): **đúng 3 điểm `commits = 0`**.
 
-Phase B2 **chưa** trả: `contribution` / `mySlices` / `peerReviewAverageScore`, `actionableAlerts`.
+Phase D1 — `actionableAlerts` (chỉ `MSR_ANOMALY` và `PEER_REVIEW_PENDING`):
+
+| Trường | Ý nghĩa |
+|---|---|
+| List | **Không bao giờ `null`**. Không team / không Project → `[]`. Có Project nhưng không có cảnh báo → `[]` |
+| Thứ tự | Mọi `MSR_ANOMALY` trước, rồi tối đa **một** `PEER_REVIEW_PENDING` |
+| `id` | Deterministic, không persist: `MSR:<taskId>` / `PEER_REVIEW_PENDING:<sprintId>` |
+| `actionType` + `targetIds` | Backend sở hữu semantics. FE tự route. **Không** trả URL / href |
+| `MSR_ANOMALY` | Cùng rule B1: task gán cho chính SV, chưa xoá, `DONE`, classifier CODE/TEST, `evidenceCommitCount = 0` (kể cả chỉ link merge). DOCUMENT / RESEARCH / AMBIGUOUS **không** tạo alert. Một alert / task. `severity` = `WARNING` |
+| Thứ tự MSR | `dueDate` ASC (null last), priority HIGHEST→LOWEST, `taskId` ASC — cùng secondary order với `myActiveTasks` |
+| Preview vs alert | `myActiveTasks` cap 10. `actionableAlerts` MSR **không** cap — mọi anomaly. Mọi `hasAnomaly=true` trong preview **phải** có alert `MSR:<id>` khớp |
+| `PEER_REVIEW_PENDING` | Chỉ khi `currentSprint != null` **và** `remainingPeers > 0`. Đúng **một** card / sprint hiện tại |
+| `remainingPeers` | ACTIVE teammates của **team hiện tại** trừ bản thân, trừ peer đã được chính SV review trên **sprint hiện tại**. Không dùng review nhận về. Không dùng sprint cũ. WITHDRAWN / inactive không phải candidate |
+| Không có | campaign / open period / due date / "còn N ngày" / overdue. Message chỉ nói còn N review cho sprint hiện tại |
+| `GHOSTING_WARNING` | **Chưa implement** — không có trong D1 |
+
+Phase D1 **chưa** trả: `contribution` / `mySlices` / `teamTotalSlices` / `contributionPercent` / `peerReviewAverageScore`, `GHOSTING_WARNING`.
 
 Project có Project nhưng không có task/commit cá nhân:
 
@@ -955,6 +1004,7 @@ Project có Project nhưng không có task/commit cá nhân:
 - `myMetrics.commits` = 0/0/0, `traceabilityPercent` = `null`, `lastCommittedAt` = `null`
 - `myActiveTasks` = `[]`, `recentCommits` = `[]`
 - `weeklyCommits` = 3 điểm zero
+- `actionableAlerts` = `[]` nếu không có MSR / peer pending (peer pending vẫn có thể xuất hiện khi có `currentSprint` và còn teammate chưa review)
 
 Lỗi:
 
@@ -962,8 +1012,6 @@ Lỗi:
 - Không phải STUDENT / không session → `401` / `403 ACCESS_DENIED`
 - Account không ACTIVE → `403 ACCOUNT_DISABLED` (filter toàn cục)
 - Không profile / không enrollment / WITHDRAWN / COMPLETED / course đã xoá / course không tồn tại → **`403 STUDENT_COURSE_FORBIDDEN`** (không lộ `COURSE_NOT_FOUND`)
-
-Phase B2 **chưa** trả: `contribution` / `mySlices` / `teamTotalSlices` / `contributionPercent` / `peerReviewAverageScore`, `actionableAlerts` (Phase D). Field này bị **omit**.
 
 Local DB only. Không gọi Jira/GitHub/Neo4j/FCM. Không cache Redis. Workload `INTERACTIVE_NORMAL`.
 

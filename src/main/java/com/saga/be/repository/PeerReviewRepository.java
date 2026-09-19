@@ -54,4 +54,31 @@ public interface PeerReviewRepository extends JpaRepository<PeerReview, UUID> {
 			  and pr.starRating is not null
 			""")
 	List<Object[]> findReviewerAndCreatedAtByProject(@Param("projectId") UUID projectId);
+
+	/**
+	 * ACTIVE teammates minus the reviewer minus candidates already reviewed by that reviewer on this
+	 * sprint. One aggregate — does not scale with teammate or review row count at the statement
+	 * level.
+	 */
+	@Query(
+			"""
+			SELECT COUNT(m)
+			FROM TeamMember m
+			JOIN m.courseEnrollment e
+			JOIN e.studentProfile sp
+			WHERE m.team.id = :teamId
+			  AND e.enrollmentStatus = com.saga.be.entity.enums.EnrollmentStatus.ACTIVE
+			  AND sp.id <> :reviewerStudentId
+			  AND NOT EXISTS (
+			    SELECT 1
+			    FROM PeerReview pr
+			    WHERE pr.sprint.id = :sprintId
+			      AND pr.reviewerStudent.id = :reviewerStudentId
+			      AND pr.revieweeStudent.id = sp.id
+			  )
+			""")
+	long countRemainingPeers(
+			@Param("teamId") UUID teamId,
+			@Param("sprintId") UUID sprintId,
+			@Param("reviewerStudentId") UUID reviewerStudentId);
 }

@@ -66,6 +66,13 @@ class StudentDashboardFetchQueryTest {
 		assertTrue(links.contains("countRawAndV23LinksByTaskIds"));
 		assertTrue(links.contains("findExternalKeysByCommitIds"));
 
+		String reviews = Files.readString(Path.of("src/main/java/com/saga/be/repository/PeerReviewRepository.java"));
+		assertTrue(reviews.contains("countRemainingPeers"));
+		assertTrue(reviews.contains("NOT EXISTS"));
+		assertTrue(reviews.contains("pr.reviewerStudent.id = :reviewerStudentId"));
+		assertTrue(reviews.contains("pr.revieweeStudent.id = sp.id"));
+		assertTrue(reviews.contains("e.enrollmentStatus = com.saga.be.entity.enums.EnrollmentStatus.ACTIVE"));
+
 		String service = Files.readString(Path.of("src/main/java/com/saga/be/service/student/StudentDashboardService.java"));
 		assertTrue(service.contains("@Transactional(readOnly = true)"));
 		assertTrue(service.contains("INTERACTIVE_NORMAL") || Files.readString(Path.of("src/main/java/com/saga/be/controller/StudentDashboardController.java")).contains("INTERACTIVE_NORMAL"));
@@ -87,5 +94,14 @@ class StudentDashboardFetchQueryTest {
 		assertFalse(service.contains("MSR_CANDIDATE_FETCH_LIMIT"));
 		assertFalse(service.contains("commit.getCommittedAt() != null ? commit.getCommittedAt() : commit.getCreatedAt()"));
 		assertTrue(service.contains("commit.getCommittedAt()"));
+		assertTrue(service.contains("classifyAnomalies"));
+		assertTrue(service.contains("actionableAlerts"));
+		assertTrue(service.contains("countRemainingPeers"));
+		assertTrue(service.contains("MSR_ANOMALY"));
+		assertTrue(service.contains("PEER_REVIEW_PENDING"));
+		assertFalse(service.contains("GHOSTING_WARNING"));
+		assertFalse(service.contains("ProjectGraphService"));
+		assertFalse(service.contains("PeerReviewService"));
+		assertFalse(service.contains("findBySprint_IdAndReviewerStudent_IdAndRevieweeStudent_Id"));
 	}
 }

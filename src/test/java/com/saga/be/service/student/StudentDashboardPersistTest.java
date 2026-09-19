@@ -3,6 +3,7 @@ package com.saga.be.service.student;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.saga.be.dto.student.dashboard.StudentDashboardAlertResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardResponse;
 import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.account.UserAccount;
@@ -21,6 +22,7 @@ import com.saga.be.entity.enums.Priority;
 import com.saga.be.entity.enums.RoleInTeam;
 import com.saga.be.entity.enums.SubjectStatus;
 import com.saga.be.entity.enums.SyllabusStatus;
+import com.saga.be.entity.assessment.PeerReview;
 import com.saga.be.entity.enums.TaskStatus;
 import com.saga.be.entity.enums.TraceLinkSource;
 import com.saga.be.entity.github.GitCommit;
@@ -113,7 +115,8 @@ class StudentDashboardPersistTest {
 				SprintRepository sprints,
 				TaskRepository tasks,
 				com.saga.be.repository.GitCommitRepository commits,
-				com.saga.be.repository.TaskGitCommitLinkRepository commitLinks) {
+				com.saga.be.repository.TaskGitCommitLinkRepository commitLinks,
+				com.saga.be.repository.PeerReviewRepository peerReviews) {
 			return new StudentDashboardService(
 					enrollments,
 					members,
@@ -123,6 +126,7 @@ class StudentDashboardPersistTest {
 					tasks,
 					commits,
 					commitLinks,
+					peerReviews,
 					java.time.Clock.fixed(java.time.Instant.parse("2026-09-20T12:00:00Z"), java.time.ZoneOffset.UTC));
 		}
 	}
@@ -165,6 +169,8 @@ class StudentDashboardPersistTest {
 	private com.saga.be.repository.GitCommitRepository commits;
 	@Autowired
 	private com.saga.be.repository.TaskGitCommitLinkRepository commitLinks;
+	@Autowired
+	private com.saga.be.repository.PeerReviewRepository peerReviews;
 
 	private TransactionTemplate tx;
 	private Fixture fixture;
@@ -189,6 +195,7 @@ class StudentDashboardPersistTest {
 		assertThat(member.weeklyCommits()).hasSize(3);
 		assertThat(member.weeklyCommits().get(0).startDate()).isEqualTo(java.time.LocalDate.of(2026, 8, 31));
 		assertThat(member.weeklyCommits()).allMatch(row -> row.commits() == 0);
+		assertThat(member.actionableAlerts()).isEmpty();
 
 		StudentDashboardResponse leader = tx.execute(status -> service.get(fixture.leaderId, fixture.courseId));
 		assertThat(leader.student().teamRole()).isEqualTo("LEADER");
@@ -237,6 +244,7 @@ class StudentDashboardPersistTest {
 		assertThat(unassigned.myActiveTasks()).isEmpty();
 		assertThat(unassigned.recentCommits()).isEmpty();
 		assertThat(unassigned.weeklyCommits()).isEmpty();
+		assertThat(unassigned.actionableAlerts()).isEmpty();
 
 		StudentDashboardResponse noProject = tx.execute(status -> service.get(fixture.noProjectMemberId, fixture.noProjectCourseId));
 		assertThat(noProject.team().projectId()).isNull();
@@ -247,6 +255,7 @@ class StudentDashboardPersistTest {
 		assertThat(noProject.myActiveTasks()).isEmpty();
 		assertThat(noProject.recentCommits()).isEmpty();
 		assertThat(noProject.weeklyCommits()).isEmpty();
+		assertThat(noProject.actionableAlerts()).isEmpty();
 	}
 
 	@Test
@@ -372,7 +381,9 @@ class StudentDashboardPersistTest {
 			JiraIntegration jira = jiraIntegrations.save(jira(project, IntegrationStatus.ACTIVE));
 			sprints.save(sprint(jira, "closed", LocalDateTime.of(2026, 8, 1, 0, 0)));
 		});
-		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).currentSprint()).isNull();
+		StudentDashboardResponse closedOnly = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		assertThat(closedOnly.currentSprint()).isNull();
+		assertThat(closedOnly.actionableAlerts()).isEmpty();
 
 		tx.executeWithoutResult(status -> {
 			JiraIntegration jira = jiraIntegrations.findByProject_Id(fixture.projectId).orElseThrow();
@@ -381,6 +392,9 @@ class StudentDashboardPersistTest {
 		StudentDashboardResponse empty = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
 		assertThat(empty.currentSprint().totalTasks()).isZero();
 		assertThat(empty.currentSprint().completionPercent()).isNull();
+		assertThat(empty.actionableAlerts()).hasSize(1);
+		assertThat(empty.actionableAlerts().getFirst().type()).isEqualTo("PEER_REVIEW_PENDING");
+		assertThat(empty.actionableAlerts().getFirst().remainingPeers()).isEqualTo(1);
 	}
 
 	@Test
@@ -397,7 +411,7 @@ class StudentDashboardPersistTest {
 		stats.clear();
 		tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
 		long first = stats.getPrepareStatementCount();
-		assertThat(first).as("Phase A+B1+B2 empty personal work stays bounded").isEqualTo(14L);
+		assertThat(first).as("Phase A+B1+B2+D1 empty personal work stays bounded").isEqualTo(15L);
 
 		tx.executeWithoutResult(status -> {
 			Course course = courses.findById(fixture.courseId).orElseThrow();
@@ -621,6 +635,14 @@ class StudentDashboardPersistTest {
 		assertThat(response.myActiveTasks())
 				.extracting(row -> row.externalKey())
 				.doesNotContain("SAGA-OK", "SAGA-ORD", "SAGA-DOC", "SAGA-RES", "SAGA-AMB");
+		assertThat(response.actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.containsExactly("MSR_ANOMALY", "MSR_ANOMALY");
+		assertThat(response.actionableAlerts())
+				.extracting(alert -> alert.targetIds().taskId())
+				.containsExactly(response.myActiveTasks().get(0).id(), response.myActiveTasks().get(1).id());
+		assertThat(response.actionableAlerts().get(0).id()).isEqualTo("MSR:" + response.myActiveTasks().get(0).id());
+		assertThat(response.actionableAlerts().get(1).id()).isEqualTo("MSR:" + response.myActiveTasks().get(1).id());
 	}
 
 	@Test
@@ -681,7 +703,7 @@ class StudentDashboardPersistTest {
 		stats.clear();
 		tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
 		long first = stats.getPrepareStatementCount();
-		assertThat(first).as("Phase A+B1+B2 with 10 tasks / 5 commits stays bounded").isEqualTo(17L);
+		assertThat(first).as("Phase A+B1+B2+D1 with 10 tasks / 5 commits stays bounded").isEqualTo(18L);
 
 		tx.executeWithoutResult(status -> {
 			Project project = projects.findById(fixture.projectId).orElseThrow();
@@ -806,7 +828,11 @@ class StudentDashboardPersistTest {
 						"SAGA-A09",
 						"SAGA-A10");
 		assertThat(response.myActiveTasks()).allMatch(row -> row.hasAnomaly());
-		assertThat(stats.getPrepareStatementCount()).isEqualTo(15L);
+		assertThat(stats.getPrepareStatementCount()).isEqualTo(16L);
+		assertThat(response.actionableAlerts()).hasSize(13);
+		assertThat(response.actionableAlerts().subList(0, 12))
+				.allMatch(alert -> "MSR_ANOMALY".equals(alert.type()));
+		assertThat(response.actionableAlerts().get(12).type()).isEqualTo("PEER_REVIEW_PENDING");
 	}
 
 	@Test
@@ -836,7 +862,7 @@ class StudentDashboardPersistTest {
 		stats.clear();
 		tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
 		long first = stats.getPrepareStatementCount();
-		assertThat(first).as("Phase A+B1+B2 with 10 coarse DONE candidates stays bounded").isEqualTo(15L);
+		assertThat(first).as("Phase A+B1+B2+D1 with 10 coarse DONE candidates stays bounded").isEqualTo(16L);
 
 		tx.executeWithoutResult(status -> {
 			Project project = projects.findById(fixture.projectId).orElseThrow();
@@ -929,6 +955,178 @@ class StudentDashboardPersistTest {
 	}
 
 	@Test
+	void d1MsrAlertsFollowB1RuleAndStayConsistentWithPreview() {
+		tx.executeWithoutResult(status -> {
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			StudentProfile member = profileOf(fixture.memberId);
+			StudentProfile leader = profileOf(fixture.leaderId);
+			GitRepo repo = repos.save(repo(project, 81L, "org/d1-msr", IntegrationStatus.ACTIVE));
+			GitCommit normal = persistCommit(repo, member, "d1norm01", 1, LocalDateTime.of(2026, 9, 1, 0, 0), "normal");
+			GitCommit merge = persistCommit(repo, member, "d1merg01", 2, LocalDateTime.of(2026, 9, 1, 0, 0), "merge");
+
+			tasks.save(assigned(project, null, member, TaskStatus.DONE, Priority.HIGH, 1, LocalDateTime.of(2026, 9, 1, 0, 0), "[\"saga:code\"]", "SAGA-CODE"));
+			tasks.save(assigned(project, null, member, TaskStatus.DONE, Priority.MEDIUM, 1, LocalDateTime.of(2026, 9, 2, 0, 0), "[\"saga:test\"]", "SAGA-TEST"));
+
+			Task evidenced = assigned(project, null, member, TaskStatus.DONE, Priority.HIGHEST, 1, LocalDateTime.of(2026, 8, 1, 0, 0), "[\"saga:code\"]", "SAGA-OK");
+			tasks.save(evidenced);
+			link(evidenced, normal);
+
+			Task mergeOnly = assigned(project, null, member, TaskStatus.DONE, Priority.LOW, 1, LocalDateTime.of(2026, 9, 3, 0, 0), "[\"saga:code\"]", "SAGA-MERGE");
+			tasks.save(mergeOnly);
+			link(mergeOnly, merge);
+
+			tasks.save(assigned(project, null, member, TaskStatus.DONE, Priority.HIGH, 1, null, "[\"saga:document\"]", "SAGA-DOC"));
+			tasks.save(assigned(project, null, member, TaskStatus.DONE, Priority.HIGH, 1, null, "[\"saga:research\"]", "SAGA-RES"));
+			tasks.save(assigned(project, null, member, TaskStatus.DONE, Priority.HIGHEST, 1, null, "[\"saga:code\",\"saga:test\"]", "SAGA-AMB"));
+			tasks.save(assigned(project, null, leader, TaskStatus.DONE, Priority.HIGHEST, 1, LocalDateTime.of(2026, 8, 1, 0, 0), "[\"saga:code\"]", "SAGA-LEAD"));
+			Task deleted = assigned(project, null, member, TaskStatus.DONE, Priority.HIGHEST, 1, LocalDateTime.of(2026, 8, 2, 0, 0), "[\"saga:test\"]", "SAGA-DEL");
+			deleted.setDeletedAt(LocalDateTime.of(2026, 9, 4, 0, 0));
+			tasks.save(deleted);
+			tasks.save(assigned(project, null, member, TaskStatus.TODO, Priority.LOW, 1, LocalDateTime.of(2026, 10, 1, 0, 0), null, "SAGA-OPEN"));
+			entityManager.flush();
+		});
+
+		StudentDashboardResponse first = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		assertThat(first.actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.containsExactly("MSR_ANOMALY", "MSR_ANOMALY", "MSR_ANOMALY");
+		assertThat(first.actionableAlerts())
+				.extracting(alert -> first.myActiveTasks().stream()
+						.filter(task -> task.id().equals(alert.targetIds().taskId()))
+						.findFirst()
+						.orElseThrow()
+						.externalKey())
+				.containsExactly("SAGA-CODE", "SAGA-TEST", "SAGA-MERGE");
+		assertThat(first.actionableAlerts())
+				.allMatch(alert -> alert.id().equals("MSR:" + alert.targetIds().taskId()));
+		assertThat(first.myActiveTasks().stream().filter(row -> row.hasAnomaly()).map(row -> "MSR:" + row.id()).toList())
+				.containsExactlyElementsOf(first.actionableAlerts().stream().map(StudentDashboardAlertResponse::id).toList());
+		assertThat(first.myActiveTasks().stream().filter(row -> !row.hasAnomaly()).map(row -> row.externalKey()).toList())
+				.contains("SAGA-OPEN");
+		assertThat(first.actionableAlerts())
+				.extracting(alert -> alert.targetIds().taskId())
+				.doesNotContainAnyElementsOf(
+						first.myActiveTasks().stream()
+								.filter(row -> !row.hasAnomaly())
+								.map(row -> row.id())
+								.toList());
+
+		StudentDashboardResponse second = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		assertThat(second.actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::id)
+				.containsExactlyElementsOf(
+						first.actionableAlerts().stream().map(StudentDashboardAlertResponse::id).toList());
+	}
+
+	@Test
+	void d1PeerReviewPendingUsesCurrentSprintCandidatesAndSubmissions() {
+		java.util.concurrent.atomic.AtomicReference<UUID> currentId = new java.util.concurrent.atomic.AtomicReference<>();
+		java.util.concurrent.atomic.AtomicReference<UUID> extra1Id = new java.util.concurrent.atomic.AtomicReference<>();
+		java.util.concurrent.atomic.AtomicReference<UUID> extra2Id = new java.util.concurrent.atomic.AtomicReference<>();
+		java.util.concurrent.atomic.AtomicReference<UUID> extra3Id = new java.util.concurrent.atomic.AtomicReference<>();
+		tx.executeWithoutResult(status -> {
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			Course course = courses.findById(fixture.courseId).orElseThrow();
+			Team team = teams.findById(fixture.teamId).orElseThrow();
+			StudentProfile member = profileOf(fixture.memberId);
+			StudentProfile leader = profileOf(fixture.leaderId);
+			JiraIntegration jira = jiraIntegrations.save(jira(project, IntegrationStatus.ACTIVE));
+			Sprint old = sprints.save(sprint(jira, "closed", LocalDateTime.of(2026, 8, 1, 0, 0)));
+			Sprint olderActive = sprints.save(sprint(jira, "active", LocalDateTime.of(2026, 9, 1, 0, 0)));
+			Sprint current = sprints.save(sprint(jira, "active", LocalDateTime.of(2026, 9, 10, 0, 0)));
+			currentId.set(current.getId());
+
+			StudentProfile extra1 = addActiveTeammate(course, team, "d1p1");
+			StudentProfile extra2 = addActiveTeammate(course, team, "d1p2");
+			StudentProfile extra3 = addActiveTeammate(course, team, "d1p3");
+			extra1Id.set(extra1.getId());
+			extra2Id.set(extra2.getId());
+			extra3Id.set(extra3.getId());
+			addWithdrawnTeammate(course, team, "d1w");
+
+			peerReviews.save(review(old, member, leader, 5));
+			peerReviews.save(review(old, member, extra1, 4));
+			peerReviews.save(review(olderActive, member, extra2, 3));
+			peerReviews.save(review(current, leader, member, 5));
+			entityManager.flush();
+		});
+
+		StudentDashboardResponse noneSubmitted = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		assertThat(noneSubmitted.currentSprint().id()).isEqualTo(currentId.get());
+		assertThat(noneSubmitted.actionableAlerts()).hasSize(1);
+		assertThat(noneSubmitted.actionableAlerts().getFirst().id()).isEqualTo("PEER_REVIEW_PENDING:" + currentId.get());
+		assertThat(noneSubmitted.actionableAlerts().getFirst().remainingPeers()).isEqualTo(4);
+		assertThat(noneSubmitted.actionableAlerts().getFirst().message()).contains("4 teammate reviews");
+		assertThat(noneSubmitted.actionableAlerts().getFirst().message()).doesNotContain("deadline", "overdue", "open");
+
+		StudentDashboardResponse sameIds = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		assertThat(sameIds.actionableAlerts().getFirst().id()).isEqualTo(noneSubmitted.actionableAlerts().getFirst().id());
+
+		tx.executeWithoutResult(status -> {
+			StudentProfile member = profileOf(fixture.memberId);
+			StudentProfile leader = profileOf(fixture.leaderId);
+			Sprint current = sprints.findById(currentId.get()).orElseThrow();
+			peerReviews.save(review(current, member, leader, 5));
+			peerReviews.save(review(current, member, students.findById(extra1Id.get()).orElseThrow(), 4));
+			entityManager.flush();
+		});
+		StudentDashboardResponse twoLeft = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		assertThat(twoLeft.actionableAlerts()).hasSize(1);
+		assertThat(twoLeft.actionableAlerts().getFirst().remainingPeers()).isEqualTo(2);
+
+		tx.executeWithoutResult(status -> {
+			StudentProfile member = profileOf(fixture.memberId);
+			Sprint current = sprints.findById(currentId.get()).orElseThrow();
+			peerReviews.save(review(current, member, students.findById(extra2Id.get()).orElseThrow(), 3));
+			peerReviews.save(review(current, member, students.findById(extra3Id.get()).orElseThrow(), 3));
+			entityManager.flush();
+		});
+		StudentDashboardResponse done = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		assertThat(done.actionableAlerts()).isEmpty();
+	}
+
+	@Test
+	void d1PeerAlertQueryCountDoesNotScaleWithTeammatesOrReviews() {
+		tx.executeWithoutResult(status -> {
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			Course course = courses.findById(fixture.courseId).orElseThrow();
+			Team team = teams.findById(fixture.teamId).orElseThrow();
+			JiraIntegration jira = jiraIntegrations.save(jira(project, IntegrationStatus.ACTIVE));
+			sprints.save(sprint(jira, "active", LocalDateTime.of(2026, 9, 1, 0, 0)));
+			addActiveTeammate(course, team, "q2");
+			entityManager.flush();
+		});
+		Statistics stats = statistics();
+		tx.executeWithoutResult(status -> entityManager.clear());
+		stats.clear();
+		StudentDashboardResponse first = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		long firstCount = stats.getPrepareStatementCount();
+		assertThat(first.actionableAlerts()).hasSize(1);
+		assertThat(first.actionableAlerts().getFirst().remainingPeers()).isEqualTo(2);
+		assertThat(firstCount).as("D1 with current sprint and 3 candidates stays bounded").isEqualTo(15L);
+
+		tx.executeWithoutResult(status -> {
+			Course course = courses.findById(fixture.courseId).orElseThrow();
+			Team team = teams.findById(fixture.teamId).orElseThrow();
+			Sprint current = sprints.findActiveByProject_Id(fixture.projectId).getFirst();
+			StudentProfile member = profileOf(fixture.memberId);
+			for (int i = 0; i < 8; i++) {
+				StudentProfile extra = addActiveTeammate(course, team, "q10" + i);
+				if (i < 3) {
+					peerReviews.save(review(current, member, extra, 4));
+				}
+			}
+			entityManager.flush();
+		});
+		tx.executeWithoutResult(status -> entityManager.clear());
+		stats.clear();
+		StudentDashboardResponse grown = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		assertThat(grown.team().membersCount()).isEqualTo(11);
+		assertThat(grown.actionableAlerts().getFirst().remainingPeers()).isEqualTo(7);
+		assertThat(stats.getPrepareStatementCount()).isEqualTo(firstCount);
+	}
+
+	@Test
 	void academicZoneClockMovesCurrentIsoWeek() {
 		StudentDashboardService ict = new StudentDashboardService(
 				enrollments,
@@ -939,10 +1137,34 @@ class StudentDashboardPersistTest {
 				tasks,
 				commits,
 				commitLinks,
+				peerReviews,
 				java.time.Clock.fixed(java.time.Instant.parse("2026-09-20T17:00:00Z"), java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
 		StudentDashboardResponse response = tx.execute(status -> ict.get(fixture.memberId, fixture.courseId));
 		assertThat(response.weeklyCommits().get(2).startDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 21));
 		assertThat(response.weeklyCommits().get(2).endDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 27));
+	}
+
+	private StudentProfile addActiveTeammate(Course course, Team team, String tag) {
+		UserAccount account = account("peer-" + tag + "-" + UUID.randomUUID() + "@gmail.com");
+		StudentProfile extra = profile(account, "ST" + tag + UUID.randomUUID().toString().substring(0, 6));
+		members.save(memberOf(team, course, enroll(extra, course, EnrollmentStatus.ACTIVE), RoleInTeam.MEMBER));
+		return extra;
+	}
+
+	private StudentProfile addWithdrawnTeammate(Course course, Team team, String tag) {
+		UserAccount account = account("wd-" + tag + "-" + UUID.randomUUID() + "@gmail.com");
+		StudentProfile extra = profile(account, "SW" + tag + UUID.randomUUID().toString().substring(0, 6));
+		members.save(memberOf(team, course, enroll(extra, course, EnrollmentStatus.WITHDRAWN), RoleInTeam.MEMBER));
+		return extra;
+	}
+
+	private static PeerReview review(Sprint sprint, StudentProfile reviewer, StudentProfile reviewee, int stars) {
+		PeerReview row = new PeerReview();
+		row.setSprint(sprint);
+		row.setReviewerStudent(reviewer);
+		row.setRevieweeStudent(reviewee);
+		row.setStarRating(stars);
+		return row;
 	}
 
 	private void assertForbidden(UUID userId, UUID courseId) {

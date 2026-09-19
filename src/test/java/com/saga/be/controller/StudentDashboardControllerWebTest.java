@@ -7,6 +7,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.saga.be.dto.student.dashboard.StudentDashboardActiveTaskResponse;
+import com.saga.be.dto.student.dashboard.StudentDashboardAlertResponse;
+import com.saga.be.dto.student.dashboard.StudentDashboardAlertTargetIds;
 import com.saga.be.dto.student.dashboard.StudentDashboardCommitMetricsResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardCourseResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardGithubIntegrationResponse;
@@ -129,7 +131,31 @@ class StudentDashboardControllerWebTest {
 						List.of(
 								new StudentDashboardWeeklyCommitResponse(LocalDate.of(2026, 8, 31), LocalDate.of(2026, 9, 6), 4),
 								new StudentDashboardWeeklyCommitResponse(LocalDate.of(2026, 9, 7), LocalDate.of(2026, 9, 13), 7),
-								new StudentDashboardWeeklyCommitResponse(LocalDate.of(2026, 9, 14), LocalDate.of(2026, 9, 20), 2))));
+								new StudentDashboardWeeklyCommitResponse(LocalDate.of(2026, 9, 14), LocalDate.of(2026, 9, 20), 2)),
+						List.of(
+								new StudentDashboardAlertResponse(
+										"MSR:77777777-7777-4777-8777-777777777777",
+										"MSR_ANOMALY",
+										"WARNING",
+										"Missing coding evidence",
+										"DONE task SAGA-1 has no coding evidence.",
+										"MSR_ANOMALY",
+										new StudentDashboardAlertTargetIds(
+												courseId,
+												teamId,
+												projectId,
+												UUID.fromString("77777777-7777-4777-8777-777777777777"),
+												null),
+										null),
+								new StudentDashboardAlertResponse(
+										"PEER_REVIEW_PENDING:" + sprintId,
+										"PEER_REVIEW_PENDING",
+										"INFO",
+										"Peer reviews pending",
+										"You still have 2 teammate reviews to complete for Sprint 1.",
+										"PEER_REVIEW_PENDING",
+										new StudentDashboardAlertTargetIds(courseId, teamId, projectId, null, sprintId),
+										2))));
 
 		mockMvc.perform(get("/api/student/courses/" + courseId + "/dashboard"))
 				.andExpect(status().isOk())
@@ -148,7 +174,17 @@ class StudentDashboardControllerWebTest {
 				.andExpect(jsonPath("$.weeklyCommits[2].commits").value(2))
 				.andExpect(jsonPath("$.weeklyCommits[0].label").doesNotExist())
 				.andExpect(jsonPath("$.contribution").doesNotExist())
-				.andExpect(jsonPath("$.actionableAlerts").doesNotExist());
+				.andExpect(jsonPath("$.actionableAlerts[0].id").value("MSR:77777777-7777-4777-8777-777777777777"))
+				.andExpect(jsonPath("$.actionableAlerts[0].type").value("MSR_ANOMALY"))
+				.andExpect(jsonPath("$.actionableAlerts[0].actionType").value("MSR_ANOMALY"))
+				.andExpect(jsonPath("$.actionableAlerts[0].targetIds.taskId")
+						.value("77777777-7777-4777-8777-777777777777"))
+				.andExpect(jsonPath("$.actionableAlerts[0].href").doesNotExist())
+				.andExpect(jsonPath("$.actionableAlerts[0].url").doesNotExist())
+				.andExpect(jsonPath("$.actionableAlerts[1].id").value("PEER_REVIEW_PENDING:" + sprintId))
+				.andExpect(jsonPath("$.actionableAlerts[1].remainingPeers").value(2))
+				.andExpect(jsonPath("$.actionableAlerts[1].targetIds.sprintId").value(sprintId.toString()))
+				.andExpect(jsonPath("$.ghosting").doesNotExist());
 	}
 
 	@Test
@@ -163,6 +199,7 @@ class StudentDashboardControllerWebTest {
 						null,
 						List.of(),
 						List.of(),
+						List.of(),
 						List.of()));
 
 		mockMvc.perform(get("/api/student/courses/" + courseId + "/dashboard"))
@@ -175,6 +212,8 @@ class StudentDashboardControllerWebTest {
 				.andExpect(jsonPath("$.myActiveTasks").isEmpty())
 				.andExpect(jsonPath("$.recentCommits").isEmpty())
 				.andExpect(jsonPath("$.weeklyCommits").isEmpty())
+				.andExpect(jsonPath("$.actionableAlerts").isArray())
+				.andExpect(jsonPath("$.actionableAlerts").isEmpty())
 				.andExpect(jsonPath("$.student.teamRole").value(Matchers.nullValue()));
 	}
 
