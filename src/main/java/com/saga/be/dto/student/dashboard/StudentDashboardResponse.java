@@ -5,9 +5,9 @@ import java.util.List;
 
 @Schema(
 		description =
-				"Phase A+B1+B2+D1 student personal dashboard: identity, optional team/project, integrations, "
+				"Phase A+B1+B2+D1+D2 student personal dashboard: identity, optional team/project, integrations, "
 						+ "current sprint, personal task/commit metrics, attention preview, recent commits, "
-						+ "rolling last-3 ISO weekly commits, and MSR / peer-review pending alerts.")
+						+ "rolling last-3 ISO weekly commits, and MSR / ghosting / peer-review pending alerts.")
 public record StudentDashboardResponse(
 		StudentDashboardStudentResponse student,
 		StudentDashboardCourseResponse course,
@@ -30,6 +30,6 @@ public record StudentDashboardResponse(
 				List<StudentDashboardWeeklyCommitResponse> weeklyCommits,
 		@Schema(
 						description =
-								"Never null. Empty with no team / no project. MSR_ANOMALY then PEER_REVIEW_PENDING. "
-										+ "GHOSTING_WARNING is not present in D1.")
+								"Never null. Empty with no team / no project. Order: MSR_ANOMALY, GHOSTING_WARNING, "
+										+ "PEER_REVIEW_PENDING.")
 				List<StudentDashboardAlertResponse> actionableAlerts) {}

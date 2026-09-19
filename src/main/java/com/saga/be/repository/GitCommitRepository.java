@@ -242,4 +242,25 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			@Param("studentId") UUID studentId,
 			@Param("rangeStart") LocalDateTime rangeStart,
 			@Param("rangeEndExclusive") LocalDateTime rangeEndExclusive);
+
+	/**
+	 * Ghosting activity: mapped V23 authored commits whose raw {@code committedAt} falls in the
+	 * academic calendar window. No {@code createdAt} fallback.
+	 */
+	@Query(
+			"""
+			select case when count(c) > 0 then true else false end
+			from GitCommit c
+			where c.repo.project.id = :projectId
+			  and c.authorStudent.id = :studentId
+			  and (c.parentCount is null or c.parentCount <= 1)
+			  and c.committedAt is not null
+			  and c.committedAt >= :windowStart
+			  and c.committedAt < :windowEndExclusive
+			""")
+	boolean existsAuthoredV23CommittedAtInRange(
+			@Param("projectId") UUID projectId,
+			@Param("studentId") UUID studentId,
+			@Param("windowStart") LocalDateTime windowStart,
+			@Param("windowEndExclusive") LocalDateTime windowEndExclusive);
 }

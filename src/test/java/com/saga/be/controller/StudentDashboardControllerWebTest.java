@@ -148,6 +148,15 @@ class StudentDashboardControllerWebTest {
 												null),
 										null),
 								new StudentDashboardAlertResponse(
+										"GHOSTING:33333333-3333-4333-8333-333333333333:" + courseId,
+										"GHOSTING_WARNING",
+										"WARNING",
+										"No recent coding commits",
+										"No attributable coding commit has been recorded in the last 5 calendar days.",
+										"GHOSTING_WARNING",
+										new StudentDashboardAlertTargetIds(courseId, teamId, projectId, null, sprintId),
+										null),
+								new StudentDashboardAlertResponse(
 										"PEER_REVIEW_PENDING:" + sprintId,
 										"PEER_REVIEW_PENDING",
 										"INFO",
@@ -181,10 +190,15 @@ class StudentDashboardControllerWebTest {
 						.value("77777777-7777-4777-8777-777777777777"))
 				.andExpect(jsonPath("$.actionableAlerts[0].href").doesNotExist())
 				.andExpect(jsonPath("$.actionableAlerts[0].url").doesNotExist())
-				.andExpect(jsonPath("$.actionableAlerts[1].id").value("PEER_REVIEW_PENDING:" + sprintId))
-				.andExpect(jsonPath("$.actionableAlerts[1].remainingPeers").value(2))
-				.andExpect(jsonPath("$.actionableAlerts[1].targetIds.sprintId").value(sprintId.toString()))
-				.andExpect(jsonPath("$.ghosting").doesNotExist());
+				.andExpect(jsonPath("$.actionableAlerts[1].type").value("GHOSTING_WARNING"))
+				.andExpect(jsonPath("$.actionableAlerts[1].severity").value("WARNING"))
+				.andExpect(jsonPath("$.actionableAlerts[1].id")
+						.value("GHOSTING:33333333-3333-4333-8333-333333333333:" + courseId))
+				.andExpect(jsonPath("$.actionableAlerts[1].inactiveDays").doesNotExist())
+				.andExpect(jsonPath("$.actionableAlerts[1].lastActivityAt").doesNotExist())
+				.andExpect(jsonPath("$.actionableAlerts[2].id").value("PEER_REVIEW_PENDING:" + sprintId))
+				.andExpect(jsonPath("$.actionableAlerts[2].remainingPeers").value(2))
+				.andExpect(jsonPath("$.actionableAlerts[2].targetIds.sprintId").value(sprintId.toString()));
 	}
 
 	@Test

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -39,6 +40,7 @@ import com.saga.be.entity.jira.Task;
 import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.GitRepoRepository;
+import com.saga.be.repository.IdentityMapRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.PeerReviewRepository;
 import com.saga.be.repository.SprintRepository;
@@ -84,6 +86,8 @@ class StudentDashboardServiceTest {
 	private TaskGitCommitLinkRepository commitLinks;
 	@Mock
 	private PeerReviewRepository peerReviews;
+	@Mock
+	private IdentityMapRepository identities;
 
 	private static final Clock UTC_SUNDAY = Clock.fixed(Instant.parse("2026-09-20T12:00:00Z"), ZoneOffset.UTC);
 
@@ -105,6 +109,7 @@ class StudentDashboardServiceTest {
 				commits,
 				commitLinks,
 				peerReviews,
+				identities,
 				UTC_SUNDAY);
 		account = new UserAccount();
 		account.setId(UUID.randomUUID());
@@ -649,6 +654,7 @@ class StudentDashboardServiceTest {
 				commits,
 				commitLinks,
 				peerReviews,
+				identities,
 				Clock.fixed(Instant.parse("2026-09-20T17:00:00Z"), ZoneId.of("Asia/Ho_Chi_Minh")));
 		Team team = team(project());
 		UUID projectId = team.getProject().getId();
@@ -677,6 +683,7 @@ class StudentDashboardServiceTest {
 				commits,
 				commitLinks,
 				peerReviews,
+				identities,
 				Clock.fixed(Instant.parse("2026-03-11T16:00:00Z"), ZoneId.of("America/New_York")));
 		Team team = team(project());
 		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
@@ -775,6 +782,201 @@ class StudentDashboardServiceTest {
 		assertEquals("MSR:" + noDueLow.getId(), alerts.get(3).id());
 		assertEquals("PEER_REVIEW_PENDING:" + active.getId(), alerts.get(4).id());
 		assertEquals(2, alerts.get(4).remainingPeers());
+		verify(identities, never()).countEligibleGithubIdentityAge(any());
+	}
+
+	@Test
+	void ghostingFiresWhenAllGatesPassAndNoRecentV23Commit() {
+		Team team = team(project());
+		TeamMember membership = eligibleMember(team);
+		Sprint active = eligibleSprint();
+		stubGhostingEligible(team, membership, active, true);
+		when(commits.existsAuthoredV23CommittedAtInRange(eq(team.getProject().getId()), eq(profile.getId()), any(), any()))
+				.thenReturn(false);
+
+		var alerts = service.get(account.getId(), course.getId()).actionableAlerts();
+		assertEquals(1, alerts.size());
+		assertEquals("GHOSTING:" + profile.getId() + ":" + course.getId(), alerts.getFirst().id());
+		assertEquals("GHOSTING_WARNING", alerts.getFirst().type());
+		assertEquals("WARNING", alerts.getFirst().severity());
+		assertEquals("GHOSTING_WARNING", alerts.getFirst().actionType());
+		assertEquals(StudentDashboardService.GHOSTING_MESSAGE, alerts.getFirst().message());
+		assertFalse(alerts.getFirst().message().toLowerCase().contains("no work"));
+		assertFalse(alerts.getFirst().message().contains("120"));
+		assertEquals(course.getId(), alerts.getFirst().targetIds().courseId());
+		assertEquals(team.getId(), alerts.getFirst().targetIds().teamId());
+		assertEquals(team.getProject().getId(), alerts.getFirst().targetIds().projectId());
+		assertEquals(active.getId(), alerts.getFirst().targetIds().sprintId());
+		assertNull(alerts.getFirst().targetIds().taskId());
+		assertNull(alerts.getFirst().remainingPeers());
+	}
+
+	@Test
+	void ghostingIsSuppressedWhenRecentV23CommitExists() {
+		Team team = team(project());
+		stubGhostingEligible(team, eligibleMember(team), eligibleSprint(), true);
+		when(commits.existsAuthoredV23CommittedAtInRange(eq(team.getProject().getId()), eq(profile.getId()), any(), any()))
+				.thenReturn(true);
+		assertTrue(service.get(account.getId(), course.getId()).actionableAlerts().isEmpty());
+	}
+
+	@Test
+	void ghostingIsSuppressedByYoungSprintMembershipEnrollmentOrBlockedOnly() {
+		Team team = team(project());
+		TeamMember membership = eligibleMember(team);
+		Sprint young = eligibleSprint();
+		young.setStartDate(LocalDateTime.of(2026, 9, 17, 0, 0));
+		stubGhostingEligible(team, membership, young, true);
+		assertTrue(service.get(account.getId(), course.getId()).actionableAlerts().isEmpty());
+		verify(identities, never()).countEligibleGithubIdentityAge(any());
+
+		Sprint old = eligibleSprint();
+		membership.setCreatedAt(LocalDateTime.of(2026, 9, 17, 8, 0));
+		stubGhostingEligible(team, membership, old, true);
+		assertTrue(service.get(account.getId(), course.getId()).actionableAlerts().isEmpty());
+
+		membership.setCreatedAt(LocalDateTime.of(2026, 9, 1, 0, 0));
+		enrollment.setEnrolledAt(LocalDateTime.of(2026, 9, 17, 0, 0));
+		assertTrue(service.get(account.getId(), course.getId()).actionableAlerts().isEmpty());
+
+		enrollment.setEnrolledAt(LocalDateTime.of(2026, 9, 1, 0, 0));
+		stubGhostingEligible(team, membership, old, true);
+		when(tasks.countStatusAndStoryPointsForAssignee(team.getProject().getId(), profile.getId()))
+				.thenReturn(List.of(
+						new Object[] {TaskStatus.DONE, 2L, 5L},
+						new Object[] {TaskStatus.BLOCKED, 1L, 0L}));
+		assertTrue(service.get(account.getId(), course.getId()).actionableAlerts().isEmpty());
+		verify(identities, never()).countEligibleGithubIdentityAge(any());
+	}
+
+	@Test
+	void ghostingRequiresAllActiveReposAndAllConfirmedIdentitiesOldEnough() {
+		Team team = team(project());
+		TeamMember membership = eligibleMember(team);
+		Sprint active = eligibleSprint();
+		stubGhostingEligible(team, membership, active, true);
+		when(repos.countAndMaxLastSyncedAtGroupedByStatus(team.getProject().getId()))
+				.thenReturn(List.<Object[]>of(
+						new Object[] {
+							IntegrationStatus.ACTIVE, 2L, LocalDateTime.of(2026, 9, 1, 0, 0), LocalDateTime.of(2026, 9, 17, 0, 0)
+						}));
+		assertTrue(service.get(account.getId(), course.getId()).actionableAlerts().isEmpty());
+		verify(identities, never()).countEligibleGithubIdentityAge(any());
+
+		when(repos.countAndMaxLastSyncedAtGroupedByStatus(team.getProject().getId()))
+				.thenReturn(List.<Object[]>of(
+						new Object[] {
+							IntegrationStatus.ACTIVE, 1L, LocalDateTime.of(2026, 9, 1, 0, 0), LocalDateTime.of(2026, 9, 1, 0, 0)
+						},
+						new Object[] {IntegrationStatus.REVOKED, 1L, LocalDateTime.of(2026, 9, 19, 0, 0), LocalDateTime.of(2026, 9, 19, 0, 0)}));
+		when(identities.countEligibleGithubIdentityAge(account.getId()))
+				.thenReturn(List.<Object[]>of(new Object[] {2L, 0L, LocalDateTime.of(2026, 9, 17, 0, 0)}));
+		assertTrue(service.get(account.getId(), course.getId()).actionableAlerts().isEmpty());
+		verify(commits, never()).existsAuthoredV23CommittedAtInRange(any(), any(), any(), any());
+
+		when(identities.countEligibleGithubIdentityAge(account.getId()))
+				.thenReturn(List.<Object[]>of(new Object[] {1L, 1L, LocalDateTime.of(2026, 9, 1, 0, 0)}));
+		assertTrue(service.get(account.getId(), course.getId()).actionableAlerts().isEmpty());
+
+		when(identities.countEligibleGithubIdentityAge(account.getId()))
+				.thenReturn(List.<Object[]>of(new Object[] {0L, 0L, null}));
+		assertTrue(service.get(account.getId(), course.getId()).actionableAlerts().isEmpty());
+
+		when(repos.countAndMaxLastSyncedAtGroupedByStatus(team.getProject().getId()))
+				.thenReturn(List.<Object[]>of(
+						new Object[] {
+							IntegrationStatus.ACTIVE, 2L, LocalDateTime.of(2026, 9, 1, 0, 0), LocalDateTime.of(2026, 9, 1, 8, 0)
+						}));
+		when(identities.countEligibleGithubIdentityAge(account.getId()))
+				.thenReturn(List.<Object[]>of(new Object[] {2L, 0L, LocalDateTime.of(2026, 9, 1, 0, 0)}));
+		assertEquals("GHOSTING_WARNING", service.get(account.getId(), course.getId()).actionableAlerts().getFirst().type());
+	}
+
+	@Test
+	void ghostingAgeGatesPassOnExactWindowStartDate() {
+		Team team = team(project());
+		TeamMember membership = eligibleMember(team);
+		Sprint sprint = eligibleSprint();
+		sprint.setStartDate(LocalDateTime.of(2026, 9, 16, 23, 59));
+		membership.setCreatedAt(LocalDateTime.of(2026, 9, 16, 23, 59));
+		enrollment.setEnrolledAt(LocalDateTime.of(2026, 9, 16, 23, 59));
+		stubGhostingEligible(team, membership, sprint, true);
+		assertEquals("GHOSTING_WARNING", service.get(account.getId(), course.getId()).actionableAlerts().getFirst().type());
+	}
+
+	@Test
+	void ghostingAssignedWorkAllowsInProgressInReviewAndBlockedPlusTodo() {
+		Team team = team(project());
+		TeamMember membership = eligibleMember(team);
+		Sprint active = eligibleSprint();
+		stubGhostingEligible(team, membership, active, true);
+		when(tasks.countStatusAndStoryPointsForAssignee(team.getProject().getId(), profile.getId()))
+				.thenReturn(List.<Object[]>of(new Object[] {TaskStatus.IN_PROGRESS, 1L, 2L}));
+		assertEquals("GHOSTING_WARNING", service.get(account.getId(), course.getId()).actionableAlerts().getFirst().type());
+
+		when(tasks.countStatusAndStoryPointsForAssignee(team.getProject().getId(), profile.getId()))
+				.thenReturn(List.<Object[]>of(new Object[] {TaskStatus.IN_REVIEW, 1L, 2L}));
+		assertEquals("GHOSTING_WARNING", service.get(account.getId(), course.getId()).actionableAlerts().getFirst().type());
+
+		when(tasks.countStatusAndStoryPointsForAssignee(team.getProject().getId(), profile.getId()))
+				.thenReturn(List.of(
+						new Object[] {TaskStatus.BLOCKED, 1L, 0L},
+						new Object[] {TaskStatus.TODO, 1L, 1L}));
+		assertEquals("GHOSTING_WARNING", service.get(account.getId(), course.getId()).actionableAlerts().getFirst().type());
+
+		when(tasks.countStatusAndStoryPointsForAssignee(team.getProject().getId(), profile.getId()))
+				.thenReturn(List.of());
+		assertTrue(service.get(account.getId(), course.getId()).actionableAlerts().isEmpty());
+	}
+
+	@Test
+	void ghostingTodayFollowsDashboardZoneWhilePersistedDatesStayNaive() {
+		service = new StudentDashboardService(
+				enrollments,
+				members,
+				jiraIntegrations,
+				repos,
+				sprints,
+				tasks,
+				commits,
+				commitLinks,
+				peerReviews,
+				identities,
+				Clock.fixed(Instant.parse("2026-09-20T17:00:00Z"), ZoneId.of("Asia/Ho_Chi_Minh")));
+		Team team = team(project());
+		TeamMember membership = eligibleMember(team);
+		Sprint sprint = eligibleSprint();
+		sprint.setStartDate(LocalDateTime.of(2026, 9, 17, 0, 0));
+		membership.setCreatedAt(LocalDateTime.of(2026, 9, 17, 0, 0));
+		enrollment.setEnrolledAt(LocalDateTime.of(2026, 9, 17, 0, 0));
+		stubGhostingEligible(team, membership, sprint, true);
+		assertEquals("GHOSTING_WARNING", service.get(account.getId(), course.getId()).actionableAlerts().getFirst().type());
+
+		clearInvocations(identities);
+		sprint.setStartDate(LocalDateTime.of(2026, 9, 18, 0, 0));
+		assertTrue(service.get(account.getId(), course.getId()).actionableAlerts().isEmpty());
+		verify(identities, never()).countEligibleGithubIdentityAge(any());
+	}
+
+	@Test
+	void ghostingSitsBetweenMsrAndPeer() {
+		Team team = team(project());
+		TeamMember membership = eligibleMember(team);
+		Sprint active = eligibleSprint();
+		stubGhostingEligible(team, membership, active, true);
+		when(peerReviews.countRemainingPeers(team.getId(), active.getId(), profile.getId())).thenReturn(1L);
+		Task anomaly = assignedTask(TaskStatus.DONE, Priority.HIGH, LocalDateTime.of(2026, 9, 2, 0, 0), "[\"saga:code\"]");
+		when(tasks.findDoneWithoutV23EvidenceCandidates(team.getProject().getId(), profile.getId()))
+				.thenReturn(List.of(candidate(anomaly)));
+		when(commits.existsAuthoredV23CommittedAtInRange(eq(team.getProject().getId()), eq(profile.getId()), any(), any()))
+				.thenReturn(false);
+
+		var alerts = service.get(account.getId(), course.getId()).actionableAlerts();
+		assertEquals(3, alerts.size());
+		assertEquals("MSR_ANOMALY", alerts.get(0).type());
+		assertEquals("GHOSTING_WARNING", alerts.get(1).type());
+		assertEquals("PEER_REVIEW_PENDING", alerts.get(2).type());
+		assertEquals("GHOSTING:" + profile.getId() + ":" + course.getId(), alerts.get(1).id());
 	}
 
 	private void stubEmptyIntegrations(UUID projectId) {
@@ -855,6 +1057,7 @@ class StudentDashboardServiceTest {
 		row.setStudentProfile(profile);
 		row.setCourse(owned);
 		row.setEnrollmentStatus(status);
+		row.setEnrolledAt(LocalDateTime.of(2026, 9, 1, 0, 0));
 		return row;
 	}
 
@@ -872,6 +1075,47 @@ class StudentDashboardServiceTest {
 		project.setId(UUID.randomUUID());
 		project.setName("SAGA");
 		return project;
+	}
+
+	private void stubGhostingEligible(Team team, TeamMember membership, Sprint active, boolean githubConnected) {
+		UUID projectId = team.getProject().getId();
+		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
+				.thenReturn(Optional.of(enrollment));
+		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId())).thenReturn(Optional.of(membership));
+		when(members.countActiveByTeam_Id(team.getId())).thenReturn(3L);
+		stubEmptyIntegrations(projectId);
+		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of(active));
+		when(tasks.countGroupedByStatusForProjectAndSprint(projectId, active.getId())).thenReturn(List.of());
+		when(tasks.countStatusAndStoryPointsForAssignee(projectId, profile.getId()))
+				.thenReturn(List.<Object[]>of(new Object[] {TaskStatus.TODO, 1L, 3L}));
+		if (githubConnected) {
+			when(repos.countAndMaxLastSyncedAtGroupedByStatus(projectId))
+					.thenReturn(List.<Object[]>of(
+							new Object[] {
+								IntegrationStatus.ACTIVE,
+								1L,
+								LocalDateTime.of(2026, 9, 1, 8, 0),
+								LocalDateTime.of(2026, 9, 1, 0, 0)
+							}));
+		}
+		lenient()
+				.when(identities.countEligibleGithubIdentityAge(account.getId()))
+				.thenReturn(List.<Object[]>of(new Object[] {1L, 0L, LocalDateTime.of(2026, 9, 1, 0, 0)}));
+		lenient()
+				.when(commits.existsAuthoredV23CommittedAtInRange(eq(projectId), eq(profile.getId()), any(), any()))
+				.thenReturn(false);
+	}
+
+	private static TeamMember eligibleMember(Team team) {
+		TeamMember member = member(team, RoleInTeam.MEMBER);
+		member.setCreatedAt(LocalDateTime.of(2026, 9, 1, 0, 0));
+		return member;
+	}
+
+	private static Sprint eligibleSprint() {
+		Sprint sprint = sprint("active");
+		sprint.setStartDate(LocalDateTime.of(2026, 9, 16, 0, 0));
+		return sprint;
 	}
 
 	private static TeamMember member(Team team, RoleInTeam role) {

@@ -17,6 +17,8 @@ import com.saga.be.entity.enums.AccountRole;
 import com.saga.be.entity.enums.AccountStatus;
 import com.saga.be.entity.enums.EnrollmentStatus;
 import com.saga.be.entity.enums.GitProvider;
+import com.saga.be.entity.enums.IdentityMappingStatus;
+import com.saga.be.entity.enums.IntegrationProvider;
 import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.Priority;
 import com.saga.be.entity.enums.RoleInTeam;
@@ -27,6 +29,7 @@ import com.saga.be.entity.enums.TaskStatus;
 import com.saga.be.entity.enums.TraceLinkSource;
 import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.github.GitRepo;
+import com.saga.be.entity.integration.IdentityMap;
 import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Sprint;
 import com.saga.be.entity.jira.Task;
@@ -116,7 +119,8 @@ class StudentDashboardPersistTest {
 				TaskRepository tasks,
 				com.saga.be.repository.GitCommitRepository commits,
 				com.saga.be.repository.TaskGitCommitLinkRepository commitLinks,
-				com.saga.be.repository.PeerReviewRepository peerReviews) {
+				com.saga.be.repository.PeerReviewRepository peerReviews,
+				com.saga.be.repository.IdentityMapRepository identities) {
 			return new StudentDashboardService(
 					enrollments,
 					members,
@@ -127,6 +131,7 @@ class StudentDashboardPersistTest {
 					commits,
 					commitLinks,
 					peerReviews,
+					identities,
 					java.time.Clock.fixed(java.time.Instant.parse("2026-09-20T12:00:00Z"), java.time.ZoneOffset.UTC));
 		}
 	}
@@ -171,6 +176,8 @@ class StudentDashboardPersistTest {
 	private com.saga.be.repository.TaskGitCommitLinkRepository commitLinks;
 	@Autowired
 	private com.saga.be.repository.PeerReviewRepository peerReviews;
+	@Autowired
+	private com.saga.be.repository.IdentityMapRepository identities;
 
 	private TransactionTemplate tx;
 	private Fixture fixture;
@@ -1127,6 +1134,415 @@ class StudentDashboardPersistTest {
 	}
 
 	@Test
+	void d2GhostingFiresWhenEligibleAndHasNoRecentCommit() {
+		prepareGhostingEligible();
+		StudentDashboardResponse first = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		StudentProfile member = tx.execute(status -> profileOf(fixture.memberId));
+		assertThat(first.actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.contains("GHOSTING_WARNING");
+		var ghosting = first.actionableAlerts().stream()
+				.filter(alert -> "GHOSTING_WARNING".equals(alert.type()))
+				.findFirst()
+				.orElseThrow();
+		assertThat(ghosting.id()).isEqualTo("GHOSTING:" + member.getId() + ":" + fixture.courseId);
+		assertThat(ghosting.severity()).isEqualTo("WARNING");
+		assertThat(ghosting.actionType()).isEqualTo("GHOSTING_WARNING");
+		assertThat(ghosting.message()).isEqualTo(StudentDashboardService.GHOSTING_MESSAGE);
+		assertThat(ghosting.targetIds().sprintId()).isNotNull();
+		assertThat(ghosting.targetIds().taskId()).isNull();
+
+		StudentDashboardResponse second = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		assertThat(second.actionableAlerts().stream().map(StudentDashboardAlertResponse::id).toList())
+				.contains(ghosting.id());
+	}
+
+	@Test
+	void d2GhostingRepoAndIdentityGatesAreConservative() {
+		prepareGhostingEligible();
+		tx.executeWithoutResult(status -> {
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			GitRepo young = repos.save(repo(project, 91L, "org/new", IntegrationStatus.ACTIVE));
+			stampCreatedAt("git_repo", young.getId(), LocalDateTime.of(2026, 9, 17, 0, 0));
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.doesNotContain("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			for (GitRepo repo : repos.findByProject_Id(fixture.projectId)) {
+				if ("org/new".equals(repo.getFullName())) {
+					repo.setConnectionStatus(IntegrationStatus.REVOKED);
+				}
+			}
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.contains("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			GitRepo secondOld = repos.save(repo(project, 93L, "org/old-2", IntegrationStatus.ACTIVE));
+			stampCreatedAt("git_repo", secondOld.getId(), LocalDateTime.of(2026, 9, 1, 8, 0));
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.contains("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			UserAccount member = users.findById(fixture.memberId).orElseThrow();
+			identities.save(githubIdentity(member, IdentityMappingStatus.ACTIVE, LocalDateTime.of(2026, 9, 17, 0, 0), "new-gh"));
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.doesNotContain("GHOSTING_WARNING");
+	}
+
+	@Test
+	void d2GhostingIgnoresPendingAndRevokedIdentitiesAndConnectedOnlyRepos() {
+		prepareGhostingEligible();
+		tx.executeWithoutResult(status -> {
+			UserAccount member = users.findById(fixture.memberId).orElseThrow();
+			identities.save(githubIdentity(member, IdentityMappingStatus.PENDING, LocalDateTime.of(2026, 9, 19, 0, 0), "pending-gh"));
+			identities.save(githubIdentity(member, IdentityMappingStatus.REVOKED, LocalDateTime.of(2026, 9, 1, 0, 0), "revoked-gh"));
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.contains("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			for (GitRepo repo : repos.findByProject_Id(fixture.projectId)) {
+				repo.setConnectionStatus(IntegrationStatus.CONNECTED);
+			}
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.doesNotContain("GHOSTING_WARNING");
+	}
+
+	@Test
+	void d2GhostingCommitBoundariesAndAssignedWork() {
+		prepareGhostingEligible();
+		tx.executeWithoutResult(status -> {
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			StudentProfile member = profileOf(fixture.memberId);
+			GitRepo repo = repos.findByProject_Id(fixture.projectId).getFirst();
+			persistCommit(repo, member, "g-before", 1, LocalDateTime.of(2026, 9, 15, 23, 59, 59), "before");
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.contains("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			StudentProfile member = profileOf(fixture.memberId);
+			GitRepo repo = repos.findByProject_Id(fixture.projectId).getFirst();
+			persistCommit(repo, member, "g-start", 1, LocalDateTime.of(2026, 9, 16, 0, 0), "start");
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.doesNotContain("GHOSTING_WARNING");
+	}
+
+	@Test
+	void d2GhostingIgnoresMergeNullCommittedAtTeammateAndOtherProject() {
+		prepareGhostingEligible();
+		tx.executeWithoutResult(status -> {
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			StudentProfile member = profileOf(fixture.memberId);
+			StudentProfile leader = profileOf(fixture.leaderId);
+			GitRepo repo = repos.findByProject_Id(fixture.projectId).getFirst();
+			persistCommit(repo, member, "g-merge", 2, LocalDateTime.of(2026, 9, 18, 0, 0), "merge");
+			persistCommit(repo, member, "g-null", 1, null, "null-at");
+			persistCommit(repo, null, "g-unmap", 1, LocalDateTime.of(2026, 9, 18, 0, 0), "unmapped");
+			persistCommit(repo, leader, "g-lead", 1, LocalDateTime.of(2026, 9, 18, 0, 0), "teammate");
+			Project other = new Project();
+			other.setCourse(courses.findById(fixture.otherCourseId).orElseThrow());
+			other.setName("OTHER-G");
+			other = projects.save(other);
+			GitRepo otherRepo = repos.save(repo(other, 92L, "org/other-g", IntegrationStatus.ACTIVE));
+			persistCommit(otherRepo, member, "g-other", 1, LocalDateTime.of(2026, 9, 18, 0, 0), "other");
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.contains("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			StudentProfile member = profileOf(fixture.memberId);
+			GitRepo repo = repos.findByProject_Id(fixture.projectId).getFirst();
+			persistCommit(repo, member, "g-pnull", null, LocalDateTime.of(2026, 9, 18, 0, 0), "null-parent");
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.doesNotContain("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			StudentProfile member = profileOf(fixture.memberId);
+			GitRepo repo = repos.findByProject_Id(fixture.projectId).getFirst();
+			persistCommit(repo, member, "g-root", 0, LocalDateTime.of(2026, 9, 18, 0, 0), "root");
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.doesNotContain("GHOSTING_WARNING");
+	}
+
+	@Test
+	void d2GhostingAssignedWorkAndQueryCount() {
+		prepareGhostingEligible();
+		Statistics stats = statistics();
+		tx.executeWithoutResult(status -> entityManager.clear());
+		stats.clear();
+		StudentDashboardResponse first = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		assertThat(first.actionableAlerts()).extracting(StudentDashboardAlertResponse::type).contains("GHOSTING_WARNING");
+		long firstCount = stats.getPrepareStatementCount();
+		assertThat(firstCount)
+				.as("D2 eligible ghosting is D1 work-without-commits (16) + identity + exists = 18; max 20")
+				.isEqualTo(18L);
+
+		tx.executeWithoutResult(status -> {
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			for (int i = 0; i < 20; i++) {
+				repos.save(repo(project, 200L + i, "org/load-g-" + i, IntegrationStatus.ACTIVE));
+			}
+			for (GitRepo extra : repos.findByProject_Id(fixture.projectId)) {
+				stampCreatedAt("git_repo", extra.getId(), LocalDateTime.of(2026, 9, 1, 0, 0));
+			}
+			entityManager.flush();
+		});
+		tx.executeWithoutResult(status -> entityManager.clear());
+		stats.clear();
+		StudentDashboardResponse grown = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		assertThat(grown.actionableAlerts()).extracting(StudentDashboardAlertResponse::type).contains("GHOSTING_WARNING");
+		assertThat(stats.getPrepareStatementCount()).isEqualTo(firstCount);
+
+		tx.executeWithoutResult(status -> {
+			UUID memberProfileId = profileOf(fixture.memberId).getId();
+			for (Task task : tasks.findAll()) {
+				if (task.getAssigneeStudent() != null && memberProfileId.equals(task.getAssigneeStudent().getId())) {
+					task.setStatus(TaskStatus.DONE);
+				}
+			}
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.doesNotContain("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			UUID memberProfileId = profileOf(fixture.memberId).getId();
+			for (Task task : tasks.findAll()) {
+				if (task.getAssigneeStudent() != null && memberProfileId.equals(task.getAssigneeStudent().getId())) {
+					task.setStatus(TaskStatus.IN_PROGRESS);
+				}
+			}
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.contains("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			UUID memberProfileId = profileOf(fixture.memberId).getId();
+			for (Task task : tasks.findAll()) {
+				if (task.getAssigneeStudent() != null && memberProfileId.equals(task.getAssigneeStudent().getId())) {
+					task.setStatus(TaskStatus.IN_REVIEW);
+				}
+			}
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.contains("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			StudentProfile member = profileOf(fixture.memberId);
+			UUID memberProfileId = member.getId();
+			for (Task task : tasks.findAll()) {
+				if (task.getAssigneeStudent() != null && memberProfileId.equals(task.getAssigneeStudent().getId())) {
+					task.setStatus(TaskStatus.BLOCKED);
+				}
+			}
+			tasks.save(assigned(project, null, member, TaskStatus.TODO, Priority.LOW, 1, null, null, "SAGA-BLOCK-TODO"));
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.contains("GHOSTING_WARNING");
+	}
+
+	@Test
+	void d2GhostingSitsBetweenMsrAndPeer() {
+		prepareGhostingEligible();
+		tx.executeWithoutResult(status -> {
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			StudentProfile member = profileOf(fixture.memberId);
+			tasks.save(assigned(project, null, member, TaskStatus.DONE, Priority.HIGH, 1, LocalDateTime.of(2026, 9, 2, 0, 0), "[\"saga:code\"]", "SAGA-MSR"));
+			entityManager.flush();
+		});
+		StudentDashboardResponse response = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		assertThat(response.actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.containsExactly("MSR_ANOMALY", "GHOSTING_WARNING", "PEER_REVIEW_PENDING");
+	}
+
+	@Test
+	void d2GhostingAgeGatesUseIndependentRawDates() {
+		prepareGhostingEligible();
+		tx.executeWithoutResult(status -> {
+			for (Sprint sprint : sprints.findActiveByProject_Id(fixture.projectId)) {
+				sprint.setStartDate(LocalDateTime.of(2026, 9, 16, 23, 59));
+			}
+			stampCreatedAt("team_member", memberTeamMemberId(), LocalDateTime.of(2026, 9, 16, 23, 59));
+			CourseEnrollment enrollment = enrollments
+					.findByStudentProfile_IdAndCourse_Id(profileOf(fixture.memberId).getId(), fixture.courseId)
+					.orElseThrow();
+			enrollment.setEnrolledAt(LocalDateTime.of(2026, 9, 16, 23, 59));
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.contains("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			for (Sprint sprint : sprints.findActiveByProject_Id(fixture.projectId)) {
+				sprint.setStartDate(LocalDateTime.of(2026, 9, 17, 0, 0));
+			}
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.doesNotContain("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			for (Sprint sprint : sprints.findActiveByProject_Id(fixture.projectId)) {
+				sprint.setStartDate(LocalDateTime.of(2026, 9, 16, 0, 0));
+			}
+			stampCreatedAt("team_member", memberTeamMemberId(), LocalDateTime.of(2026, 9, 17, 0, 0));
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.doesNotContain("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			stampCreatedAt("team_member", memberTeamMemberId(), LocalDateTime.of(2026, 9, 16, 0, 0));
+			CourseEnrollment enrollment = enrollments
+					.findByStudentProfile_IdAndCourse_Id(profileOf(fixture.memberId).getId(), fixture.courseId)
+					.orElseThrow();
+			enrollment.setEnrolledAt(LocalDateTime.of(2026, 9, 17, 0, 0));
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.doesNotContain("GHOSTING_WARNING");
+	}
+
+	@Test
+	void d2GhostingVerifiedIdentityNullLinkedAtAndWindowEnd() {
+		prepareGhostingEligible();
+		tx.executeWithoutResult(status -> {
+			UserAccount member = users.findById(fixture.memberId).orElseThrow();
+			for (IdentityMap map : identities.findByUserAccount_IdAndProvider(member.getId(), IntegrationProvider.GITHUB)) {
+				map.setMappingStatus(IdentityMappingStatus.VERIFIED);
+			}
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.contains("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			UserAccount member = users.findById(fixture.memberId).orElseThrow();
+			identities.save(githubIdentity(member, IdentityMappingStatus.VERIFIED, LocalDateTime.of(2026, 9, 17, 0, 0), "new-ver"));
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.doesNotContain("GHOSTING_WARNING");
+	}
+
+	@Test
+	void d2GhostingNullLinkedAtAndCommitWindowEndExclusive() {
+		prepareGhostingEligible();
+		tx.executeWithoutResult(status -> {
+			UserAccount member = users.findById(fixture.memberId).orElseThrow();
+			for (IdentityMap map : identities.findByUserAccount_IdAndProvider(member.getId(), IntegrationProvider.GITHUB)) {
+				map.setLinkedAt(null);
+			}
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.doesNotContain("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			UserAccount member = users.findById(fixture.memberId).orElseThrow();
+			for (IdentityMap map : identities.findByUserAccount_IdAndProvider(member.getId(), IntegrationProvider.GITHUB)) {
+				map.setLinkedAt(LocalDateTime.of(2026, 9, 1, 0, 0));
+			}
+			StudentProfile profile = profileOf(fixture.memberId);
+			GitRepo repo = repos.findByProject_Id(fixture.projectId).getFirst();
+			persistCommit(repo, profile, "g-end", 1, LocalDateTime.of(2026, 9, 21, 0, 0), "at-end");
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.contains("GHOSTING_WARNING");
+
+		tx.executeWithoutResult(status -> {
+			StudentProfile member = profileOf(fixture.memberId);
+			GitRepo repo = repos.findByProject_Id(fixture.projectId).getFirst();
+			persistCommit(repo, member, "g-before-end", 1, LocalDateTime.of(2026, 9, 20, 23, 59, 59), "before-end");
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.doesNotContain("GHOSTING_WARNING");
+	}
+
+	@Test
+	void d2GhostingWindowFollowsDashboardZoneForTodayOnly() {
+		prepareGhostingEligible();
+		tx.executeWithoutResult(status -> {
+			StudentProfile member = profileOf(fixture.memberId);
+			GitRepo repo = repos.findByProject_Id(fixture.projectId).getFirst();
+			persistCommit(repo, member, "g-sep16", 1, LocalDateTime.of(2026, 9, 16, 12, 0), "utc-window");
+			entityManager.flush();
+		});
+		assertThat(tx.execute(status -> service.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.doesNotContain("GHOSTING_WARNING");
+
+		StudentDashboardService ict = new StudentDashboardService(
+				enrollments,
+				members,
+				jiraIntegrations,
+				repos,
+				sprints,
+				tasks,
+				commits,
+				commitLinks,
+				peerReviews,
+				identities,
+				java.time.Clock.fixed(java.time.Instant.parse("2026-09-20T17:00:00Z"), java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
+		assertThat(tx.execute(status -> ict.get(fixture.memberId, fixture.courseId)).actionableAlerts())
+				.extracting(StudentDashboardAlertResponse::type)
+				.contains("GHOSTING_WARNING");
+	}
+
+	@Test
 	void academicZoneClockMovesCurrentIsoWeek() {
 		StudentDashboardService ict = new StudentDashboardService(
 				enrollments,
@@ -1138,10 +1554,60 @@ class StudentDashboardPersistTest {
 				commits,
 				commitLinks,
 				peerReviews,
+				identities,
 				java.time.Clock.fixed(java.time.Instant.parse("2026-09-20T17:00:00Z"), java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
 		StudentDashboardResponse response = tx.execute(status -> ict.get(fixture.memberId, fixture.courseId));
 		assertThat(response.weeklyCommits().get(2).startDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 21));
 		assertThat(response.weeklyCommits().get(2).endDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 27));
+	}
+
+	private void prepareGhostingEligible() {
+		tx.executeWithoutResult(status -> {
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			StudentProfile member = profileOf(fixture.memberId);
+			UserAccount account = users.findById(fixture.memberId).orElseThrow();
+			JiraIntegration jira = jiraIntegrations.save(jira(project, IntegrationStatus.ACTIVE));
+			sprints.save(sprint(jira, "active", LocalDateTime.of(2026, 9, 1, 0, 0)));
+			tasks.save(assigned(project, null, member, TaskStatus.TODO, Priority.MEDIUM, 1, null, null, "SAGA-OPEN"));
+			GitRepo repo = repos.save(repo(project, 81L, "org/ghost", IntegrationStatus.ACTIVE));
+			identities.save(githubIdentity(account, IdentityMappingStatus.ACTIVE, LocalDateTime.of(2026, 9, 1, 0, 0), "old-gh"));
+			entityManager.flush();
+			stampCreatedAt("git_repo", repo.getId(), LocalDateTime.of(2026, 9, 1, 0, 0));
+			stampCreatedAt("team_member", memberTeamMemberId(), LocalDateTime.of(2026, 9, 1, 0, 0));
+			entityManager.flush();
+		});
+	}
+
+	private UUID memberTeamMemberId() {
+		return members.findByCourseEnrollment_Id(
+						enrollments
+								.findByStudentProfile_IdAndCourse_Id(profileOf(fixture.memberId).getId(), fixture.courseId)
+								.orElseThrow()
+								.getId())
+				.orElseThrow()
+				.getId();
+	}
+
+	private void stampCreatedAt(String table, UUID id, LocalDateTime at) {
+		entityManager
+				.createNativeQuery("update " + table + " set created_at = :ts where id = :id")
+				.setParameter("ts", at)
+				.setParameter("id", id.toString())
+				.executeUpdate();
+	}
+
+	private static IdentityMap githubIdentity(
+			UserAccount user, IdentityMappingStatus status, LocalDateTime linkedAt, String subject) {
+		IdentityMap map = new IdentityMap();
+		map.setUserAccount(user);
+		map.setProvider(IntegrationProvider.GITHUB);
+		map.setExternalAccountId(subject);
+		map.setExternalUsername(subject);
+		map.setMappingStatus(status);
+		map.setPrimary(status == IdentityMappingStatus.ACTIVE || status == IdentityMappingStatus.VERIFIED);
+		map.setLinkedAt(linkedAt);
+		map.setVersion(0L);
+		return map;
 	}
 
 	private StudentProfile addActiveTeammate(Course course, Team team, String tag) {

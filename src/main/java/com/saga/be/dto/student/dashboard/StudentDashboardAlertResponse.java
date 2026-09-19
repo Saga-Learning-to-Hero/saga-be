@@ -5,8 +5,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 @Schema(
 		description =
-				"Phase D1 actionable alert. Currently MSR_ANOMALY and PEER_REVIEW_PENDING only. "
-						+ "GHOSTING_WARNING is not implemented.")
+				"Phase D1+D2 actionable alert. MSR_ANOMALY, GHOSTING_WARNING, then PEER_REVIEW_PENDING. "
+						+ "GHOSTING_WARNING is commit-only: no attributable V23 committedAt in the last 5 calendar days.")
 public record StudentDashboardAlertResponse(
 		String id,
 		String type,

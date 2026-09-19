@@ -807,7 +807,7 @@ Dùng `myRole` để quyết định UI: hiện nút "Tạo Project"/"Cấu hìn
 - `403 STUDENT_COURSE_FORBIDDEN`: chưa ghi danh ACTIVE course này.
 - `404 TEAM_NOT_FOUND`: đã ghi danh nhưng Lecturer chưa gán nhóm.
 
-### `GET /api/student/courses/{courseId}/dashboard` — Phase A+B1+B2+D1
+### `GET /api/student/courses/{courseId}/dashboard` — Phase A+B1+B2+D1+D2
 
 Personal cockpit của **chính** sinh viên đang gọi API. **MEMBER / LEADER / MENTOR** đều gọi được — không dùng gate của `/progress` (leader-only).
 
@@ -906,6 +906,21 @@ Không team / không project **không** phải 404: trả **200** với `team` /
       }
     },
     {
+      "id": "GHOSTING:<studentId>:<courseId>",
+      "type": "GHOSTING_WARNING",
+      "severity": "WARNING",
+      "title": "No recent coding commits",
+      "message": "No attributable coding commit has been recorded in the last 5 calendar days.",
+      "actionType": "GHOSTING_WARNING",
+      "targetIds": {
+        "courseId": "...",
+        "teamId": "...",
+        "projectId": "...",
+        "taskId": null,
+        "sprintId": "..."
+      }
+    },
+    {
       "id": "PEER_REVIEW_PENDING:<sprintId>",
       "type": "PEER_REVIEW_PENDING",
       "severity": "INFO",
@@ -980,13 +995,13 @@ Không team / không Project: `weeklyCommits = []`.
 
 Có Project nhưng không có commit đủ điều kiện (kể cả chỉ merge / chỉ `committedAt` null): **đúng 3 điểm `commits = 0`**.
 
-Phase D1 — `actionableAlerts` (chỉ `MSR_ANOMALY` và `PEER_REVIEW_PENDING`):
+Phase D1+D2 — `actionableAlerts` (`MSR_ANOMALY`, `GHOSTING_WARNING`, `PEER_REVIEW_PENDING`):
 
 | Trường | Ý nghĩa |
 |---|---|
 | List | **Không bao giờ `null`**. Không team / không Project → `[]`. Có Project nhưng không có cảnh báo → `[]` |
-| Thứ tự | Mọi `MSR_ANOMALY` trước, rồi tối đa **một** `PEER_REVIEW_PENDING` |
-| `id` | Deterministic, không persist: `MSR:<taskId>` / `PEER_REVIEW_PENDING:<sprintId>` |
+| Thứ tự | Mọi `MSR_ANOMALY`, rồi tối đa **một** `GHOSTING_WARNING`, rồi tối đa **một** `PEER_REVIEW_PENDING` |
+| `id` | Deterministic, không persist: `MSR:<taskId>` / `GHOSTING:<studentId>:<courseId>` / `PEER_REVIEW_PENDING:<sprintId>` |
 | `actionType` + `targetIds` | Backend sở hữu semantics. FE tự route. **Không** trả URL / href |
 | `MSR_ANOMALY` | Cùng rule B1: task gán cho chính SV, chưa xoá, `DONE`, classifier CODE/TEST, `evidenceCommitCount = 0` (kể cả chỉ link merge). DOCUMENT / RESEARCH / AMBIGUOUS **không** tạo alert. Một alert / task. `severity` = `WARNING` |
 | Thứ tự MSR | `dueDate` ASC (null last), priority HIGHEST→LOWEST, `taskId` ASC — cùng secondary order với `myActiveTasks` |
@@ -994,9 +1009,12 @@ Phase D1 — `actionableAlerts` (chỉ `MSR_ANOMALY` và `PEER_REVIEW_PENDING`):
 | `PEER_REVIEW_PENDING` | Chỉ khi `currentSprint != null` **và** `remainingPeers > 0`. Đúng **một** card / sprint hiện tại |
 | `remainingPeers` | ACTIVE teammates của **team hiện tại** trừ bản thân, trừ peer đã được chính SV review trên **sprint hiện tại**. Không dùng review nhận về. Không dùng sprint cũ. WITHDRAWN / inactive không phải candidate |
 | Không có | campaign / open period / due date / "còn N ngày" / overdue. Message chỉ nói còn N review cho sprint hiện tại |
-| `GHOSTING_WARNING` | **Chưa implement** — không có trong D1 |
+| `GHOSTING_WARNING` | **Không phải "không làm việc".** Chỉ: không có commit coding **gán được** (`authorStudent` = SV hiện tại, V23, `committedAt` trong 5 ngày lịch kể cả hôm nay). `severity` = `WARNING`. Không `inactiveDays` / `lastActivityAt` |
+| Ghosting — cửa sổ | `today = LocalDate.now(saga.dashboard.zone)`, `windowStartDate = today - 4`. So sánh **raw calendar date / LocalDateTime**, không Instant, không 120 giờ |
+| Ghosting — điều kiện | Team+Project; `currentSprint` + `startDate.toLocalDate() <= windowStartDate`; `TeamMember.createdAt` và `enrolledAt` đủ cũ (cổng độc lập); `todo+inProgress+inReview > 0` (all DONE / BLOCKED-only / zero assigned → tắt); `github.connected` (ACTIVE only); **mọi** repo ACTIVE có `createdAt` đủ cũ (`MAX(createdAt)`); **mọi** GitHub identity `ACTIVE`/`VERIFIED` có `linkedAt` non-null và đủ cũ (`PENDING` bỏ qua); không có V23 `committedAt` trong `[windowStart, windowEndExclusive)` |
+| Ghosting — giới hạn | `createdAt` repo là first-claim, **không** phải firstActiveAt (reconnect có thể trông cũ hơn thực tế). Tài khoản GitHub phụ / chưa map có thể giấu commit. Không bịa "no work" / free-riding |
 
-Phase D1 **chưa** trả: `contribution` / `mySlices` / `teamTotalSlices` / `contributionPercent` / `peerReviewAverageScore`, `GHOSTING_WARNING`.
+Phase D2 **chưa** trả: `contribution` / `mySlices` / `teamTotalSlices` / `contributionPercent` / `peerReviewAverageScore`.
 
 Project có Project nhưng không có task/commit cá nhân:
 

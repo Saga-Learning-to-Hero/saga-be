@@ -39,6 +39,7 @@ import com.saga.be.exception.AcademicException;
 import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.GitRepoRepository;
+import com.saga.be.repository.IdentityMapRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.PeerReviewRepository;
 import com.saga.be.repository.SprintRepository;
@@ -69,10 +70,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Phase A+B1+B2+D1 student personal dashboard. Course-scoped identity/team/project/integrations/current
+ * Phase A+B1+B2+D1+D2 student personal dashboard. Course-scoped identity/team/project/integrations/current
  * sprint plus personal task/commit metrics, previews, last-3 ISO weekly commits, and local MSR /
- * peer-review pending alerts. Ordinary MEMBER is allowed; this path does not reuse lecturer/leader
- * project-data gates, contribution evaluation, or the graph.
+ * ghosting / peer-review pending alerts. Ordinary MEMBER is allowed; this path does not reuse
+ * lecturer/leader project-data gates, contribution evaluation, or the graph.
  */
 @Service
 @Profile("!test")
@@ -82,7 +83,10 @@ public class StudentDashboardService {
 	static final int RECENT_COMMIT_LIMIT = 5;
 	static final int WEEKLY_COMMIT_WEEKS = 3;
 	static final String MSR_ANOMALY = "MSR_ANOMALY";
+	static final String GHOSTING_WARNING = "GHOSTING_WARNING";
 	static final String PEER_REVIEW_PENDING = "PEER_REVIEW_PENDING";
+	static final String GHOSTING_MESSAGE =
+			"No attributable coding commit has been recorded in the last 5 calendar days.";
 
 	private final CourseEnrollmentRepository enrollments;
 	private final TeamMemberRepository members;
@@ -93,6 +97,7 @@ public class StudentDashboardService {
 	private final GitCommitRepository commits;
 	private final TaskGitCommitLinkRepository commitLinks;
 	private final PeerReviewRepository peerReviews;
+	private final IdentityMapRepository identities;
 	private final Clock clock;
 
 	public StudentDashboardService(
@@ -105,6 +110,7 @@ public class StudentDashboardService {
 			GitCommitRepository commits,
 			TaskGitCommitLinkRepository commitLinks,
 			PeerReviewRepository peerReviews,
+			IdentityMapRepository identities,
 			DashboardProperties dashboard) {
 		this(
 				enrollments,
@@ -116,6 +122,7 @@ public class StudentDashboardService {
 				commits,
 				commitLinks,
 				peerReviews,
+				identities,
 				dashboard.clock());
 	}
 
@@ -129,6 +136,7 @@ public class StudentDashboardService {
 			GitCommitRepository commits,
 			TaskGitCommitLinkRepository commitLinks,
 			PeerReviewRepository peerReviews,
+			IdentityMapRepository identities,
 			Clock clock) {
 		this.enrollments = enrollments;
 		this.members = members;
@@ -139,6 +147,7 @@ public class StudentDashboardService {
 		this.commits = commits;
 		this.commitLinks = commitLinks;
 		this.peerReviews = peerReviews;
+		this.identities = identities;
 		this.clock = clock;
 	}
 
@@ -187,18 +196,31 @@ public class StudentDashboardService {
 		UUID projectId = project.getId();
 		UUID studentId = profile.getId();
 		Sprint current = selectCurrentSprint(projectId);
+		GithubProjection github = githubProjection(projectId);
+		StudentDashboardTaskMetricsResponse taskMetrics = taskMetrics(projectId, studentId);
 		List<AttentionRow> anomalies = classifyAnomalies(projectId, studentId);
 		return new StudentDashboardResponse(
 				student,
 				courseDto,
 				teamDto,
-				new StudentDashboardIntegrationsResponse(jiraSummary(projectId), githubSummary(projectId)),
+				new StudentDashboardIntegrationsResponse(jiraSummary(projectId), github.dto()),
 				current == null ? null : toSprintDto(current, projectId),
-				new StudentDashboardMetricsResponse(taskMetrics(projectId, studentId), commitMetrics(projectId, studentId)),
+				new StudentDashboardMetricsResponse(taskMetrics, commitMetrics(projectId, studentId)),
 				activeTasks(projectId, studentId, anomalies),
 				recentCommits(projectId, studentId),
 				weeklyCommits(projectId, studentId),
-				actionableAlerts(course.getId(), team.getId(), projectId, current, studentId, anomalies));
+				actionableAlerts(
+						course.getId(),
+						team.getId(),
+						projectId,
+						current,
+						studentId,
+						account.getId(),
+						enrollment,
+						membership,
+						github,
+						taskMetrics,
+						anomalies));
 	}
 
 	private static StudentDashboardCourseResponse toCourse(Course course) {
@@ -228,10 +250,11 @@ public class StudentDashboardService {
 	 * the persistence enum: ACTIVE if any live repo exists; otherwise the single shared non-ACTIVE
 	 * status; {@code MIXED} when non-ACTIVE statuses differ; null when no rows.
 	 */
-	private StudentDashboardGithubIntegrationResponse githubSummary(UUID projectId) {
+	private GithubProjection githubProjection(UUID projectId) {
 		long activeCount = 0;
 		boolean anyRow = false;
 		LocalDateTime lastSyncedAt = null;
+		LocalDateTime maxActiveCreatedAt = null;
 		Set<IntegrationStatus> nonActive = new LinkedHashSet<>();
 		for (Object[] row : repos.countAndMaxLastSyncedAtGroupedByStatus(projectId)) {
 			IntegrationStatus status = (IntegrationStatus) row[0];
@@ -243,13 +266,16 @@ public class StudentDashboardService {
 			if (status == IntegrationStatus.ACTIVE) {
 				activeCount = count;
 				lastSyncedAt = (LocalDateTime) row[2];
+				maxActiveCreatedAt = row.length > 3 ? (LocalDateTime) row[3] : null;
 			} else {
 				nonActive.add(status);
 			}
 		}
 		boolean connected = activeCount > 0;
-		return new StudentDashboardGithubIntegrationResponse(
-				connected, activeCount, githubAggregateStatus(connected, anyRow, nonActive), lastSyncedAt);
+		return new GithubProjection(
+				new StudentDashboardGithubIntegrationResponse(
+						connected, activeCount, githubAggregateStatus(connected, anyRow, nonActive), lastSyncedAt),
+				maxActiveCreatedAt);
 	}
 
 	private static String githubAggregateStatus(
@@ -413,10 +439,20 @@ public class StudentDashboardService {
 			UUID projectId,
 			Sprint current,
 			UUID studentId,
+			UUID userId,
+			CourseEnrollment enrollment,
+			TeamMember membership,
+			GithubProjection github,
+			StudentDashboardTaskMetricsResponse taskMetrics,
 			List<AttentionRow> anomalies) {
-		List<StudentDashboardAlertResponse> alerts = new ArrayList<>(anomalies.size() + 1);
+		List<StudentDashboardAlertResponse> alerts = new ArrayList<>(anomalies.size() + 2);
 		for (AttentionRow row : anomalies) {
 			alerts.add(msrAlert(courseId, teamId, projectId, row));
+		}
+		StudentDashboardAlertResponse ghosting =
+				ghostingAlert(courseId, teamId, projectId, current, studentId, userId, enrollment, membership, github, taskMetrics);
+		if (ghosting != null) {
+			alerts.add(ghosting);
 		}
 		if (current != null) {
 			long remaining = peerReviews.countRemainingPeers(teamId, current.getId(), studentId);
@@ -425,6 +461,66 @@ public class StudentDashboardService {
 			}
 		}
 		return alerts;
+	}
+
+	private StudentDashboardAlertResponse ghostingAlert(
+			UUID courseId,
+			UUID teamId,
+			UUID projectId,
+			Sprint current,
+			UUID studentId,
+			UUID userId,
+			CourseEnrollment enrollment,
+			TeamMember membership,
+			GithubProjection github,
+			StudentDashboardTaskMetricsResponse taskMetrics) {
+		LocalDate today = LocalDate.now(clock);
+		LocalDate windowStartDate = today.minusDays(4);
+		LocalDateTime windowStart = windowStartDate.atStartOfDay();
+		LocalDateTime windowEndExclusive = today.plusDays(1).atStartOfDay();
+		LocalDateTime identityCutoff = windowStartDate.plusDays(1).atStartOfDay();
+		if (current == null || current.getStartDate() == null || current.getStartDate().toLocalDate().isAfter(windowStartDate)) {
+			return null;
+		}
+		if (membership.getCreatedAt() == null || membership.getCreatedAt().toLocalDate().isAfter(windowStartDate)) {
+			return null;
+		}
+		if (enrollment.getEnrolledAt() == null || enrollment.getEnrolledAt().toLocalDate().isAfter(windowStartDate)) {
+			return null;
+		}
+		if (taskMetrics.todo() + taskMetrics.inProgress() + taskMetrics.inReview() <= 0) {
+			return null;
+		}
+		if (!github.dto().connected()) {
+			return null;
+		}
+		if (github.maxActiveCreatedAt() == null || !github.maxActiveCreatedAt().isBefore(identityCutoff)) {
+			return null;
+		}
+		if (!confirmedGithubIdentitiesOldEnough(userId, identityCutoff)) {
+			return null;
+		}
+		if (commits.existsAuthoredV23CommittedAtInRange(projectId, studentId, windowStart, windowEndExclusive)) {
+			return null;
+		}
+		return new StudentDashboardAlertResponse(
+				"GHOSTING:" + studentId + ":" + courseId,
+				GHOSTING_WARNING,
+				"WARNING",
+				"No recent coding commits",
+				GHOSTING_MESSAGE,
+				GHOSTING_WARNING,
+				new StudentDashboardAlertTargetIds(courseId, teamId, projectId, null, current.getId()),
+				null);
+	}
+
+	private boolean confirmedGithubIdentitiesOldEnough(UUID userId, LocalDateTime identityCutoff) {
+		List<Object[]> rows = identities.countEligibleGithubIdentityAge(userId);
+		Object[] row = rows == null || rows.isEmpty() ? null : rows.getFirst();
+		long eligible = row == null || row[0] == null ? 0L : ((Number) row[0]).longValue();
+		long nullLinked = row == null || row[1] == null ? 0L : ((Number) row[1]).longValue();
+		LocalDateTime maxLinkedAt = row == null ? null : (LocalDateTime) row[2];
+		return eligible > 0 && nullLinked == 0 && maxLinkedAt != null && maxLinkedAt.isBefore(identityCutoff);
 	}
 
 	private static StudentDashboardAlertResponse msrAlert(
@@ -597,6 +693,9 @@ public class StudentDashboardService {
 
 	private static final Comparator<AttentionRow> ATTENTION_ORDER =
 			Comparator.comparing((AttentionRow row) -> row.anomaly() ? 0 : 1).thenComparing(ANOMALY_ORDER);
+
+	private record GithubProjection(
+			StudentDashboardGithubIntegrationResponse dto, LocalDateTime maxActiveCreatedAt) {}
 
 	private record AttentionRow(
 			UUID id,

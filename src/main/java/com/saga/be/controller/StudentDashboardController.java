@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(
 		name = "Student dashboard",
 		description =
-				"Phase A+B1+B2+D1 personal cockpit: identity, optional team/project, integrations, current sprint, personal task/commit metrics, previews, last-3 ISO weekly commits, MSR and peer-review pending alerts. MEMBER, LEADER, and MENTOR.")
+				"Phase A+B1+B2+D1+D2 personal cockpit: identity, optional team/project, integrations, current sprint, personal task/commit metrics, previews, last-3 ISO weekly commits, MSR, ghosting, and peer-review pending alerts. MEMBER, LEADER, and MENTOR.")
 @SecurityRequirement(name = "SAGA_SESSION")
 public class StudentDashboardController {
 
@@ -35,10 +35,10 @@ public class StudentDashboardController {
 
 	@GetMapping
 	@Operation(
-			summary = "Student personal dashboard for one enrolled course (Phase A+B1+B2+D1).",
+			summary = "Student personal dashboard for one enrolled course (Phase A+B1+B2+D1+D2).",
 			description =
 					"ACTIVE enrollment on a non-deleted course. No team and no project return 200 with nulls. "
-							+ "Ordinary MEMBER is allowed. contribution and GHOSTING_WARNING are not present yet.")
+							+ "Ordinary MEMBER is allowed. contribution is not present yet.")
 	public StudentDashboardResponse get(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID courseId) {
 		return dashboard.get(principal.getUserId(), courseId);

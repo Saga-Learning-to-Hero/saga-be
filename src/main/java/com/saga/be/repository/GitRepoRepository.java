@@ -105,11 +105,12 @@ public interface GitRepoRepository extends JpaRepository<GitRepo, UUID> {
 
 	/**
 	 * Student dashboard GitHub summary: one row per connectionStatus —
-	 * {@code Object[]{IntegrationStatus status, Long count, LocalDateTime maxLastSyncedAt}}.
+	 * {@code Object[]{IntegrationStatus status, Long count, LocalDateTime maxLastSyncedAt, LocalDateTime maxCreatedAt}}.
+	 * {@code maxCreatedAt} is an internal Ghosting age signal; it is not part of the public GitHub DTO.
 	 */
 	@Query(
 			"""
-			select r.connectionStatus, count(r), max(r.lastSyncedAt)
+			select r.connectionStatus, count(r), max(r.lastSyncedAt), max(r.createdAt)
 			from GitRepo r
 			where r.project.id = :projectId
 			group by r.connectionStatus

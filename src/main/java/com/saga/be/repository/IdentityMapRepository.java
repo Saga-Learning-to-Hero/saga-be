@@ -45,4 +45,23 @@ public interface IdentityMapRepository extends JpaRepository<IdentityMap, UUID> 
 			@Param("provider") IntegrationProvider provider,
 			@Param("usernames") Collection<String> usernames,
 			@Param("statuses") Collection<IdentityMappingStatus> statuses);
+
+	/**
+	 * Student dashboard Ghosting identity gate —
+	 * {@code Object[]{Long eligibleCount, Long nullLinkedAtCount, LocalDateTime maxLinkedAt}}.
+	 * Always one row. Counts only {@code ACTIVE}/{@code VERIFIED} GitHub maps.
+	 */
+	@Query(
+			"""
+			select count(m),
+			       coalesce(sum(case when m.linkedAt is null then 1 else 0 end), 0),
+			       max(m.linkedAt)
+			from IdentityMap m
+			where m.userAccount.id = :userId
+			  and m.provider = com.saga.be.entity.enums.IntegrationProvider.GITHUB
+			  and m.mappingStatus in (
+			      com.saga.be.entity.enums.IdentityMappingStatus.ACTIVE,
+			      com.saga.be.entity.enums.IdentityMappingStatus.VERIFIED)
+			""")
+	List<Object[]> countEligibleGithubIdentityAge(@Param("userId") UUID userId);
 }

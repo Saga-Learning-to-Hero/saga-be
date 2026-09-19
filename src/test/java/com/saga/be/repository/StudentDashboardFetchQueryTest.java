@@ -28,6 +28,7 @@ class StudentDashboardFetchQueryTest {
 		String repos = Files.readString(Path.of("src/main/java/com/saga/be/repository/GitRepoRepository.java"));
 		assertTrue(repos.contains("countAndMaxLastSyncedAtGroupedByStatus"));
 		assertTrue(repos.contains("group by r.connectionStatus"));
+		assertTrue(repos.contains("max(r.createdAt)"));
 
 		String tasks = Files.readString(Path.of("src/main/java/com/saga/be/repository/TaskRepository.java"));
 		assertTrue(tasks.contains("countGroupedByStatusForProjectAndSprint"));
@@ -59,6 +60,10 @@ class StudentDashboardFetchQueryTest {
 		int weekly = commits.indexOf("findWeeklyCommittedAtByProjectAndAuthor");
 		assertTrue(weekly > 0);
 		assertFalse(commits.substring(weekly - 700, weekly).contains("coalesce(c.committedAt"));
+		assertTrue(commits.contains("existsAuthoredV23CommittedAtInRange"));
+		int ghostingCommit = commits.indexOf("existsAuthoredV23CommittedAtInRange");
+		assertTrue(ghostingCommit > 0);
+		assertFalse(commits.substring(ghostingCommit - 500, ghostingCommit).contains("coalesce(c.committedAt"));
 
 		String links = Files.readString(Path.of("src/main/java/com/saga/be/repository/TaskGitCommitLinkRepository.java"));
 		assertTrue(links.contains("countDistinctLinkedAuthoredV23"));
@@ -72,6 +77,14 @@ class StudentDashboardFetchQueryTest {
 		assertTrue(reviews.contains("pr.reviewerStudent.id = :reviewerStudentId"));
 		assertTrue(reviews.contains("pr.revieweeStudent.id = sp.id"));
 		assertTrue(reviews.contains("e.enrollmentStatus = com.saga.be.entity.enums.EnrollmentStatus.ACTIVE"));
+
+		String identities = Files.readString(Path.of("src/main/java/com/saga/be/repository/IdentityMapRepository.java"));
+		assertTrue(identities.contains("countEligibleGithubIdentityAge"));
+		assertTrue(identities.contains("IdentityMappingStatus.ACTIVE"));
+		assertTrue(identities.contains("IdentityMappingStatus.VERIFIED"));
+		assertTrue(identities.contains("max(m.linkedAt)"));
+		assertFalse(identities.contains("min(m.linkedAt)"));
+		assertFalse(identities.substring(identities.indexOf("countEligibleGithubIdentityAge")).contains("PENDING"));
 
 		String service = Files.readString(Path.of("src/main/java/com/saga/be/service/student/StudentDashboardService.java"));
 		assertTrue(service.contains("@Transactional(readOnly = true)"));
@@ -98,8 +111,14 @@ class StudentDashboardFetchQueryTest {
 		assertTrue(service.contains("actionableAlerts"));
 		assertTrue(service.contains("countRemainingPeers"));
 		assertTrue(service.contains("MSR_ANOMALY"));
+		assertTrue(service.contains("GHOSTING_WARNING"));
 		assertTrue(service.contains("PEER_REVIEW_PENDING"));
-		assertFalse(service.contains("GHOSTING_WARNING"));
+		assertTrue(service.contains("countEligibleGithubIdentityAge"));
+		assertTrue(service.contains("existsAuthoredV23CommittedAtInRange"));
+		assertFalse(service.contains("COALESCE(committedAt, createdAt)"));
+		assertFalse(service.contains("atZone("));
+		assertFalse(service.contains("firstActiveAt"));
+		assertFalse(service.contains("lastCommittedAt"));
 		assertFalse(service.contains("ProjectGraphService"));
 		assertFalse(service.contains("PeerReviewService"));
 		assertFalse(service.contains("findBySprint_IdAndReviewerStudent_IdAndRevieweeStudent_Id"));
