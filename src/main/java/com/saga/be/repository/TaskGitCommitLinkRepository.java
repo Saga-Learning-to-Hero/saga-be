@@ -90,6 +90,39 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 	Page<UUID> findPageIdsByProjectAndTask(
 			@Param("projectId") UUID projectId, @Param("taskId") UUID taskId, Pageable pageable);
 
+	/**
+	 * V23 task-link page for the work-session timeline. Same coding predicate and coalesce sort as
+	 * {@link #findPageIdsByProjectAndTask}, but returns {@code TaskGitCommitLink.id} so callers can
+	 * surface {@code linkSource} / {@code createdAt} without a second identity lookup. Sort is in
+	 * JPQL; callers must pass an unsorted {@link Pageable}.
+	 */
+	@Query(
+			value =
+					"""
+					select l.id
+					from TaskGitCommitLink l
+					join l.gitCommit c
+					join l.task t
+					where t.id = :taskId
+					  and t.project.id = :projectId
+					  and t.deletedAt is null
+					  and (c.parentCount is null or c.parentCount <= 1)
+					order by coalesce(c.committedAt, c.createdAt) desc, c.id desc
+					""",
+			countQuery =
+					"""
+					select count(l.id)
+					from TaskGitCommitLink l
+					join l.gitCommit c
+					join l.task t
+					where t.id = :taskId
+					  and t.project.id = :projectId
+					  and t.deletedAt is null
+					  and (c.parentCount is null or c.parentCount <= 1)
+					""")
+	Page<UUID> findPageLinkIdsByProjectAndTaskV23(
+			@Param("projectId") UUID projectId, @Param("taskId") UUID taskId, Pageable pageable);
+
 	long countByTask_Id(UUID taskId);
 
 	@Query(
@@ -243,6 +276,18 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			where l.id in :ids
 			""")
 	List<TaskGitCommitLink> findFetchedByIdIn(@Param("ids") Collection<UUID> ids);
+
+	/** Timeline fetch: link + commit + repo + optional mapped author. */
+	@Query(
+			"""
+			select distinct l
+			from TaskGitCommitLink l
+			join fetch l.gitCommit c
+			join fetch c.repo r
+			left join fetch c.authorStudent
+			where l.id in :ids
+			""")
+	List<TaskGitCommitLink> findFetchedWithAuthorByIdIn(@Param("ids") Collection<UUID> ids);
 
 	/**
 	 * Sprint activity: commit ids linked to a non-deleted task in a sprint —

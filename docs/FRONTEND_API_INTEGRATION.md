@@ -547,6 +547,10 @@ Breaking change phải được nêu rõ.
 | POST | `/api/tasks/{taskId}/files` | Session + CSRF | Team member | Task evidence V1 | `TaskEvidenceController` |
 | GET | `/api/tasks/{taskId}/files/{fileId}` | Session | Team member; course lecturer; ADMIN | Task evidence V1 | `TaskEvidenceController` |
 | DELETE | `/api/tasks/{taskId}/files/{fileId}` | Session + CSRF | Team member | Task evidence V1 | `TaskEvidenceController` |
+| GET | `/api/tasks/{taskId}/work-sessions` | Session | Team member (caller sessions only) | Work-session timer V1 | `TaskEvidenceController` |
+| POST | `/api/tasks/{taskId}/work-sessions/start` | Session + CSRF | Team member | Work-session timer V1 | `TaskEvidenceController` |
+| POST | `/api/tasks/{taskId}/work-sessions/{sessionId}/stop` | Session + CSRF | Session owner | Work-session timer V1 | `TaskEvidenceController` |
+| GET | `/api/projects/{projectId}/tasks/{taskId}/work-session-timeline` | Session | ACTIVE member or assigned lecturer (`requireReader`) | Work-session + V23 commit timeline V1 | `ProjectProjectionController` |
 
 ---
 
@@ -1234,6 +1238,24 @@ Member fields: `sliceScore`, `sliceContributionPercentage` (trước peer), `fin
 Task được tính: `DONE` + có sprint + đúng một nhãn `saga:code|test|document|research`. DOCUMENT/RESEARCH cần ≥1 `task_attachment` **hoặc** ≥1 `task_web_link` **hoặc** ≥1 `task_file`. Số file/link không tăng điểm. Commit không cộng điểm. `storyPoint` null → 1.
 
 Playbook FE (lấy `taskId`, CSRF, request/response, quyền, mã lỗi, gợi ý UI): `docs/FRONTEND_TASK_EVIDENCE_API.md`.
+
+Work-session timer (caller-only) vs team timeline: see `docs/FE_API_INTEGRATION_GUIDE_VI.md` §28.
+
+```text
+GET /api/tasks/{taskId}/work-sessions
+POST /api/tasks/{taskId}/work-sessions/start
+POST /api/tasks/{taskId}/work-sessions/{sessionId}/stop
+
+GET /api/projects/{projectId}/tasks/{taskId}/work-session-timeline
+    ?sessionPage=0&sessionSize=20&commitPage=0&commitSize=50
+```
+
+`GET .../work-sessions` returns **only the caller's** sessions (timer restore).
+`GET .../work-session-timeline` is team-visible under `requireReader` (ACTIVE member / assigned lecturer; ADMIN denied).
+
+Work sessions and commits are independent evidence streams. Their timestamps are displayed for context. The API does not assert that a commit was produced by, or occurred during, a work session.
+
+Session paging: default `sessionSize=20`, max `100`, order `startedAt DESC`. Commit paging: default `50`, max `200` (same as `GET .../tasks/{taskId}/commits`). No `sessionId` on commits. No contribution score.
 
 Gắn URL (team member, CSRF trên write):
 

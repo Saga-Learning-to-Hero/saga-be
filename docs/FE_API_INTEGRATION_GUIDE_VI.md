@@ -1399,6 +1399,7 @@ PUT /api/projects/{projectId}/tasks/{taskId}/sprint
 |---|---|---|
 | GET | `/api/projects/{projectId}/commits` | Raw commit history đã đồng bộ của project — **đã paged**, **bao gồm** known merges |
 | GET | `/api/projects/{projectId}/tasks/{taskId}/commits` | Commit đã liên kết canonical với 1 task (`task_git_commit_link`) — **đã paged**, **loại** known merges |
+| GET | `/api/projects/{projectId}/tasks/{taskId}/work-session-timeline` | Work-session history (team-visible) + V23 linked commits — hai luồng độc lập, đã paged (mục 28.2) |
 | GET | `/api/projects/{projectId}/repos/{repoId}/branches` | Branch dropdown — inventory live từ GitHub cho 1 `GitRepo` ACTIVE |
 | GET | `/api/projects/{projectId}/task-commit-links` | **Canonical batch** Task ↔ Commit cho Pipeline / Audit Matrix |
 
@@ -1587,9 +1588,9 @@ SYNC_STATUS_CHANGED
 | `READY` | Gửi ngay khi vừa kết nối SSE thành công (kể cả sau khi reconnect) — coi như tín hiệu "làm mới toàn bộ dữ liệu project hiện tại" |
 | `TASKS_CHANGED` | Refetch danh sách task |
 | `SPRINTS_CHANGED` | Refetch danh sách sprint (và task nếu màn hình đang hiển thị theo sprint) |
-| `COMMITS_CHANGED` | Refetch danh sách commit |
-| `TASK_LINKS_CHANGED` | Refetch `linkedCommitCount` / danh sách commit của task đang mở |
-| `TASK_EVIDENCE_CHANGED` | Refetch dữ liệu evidence/work-session/contribution của task đang mở |
+| `COMMITS_CHANGED` | Refetch danh sách commit / `work-session-timeline` |
+| `TASK_LINKS_CHANGED` | Refetch `linkedCommitCount` / commits / `work-session-timeline` của task đang mở |
+| `TASK_EVIDENCE_CHANGED` | Refetch evidence/work-session timer **và** `work-session-timeline` của task đang mở |
 | `SYNC_STATUS_CHANGED` | Refetch `GET /sync-status` |
 
 Server gửi heartbeat (comment SSE, không phải event có tên) mỗi ~25 giây để giữ kết nối — FE không cần xử lý riêng, `EventSource` tự bỏ qua comment. Nếu `EventSource` tự reconnect (mất mạng tạm thời), sự kiện `READY` sẽ được gửi lại ngay khi kết nối lại thành công — dùng đây làm điểm neo để refetch toàn bộ.
@@ -1600,11 +1601,13 @@ Server gửi heartbeat (comment SSE, không phải event có tên) mỗi ~25 gi�
 
 ## 28. Contribution / Evidence APIs
 
-Base: `/api/tasks/{taskId}` — **lưu ý path KHÔNG nằm dưới `/api/projects/{projectId}`** mà độc lập, chỉ cần `taskId`.
+### 28.1 Caller-owned work sessions (timer)
+
+Base: `/api/tasks/{taskId}` — **path KHÔNG nằm dưới `/api/projects/{projectId}`**; chỉ cần `taskId`.
 
 | Method | Path | Mục đích |
 |---|---|---|
-| GET | `/work-sessions` | Phiên OPEN hiện tại của user + lịch sử phiên trên task này. Dùng để **khôi phục timer sau reload/đóng modal**. |
+| GET | `/work-sessions` | **Chỉ phiên của chính caller** trên task này (OPEN hiện tại + lịch sử). Dùng để **khôi phục timer sau reload/đóng modal**. **Không** trả phiên teammate. |
 | POST | `/work-sessions/start` | Bắt đầu phiên, hoặc trả về phiên OPEN sẵn có (cùng user + cùng task). **Không tạo bản ghi mới nếu đã có OPEN.** |
 | POST | `/work-sessions/{sessionId}/stop` | Kết thúc phiên. **Chỉ gọi khi user bấm Stop.** Đóng modal / đổi route / reload **không** được gọi stop. |
 | POST | `/contribution-confirmations` | Xác nhận đóng góp — body: `{ "commitShas": [...], "pullRequests": [...] }`, **yêu cầu step-up session** (xác thực lại gần đây) |
@@ -1616,13 +1619,42 @@ Base: `/api/tasks/{taskId}` — **lưu ý path KHÔNG nằm dưới `/api/projec
 
 **Work session — lifecycle (server là nguồn sự thật):**
 
-- `ACTIVE` trên server = `status: "OPEN"` và `endedAt: null`. Timer FE = `now - startedAt` (hoặc dùng `elapsedSeconds` server tính tại thời điểm đọc). **Không persist** một giá trị ticking.
+- `ACTIVE` trên server = `status: "OPEN"` (endedAt thường `null`). Timer FE = `now - startedAt` (hoặc dùng `elapsedSeconds` server tính tại thời điểm đọc). **Không persist** một giá trị ticking.
 - Đóng modal / đổi route / reload / mất SSE: **không** gọi `POST .../stop`. Phiên OPEN vẫn chạy trên server.
 - Mở lại Task: `GET /api/tasks/{taskId}/work-sessions` → `activeSession` (có thể `null`). `setInterval` chỉ để vẽ UI.
-- Cùng student + cùng task: tối đa **một** phiên `OPEN`. `POST start` lần 2 trả về phiên đó, không insert thêm. Student **được** có OPEN trên task khác.
-- Nếu `sessions` chứa **nhiều** `OPEN` (dữ liệu cũ trước khi START idempotent): `activeSession` là phiên `startedAt` sớm nhất. Backend **không** tự đóng các bản còn lại. FE vẫn không gọi stop khi đóng modal.
-- `sessions` là lịch sử đầy đủ (OPEN hiện tại + mọi phiên `STOPPED`). Không gộp/xoá lịch sử hợp lệ.
-- Response một phiên: `{ "id", "taskId", "startedAt", "endedAt", "status", "elapsedSeconds" }`.
+- Cùng student + cùng task: tối đa **một** phiên `OPEN` (START idempotent). Student **được** có OPEN trên task khác.
+- Nếu `sessions` chứa **nhiều** `OPEN` (dữ liệu cũ): `activeSession` là phiên `startedAt` sớm nhất. Backend **không** tự đóng các bản còn lại.
+- `sessions` là lịch sử **của caller** (OPEN hiện tại + mọi phiên `STOPPED`). Không gộp/xoá lịch sử hợp lệ.
+- Response một phiên: `{ "id", "taskId", "startedAt", "endedAt", "status", "elapsedSeconds" }` — **không** có userId/studentId (caller đã biết là mình).
+
+Auth ghi/đọc timer: thành viên team của project chứa task (không phải `requireReader`). ADMIN / lecturer **không** dùng API timer này trừ khi họ cũng là team member.
+
+### 28.2 Task work-session + commit timeline (team-visible read)
+
+```
+GET /api/projects/{projectId}/tasks/{taskId}/work-session-timeline
+  ?sessionPage&sessionSize&commitPage&commitSize
+```
+
+Hai luồng bằng chứng **độc lập** trên một task:
+
+1. **Work sessions** — presence SAGA (mọi session của mọi thành viên trên task; có actor identity).
+2. **V23 linked commits** — commit gắn qua `task_git_commit_link`, loại known merge (`parentCount > 1`).
+
+**Work sessions and commits are independent evidence streams. Their timestamps are displayed for context. The API does not assert that a commit was produced by, or occurred during, a work session.**
+
+Không có `sessionId` trên commit; không có overlap/causality/contribution score.
+
+| Query | Default | Max | Ghi chú |
+|---|---|---|---|
+| `sessionPage` / `sessionSize` | `0` / `20` | `100` | Lịch sử `startedAt DESC, id DESC`. `openSessions` = **mọi** OPEN (`startedAt ASC`), không phân trang, không collapse legacy duplicate. |
+| `commitPage` / `commitSize` | `0` / `50` | `200` | Giống `GET .../tasks/{taskId}/commits`. Sort `coalesce(committedAt, createdAt) DESC, id DESC`. |
+
+`sessionCount` + `totalElapsedSeconds` = **toàn task** (mọi trang). `elapsedSeconds` / total dùng một `now` snapshot mỗi request. `committedAt` nullable thô — **không** COALESCE vào response. `linkedAt` = `TaskGitCommitLink.createdAt`. Timestamps = ISO `LocalDateTime` **không** `Z`/offset.
+
+Auth: `ProjectDataAuthorization.requireReader` — ACTIVE MEMBER/LEADER, lecturer đúng course. ADMIN / lecturer ngoài course / student ngoài team / withdrawn → 403. Soft-deleted / task sai project → 404 `PROJECT_NOT_FOUND`.
+
+Realtime: refetch khi `TASK_EVIDENCE_CHANGED` / `TASK_LINKS_CHANGED` / `COMMITS_CHANGED`. Không nhét payload timeline vào SSE.
 
 **Bằng chứng đồng bộ từ Jira là bất biến**: nếu `source === "JIRA"` (field `source` trong response web-link/file), request `DELETE` sẽ bị từ chối với `409 TASK_EVIDENCE_JIRA_IMMUTABLE` — chỉ nội dung do chính SAGA tạo ra (`source === "SAGA"`) mới xoá được.
 
@@ -2158,6 +2190,7 @@ Chi tiết: [`docs/PEER_REVIEW_FLOW_SUMMARY.md`](./PEER_REVIEW_FLOW_SUMMARY.md).
 ### EVIDENCE / CONTRIBUTION
 | Method | Path | Role |
 |---|---|---|
+| GET | `/api/projects/{projectId}/tasks/{taskId}/work-session-timeline` | ACTIVE member / assigned lecturer (`requireReader`) — team-visible sessions + V23 commits |
 | GET | `/api/tasks/{taskId}/work-sessions` | thành viên (chỉ session của chính mình) |
 | POST | `/api/tasks/{taskId}/work-sessions/start`, `/{sessionId}/stop` | thành viên |
 | POST | `/api/tasks/{taskId}/contribution-confirmations` | thành viên (cần step-up) |

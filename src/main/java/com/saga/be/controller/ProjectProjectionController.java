@@ -20,6 +20,7 @@ import com.saga.be.dto.project.PutProjectTaskSprintRequest;
 import com.saga.be.dto.project.SprintActivityResponse;
 import com.saga.be.dto.project.TaskEvidenceResponse;
 import com.saga.be.dto.project.TaskParentOptionsResponse;
+import com.saga.be.dto.project.TaskWorkSessionTimelineResponse;
 import com.saga.be.dto.project.TransitionProjectTaskRequest;
 import com.saga.be.integration.jira.JiraIssueWriteClient.TransitionOption;
 import com.saga.be.security.SagaUserPrincipal;
@@ -32,6 +33,7 @@ import com.saga.be.service.projection.ProjectProjectionReadService;
 import com.saga.be.service.projection.ProjectTaskCommitLinkReadService;
 import com.saga.be.service.projection.ProjectTaskEvidenceReadService;
 import com.saga.be.service.projection.SprintActivityAnalyticsService;
+import com.saga.be.service.projection.TaskWorkSessionTimelineService;
 import com.saga.be.service.sync.ProjectManualSyncService;
 import com.saga.be.workload.Workload;
 import com.saga.be.workload.WorkloadClass;
@@ -74,6 +76,7 @@ public class ProjectProjectionController {
 	private final ProjectCommitDetailReadService commitDetails;
 	private final ProjectTaskCommitLinkReadService linkReads;
 	private final ProjectTaskEvidenceReadService evidence;
+	private final TaskWorkSessionTimelineService workSessionTimeline;
 
 	public ProjectProjectionController(
 			ProjectProjectionReadService projections,
@@ -85,7 +88,8 @@ public class ProjectProjectionController {
 			ProjectGitBranchReadService branches,
 			ProjectCommitDetailReadService commitDetails,
 			ProjectTaskCommitLinkReadService linkReads,
-			ProjectTaskEvidenceReadService evidence) {
+			ProjectTaskEvidenceReadService evidence,
+			TaskWorkSessionTimelineService workSessionTimeline) {
 		this.projections = projections;
 		this.taskCommands = taskCommands;
 		this.sprintCommands = sprintCommands;
@@ -96,6 +100,7 @@ public class ProjectProjectionController {
 		this.commitDetails = commitDetails;
 		this.linkReads = linkReads;
 		this.evidence = evidence;
+		this.workSessionTimeline = workSessionTimeline;
 	}
 
 	@GetMapping("/tasks")
@@ -156,6 +161,31 @@ public class ProjectProjectionController {
 			@RequestParam(required = false) Integer page,
 			@RequestParam(required = false) Integer size) {
 		return evidence.list(principal.getUserId(), projectId, taskId, type, page, size);
+	}
+
+	@GetMapping("/tasks/{taskId}/work-session-timeline")
+	@Workload(WorkloadClass.INTERACTIVE_NORMAL)
+	@Operation(
+			summary = "Task work-session history + V23 linked coding commits (independent streams).",
+			description =
+					"""
+					Team-visible SAGA work-session presence and V23 task_git_commit_link coding commits
+					for visual context only. Does not assert that a commit was produced by or occurred
+					during a work session. sessionPage/sessionSize default 0/20 max 100;
+					commitPage/commitSize default 0/50 max 200 (same as GET .../commits).
+					Local DB only; no GitHub/Jira/Neo4j. Distinct from GET /api/tasks/{taskId}/work-sessions
+					(caller-owned timer restore).
+					""")
+	public TaskWorkSessionTimelineResponse taskWorkSessionTimeline(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@PathVariable UUID taskId,
+			@RequestParam(required = false) Integer sessionPage,
+			@RequestParam(required = false) Integer sessionSize,
+			@RequestParam(required = false) Integer commitPage,
+			@RequestParam(required = false) Integer commitSize) {
+		return workSessionTimeline.get(
+				principal.getUserId(), projectId, taskId, sessionPage, sessionSize, commitPage, commitSize);
 	}
 
 	@PostMapping("/tasks")
