@@ -63,6 +63,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -100,6 +101,7 @@ public class StudentDashboardService {
 	private final IdentityMapRepository identities;
 	private final Clock clock;
 
+	@Autowired
 	public StudentDashboardService(
 			CourseEnrollmentRepository enrollments,
 			TeamMemberRepository members,
