@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(
 		name = "Admin dashboard",
 		description =
-				"Phase A+B+C: selected semester, available semesters, KPIs, weeklyTimeline, unconnectedTeamsAlert, Redis cache. ADMIN only.")
+				"Phase A+B+C+D: selected semester, available semesters, KPIs, weeklyTimeline, unconnectedTeamsAlert, platform-wide integrationPulse, Redis cache. ADMIN only.")
 @SecurityRequirement(name = "SAGA_SESSION")
 public class AdminDashboardController {
 

@@ -2,13 +2,12 @@ package com.saga.be.service.admin.dashboard;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.saga.be.dto.admin.dashboard.AdminDashboardCachedPayload;
+import com.saga.be.dto.admin.dashboard.AdminDashboardIntegrationPulseCachedPayload;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.springframework.context.annotation.Profile;
 import org.springframework.data.redis.RedisConnectionFailureException;
@@ -19,37 +18,26 @@ import org.springframework.stereotype.Component;
 
 @Component
 @Profile("!test")
-public class AdminDashboardRedisCacheStore implements AdminDashboardCacheStore {
+public class AdminDashboardPulseRedisCacheStore implements AdminDashboardPulseCacheStore {
 
-	/**
-	 * v3 because Phase C added {@code unconnectedTeamsAlert}. Leftover Phase-B v2 JSON must not
-	 * deserialize as a hit with a missing/null alert list.
-	 */
-	static final String KEY_PREFIX = "saga:admin:dashboard:summary:v3:";
-	static final Duration CACHE_TTL = Duration.ofSeconds(600);
+	static final String CACHE_KEY = "saga:admin:dashboard:integration-pulse:v1";
+	static final String LOCK_KEY = CACHE_KEY + ":lock";
+	static final Duration CACHE_TTL = Duration.ofSeconds(60);
 	static final Duration LOCK_TTL = Duration.ofSeconds(45);
 
 	private final StringRedisTemplate redis;
 	private final ObjectMapper mapper;
 
-	public AdminDashboardRedisCacheStore(StringRedisTemplate redis, ObjectMapper mapper) {
+	public AdminDashboardPulseRedisCacheStore(StringRedisTemplate redis, ObjectMapper mapper) {
 		this.redis = redis;
 		this.mapper = mapper;
 	}
 
-	static String cacheKey(UUID semesterId) {
-		return KEY_PREFIX + semesterId;
-	}
-
-	static String lockKey(UUID semesterId) {
-		return KEY_PREFIX + semesterId + ":lock";
-	}
-
 	@Override
-	public Optional<AdminDashboardCachedPayload> get(UUID semesterId) {
+	public Optional<AdminDashboardIntegrationPulseCachedPayload> get() {
 		String json;
 		try {
-			json = redis.opsForValue().get(cacheKey(semesterId));
+			json = redis.opsForValue().get(CACHE_KEY);
 		} catch (RedisConnectionFailureException | RedisSystemException ex) {
 			throw ex;
 		}
@@ -57,14 +45,14 @@ public class AdminDashboardRedisCacheStore implements AdminDashboardCacheStore {
 			return Optional.empty();
 		}
 		try {
-			return Optional.of(mapper.readValue(json, AdminDashboardCachedPayload.class));
+			return Optional.of(mapper.readValue(json, AdminDashboardIntegrationPulseCachedPayload.class));
 		} catch (Exception ex) {
 			return Optional.empty();
 		}
 	}
 
 	@Override
-	public boolean publishIfOwner(UUID semesterId, String ownerToken, AdminDashboardCachedPayload payload) {
+	public boolean publishIfOwner(String ownerToken, AdminDashboardIntegrationPulseCachedPayload payload) {
 		String json;
 		try {
 			json = mapper.writeValueAsString(payload);
@@ -72,13 +60,13 @@ public class AdminDashboardRedisCacheStore implements AdminDashboardCacheStore {
 			throw new IntegrationException(
 					IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
 					HttpStatus.SERVICE_UNAVAILABLE,
-					"Unable to persist admin dashboard cache.");
+					"Unable to persist admin dashboard integration pulse cache.");
 		}
 		Long published;
 		try {
 			published = redis.execute(
 					AdminDashboardRedisScripts.PUBLISH_IF_OWNER,
-					List.of(lockKey(semesterId), cacheKey(semesterId)),
+					List.of(LOCK_KEY, CACHE_KEY),
 					ownerToken,
 					json,
 					String.valueOf(CACHE_TTL.toSeconds()));
@@ -89,10 +77,10 @@ public class AdminDashboardRedisCacheStore implements AdminDashboardCacheStore {
 	}
 
 	@Override
-	public Optional<Long> ttlSeconds(UUID semesterId) {
+	public Optional<Long> ttlSeconds() {
 		Long expire;
 		try {
-			expire = redis.getExpire(cacheKey(semesterId), TimeUnit.SECONDS);
+			expire = redis.getExpire(CACHE_KEY, TimeUnit.SECONDS);
 		} catch (RedisConnectionFailureException | RedisSystemException ex) {
 			throw ex;
 		}
@@ -103,10 +91,10 @@ public class AdminDashboardRedisCacheStore implements AdminDashboardCacheStore {
 	}
 
 	@Override
-	public boolean tryLock(UUID semesterId, String ownerToken) {
+	public boolean tryLock(String ownerToken) {
 		Boolean placed;
 		try {
-			placed = redis.opsForValue().setIfAbsent(lockKey(semesterId), ownerToken, LOCK_TTL);
+			placed = redis.opsForValue().setIfAbsent(LOCK_KEY, ownerToken, LOCK_TTL);
 		} catch (RedisConnectionFailureException | RedisSystemException ex) {
 			throw ex;
 		}
@@ -114,11 +102,10 @@ public class AdminDashboardRedisCacheStore implements AdminDashboardCacheStore {
 	}
 
 	@Override
-	public boolean unlock(UUID semesterId, String ownerToken) {
+	public boolean unlock(String ownerToken) {
 		Long deleted;
 		try {
-			deleted = redis.execute(
-					AdminDashboardRedisScripts.COMPARE_AND_DELETE, List.of(lockKey(semesterId)), ownerToken);
+			deleted = redis.execute(AdminDashboardRedisScripts.COMPARE_AND_DELETE, List.of(LOCK_KEY), ownerToken);
 		} catch (RedisConnectionFailureException | RedisSystemException ex) {
 			throw ex;
 		}

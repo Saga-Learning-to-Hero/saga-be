@@ -360,6 +360,7 @@ class AdminDashboardKpiTest {
 				activeSettings,
 				queries,
 				new AdminDashboardServiceCacheTest.MemoryCache(),
+				refresh -> AdminDashboardPulseQueryService.emptyRows(),
 				new PlatformTransactionManagerAdapter(),
 				CLOCK,
 				duration -> {},

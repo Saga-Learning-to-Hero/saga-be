@@ -3,6 +3,7 @@ package com.saga.be.service.admin.dashboard;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.saga.be.dto.admin.dashboard.AdminDashboardCachedPayload;
+import com.saga.be.dto.admin.dashboard.AdminDashboardIntegrationPulseCachedPayload;
 import com.saga.be.dto.admin.dashboard.AdminDashboardKpisResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSelectedSemesterResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSummaryResponse;
@@ -33,6 +34,7 @@ import com.saga.be.repository.SubjectRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
 import com.saga.be.repository.TeamRepository;
+import com.saga.be.repository.WebhookReceiptRepository;
 import jakarta.persistence.EntityManager;
 import java.time.Clock;
 import java.time.Duration;
@@ -126,9 +128,12 @@ class AdminDashboardQueryCountTest {
 	private TaskRepository tasks;
 	@Autowired
 	private TaskGitCommitLinkRepository links;
+	@Autowired
+	private WebhookReceiptRepository receipts;
 
 	private TransactionTemplate tx;
 	private AdminDashboardQueryService queries;
+	private AdminDashboardPulseQueryService pulseQueries;
 	private Semester semester;
 
 	@BeforeEach
@@ -144,6 +149,7 @@ class AdminDashboardQueryCountTest {
 				tasks,
 				links,
 				CLOCK);
+		pulseQueries = new AdminDashboardPulseQueryService(receipts, CLOCK);
 		semester = tx.execute(status -> seed());
 	}
 
@@ -259,6 +265,57 @@ class AdminDashboardQueryCountTest {
 	}
 
 	@Test
+	void summaryWarmAndPulseColdAddsOneGroupedReceiptQuery() {
+		AdminDashboardServiceCacheTest.MemoryCache summaryCache = new AdminDashboardServiceCacheTest.MemoryCache();
+		summaryCache.values.put(semester.getId(), cached(semester));
+		summaryCache.ttls.put(semester.getId(), 600L);
+		AdminDashboardPulseCacheTest.MemoryPulseCache pulseCache = new AdminDashboardPulseCacheTest.MemoryPulseCache();
+		AdminDashboardService service = dashboardService(summaryCache, pulseService(pulseCache));
+		Statistics stats = statistics();
+		tx.executeWithoutResult(status -> entityManager.clear());
+		stats.clear();
+		AdminDashboardSummaryResponse hit = service.summary(semester.getId(), false);
+		assertThat(hit.integrationPulse()).hasSize(2);
+		assertThat(stats.getPrepareStatementCount()).as("warm summary + cold pulse").isEqualTo(2L);
+	}
+
+	@Test
+	void summaryColdAndPulseColdKeepsAggregateBaselinePlusOnePulseQuery() {
+		AdminDashboardServiceCacheTest.MemoryCache summaryCache = new AdminDashboardServiceCacheTest.MemoryCache();
+		AdminDashboardPulseCacheTest.MemoryPulseCache pulseCache = new AdminDashboardPulseCacheTest.MemoryPulseCache();
+		AdminDashboardService service = dashboardService(summaryCache, pulseService(pulseCache));
+		Statistics stats = statistics();
+		tx.executeWithoutResult(status -> entityManager.clear());
+		stats.clear();
+		AdminDashboardSummaryResponse cold = service.summary(semester.getId(), false);
+		assertThat(cold.kpis().totalTeams()).isEqualTo(3);
+		assertThat(cold.integrationPulse()).hasSize(2);
+		assertThat(stats.getPrepareStatementCount())
+				.as("resolve + summary cold 15 + pulse cold 1")
+				.isEqualTo(17L);
+	}
+
+	@Test
+	void forceRefreshBothRecomputesSummaryAndPulse() {
+		AdminDashboardServiceCacheTest.MemoryCache summaryCache = new AdminDashboardServiceCacheTest.MemoryCache();
+		summaryCache.values.put(semester.getId(), cached(semester));
+		summaryCache.ttls.put(semester.getId(), 600L);
+		AdminDashboardPulseCacheTest.MemoryPulseCache pulseCache = new AdminDashboardPulseCacheTest.MemoryPulseCache();
+		pulseCache.value = new AdminDashboardIntegrationPulseCachedPayload(
+				"old", CLOCK.instant(), AdminDashboardPulseQueryService.emptyRows());
+		pulseCache.ttlSeconds = 60L;
+		AdminDashboardService service = dashboardService(summaryCache, pulseService(pulseCache));
+		Statistics stats = statistics();
+		tx.executeWithoutResult(status -> entityManager.clear());
+		stats.clear();
+		AdminDashboardSummaryResponse refreshed = service.summary(semester.getId(), true);
+		assertThat(refreshed.integrationPulse()).hasSize(2);
+		assertThat(stats.getPrepareStatementCount())
+				.as("forceRefresh resolve + summary 15 + pulse 1")
+				.isEqualTo(17L);
+	}
+
+	@Test
 	void warmCacheStillResolvesSemester() {
 		AdminDashboardServiceCacheTest.MemoryCache cache = new AdminDashboardServiceCacheTest.MemoryCache();
 		cache.values.put(semester.getId(), cached(semester));
@@ -268,6 +325,7 @@ class AdminDashboardQueryCountTest {
 				activeSettings,
 				queries,
 				cache,
+				refresh -> AdminDashboardPulseQueryService.emptyRows(),
 				transactionManager,
 				CLOCK,
 				duration -> {},
@@ -357,6 +415,34 @@ class AdminDashboardQueryCountTest {
 		}
 		entityManager.flush();
 		return row;
+	}
+
+	private AdminDashboardService dashboardService(
+			AdminDashboardCacheStore summaryCache, AdminDashboardPulseLoader pulse) {
+		return new AdminDashboardService(
+				semesters,
+				activeSettings,
+				queries,
+				summaryCache,
+				pulse,
+				transactionManager,
+				CLOCK,
+				duration -> {},
+				Duration.ZERO,
+				Duration.ZERO,
+				() -> "t");
+	}
+
+	private AdminDashboardPulseService pulseService(AdminDashboardPulseCacheStore pulseCache) {
+		return new AdminDashboardPulseService(
+				pulseQueries,
+				pulseCache,
+				transactionManager,
+				CLOCK,
+				duration -> {},
+				Duration.ZERO,
+				Duration.ZERO,
+				() -> "p");
 	}
 
 	private static AdminDashboardCachedPayload cached(Semester semester) {

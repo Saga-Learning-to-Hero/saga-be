@@ -14,7 +14,7 @@
 8. [Current User Profile](#8-current-user-profile)
 9. [Role Model](#9-role-model)
 10. [Admin — Subject / Syllabus / Semester / Class / Course](#10-admin--subject--syllabus--semester--class--course)
-10a. [Admin — Dashboard summary (Phase A+B+C)](#10a-admin--dashboard-summary-phase-abc)
+10a. [Admin — Dashboard summary (Phase A+B+C+D)](#10a-admin--dashboard-summary-phase-abcd)
 11. [Admin — Course Roster](#11-admin--course-roster)
 12. [Remove Student — Chi tiết FE Flow](#12-remove-student--chi-tiết-fe-flow)
 13. [Lecturer — Course / Team Management](#13-lecturer--course--team-management)
@@ -436,13 +436,13 @@ Filter `semesterId` giữ semantics cũ. Semester không tồn tại / đã xóa
 
 ---
 
-## 10a. Admin — Dashboard summary (Phase A+B+C)
+## 10a. Admin — Dashboard summary (Phase A+B+C+D)
 
 `GET /api/admin/dashboard/summary?semesterId=<UUID optional>&forceRefresh=false`
 
 **ADMIN only.** Workload: `HEAVY_READ`. Không mở rộng authorization.
 
-Phase A+B+C trả `selectedSemester`, `availableSemesters`, `kpis`, `weeklyTimeline`, `unconnectedTeamsAlert`, `cacheMetadata`. **Không** có `projectHealthDistribution`, `sprintMilestones`, `integrationsHealth` — các field này bị **omit**, không trả mảng/object rỗng hay zero giả. `unconnectedTeamsAlert` luôn là mảng (rỗng khi không có team lệch).
+Phase A+B+C+D trả `selectedSemester`, `availableSemesters`, `kpis`, `weeklyTimeline`, `unconnectedTeamsAlert`, `integrationPulse`, `cacheMetadata`. **Không** có `projectHealthDistribution`, `sprintMilestones`, `integrationsHealth`, `successRate`, `latency`, provider ping — các field này bị **omit**, không trả mảng/object rỗng hay zero giả. `unconnectedTeamsAlert` luôn là mảng (rỗng khi không có team lệch). `integrationPulse` luôn có đúng 2 phần tử `GITHUB` rồi `JIRA`.
 
 ### Lệch so với spec cũ (đọc kỹ)
 
@@ -450,7 +450,7 @@ Phase A+B+C trả `selectedSemester`, `availableSemesters`, `kpis`, `weeklyTimel
 |---|---|
 | `Semester.isDefault` | **Không tồn tại.** Kỳ mặc định là `active_semester_setting.singleton_id=1` (`GET/PUT /api/admin/semesters/active`). |
 | Timestamp semester | API semester hiện tại expose **date-only** `LocalDate`. Dashboard cũng vậy (`startDate`/`endDate` là ngày, không có giờ). |
-| Health / sprint / integration | **Chưa implement** — không có trong JSON Phase A+B+C. |
+| Health / sprint / provider status | **Chưa implement** — không có `projectHealthDistribution`, `sprintMilestones`, `integrationsHealth`, latency, successRate. Phase D chỉ thêm `integrationPulse` (unique delivery). |
 | `studentsGrowthPercentage` luôn là số | Có thể **`null`**: không có kỳ trước, hoặc kỳ trước có 0 sinh viên. |
 | Traceability theo `linkedCommitCount` raw | Dùng semantic V23: loại merge đã biết (`parentCount > 1`). `parentCount` null/0/1 vẫn vào mẫu số. |
 | `forceRefresh` luôn tính lại song song | Single-flight: một owner compute; follower chờ generation mới. Hết thời gian chờ → trả cache cũ + `refreshPending=true`. Không có cache cũ → `503 INTEGRATION_UNAVAILABLE`. |
@@ -523,7 +523,47 @@ Connected (KPI) = Team có Project **và** Jira `connectionStatus=ACTIVE` **và*
 
 `daysSinceCreated` = số ngày lịch đầy đủ giữa `createdAt.toLocalDate()` và `today` theo `saga.dashboard.zone` (default UTC), tối thiểu 0. Warm cache tính lại field này, không chạy lại SQL.
 
-Timezone: cột `LocalDateTime` (commit/task) so trực tiếp với biên `LocalDate.atStartOfDay()` (naive wall-clock, không convert cột). `today` / `now` lấy từ `Clock.system(saga.dashboard.zone)` — **default `UTC`**, không dùng timezone mặc định của OS/container. Cấu hình: `saga.dashboard.zone` / `SAGA_DASHBOARD_ZONE`. Cùng zone cho `periodStatus`, `currentWeekIndex`, `isCurrentWeek`.
+Timezone (học kỳ / KPI / tuần / alert): cột `LocalDateTime` (commit/task/team) so trực tiếp với biên `LocalDate.atStartOfDay()` (naive wall-clock, không convert cột). `today` / `now` lấy từ `Clock.system(saga.dashboard.zone)` — **default `UTC`**, không dùng timezone mặc định của OS/container. Cấu hình: `saga.dashboard.zone` / `SAGA_DASHBOARD_ZONE`. Cùng zone cho `periodStatus`, `currentWeekIndex`, `isCurrentWeek`.
+
+### integrationPulse
+
+**Platform-wide**, không theo `semesterId`. Đổi kỳ trên dashboard **không** đổi pulse. Không join Course / Semester / Project / Integration. `webhook_receipt.targetId` hiện luôn `null`.
+
+Đây là metric **unique first-seen delivery**, không phải số HTTP webhook thô.
+
+Một unique delivery = một row `webhook_receipt` với khóa `(provider, deliveryId)`. Redelivery / duplicate HTTP **không** tạo row mới và **không** tăng count — ingest chỉ ghi `receipt_status=DUPLICATE` trên row cũ.
+
+| Field | Định nghĩa |
+|---|---|
+| `service` | Chỉ `GITHUB` hoặc `JIRA`. Luôn trả đủ 2 phần tử theo thứ tự đó, kể cả khi count = 0. |
+| `uniqueEventsReceived24h` | Số row có `createdAt >= now - 24h` (rolling duration, inclusive cutoff). |
+| `uniqueEventsReceived7d` | Số row có `createdAt >= now - 7d` (rolling duration, inclusive cutoff). |
+| `lastUniqueEventAt` | `max(createdAt)` **toàn thời gian** cho provider đó — latest first-seen unique delivery, không phải latest HTTP và không bị cắt 7 ngày. Không có row → `null`. |
+
+`createdAt` là Hibernate naive `LocalDateTime` (first-seen), ghi từ **JVM wall-clock** (`LocalDateTime.now()` / `@CreationTimestamp source=VM` → `Clock.systemDefaultZone()`). **Không** phải `CURRENT_TIMESTAMP` của DB trên INSERT thông thường, **không** phải Instant UTC, **không** đi qua `saga.dashboard.zone`.
+
+Cutoff pulse = `LocalDateTime.now(persistenceClock) - 24h/7d` với persistence clock = JVM default zone — so naive-to-naive, inclusive `createdAt >= cutoff`. Đổi `saga.dashboard.zone` (UTC → `Asia/Ho_Chi_Minh`) **không** đổi membership 24h/7d. Zone học kỳ chỉ ảnh hưởng `periodStatus` / `currentWeekIndex` / `isCurrentWeek` / `daysSinceCreated`.
+
+**Không** diễn giải 0 event là provider DOWN. Không expose `successRate`, `latencyMs`, `p95Latency`, `eventsProcessed24h`, `eventsFailed24h`, `duplicateEvents24h`, `lastProcessedAt`, `lastPing`, `status`.
+
+Không trả `deliveryId`, `payloadJson`, `errorCategory`, `targetId`.
+
+```json
+"integrationPulse": [
+  {
+    "service": "GITHUB",
+    "uniqueEventsReceived24h": 123,
+    "uniqueEventsReceived7d": 456,
+    "lastUniqueEventAt": "2026-09-19T10:00:00"
+  },
+  {
+    "service": "JIRA",
+    "uniqueEventsReceived24h": 94,
+    "uniqueEventsReceived7d": 382,
+    "lastUniqueEventAt": "2026-09-19T09:55:00"
+  }
+]
+```
 
 ```json
 {
@@ -585,6 +625,20 @@ Timezone: cột `LocalDateTime` (commit/task) so trực tiếp với biên `Loca
       "daysSinceCreated": 14
     }
   ],
+  "integrationPulse": [
+    {
+      "service": "GITHUB",
+      "uniqueEventsReceived24h": 123,
+      "uniqueEventsReceived7d": 456,
+      "lastUniqueEventAt": "2026-09-19T10:00:00"
+    },
+    {
+      "service": "JIRA",
+      "uniqueEventsReceived24h": 94,
+      "uniqueEventsReceived7d": 382,
+      "lastUniqueEventAt": "2026-09-19T09:55:00"
+    }
+  ],
   "cacheMetadata": {
     "cachedAt": "2026-09-19T04:00:00Z",
     "expiresAt": "2026-09-19T04:10:00Z",
@@ -596,11 +650,12 @@ Timezone: cột `LocalDateTime` (commit/task) so trực tiếp với biên `Loca
 
 ### Cache
 
-- Key: `saga:admin:dashboard:summary:v3:{resolvedSemesterId}` (và `:lock`). **v3** vì Phase C thêm `unconnectedTeamsAlert` — cache v2 không được coi là hit thiếu/null alert. TTL 600s. `generation` là thế hệ **aggregate** (KPI + weekly counts + alert membership); không đổi chỉ vì tuần/ngày/`daysSinceCreated` trôi.
-- Mỗi response (kể cả warm hit) **tính lại** `periodStatus`, `currentWeekIndex`, `isCurrentWeek`, `daysSinceCreated` từ Clock — không chạy lại SQL tuần/alert. `commits` / `tasksCompleted` / `traceabilityRate` / membership alert giữ nguyên từ cache.
-- `forceRefresh=false`: resolve semester → GET cache → hit thì gắn `cacheMetadata` live (TTL đọc lúc trả lời, không cache `ttlSecondsRemaining`) rồi decorate temporal fields.
-- `forceRefresh=true`: không dùng fast-path hit; một lock owner (`SET NX`, TTL 45s, owner token + Lua compare-and-delete). Follower chờ generation đổi. Timeout + còn cache cũ → `refreshPending=true`. Timeout + không cache → `503 INTEGRATION_UNAVAILABLE`.
-- Redis down: convention hiện tại — `503 SESSION_STORE_UNAVAILABLE`.
+- Summary key: `saga:admin:dashboard:summary:v3:{resolvedSemesterId}` (và `:lock`). **v3 giữ nguyên** — `integrationPulse` **không** nằm trong JSON summary. TTL 600s. `generation` là thế hệ **aggregate** (KPI + weekly counts + alert membership); không đổi chỉ vì tuần/ngày/`daysSinceCreated` trôi.
+- Pulse key **global**: `saga:admin:dashboard:integration-pulse:v1` (và `:lock`). TTL **60s** — tươi hơn summary 600s, không chạy query webhook trên mọi request. Cùng pattern SET NX + Lua publish-if-owner / compare-delete; stale owner không ghi đè.
+- Mỗi response (kể cả warm hit) **tính lại** `periodStatus`, `currentWeekIndex`, `isCurrentWeek`, `daysSinceCreated` từ Clock — không chạy lại SQL tuần/alert. `commits` / `tasksCompleted` / `traceabilityRate` / membership alert giữ nguyên từ cache. Pulse timestamps không decorate lại.
+- `forceRefresh=false`: resolve semester → GET summary v3; GET pulse v1 riêng; hit thì attach rồi decorate temporal.
+- `forceRefresh=true`: refresh **cả hai** key, mỗi key/lock riêng. Follower chờ generation đổi. Timeout + còn cache cũ → summary `refreshPending=true` và/hoặc stale pulse. Timeout + không cache pulse → `503 INTEGRATION_UNAVAILABLE` (không bịa zero). Timeout + còn stale pulse → dashboard vẫn trả được (không fail cả page chỉ vì mất lock pulse).
+- Pulse DB compute fail: ném lỗi, **không** bịa `[0,0,null]`. Redis down: `503 SESSION_STORE_UNAVAILABLE`.
 
 ---
 

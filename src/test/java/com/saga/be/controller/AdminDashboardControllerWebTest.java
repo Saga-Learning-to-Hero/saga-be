@@ -12,8 +12,10 @@ import com.saga.be.dto.admin.dashboard.AdminDashboardKpisResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSelectedSemesterResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSummaryResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardMissingService;
+import com.saga.be.dto.admin.dashboard.AdminDashboardIntegrationPulseResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardUnconnectedTeamResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardWeeklyPointResponse;
+import com.saga.be.entity.enums.IntegrationProvider;
 import com.saga.be.service.admin.dashboard.AdminDashboardService;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -76,6 +78,14 @@ class AdminDashboardControllerWebTest {
 								AdminDashboardMissingService.BOTH,
 								LocalDateTime.of(2026, 9, 5, 0, 0),
 								14)),
+						List.of(
+								new AdminDashboardIntegrationPulseResponse(
+										IntegrationProvider.GITHUB,
+										123L,
+										456L,
+										LocalDateTime.of(2026, 9, 19, 10, 0)),
+								new AdminDashboardIntegrationPulseResponse(
+										IntegrationProvider.JIRA, 94L, 382L, null)),
 						new AdminDashboardCacheMetadataResponse(
 								Instant.parse("2026-09-19T04:00:00Z"), Instant.parse("2026-09-19T04:10:00Z"), 600L, false)));
 		mockMvc.perform(get("/api/admin/dashboard/summary").param("semesterId", semesterId.toString()))
@@ -98,6 +108,16 @@ class AdminDashboardControllerWebTest {
 				.andExpect(jsonPath("$.unconnectedTeamsAlert[0].teamNo").value(7))
 				.andExpect(jsonPath("$.unconnectedTeamsAlert[0].missingService").value("BOTH"))
 				.andExpect(jsonPath("$.unconnectedTeamsAlert[0].daysSinceCreated").value(14))
+				.andExpect(jsonPath("$.integrationPulse[0].service").value("GITHUB"))
+				.andExpect(jsonPath("$.integrationPulse[0].uniqueEventsReceived24h").value(123))
+				.andExpect(jsonPath("$.integrationPulse[0].uniqueEventsReceived7d").value(456))
+				.andExpect(jsonPath("$.integrationPulse[0].lastUniqueEventAt").value("2026-09-19T10:00:00"))
+				.andExpect(jsonPath("$.integrationPulse[1].service").value("JIRA"))
+				.andExpect(jsonPath("$.integrationPulse[1].uniqueEventsReceived24h").value(94))
+				.andExpect(jsonPath("$.integrationPulse[1].lastUniqueEventAt").value(org.hamcrest.Matchers.nullValue()))
+				.andExpect(jsonPath("$.integrationPulse[0].successRate").doesNotExist())
+				.andExpect(jsonPath("$.integrationPulse[0].latencyMs").doesNotExist())
+				.andExpect(jsonPath("$.integrationPulse[0].status").doesNotExist())
 				.andExpect(jsonPath("$.cacheMetadata.refreshPending").value(false))
 				.andExpect(jsonPath("$.projectHealthDistribution").doesNotExist())
 				.andExpect(jsonPath("$.sprintMilestones").doesNotExist())
@@ -119,6 +139,7 @@ class AdminDashboardControllerWebTest {
 								true),
 						List.of(),
 						new AdminDashboardKpisResponse(0, null, null, 0, 0, 0, null, 0, 0, null),
+						List.of(),
 						List.of(),
 						List.of(),
 						new AdminDashboardCacheMetadataResponse(

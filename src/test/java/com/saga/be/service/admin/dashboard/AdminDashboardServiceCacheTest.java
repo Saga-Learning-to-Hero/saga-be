@@ -387,6 +387,7 @@ class AdminDashboardServiceCacheTest {
 				activeSettings,
 				queries,
 				store,
+				refresh -> AdminDashboardPulseQueryService.emptyRows(),
 				passthroughTm(),
 				clock,
 				sleeper,

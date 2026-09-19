@@ -69,6 +69,7 @@ class AdminDashboardRedisCacheStoreTest {
 						eq("owner-a"),
 						json.capture(),
 						eq("600"));
+		assertThat(script.getValue()).isSameAs(AdminDashboardRedisScripts.PUBLISH_IF_OWNER);
 		assertThat(script.getValue().getScriptAsString()).contains("SET");
 		assertThat(script.getValue().getScriptAsString()).contains("'EX'");
 		assertThat(script.getValue().getScriptAsString()).contains("DEL");
@@ -76,6 +77,8 @@ class AdminDashboardRedisCacheStoreTest {
 		assertThat(json.getValue()).contains("\"generation\":\"gen-1\"");
 		assertThat(json.getValue()).doesNotContain("ttlSecondsRemaining");
 		assertThat(json.getValue()).doesNotContain("refreshPending");
+		assertThat(json.getValue()).doesNotContain("integrationPulse");
+		assertThat(json.getValue()).doesNotContain("uniqueEventsReceived24h");
 		AdminDashboardCachedPayload read = mapper.readValue(json.getValue(), AdminDashboardCachedPayload.class);
 		assertThat(read.generation()).isEqualTo("gen-1");
 	}
