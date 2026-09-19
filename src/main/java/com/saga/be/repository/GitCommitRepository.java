@@ -169,4 +169,26 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			  and (c.parentCount is null or c.parentCount <= 1)
 			""")
 	long countTraceableByCourseSemester(@Param("semesterId") UUID semesterId);
+
+	/**
+	 * Phase B weekly activity: V23-included commits only ({@code parentCount} null or {@code <= 1}).
+	 * Lightweight {@code Object[]{UUID commitId, LocalDateTime effectiveTimestamp}}.
+	 */
+	@Query(
+			"""
+			select c.id, coalesce(c.committedAt, c.createdAt)
+			from GitCommit c
+			join c.repo r
+			join r.project p
+			join p.course course
+			where course.semester.id = :semesterId
+			  and course.deletedAt is null
+			  and (c.parentCount is null or c.parentCount <= 1)
+			  and coalesce(c.committedAt, c.createdAt) >= :startInclusive
+			  and coalesce(c.committedAt, c.createdAt) < :endExclusive
+			""")
+	List<Object[]> findActivityIdAndTimestampByCourseSemester(
+			@Param("semesterId") UUID semesterId,
+			@Param("startInclusive") LocalDateTime startInclusive,
+			@Param("endExclusive") LocalDateTime endExclusive);
 }

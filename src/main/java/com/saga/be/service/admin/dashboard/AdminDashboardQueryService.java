@@ -4,6 +4,8 @@ import com.saga.be.dto.admin.dashboard.AdminDashboardAvailableSemesterResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardCachedPayload;
 import com.saga.be.dto.admin.dashboard.AdminDashboardKpisResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSelectedSemesterResponse;
+import com.saga.be.dto.admin.dashboard.AdminDashboardWeeklyPointResponse;
+import com.saga.be.config.AdminDashboardProperties;
 import com.saga.be.entity.academic.Semester;
 import com.saga.be.entity.enums.EnrollmentStatus;
 import com.saga.be.repository.ActiveSemesterSettingRepository;
@@ -14,11 +16,14 @@ import com.saga.be.repository.SemesterRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
 import com.saga.be.repository.TeamRepository;
+import com.saga.be.service.admin.dashboard.AdminDashboardSemesterWeeks.WeekSlice;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
@@ -27,6 +32,18 @@ import org.springframework.stereotype.Service;
 /**
  * Grouped semester-scope aggregates. No provider HTTP. Callers must run this inside a short
  * read-only JDBC block and release it before any Redis write.
+ *
+ * <p>Phase B adds three constant queries (V23 activity id+timestamp, distinct linked ids, DONE
+ * completion timestamps) then buckets in memory. SQL count does not scale with {@code totalWeeks}.
+ *
+ * <p>Timestamps are naive {@link LocalDateTime} wall-clock values compared to semester
+ * {@code LocalDate.atStartOfDay()} bounds. {@code now} is {@code LocalDateTime.now(clock)} from
+ * {@code saga.dashboard.zone} (default UTC). No zone conversion is applied to stored commit/task
+ * columns. Temporal display fields are re-derived on each HTTP response from the same clock.
+ *
+ * <p>{@code tasksCompleted} counts current {@code DONE} rows only, bucketed by
+ * {@code coalesce(completedAt, resolvedAt, createdAt)}. This is not an immutable status-transition
+ * history: a task that was DONE in week 2 and later reopened is omitted.
  */
 @Service
 @Profile("!test")
@@ -51,7 +68,8 @@ public class AdminDashboardQueryService {
 			TeamRepository teams,
 			GitCommitRepository commits,
 			TaskRepository tasks,
-			TaskGitCommitLinkRepository links) {
+			TaskGitCommitLinkRepository links,
+			AdminDashboardProperties properties) {
 		this(
 				semesters,
 				activeSettings,
@@ -61,7 +79,7 @@ public class AdminDashboardQueryService {
 				commits,
 				tasks,
 				links,
-				Clock.systemDefaultZone());
+				properties.clock());
 	}
 
 	public AdminDashboardQueryService(
@@ -129,14 +147,26 @@ public class AdminDashboardQueryService {
 		long linked = links.countDistinctLinkedTraceableByCourseSemester(selectedId);
 		Double traceability = traceable == 0 ? null : ratioPercent(linked, traceable);
 
+		LocalDateTime now = LocalDateTime.now(clock);
+		List<WeekSlice> slices = AdminDashboardSemesterWeeks.slices(start, end, now);
+		LocalDateTime startInclusive = AdminDashboardSemesterWeeks.startInclusive(start);
+		LocalDateTime endExclusive = AdminDashboardSemesterWeeks.endExclusive(end);
+		List<Object[]> activityRows =
+				commits.findActivityIdAndTimestampByCourseSemester(selectedId, startInclusive, endExclusive);
+		Set<UUID> linkedIds = new HashSet<>(links.findDistinctLinkedTraceableIdsByCourseSemester(selectedId));
+		List<LocalDateTime> completions =
+				tasks.findDoneCompletionTimestampsByCourseSemester(selectedId, startInclusive, endExclusive);
+		List<AdminDashboardWeeklyPointResponse> weeklyTimeline = AdminDashboardWeeklyTimeline.bucket(
+				slices, AdminDashboardWeeklyTimeline.activities(activityRows, linkedIds), completions);
+
 		AdminDashboardSelectedSemesterResponse selectedDto = new AdminDashboardSelectedSemesterResponse(
 				selectedId,
 				selected.getCode(),
 				selected.getName(),
 				start,
 				end,
-				AdminDashboardSemesterWeeks.totalWeeks(start, end),
-				AdminDashboardSemesterWeeks.currentWeekIndex(start, end, today),
+				slices.size(),
+				AdminDashboardSemesterWeeks.currentWeekIndex(slices),
 				selectedId.equals(activeId));
 
 		return new AdminDashboardCachedPayload(
@@ -154,7 +184,8 @@ public class AdminDashboardQueryService {
 						connectedRate,
 						rawCommits,
 						activeTasks,
-						traceability));
+						traceability),
+				weeklyTimeline);
 	}
 
 	private UUID activeSemesterId() {

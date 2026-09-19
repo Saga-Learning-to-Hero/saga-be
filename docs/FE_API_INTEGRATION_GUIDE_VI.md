@@ -14,7 +14,7 @@
 8. [Current User Profile](#8-current-user-profile)
 9. [Role Model](#9-role-model)
 10. [Admin — Subject / Syllabus / Semester / Class / Course](#10-admin--subject--syllabus--semester--class--course)
-10a. [Admin — Dashboard summary (Phase A)](#10a-admin--dashboard-summary-phase-a)
+10a. [Admin — Dashboard summary (Phase A+B)](#10a-admin--dashboard-summary-phase-ab)
 11. [Admin — Course Roster](#11-admin--course-roster)
 12. [Remove Student — Chi tiết FE Flow](#12-remove-student--chi-tiết-fe-flow)
 13. [Lecturer — Course / Team Management](#13-lecturer--course--team-management)
@@ -436,13 +436,13 @@ Filter `semesterId` giữ semantics cũ. Semester không tồn tại / đã xóa
 
 ---
 
-## 10a. Admin — Dashboard summary (Phase A)
+## 10a. Admin — Dashboard summary (Phase A+B)
 
 `GET /api/admin/dashboard/summary?semesterId=<UUID optional>&forceRefresh=false`
 
 **ADMIN only.** Workload: `HEAVY_READ`. Không mở rộng authorization.
 
-Phase A **chỉ** trả `selectedSemester`, `availableSemesters`, `kpis`, `cacheMetadata`. **Không** có `weeklyTimeline`, `projectHealthDistribution`, `sprintMilestones`, `integrationsHealth`, `unconnectedTeamsAlert` — các field này bị **omit**, không trả mảng/object rỗng hay zero giả.
+Phase A+B trả `selectedSemester`, `availableSemesters`, `kpis`, `weeklyTimeline`, `cacheMetadata`. **Không** có `projectHealthDistribution`, `sprintMilestones`, `integrationsHealth`, `unconnectedTeamsAlert` — các field này bị **omit**, không trả mảng/object rỗng hay zero giả.
 
 ### Lệch so với spec cũ (đọc kỹ)
 
@@ -450,7 +450,7 @@ Phase A **chỉ** trả `selectedSemester`, `availableSemesters`, `kpis`, `cache
 |---|---|
 | `Semester.isDefault` | **Không tồn tại.** Kỳ mặc định là `active_semester_setting.singleton_id=1` (`GET/PUT /api/admin/semesters/active`). |
 | Timestamp semester | API semester hiện tại expose **date-only** `LocalDate`. Dashboard cũng vậy (`startDate`/`endDate` là ngày, không có giờ). |
-| Health / sprint / integration / unconnected alert | **Chưa implement** — không có trong JSON Phase A. |
+| Health / sprint / integration / unconnected alert | **Chưa implement** — không có trong JSON Phase A+B. |
 | `studentsGrowthPercentage` luôn là số | Có thể **`null`**: không có kỳ trước, hoặc kỳ trước có 0 sinh viên. |
 | Traceability theo `linkedCommitCount` raw | Dùng semantic V23: loại merge đã biết (`parentCount > 1`). `parentCount` null/0/1 vẫn vào mẫu số. |
 | `forceRefresh` luôn tính lại song song | Single-flight: một owner compute; follower chờ generation mới. Hết thời gian chờ → trả cache cũ + `refreshPending=true`. Không có cache cũ → `503 INTEGRATION_UNAVAILABLE`. |
@@ -465,7 +465,7 @@ Phase A **chỉ** trả `selectedSemester`, `availableSemesters`, `kpis`, `cache
 
 `availableSemesters[].periodStatus` chỉ suy ra từ ngày: `UPCOMING | IN_PROGRESS | COMPLETED`. **Không** dùng `ACTIVE` làm period status. `active` là boolean riêng.
 
-`currentWeekIndex`: 1-based trong `[startDate, endDate]`; **null** khi `today` nằm ngoài khoảng. `totalWeeks` = `ceil(số ngày inclusive / 7)` — không snap Monday, không cap 15 tuần.
+`currentWeekIndex`: tuần 1-based đang chứa `now` theo slice `[weekStart, weekEndExclusive)`. **null** khi `now` nằm ngoài khoảng kỳ (kỳ quá khứ/tương lai, hoặc `now == semesterEndExclusive`). `totalWeeks` = `ceil(số ngày inclusive / 7)` — không snap Monday, không cap 15 tuần. `selectedSemester.currentWeekIndex` và `weeklyTimeline[].isCurrentWeek` luôn khớp.
 
 Scope KPI: `Course.semester.id = selectedSemesterId AND Course.deletedAt IS NULL`. Không scope theo `AcademicClass.semester` hay `Project.createdAt`.
 
@@ -483,6 +483,24 @@ Scope KPI: `Course.semester.id = selectedSemesterId AND Course.deletedAt IS NULL
 | `traceabilityRate` | Mẫu số: commit in-scope `parentCount IS NULL OR <= 1`. Tử số: các commit đó có ≥1 `task_git_commit_link` tới Task in-scope. Mẫu số 0 → `null`. |
 
 Không gọi GitHub/Jira HTTP.
+
+### weeklyTimeline
+
+Mảng tuần **liên tục 7 ngày**, neo vào `selectedSemester.startDate` (không snap Monday / Sunday). Tuần cuối có thể ngắn hơn 7 ngày. Không giới hạn 15 tuần — kỳ 20 tuần trả đủ 20 phần tử.
+
+| Field | Định nghĩa |
+|---|---|
+| `weekIndex` | 1-based. |
+| `weekLabel` | `"Tuần 01"`, `"Tuần 02"`, … — không gắn `"(Hiện tại)"`. Trạng thái hiện tại chỉ nằm ở `isCurrentWeek`. |
+| `startDate` / `endDate` | Date-only inclusive của slice. Nội bộ: `weekStart = semesterStartInclusive + 7*(k-1)`; `weekEndExclusive = min(weekStart+7d, semesterEndExclusive)`; `endDate = weekEndExclusive.minusNanos(1).toLocalDate()`. |
+| `isCurrentWeek` | `now >= weekStart AND now < weekEndExclusive`. Kỳ quá khứ/tương lai: tất cả `false`. `now == start` → tuần 1. `now == endExclusive` → không tuần nào. |
+| `commits` | Commit **activity V23** (`parentCount` null/0/1) có `coalesce(committedAt, createdAt)` nằm trong tuần. Merge đã biết (`parentCount > 1`) **loại**. **Khác** `kpis.totalCommitsSynced` (raw, gồm merge, không cắt theo ngày kỳ). Một commit gắn nhiều Task vẫn đếm **1**. |
+| `tasksCompleted` | Task **hiện đang** `DONE` và `deletedAt IS NULL`, bucket theo `coalesce(completedAt, resolvedAt, createdAt)` nếu timestamp nằm trong interval kỳ. **Không** phải lịch sử chuyển trạng thái bất biến: task từng DONE tuần 2 rồi reopen thì **không** đếm hôm nay. Task DONE ngoài khoảng ngày kỳ không bị nhét vào tuần nào. |
+| `traceabilityRate` | Cùng họ semantic Phase A / V23: mẫu số = commit activity trong tuần; tử số = các commit đó hiện có ≥1 `task_git_commit_link` (link **không** cần được tạo trong tuần). Mẫu số 0 → `null`. Không dùng `linkedCommitCount` raw. |
+
+Tỷ lệ % dùng cùng công thức KPI: `(numerator * 100.0) / denominator` — `double` Java, không làm tròn thêm (ví dụ 2/3 → `66.666...`).
+
+Timezone: cột `LocalDateTime` (commit/task) so trực tiếp với biên `LocalDate.atStartOfDay()` (naive wall-clock, không convert cột). `today` / `now` lấy từ `Clock.system(saga.dashboard.zone)` — **default `UTC`**, không dùng timezone mặc định của OS/container. Cấu hình: `saga.dashboard.zone` / `SAGA_DASHBOARD_ZONE`. Cùng zone cho `periodStatus`, `currentWeekIndex`, `isCurrentWeek`.
 
 ```json
 {
@@ -519,6 +537,18 @@ Không gọi GitHub/Jira HTTP.
     "totalJiraTasksSynced": 400,
     "traceabilityRate": 62.5
   },
+  "weeklyTimeline": [
+    {
+      "weekIndex": 1,
+      "weekLabel": "Tuần 01",
+      "startDate": "2026-09-01",
+      "endDate": "2026-09-07",
+      "isCurrentWeek": false,
+      "commits": 12,
+      "tasksCompleted": 4,
+      "traceabilityRate": 83.333...
+    }
+  ],
   "cacheMetadata": {
     "cachedAt": "2026-09-19T04:00:00Z",
     "expiresAt": "2026-09-19T04:10:00Z",
@@ -530,8 +560,9 @@ Không gọi GitHub/Jira HTTP.
 
 ### Cache
 
-- Key: `saga:admin:dashboard:summary:v1:{resolvedSemesterId}`, TTL 600s.
-- `forceRefresh=false`: resolve semester → GET cache → hit thì gắn `cacheMetadata` live (TTL đọc lúc trả lời, không cache `ttlSecondsRemaining`).
+- Key: `saga:admin:dashboard:summary:v2:{resolvedSemesterId}` (và `:lock`). **v2** vì payload Phase B thêm `weeklyTimeline`. Temporal decoration không đổi shape JSON nên **không** bump v3. TTL 600s. `generation` là thế hệ **aggregate** (KPI + weekly counts); không đổi chỉ vì tuần/ngày trôi.
+- Mỗi response (kể cả warm hit) **tính lại** `periodStatus`, `currentWeekIndex`, `isCurrentWeek` từ Clock — không chạy lại SQL tuần. `commits` / `tasksCompleted` / `traceabilityRate` giữ nguyên từ cache.
+- `forceRefresh=false`: resolve semester → GET cache → hit thì gắn `cacheMetadata` live (TTL đọc lúc trả lời, không cache `ttlSecondsRemaining`) rồi decorate temporal fields.
 - `forceRefresh=true`: không dùng fast-path hit; một lock owner (`SET NX`, TTL 45s, owner token + Lua compare-and-delete). Follower chờ generation đổi. Timeout + còn cache cũ → `refreshPending=true`. Timeout + không cache → `503 INTEGRATION_UNAVAILABLE`.
 - Redis down: convention hiện tại — `503 SESSION_STORE_UNAVAILABLE`.
 

@@ -9,10 +9,13 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.saga.be.dto.admin.dashboard.AdminDashboardAvailableSemesterResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardCachedPayload;
 import com.saga.be.dto.admin.dashboard.AdminDashboardKpisResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSelectedSemesterResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSummaryResponse;
+import com.saga.be.dto.admin.dashboard.AdminDashboardWeeklyPointResponse;
+import com.saga.be.dto.admin.dashboard.SemesterPeriodStatus;
 import com.saga.be.entity.academic.Semester;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
@@ -25,6 +28,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
@@ -62,11 +66,13 @@ class AdminDashboardServiceCacheTest {
 	private AdminDashboardQueryService queries;
 
 	private MemoryCache cache;
+	private MutableClock clock;
 	private AdminDashboardService service;
 
 	@BeforeEach
 	void setUp() {
 		cache = new MemoryCache();
+		clock = new MutableClock(NOW, ZoneOffset.UTC);
 		service = service(cache, duration -> {}, Duration.ofMillis(40), Duration.ofMillis(10));
 	}
 
@@ -265,6 +271,55 @@ class AdminDashboardServiceCacheTest {
 	}
 
 	@Test
+	void warmHitRedecoratesCurrentWeekAfterBoundaryWithoutRecompute() {
+		Semester semester = semester();
+		when(semesters.findById(SEMESTER_ID)).thenReturn(Optional.of(semester));
+		clock.setInstant(Instant.parse("2026-09-14T23:00:00Z"));
+		cache.values.put(SEMESTER_ID, timelinePayload(2, SemesterPeriodStatus.IN_PROGRESS));
+		cache.ttls.put(SEMESTER_ID, 600L);
+		clock.setInstant(Instant.parse("2026-09-15T00:00:00Z"));
+		AdminDashboardSummaryResponse response = service.summary(SEMESTER_ID, false);
+		assertThat(response.selectedSemester().currentWeekIndex()).isEqualTo(3);
+		assertThat(response.weeklyTimeline().get(1).isCurrentWeek()).isFalse();
+		assertThat(response.weeklyTimeline().get(2).isCurrentWeek()).isTrue();
+		assertThat(response.weeklyTimeline().get(1).commits()).isEqualTo(20);
+		assertThat(response.cacheMetadata().cachedAt()).isEqualTo(Instant.parse("2026-09-19T03:50:00Z"));
+		assertThat(cache.values.get(SEMESTER_ID).generation()).isEqualTo("g1");
+		verify(queries, never()).compute(any(), any());
+	}
+
+	@Test
+	void warmHitFlipsUpcomingToInProgressAtSemesterStartWithoutRecompute() {
+		Semester semester = semester();
+		when(semesters.findById(SEMESTER_ID)).thenReturn(Optional.of(semester));
+		clock.setInstant(Instant.parse("2026-08-31T23:00:00Z"));
+		cache.values.put(SEMESTER_ID, timelinePayload(null, SemesterPeriodStatus.UPCOMING));
+		cache.ttls.put(SEMESTER_ID, 600L);
+		clock.setInstant(Instant.parse("2026-09-01T00:00:00Z"));
+		AdminDashboardSummaryResponse response = service.summary(SEMESTER_ID, false);
+		assertThat(response.availableSemesters().getFirst().periodStatus()).isEqualTo(SemesterPeriodStatus.IN_PROGRESS);
+		assertThat(response.selectedSemester().currentWeekIndex()).isEqualTo(1);
+		assertThat(response.weeklyTimeline().getFirst().isCurrentWeek()).isTrue();
+		verify(queries, never()).compute(any(), any());
+	}
+
+	@Test
+	void warmHitClearsCurrentWeekAtEndExclusiveWithoutRecompute() {
+		Semester semester = semester();
+		when(semesters.findById(SEMESTER_ID)).thenReturn(Optional.of(semester));
+		clock.setInstant(Instant.parse("2026-12-15T12:00:00Z"));
+		cache.values.put(SEMESTER_ID, timelinePayload(16, SemesterPeriodStatus.IN_PROGRESS));
+		cache.ttls.put(SEMESTER_ID, 600L);
+		clock.setInstant(Instant.parse("2026-12-16T00:00:00Z"));
+		AdminDashboardSummaryResponse response = service.summary(SEMESTER_ID, false);
+		assertThat(response.selectedSemester().currentWeekIndex()).isNull();
+		assertThat(response.weeklyTimeline()).allSatisfy(point -> assertThat(point.isCurrentWeek()).isFalse());
+		assertThat(response.availableSemesters().getFirst().periodStatus()).isEqualTo(SemesterPeriodStatus.COMPLETED);
+		assertThat(response.kpis().totalStudents()).isEqualTo(9);
+		verify(queries, never()).compute(any(), any());
+	}
+
+	@Test
 	void liveTtlMetadataIsAttachedOnHit() {
 		Semester semester = semester();
 		when(semesters.findById(SEMESTER_ID)).thenReturn(Optional.of(semester));
@@ -287,7 +342,7 @@ class AdminDashboardServiceCacheTest {
 				queries,
 				store,
 				passthroughTm(),
-				Clock.fixed(NOW, ZoneOffset.UTC),
+				clock,
 				sleeper,
 				wait,
 				poll,
@@ -319,6 +374,41 @@ class AdminDashboardServiceCacheTest {
 		return semester;
 	}
 
+	private static AdminDashboardCachedPayload timelinePayload(
+			Integer staleWeek, SemesterPeriodStatus staleStatus) {
+		return new AdminDashboardCachedPayload(
+				"g1",
+				Instant.parse("2026-09-19T03:50:00Z"),
+				new AdminDashboardSelectedSemesterResponse(
+						SEMESTER_ID,
+						"FA26",
+						"Fall",
+						LocalDate.of(2026, 9, 1),
+						LocalDate.of(2026, 12, 15),
+						16,
+						staleWeek,
+						true),
+				List.of(new AdminDashboardAvailableSemesterResponse(
+						SEMESTER_ID,
+						"FA26",
+						"Fall",
+						LocalDate.of(2026, 9, 1),
+						LocalDate.of(2026, 12, 15),
+						true,
+						staleStatus)),
+				new AdminDashboardKpisResponse(9, null, null, 0, 0, 0, null, 0, 0, null),
+				List.of(
+						weekPoint(1, LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 7), 10),
+						weekPoint(2, LocalDate.of(2026, 9, 8), LocalDate.of(2026, 9, 14), 20),
+						weekPoint(3, LocalDate.of(2026, 9, 15), LocalDate.of(2026, 9, 21), 30)));
+	}
+
+	private static AdminDashboardWeeklyPointResponse weekPoint(
+			int index, LocalDate start, LocalDate end, long commits) {
+		return new AdminDashboardWeeklyPointResponse(
+				index, "Tuần %02d".formatted(index), start, end, false, commits, 4, 50.0d);
+	}
+
 	private static AdminDashboardCachedPayload payload(String generation, long students) {
 		return new AdminDashboardCachedPayload(
 				generation,
@@ -333,7 +423,37 @@ class AdminDashboardServiceCacheTest {
 						3,
 						true),
 				List.of(),
-				new AdminDashboardKpisResponse(students, null, null, 0, 0, 0, null, 0, 0, null));
+				new AdminDashboardKpisResponse(students, null, null, 0, 0, 0, null, 0, 0, null),
+				List.of());
+	}
+
+	static final class MutableClock extends Clock {
+		private Instant instant;
+		private final ZoneId zone;
+
+		MutableClock(Instant instant, ZoneId zone) {
+			this.instant = instant;
+			this.zone = zone;
+		}
+
+		void setInstant(Instant instant) {
+			this.instant = instant;
+		}
+
+		@Override
+		public ZoneId getZone() {
+			return zone;
+		}
+
+		@Override
+		public Clock withZone(ZoneId zone) {
+			return new MutableClock(instant, zone);
+		}
+
+		@Override
+		public Instant instant() {
+			return instant;
+		}
 	}
 
 	static final class MemoryCache implements AdminDashboardCacheStore {

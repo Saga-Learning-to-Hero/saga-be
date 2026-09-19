@@ -19,7 +19,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/admin/dashboard")
 @Tag(
 		name = "Admin dashboard",
-		description = "Phase A: selected semester, available semesters, supported KPIs, Redis cache. ADMIN only.")
+		description =
+				"Phase A+B: selected semester, available semesters, KPIs, weeklyTimeline, Redis cache. ADMIN only.")
 @SecurityRequirement(name = "SAGA_SESSION")
 public class AdminDashboardController {
 

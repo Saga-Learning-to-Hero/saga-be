@@ -22,7 +22,11 @@ import org.springframework.stereotype.Component;
 @Profile("!test")
 public class AdminDashboardRedisCacheStore implements AdminDashboardCacheStore {
 
-	static final String KEY_PREFIX = "saga:admin:dashboard:summary:v1:";
+	/**
+	 * v2 because Phase B added {@code weeklyTimeline}. Temporal decoration does not change the stored
+	 * JSON shape, so this gate keeps v2.
+	 */
+	static final String KEY_PREFIX = "saga:admin:dashboard:summary:v2:";
 	static final Duration CACHE_TTL = Duration.ofSeconds(600);
 	static final Duration LOCK_TTL = Duration.ofSeconds(45);
 

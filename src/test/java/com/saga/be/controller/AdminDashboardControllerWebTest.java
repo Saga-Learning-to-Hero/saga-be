@@ -11,6 +11,7 @@ import com.saga.be.dto.admin.dashboard.AdminDashboardCacheMetadataResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardKpisResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSelectedSemesterResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSummaryResponse;
+import com.saga.be.dto.admin.dashboard.AdminDashboardWeeklyPointResponse;
 import com.saga.be.service.admin.dashboard.AdminDashboardService;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -53,6 +54,15 @@ class AdminDashboardControllerWebTest {
 								true),
 						List.of(),
 						new AdminDashboardKpisResponse(10, 25.0d, "SP26", 2, 4, 1, 25.0d, 8, 6, 50.0d),
+						List.of(new AdminDashboardWeeklyPointResponse(
+								1,
+								"Tuần 01",
+								LocalDate.of(2026, 9, 1),
+								LocalDate.of(2026, 9, 7),
+								false,
+								12,
+								4,
+								83.33d)),
 						new AdminDashboardCacheMetadataResponse(
 								Instant.parse("2026-09-19T04:00:00Z"), Instant.parse("2026-09-19T04:10:00Z"), 600L, false)));
 		mockMvc.perform(get("/api/admin/dashboard/summary").param("semesterId", semesterId.toString()))
@@ -66,8 +76,13 @@ class AdminDashboardControllerWebTest {
 				.andExpect(jsonPath("$.kpis.comparedSemesterCode").value("SP26"))
 				.andExpect(jsonPath("$.kpis.connectedTeamsRate").value(25.0))
 				.andExpect(jsonPath("$.kpis.traceabilityRate").value(50.0))
+				.andExpect(jsonPath("$.weeklyTimeline[0].weekLabel").value("Tuần 01"))
+				.andExpect(jsonPath("$.weeklyTimeline[0].isCurrentWeek").value(false))
+				.andExpect(jsonPath("$.weeklyTimeline[0].currentWeek").doesNotExist())
+				.andExpect(jsonPath("$.weeklyTimeline[0].commits").value(12))
+				.andExpect(jsonPath("$.weeklyTimeline[0].tasksCompleted").value(4))
+				.andExpect(jsonPath("$.weeklyTimeline[0].traceabilityRate").value(83.33))
 				.andExpect(jsonPath("$.cacheMetadata.refreshPending").value(false))
-				.andExpect(jsonPath("$.weeklyTimeline").doesNotExist())
 				.andExpect(jsonPath("$.projectHealthDistribution").doesNotExist())
 				.andExpect(jsonPath("$.sprintMilestones").doesNotExist())
 				.andExpect(jsonPath("$.integrationsHealth").doesNotExist())
@@ -89,6 +104,7 @@ class AdminDashboardControllerWebTest {
 								true),
 						List.of(),
 						new AdminDashboardKpisResponse(0, null, null, 0, 0, 0, null, 0, 0, null),
+						List.of(),
 						new AdminDashboardCacheMetadataResponse(
 								Instant.parse("2026-09-19T04:00:00Z"), Instant.parse("2026-09-19T04:10:00Z"), 600L, false)));
 		mockMvc.perform(get("/api/admin/dashboard/summary").param("forceRefresh", "true"))

@@ -1,5 +1,6 @@
 package com.saga.be.service.admin.dashboard;
 
+import com.saga.be.config.AdminDashboardProperties;
 import com.saga.be.dto.admin.dashboard.AdminDashboardCacheMetadataResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardCachedPayload;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSummaryResponse;
@@ -25,9 +26,10 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Admin dashboard Phase A. Redis GET/lock/SET and wait loops stay outside any JDBC transaction.
+ * Admin dashboard Phase A+B. Redis GET/lock/SET and wait loops stay outside any JDBC transaction.
  * Database aggregation runs in a short read-only {@link TransactionTemplate} that is closed
- * before the cache write.
+ * before the cache write. Cached aggregates are decorated with live temporal fields from
+ * {@code saga.dashboard.zone} on every response.
  */
 @Service
 @Profile("!test")
@@ -53,14 +55,15 @@ public class AdminDashboardService {
 			ActiveSemesterSettingRepository activeSettings,
 			AdminDashboardQueryService queries,
 			AdminDashboardCacheStore cache,
-			PlatformTransactionManager transactionManager) {
+			PlatformTransactionManager transactionManager,
+			AdminDashboardProperties properties) {
 		this(
 				semesters,
 				activeSettings,
 				queries,
 				cache,
 				transactionManager,
-				Clock.systemDefaultZone(),
+				properties.clock(),
 				duration -> Thread.sleep(duration.toMillis()),
 				DEFAULT_REFRESH_WAIT,
 				DEFAULT_REFRESH_POLL,
@@ -212,10 +215,15 @@ public class AdminDashboardService {
 		return new AdminDashboardCacheMetadataResponse(payload.cachedAt(), expiresAt, ttl.orElse(null), refreshPending);
 	}
 
-	private static AdminDashboardSummaryResponse toResponse(
+	private AdminDashboardSummaryResponse toResponse(
 			AdminDashboardCachedPayload payload, AdminDashboardCacheMetadataResponse metadata) {
+		AdminDashboardCachedPayload view = AdminDashboardTemporalView.decorate(payload, clock);
 		return new AdminDashboardSummaryResponse(
-				payload.selectedSemester(), payload.availableSemesters(), payload.kpis(), metadata);
+				view.selectedSemester(),
+				view.availableSemesters(),
+				view.kpis(),
+				view.weeklyTimeline(),
+				metadata);
 	}
 
 	@FunctionalInterface

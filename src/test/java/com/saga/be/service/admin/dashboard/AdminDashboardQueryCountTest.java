@@ -155,10 +155,13 @@ class AdminDashboardQueryCountTest {
 		AdminDashboardCachedPayload first = tx.execute(status -> queries.compute(semester, CLOCK.instant()));
 		long cold = stats.getPrepareStatementCount();
 		assertThat(first.kpis().totalTeams()).isEqualTo(3);
-		assertThat(cold).as("cold compute grouped aggregates").isEqualTo(11L);
+		assertThat(cold).as("cold compute grouped aggregates").isEqualTo(14L);
 
 		tx.executeWithoutResult(status -> {
-			Course course = courses.findAll().getFirst();
+			Course course = courses.findAll().stream()
+					.filter(row -> semester.getId().equals(row.getSemester().getId()))
+					.findFirst()
+					.orElseThrow();
 			for (int i = 4; i <= 12; i++) {
 				Project project = new Project();
 				project.setCourse(course);
@@ -214,7 +217,44 @@ class AdminDashboardQueryCountTest {
 		stats.clear();
 		AdminDashboardCachedPayload payload = tx.execute(status -> queries.compute(semester, CLOCK.instant()));
 		assertThat(payload.kpis().comparedSemesterCode()).isNotNull();
-		assertThat(stats.getPrepareStatementCount()).as("cold compute with previous semester").isEqualTo(12L);
+		assertThat(stats.getPrepareStatementCount()).as("cold compute with previous semester").isEqualTo(15L);
+	}
+
+	@Test
+	void oneWeekAndSixteenWeekSemestersUseTheSameColdQueryCount() {
+		Semester sixteenWeek = tx.execute(status -> {
+			Semester row = new Semester();
+			row.setCode("SX" + UUID.randomUUID().toString().substring(0, 8));
+			row.setName("Sixteen");
+			row.setStartDate(LocalDateTime.of(2030, 1, 1, 0, 0));
+			row.setEndDate(LocalDateTime.of(2030, 4, 22, 0, 0));
+			return semesters.save(row);
+		});
+		Semester oneWeek = tx.execute(status -> {
+			Semester row = new Semester();
+			row.setCode("OW" + UUID.randomUUID().toString().substring(0, 8));
+			row.setName("One");
+			row.setStartDate(LocalDateTime.of(2031, 6, 1, 0, 0));
+			row.setEndDate(LocalDateTime.of(2031, 6, 7, 0, 0));
+			return semesters.save(row);
+		});
+		Statistics stats = statistics();
+		tx.executeWithoutResult(status -> entityManager.clear());
+		stats.clear();
+		AdminDashboardCachedPayload sixteen = tx.execute(status -> queries.compute(sixteenWeek, CLOCK.instant()));
+		long sixteenCount = stats.getPrepareStatementCount();
+		assertThat(sixteen.selectedSemester().totalWeeks()).isEqualTo(16);
+		assertThat(sixteen.weeklyTimeline()).hasSize(16);
+		assertThat(sixteenCount).as("16-week far-future semester has a previous").isEqualTo(15L);
+
+		tx.executeWithoutResult(status -> entityManager.clear());
+		stats.clear();
+		AdminDashboardCachedPayload one = tx.execute(status -> queries.compute(oneWeek, CLOCK.instant()));
+		assertThat(one.selectedSemester().totalWeeks()).isEqualTo(1);
+		assertThat(one.weeklyTimeline()).hasSize(1);
+		assertThat(stats.getPrepareStatementCount())
+				.as("1-week semester uses the same SQL set as 16-week")
+				.isEqualTo(sixteenCount);
 	}
 
 	@Test
@@ -332,7 +372,8 @@ class AdminDashboardQueryCountTest {
 						3,
 						true),
 				List.of(),
-				new AdminDashboardKpisResponse(0, null, null, 0, 0, 0, null, 0, 0, null));
+				new AdminDashboardKpisResponse(0, null, null, 0, 0, 0, null, 0, 0, null),
+				List.of());
 	}
 
 	private Statistics statistics() {

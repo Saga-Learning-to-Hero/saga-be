@@ -260,4 +260,27 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			  and t.deletedAt is null
 			""")
 	long countActiveByCourseSemester(@Param("semesterId") UUID semesterId);
+
+	/**
+	 * Phase B weekly completions: current {@code DONE} tasks only. Effective timestamp is
+	 * {@code coalesce(completedAt, resolvedAt, createdAt)}. This is <strong>not</strong> an
+	 * immutable status-transition history — a task DONE in week 2 then reopened is omitted.
+	 */
+	@Query(
+			"""
+			select coalesce(t.completedAt, t.resolvedAt, t.createdAt)
+			from Task t
+			join t.project p
+			join p.course c
+			where c.semester.id = :semesterId
+			  and c.deletedAt is null
+			  and t.deletedAt is null
+			  and t.status = com.saga.be.entity.enums.TaskStatus.DONE
+			  and coalesce(t.completedAt, t.resolvedAt, t.createdAt) >= :startInclusive
+			  and coalesce(t.completedAt, t.resolvedAt, t.createdAt) < :endExclusive
+			""")
+	List<LocalDateTime> findDoneCompletionTimestampsByCourseSemester(
+			@Param("semesterId") UUID semesterId,
+			@Param("startInclusive") LocalDateTime startInclusive,
+			@Param("endExclusive") LocalDateTime endExclusive);
 }

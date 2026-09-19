@@ -325,6 +325,10 @@ class AdminDashboardKpiTest {
 		AdminDashboardCachedPayload payload = compute(current);
 		assertThat(payload.selectedSemester().totalWeeks()).isEqualTo(16);
 		assertThat(payload.selectedSemester().currentWeekIndex()).isEqualTo(3);
+		assertThat(payload.weeklyTimeline()).hasSize(16);
+		assertThat(payload.weeklyTimeline().get(2).isCurrentWeek()).isTrue();
+		assertThat(payload.weeklyTimeline().get(2).weekIndex()).isEqualTo(3);
+		assertThat(payload.weeklyTimeline().stream().filter(point -> point.isCurrentWeek())).hasSize(1);
 		assertThat(payload.selectedSemester().active()).isTrue();
 		assertThat(payload.availableSemesters()).extracting(row -> row.code()).containsExactly("SP27", "FA26", "SP26");
 		assertThat(payload.availableSemesters().stream().filter(row -> row.code().equals("FA26")).findFirst())
