@@ -142,4 +142,31 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			group by c.repo.project.id
 			""")
 	List<Object[]> countAndMaxCommittedAtGroupedByProjects(@Param("projectIds") Collection<UUID> projectIds);
+
+	/** Raw provider sync volume: every git_commit on in-scope projects, including known merges. */
+	@Query(
+			"""
+			select count(c.id)
+			from GitCommit c
+			join c.repo r
+			join r.project p
+			join p.course course
+			where course.semester.id = :semesterId
+			  and course.deletedAt is null
+			""")
+	long countRawByCourseSemester(@Param("semesterId") UUID semesterId);
+
+	/** V23 activity denominator: UNKNOWN / root / normal only ({@code parentCount} null or {@code <= 1}). */
+	@Query(
+			"""
+			select count(c.id)
+			from GitCommit c
+			join c.repo r
+			join r.project p
+			join p.course course
+			where course.semester.id = :semesterId
+			  and course.deletedAt is null
+			  and (c.parentCount is null or c.parentCount <= 1)
+			""")
+	long countTraceableByCourseSemester(@Param("semesterId") UUID semesterId);
 }

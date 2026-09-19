@@ -14,6 +14,7 @@
 8. [Current User Profile](#8-current-user-profile)
 9. [Role Model](#9-role-model)
 10. [Admin — Subject / Syllabus / Semester / Class / Course](#10-admin--subject--syllabus--semester--class--course)
+10a. [Admin — Dashboard summary (Phase A)](#10a-admin--dashboard-summary-phase-a)
 11. [Admin — Course Roster](#11-admin--course-roster)
 12. [Remove Student — Chi tiết FE Flow](#12-remove-student--chi-tiết-fe-flow)
 13. [Lecturer — Course / Team Management](#13-lecturer--course--team-management)
@@ -432,6 +433,107 @@ GET /api/admin/classes
 ```
 
 Filter `semesterId` giữ semantics cũ. Semester không tồn tại / đã xóa → `SEMESTER_NOT_FOUND`. **Không có `q`.**
+
+---
+
+## 10a. Admin — Dashboard summary (Phase A)
+
+`GET /api/admin/dashboard/summary?semesterId=<UUID optional>&forceRefresh=false`
+
+**ADMIN only.** Workload: `HEAVY_READ`. Không mở rộng authorization.
+
+Phase A **chỉ** trả `selectedSemester`, `availableSemesters`, `kpis`, `cacheMetadata`. **Không** có `weeklyTimeline`, `projectHealthDistribution`, `sprintMilestones`, `integrationsHealth`, `unconnectedTeamsAlert` — các field này bị **omit**, không trả mảng/object rỗng hay zero giả.
+
+### Lệch so với spec cũ (đọc kỹ)
+
+| Spec cũ | Contract hiện tại |
+|---|---|
+| `Semester.isDefault` | **Không tồn tại.** Kỳ mặc định là `active_semester_setting.singleton_id=1` (`GET/PUT /api/admin/semesters/active`). |
+| Timestamp semester | API semester hiện tại expose **date-only** `LocalDate`. Dashboard cũng vậy (`startDate`/`endDate` là ngày, không có giờ). |
+| Health / sprint / integration / unconnected alert | **Chưa implement** — không có trong JSON Phase A. |
+| `studentsGrowthPercentage` luôn là số | Có thể **`null`**: không có kỳ trước, hoặc kỳ trước có 0 sinh viên. |
+| Traceability theo `linkedCommitCount` raw | Dùng semantic V23: loại merge đã biết (`parentCount > 1`). `parentCount` null/0/1 vẫn vào mẫu số. |
+| `forceRefresh` luôn tính lại song song | Single-flight: một owner compute; follower chờ generation mới. Hết thời gian chờ → trả cache cũ + `refreshPending=true`. Không có cache cũ → `503 INTEGRATION_UNAVAILABLE`. |
+
+### Resolve semester
+
+- **Omit `semesterId`**: đọc `active_semester_setting`. Semester tham chiếu phải tồn tại và `deleted_at IS NULL`. Không có kỳ active → `404 SEMESTER_NOT_FOUND` `"No active semester is configured."`
+- **Có `semesterId`**: cùng semantics `requireSemester` (không tìm thấy / đã xóa → `404 SEMESTER_NOT_FOUND` `"Semester was not found."`). Kỳ quá khứ/tương lai **được phép**.
+- `startDate` hoặc `endDate` null → `400 SEMESTER_DATE_RANGE_INVALID`. Backend **không** bịa range từ `createdAt`.
+
+`selectedSemester.active` = kỳ đang chọn **trùng** kỳ platform active. Đây **không** phải trạng thái thời gian.
+
+`availableSemesters[].periodStatus` chỉ suy ra từ ngày: `UPCOMING | IN_PROGRESS | COMPLETED`. **Không** dùng `ACTIVE` làm period status. `active` là boolean riêng.
+
+`currentWeekIndex`: 1-based trong `[startDate, endDate]`; **null** khi `today` nằm ngoài khoảng. `totalWeeks` = `ceil(số ngày inclusive / 7)` — không snap Monday, không cap 15 tuần.
+
+Scope KPI: `Course.semester.id = selectedSemesterId AND Course.deletedAt IS NULL`. Không scope theo `AcademicClass.semester` hay `Project.createdAt`.
+
+### KPIs
+
+| Field | Định nghĩa |
+|---|---|
+| `totalStudents` | `COUNT(DISTINCT CourseEnrollment.studentProfile.id)` enrollment `ACTIVE` trên course in-scope. **Không** lọc `user_account.account_status`. WITHDRAWN/COMPLETED không đếm. |
+| `studentsGrowthPercentage` / `comparedSemesterCode` | Kỳ trước: `deletedAt IS NULL`, `startDate < selected.startDate`, `ORDER BY startDate DESC, id DESC LIMIT 1`. Cùng định nghĩa student. Không có kỳ trước → cả hai `null`. Kỳ trước = 0 sinh viên → percentage `null`, code vẫn có. Công thức: `((current - previous) / previous) * 100`. |
+| `totalCourses` | Course non-deleted của kỳ. |
+| `totalTeams` | Team thuộc các course đó (team chưa có Project vẫn đếm). Không đếm Project như Team. |
+| `connectedTeamsCount` / `connectedTeamsRate` | Connected = team có Project **và** Jira `connectionStatus=ACTIVE` **và** ≥1 GitRepo `ACTIVE`. Enum legacy `CONNECTED` **không đủ**. `totalTeams==0` → rate `null`; không thì `connected/totalTeams*100`. |
+| `totalCommitsSynced` | Mọi `git_commit` gắn qua Project/GitRepo in-scope, **gồm** merge (`parentCount > 1`). Không lọc V23 evidence. |
+| `totalJiraTasksSynced` | Task `deletedAt IS NULL` trên Project in-scope (Jira-origin và SAGA-created). |
+| `traceabilityRate` | Mẫu số: commit in-scope `parentCount IS NULL OR <= 1`. Tử số: các commit đó có ≥1 `task_git_commit_link` tới Task in-scope. Mẫu số 0 → `null`. |
+
+Không gọi GitHub/Jira HTTP.
+
+```json
+{
+  "selectedSemester": {
+    "id": "...",
+    "code": "FA26",
+    "name": "Fall",
+    "startDate": "2026-09-01",
+    "endDate": "2026-12-15",
+    "totalWeeks": 16,
+    "currentWeekIndex": 3,
+    "active": true
+  },
+  "availableSemesters": [
+    {
+      "id": "...",
+      "code": "FA26",
+      "name": "Fall",
+      "startDate": "2026-09-01",
+      "endDate": "2026-12-15",
+      "active": true,
+      "periodStatus": "IN_PROGRESS"
+    }
+  ],
+  "kpis": {
+    "totalStudents": 120,
+    "studentsGrowthPercentage": 12.5,
+    "comparedSemesterCode": "SP26",
+    "totalCourses": 8,
+    "totalTeams": 24,
+    "connectedTeamsCount": 10,
+    "connectedTeamsRate": 41.666...,
+    "totalCommitsSynced": 900,
+    "totalJiraTasksSynced": 400,
+    "traceabilityRate": 62.5
+  },
+  "cacheMetadata": {
+    "cachedAt": "2026-09-19T04:00:00Z",
+    "expiresAt": "2026-09-19T04:10:00Z",
+    "ttlSecondsRemaining": 580,
+    "refreshPending": false
+  }
+}
+```
+
+### Cache
+
+- Key: `saga:admin:dashboard:summary:v1:{resolvedSemesterId}`, TTL 600s.
+- `forceRefresh=false`: resolve semester → GET cache → hit thì gắn `cacheMetadata` live (TTL đọc lúc trả lời, không cache `ttlSecondsRemaining`).
+- `forceRefresh=true`: không dùng fast-path hit; một lock owner (`SET NX`, TTL 45s, owner token + Lua compare-and-delete). Follower chờ generation đổi. Timeout + còn cache cũ → `refreshPending=true`. Timeout + không cache → `503 INTEGRATION_UNAVAILABLE`.
+- Redis down: convention hiện tại — `503 SESSION_STORE_UNAVAILABLE`.
 
 ---
 
@@ -1609,6 +1711,7 @@ export function subscribeProjectEvents(
 | POST/GET/PATCH | `/api/admin/courses`, `/{courseId}` | ADMIN |
 | GET | `/api/admin/lecturers` | ADMIN |
 | GET | `/api/admin/lecturers/paged` | ADMIN |
+| GET | `/api/admin/dashboard/summary` | ADMIN |
 
 ### ROSTER
 | Method | Path | Role |

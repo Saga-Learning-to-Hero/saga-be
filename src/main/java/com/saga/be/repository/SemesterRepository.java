@@ -1,6 +1,7 @@
 package com.saga.be.repository;
 
 import com.saga.be.entity.academic.Semester;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -15,4 +16,9 @@ public interface SemesterRepository extends JpaRepository<Semester, UUID> {
 	boolean existsByCodeAndIdNot(String code, UUID id);
 
 	List<Semester> findByDeletedAtIsNullOrderByStartDateDesc();
+
+	List<Semester> findByDeletedAtIsNullOrderByStartDateDescIdDesc();
+
+	Optional<Semester> findFirstByDeletedAtIsNullAndStartDateNotNullAndStartDateLessThanOrderByStartDateDescIdDesc(
+			LocalDateTime startDate);
 }

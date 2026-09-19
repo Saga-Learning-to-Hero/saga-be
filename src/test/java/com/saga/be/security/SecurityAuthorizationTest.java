@@ -83,6 +83,33 @@ class SecurityAuthorizationTest {
 	}
 
 	@Test
+	void unauthenticatedCannotReadAdminDashboard() throws Exception {
+		mockMvc.perform(get("/api/admin/dashboard/summary"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(content().json("{\"code\":\"INVALID_CREDENTIALS\",\"message\":\"Authentication failed.\"}"));
+	}
+
+	@Test
+	void studentCannotReadAdminDashboard() throws Exception {
+		mockMvc.perform(get("/api/admin/dashboard/summary").with(authentication(auth(AccountRole.STUDENT, "hash"))))
+				.andExpect(status().isForbidden())
+				.andExpect(content().json("{\"code\":\"ACCESS_DENIED\",\"message\":\"Access denied.\"}"));
+	}
+
+	@Test
+	void lecturerCannotReadAdminDashboard() throws Exception {
+		mockMvc.perform(get("/api/admin/dashboard/summary").with(authentication(auth(AccountRole.LECTURER, "hash"))))
+				.andExpect(status().isForbidden())
+				.andExpect(content().json("{\"code\":\"ACCESS_DENIED\",\"message\":\"Access denied.\"}"));
+	}
+
+	@Test
+	void adminIsNotDeniedReadAdminDashboard() throws Exception {
+		mockMvc.perform(get("/api/admin/dashboard/summary").with(authentication(auth(AccountRole.ADMIN, "hash"))))
+				.andExpect(status().isNotFound());
+	}
+
+	@Test
 	void unauthenticatedCannotListAdminLecturersPaged() throws Exception {
 		mockMvc.perform(get("/api/admin/lecturers/paged"))
 				.andExpect(status().isUnauthorized())

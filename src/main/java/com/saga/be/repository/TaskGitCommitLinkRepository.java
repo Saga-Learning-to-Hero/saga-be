@@ -277,4 +277,24 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			""")
 	List<Object[]> findLinkedCommitIdsBySprintAndAuthor(
 			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
+
+	/**
+	 * Distinct in-scope commits that have a canonical link to an in-scope (non-deleted) Task.
+	 * Known merges ({@code parentCount > 1}) are excluded.
+	 */
+	@Query(
+			"""
+			select count(distinct c.id)
+			from TaskGitCommitLink l
+			join l.gitCommit c
+			join c.repo r
+			join r.project p
+			join p.course course
+			join l.task t
+			where course.semester.id = :semesterId
+			  and course.deletedAt is null
+			  and t.deletedAt is null
+			  and (c.parentCount is null or c.parentCount <= 1)
+			""")
+	long countDistinctLinkedTraceableByCourseSemester(@Param("semesterId") UUID semesterId);
 }

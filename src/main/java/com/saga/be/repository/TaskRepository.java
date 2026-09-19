@@ -248,4 +248,16 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 	@Modifying(clearAutomatically = true, flushAutomatically = true)
 	@Query("delete from Task t where t.project.id = :projectId")
 	int deleteByProject_Id(@Param("projectId") UUID projectId);
+
+	@Query(
+			"""
+			select count(t.id)
+			from Task t
+			join t.project p
+			join p.course c
+			where c.semester.id = :semesterId
+			  and c.deletedAt is null
+			  and t.deletedAt is null
+			""")
+	long countActiveByCourseSemester(@Param("semesterId") UUID semesterId);
 }

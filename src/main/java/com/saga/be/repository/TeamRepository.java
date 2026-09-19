@@ -50,4 +50,44 @@ public interface TeamRepository extends JpaRepository<Team, UUID> {
 			WHERE t.id = :teamId AND t.course.id = :courseId
 			""")
 	Optional<Team> findFetchedByIdAndCourse_Id(@Param("teamId") UUID teamId, @Param("courseId") UUID courseId);
+
+	@Query(
+			"""
+			select count(t.id)
+			from Team t
+			join t.course c
+			where c.semester.id = :semesterId
+			  and c.deletedAt is null
+			""")
+	long countByCourseSemester(@Param("semesterId") UUID semesterId);
+
+	/**
+	 * Canonical connected-team count for admin dashboard / unconnected-team alert.
+	 *
+	 * <p>Counts <strong>teams</strong>, not repositories. A team is connected when it has a
+	 * Project, a Jira integration with {@code connectionStatus = ACTIVE}, and {@code EXISTS} at
+	 * least one GitRepo with {@code connectionStatus = ACTIVE}. Multiple ACTIVE repos on one
+	 * project still contribute one team ({@code count(distinct t.id)} + {@code EXISTS}). Legacy
+	 * {@code CONNECTED} is not sufficient.
+	 */
+	@Query(
+			"""
+			select count(distinct t.id)
+			from Team t
+			join t.course c
+			where c.semester.id = :semesterId
+			  and c.deletedAt is null
+			  and t.project is not null
+			  and exists (
+			    select 1 from JiraIntegration j
+			    where j.project = t.project
+			      and j.connectionStatus = com.saga.be.entity.enums.IntegrationStatus.ACTIVE
+			  )
+			  and exists (
+			    select 1 from GitRepo r
+			    where r.project = t.project
+			      and r.connectionStatus = com.saga.be.entity.enums.IntegrationStatus.ACTIVE
+			  )
+			""")
+	long countConnectedByCourseSemester(@Param("semesterId") UUID semesterId);
 }

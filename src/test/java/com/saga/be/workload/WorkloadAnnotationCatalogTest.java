@@ -2,6 +2,7 @@ package com.saga.be.workload;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.saga.be.controller.AdminDashboardController;
 import com.saga.be.controller.AuthController;
 import com.saga.be.controller.LecturerCourseController;
 import com.saga.be.controller.ProjectGraphController;
@@ -29,6 +30,7 @@ class WorkloadAnnotationCatalogTest {
 		assertClass(ProjectProjectionController.class, "taskCommits", WorkloadClass.INTERACTIVE_NORMAL);
 		assertClass(ProjectProjectionController.class, "sync", WorkloadClass.INTERACTIVE_WRITE);
 		assertClass(ProjectProjectionController.class, "projectProgress", WorkloadClass.HEAVY_READ);
+		assertClass(AdminDashboardController.class, "summary", WorkloadClass.HEAVY_READ);
 		assertClass(LecturerCourseController.class, "roster", WorkloadClass.INTERACTIVE_NORMAL);
 		assertClass(ProjectGraphController.class, "overview", WorkloadClass.HEAVY_READ);
 		assertClass(TeamContributionController.class, "evaluate", WorkloadClass.HEAVY_READ);

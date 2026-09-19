@@ -1,0 +1,100 @@
+package com.saga.be.controller;
+
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.saga.be.dto.admin.dashboard.AdminDashboardCacheMetadataResponse;
+import com.saga.be.dto.admin.dashboard.AdminDashboardKpisResponse;
+import com.saga.be.dto.admin.dashboard.AdminDashboardSelectedSemesterResponse;
+import com.saga.be.dto.admin.dashboard.AdminDashboardSummaryResponse;
+import com.saga.be.service.admin.dashboard.AdminDashboardService;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+
+@ExtendWith(MockitoExtension.class)
+class AdminDashboardControllerWebTest {
+
+	@Mock
+	private AdminDashboardService dashboard;
+
+	private MockMvc mockMvc;
+
+	@BeforeEach
+	void setUp() {
+		mockMvc = MockMvcBuilders.standaloneSetup(new AdminDashboardController(dashboard)).build();
+	}
+
+	@Test
+	void summaryExposesPhaseAContractAndOmitsLaterSections() throws Exception {
+		UUID semesterId = UUID.fromString("11111111-1111-4111-8111-111111111111");
+		when(dashboard.summary(eq(semesterId), eq(false)))
+				.thenReturn(new AdminDashboardSummaryResponse(
+						new AdminDashboardSelectedSemesterResponse(
+								semesterId,
+								"FA26",
+								"Fall",
+								LocalDate.of(2026, 9, 1),
+								LocalDate.of(2026, 12, 15),
+								16,
+								3,
+								true),
+						List.of(),
+						new AdminDashboardKpisResponse(10, 25.0d, "SP26", 2, 4, 1, 25.0d, 8, 6, 50.0d),
+						new AdminDashboardCacheMetadataResponse(
+								Instant.parse("2026-09-19T04:00:00Z"), Instant.parse("2026-09-19T04:10:00Z"), 600L, false)));
+		mockMvc.perform(get("/api/admin/dashboard/summary").param("semesterId", semesterId.toString()))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.selectedSemester.code").value("FA26"))
+				.andExpect(jsonPath("$.selectedSemester.totalWeeks").value(16))
+				.andExpect(jsonPath("$.selectedSemester.currentWeekIndex").value(3))
+				.andExpect(jsonPath("$.selectedSemester.active").value(true))
+				.andExpect(jsonPath("$.kpis.totalStudents").value(10))
+				.andExpect(jsonPath("$.kpis.studentsGrowthPercentage").value(25.0))
+				.andExpect(jsonPath("$.kpis.comparedSemesterCode").value("SP26"))
+				.andExpect(jsonPath("$.kpis.connectedTeamsRate").value(25.0))
+				.andExpect(jsonPath("$.kpis.traceabilityRate").value(50.0))
+				.andExpect(jsonPath("$.cacheMetadata.refreshPending").value(false))
+				.andExpect(jsonPath("$.weeklyTimeline").doesNotExist())
+				.andExpect(jsonPath("$.projectHealthDistribution").doesNotExist())
+				.andExpect(jsonPath("$.sprintMilestones").doesNotExist())
+				.andExpect(jsonPath("$.integrationsHealth").doesNotExist())
+				.andExpect(jsonPath("$.unconnectedTeamsAlert").doesNotExist());
+	}
+
+	@Test
+	void omittedSemesterIdAndForceRefreshArePassedThrough() throws Exception {
+		when(dashboard.summary(isNull(), eq(true)))
+				.thenReturn(new AdminDashboardSummaryResponse(
+						new AdminDashboardSelectedSemesterResponse(
+								UUID.fromString("11111111-1111-4111-8111-111111111111"),
+								"FA26",
+								"Fall",
+								LocalDate.of(2026, 9, 1),
+								LocalDate.of(2026, 12, 15),
+								16,
+								3,
+								true),
+						List.of(),
+						new AdminDashboardKpisResponse(0, null, null, 0, 0, 0, null, 0, 0, null),
+						new AdminDashboardCacheMetadataResponse(
+								Instant.parse("2026-09-19T04:00:00Z"), Instant.parse("2026-09-19T04:10:00Z"), 600L, false)));
+		mockMvc.perform(get("/api/admin/dashboard/summary").param("forceRefresh", "true"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.kpis.studentsGrowthPercentage").value(org.hamcrest.Matchers.nullValue()))
+				.andExpect(jsonPath("$.selectedSemester.id")
+						.value("11111111-1111-4111-8111-111111111111"));
+	}
+}

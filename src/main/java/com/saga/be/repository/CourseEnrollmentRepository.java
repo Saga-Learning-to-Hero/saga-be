@@ -63,4 +63,20 @@ public interface CourseEnrollmentRepository extends JpaRepository<CourseEnrollme
 			""")
 	List<CourseEnrollment> findFetchedByStudentProfile_IdAndEnrollmentStatus(
 			@Param("studentProfileId") UUID studentProfileId, @Param("status") EnrollmentStatus status);
+
+	/**
+	 * Distinct ACTIVE enrollments on non-deleted courses of {@code semesterId}. Does not consult
+	 * {@code user_account.account_status}.
+	 */
+	@Query(
+			"""
+			select count(distinct e.studentProfile.id)
+			from CourseEnrollment e
+			join e.course c
+			where c.semester.id = :semesterId
+			  and c.deletedAt is null
+			  and e.enrollmentStatus = :status
+			""")
+	long countDistinctStudentsBySemesterAndStatus(
+			@Param("semesterId") UUID semesterId, @Param("status") EnrollmentStatus status);
 }

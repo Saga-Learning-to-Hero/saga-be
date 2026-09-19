@@ -99,4 +99,6 @@ public interface CourseRepository extends JpaRepository<Course, UUID> {
 			WHERE c.id = :courseId AND c.deletedAt IS NULL
 			""")
 	Optional<Course> findActiveFetchedById(@Param("courseId") UUID courseId);
+
+	long countBySemester_IdAndDeletedAtIsNull(UUID semesterId);
 }
