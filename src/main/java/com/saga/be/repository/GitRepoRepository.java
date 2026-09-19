@@ -102,4 +102,17 @@ public interface GitRepoRepository extends JpaRepository<GitRepo, UUID> {
 			""")
 	List<GitRepo> findFetchedByProject_IdAndConnectionStatus(
 			@Param("projectId") UUID projectId, @Param("status") IntegrationStatus status);
+
+	/**
+	 * Student dashboard GitHub summary: one row per connectionStatus —
+	 * {@code Object[]{IntegrationStatus status, Long count, LocalDateTime maxLastSyncedAt}}.
+	 */
+	@Query(
+			"""
+			select r.connectionStatus, count(r), max(r.lastSyncedAt)
+			from GitRepo r
+			where r.project.id = :projectId
+			group by r.connectionStatus
+			""")
+	List<Object[]> countAndMaxLastSyncedAtGroupedByStatus(@Param("projectId") UUID projectId);
 }

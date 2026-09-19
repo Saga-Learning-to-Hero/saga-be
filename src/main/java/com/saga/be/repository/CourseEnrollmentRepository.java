@@ -65,6 +65,27 @@ public interface CourseEnrollmentRepository extends JpaRepository<CourseEnrollme
 			@Param("studentProfileId") UUID studentProfileId, @Param("status") EnrollmentStatus status);
 
 	/**
+	 * Student dashboard gate: ACTIVE enrollment on a non-deleted course, with Course/Subject/
+	 * Semester and StudentProfile/UserAccount already fetched. Missing profile, missing
+	 * enrollment, WITHDRAWN/COMPLETED, deleted course, and nonexistent course all yield empty.
+	 */
+	@Query(
+			"""
+			SELECT e FROM CourseEnrollment e
+			JOIN FETCH e.studentProfile p
+			JOIN FETCH p.userAccount
+			JOIN FETCH e.course c
+			JOIN FETCH c.subject
+			JOIN FETCH c.semester
+			WHERE p.userAccount.id = :userId
+			  AND c.id = :courseId
+			  AND e.enrollmentStatus = com.saga.be.entity.enums.EnrollmentStatus.ACTIVE
+			  AND c.deletedAt IS NULL
+			""")
+	Optional<CourseEnrollment> findFetchedActiveByUserAndCourse(
+			@Param("userId") UUID userId, @Param("courseId") UUID courseId);
+
+	/**
 	 * Distinct ACTIVE enrollments on non-deleted courses of {@code semesterId}. Does not consult
 	 * {@code user_account.account_status}.
 	 */

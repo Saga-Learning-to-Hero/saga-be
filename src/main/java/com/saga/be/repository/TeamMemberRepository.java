@@ -15,6 +15,25 @@ public interface TeamMemberRepository extends JpaRepository<TeamMember, UUID> {
 
 	Optional<TeamMember> findByCourseEnrollment_Id(UUID courseEnrollmentId);
 
+	@Query(
+			"""
+			SELECT m FROM TeamMember m
+			JOIN FETCH m.team t
+			LEFT JOIN FETCH t.project
+			WHERE m.courseEnrollment.id = :enrollmentId
+			""")
+	Optional<TeamMember> findFetchedByCourseEnrollment_Id(@Param("enrollmentId") UUID enrollmentId);
+
+	@Query(
+			"""
+			SELECT COUNT(m)
+			FROM TeamMember m
+			JOIN m.courseEnrollment e
+			WHERE m.team.id = :teamId
+			  AND e.enrollmentStatus = com.saga.be.entity.enums.EnrollmentStatus.ACTIVE
+			""")
+	long countActiveByTeam_Id(@Param("teamId") UUID teamId);
+
 	/**
 	 * Scalar-only projection — does NOT hydrate a managed {@link TeamMember} entity into the
 	 * persistence context. Use this to discover which team to lock BEFORE the first (and only)

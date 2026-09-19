@@ -407,6 +407,16 @@ class SecurityAuthorizationTest {
 	}
 
 	@Test
+	void studentDashboardEndpointStaysStudentOnly() throws Exception {
+		String path = "/api/student/courses/22222222-2222-4222-8222-222222222222/dashboard";
+		mockMvc.perform(get(path)).andExpect(status().isUnauthorized());
+		mockMvc.perform(get(path).with(authentication(auth(AccountRole.LECTURER, "hash"))))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(get(path).with(authentication(auth(AccountRole.ADMIN, "hash"))))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
 	void lecturerWithPasswordCanAccessLecturerApi() throws Exception {
 		mockMvc.perform(get("/api/lecturer/anything").with(authentication(auth(AccountRole.LECTURER, "hash"))))
 				.andExpect(status().isOk())

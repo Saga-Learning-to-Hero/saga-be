@@ -314,4 +314,54 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			  and (c.parentCount is null or c.parentCount <= 1)
 			""")
 	List<UUID> findDistinctLinkedTraceableIdsByCourseSemester(@Param("semesterId") UUID semesterId);
+
+	/**
+	 * Distinct authored V23 commits that have at least one canonical link to a non-deleted task.
+	 * A commit linked to several tasks counts once.
+	 */
+	@Query(
+			"""
+			select count(distinct c.id)
+			from TaskGitCommitLink l
+			join l.gitCommit c
+			join l.task t
+			where c.repo.project.id = :projectId
+			  and c.authorStudent.id = :studentId
+			  and t.deletedAt is null
+			  and (c.parentCount is null or c.parentCount <= 1)
+			""")
+	long countDistinctLinkedAuthoredV23(@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
+
+	/**
+	 * Preview link counts for a bounded task-id set —
+	 * {@code Object[]{UUID taskId, Long rawLinks, Long v23Links}}.
+	 */
+	@Query(
+			"""
+			select l.task.id,
+			       count(l),
+			       sum(case when c.parentCount is null or c.parentCount <= 1 then 1 else 0 end)
+			from TaskGitCommitLink l
+			join l.gitCommit c
+			where l.task.id in :taskIds
+			group by l.task.id
+			""")
+	List<Object[]> countRawAndV23LinksByTaskIds(@Param("taskIds") Collection<UUID> taskIds);
+
+	/**
+	 * Bulk linkedTaskKeys for recent commits —
+	 * {@code Object[]{UUID commitId, String externalKey}}. Null keys and soft-deleted tasks omitted.
+	 */
+	@Query(
+			"""
+			select c.id, t.externalKey
+			from TaskGitCommitLink l
+			join l.gitCommit c
+			join l.task t
+			where c.id in :commitIds
+			  and t.deletedAt is null
+			  and t.externalKey is not null
+			order by t.externalKey asc, t.id asc
+			""")
+	List<Object[]> findExternalKeysByCommitIds(@Param("commitIds") Collection<UUID> commitIds);
 }

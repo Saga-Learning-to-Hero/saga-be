@@ -117,6 +117,22 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 	long countByProject_IdAndSprint_IdAndStatusAndDeletedAtIsNull(UUID projectId, UUID sprintId, TaskStatus status);
 
 	/**
+	 * Student dashboard sprint progress: one row per status for non-deleted tasks in one sprint —
+	 * {@code Object[]{TaskStatus status, Long count}}. Includes subtasks (same as ProjectProgress).
+	 */
+	@Query(
+			"""
+			select t.status, count(t)
+			from Task t
+			where t.project.id = :projectId
+			  and t.sprint.id = :sprintId
+			  and t.deletedAt is null
+			group by t.status
+			""")
+	List<Object[]> countGroupedByStatusForProjectAndSprint(
+			@Param("projectId") UUID projectId, @Param("sprintId") UUID sprintId);
+
+	/**
 	 * Sprint activity: one row per (sprint, status) for non-deleted tasks in a sprint —
 	 * {@code Object[]{UUID sprintId, TaskStatus status, Long count}}. Backlog (null sprint) is
 	 * excluded.
@@ -283,4 +299,73 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			@Param("semesterId") UUID semesterId,
 			@Param("startInclusive") LocalDateTime startInclusive,
 			@Param("endExclusive") LocalDateTime endExclusive);
+
+	/**
+	 * Student dashboard personal task metrics: one row per status —
+	 * {@code Object[]{TaskStatus status, Long count, Long storyPointSum}}.
+	 * {@code storyPointSum} uses {@code coalesce(storyPoint, 0)}. Project-wide, not sprint-scoped.
+	 */
+	@Query(
+			"""
+			select t.status, count(t), coalesce(sum(coalesce(t.storyPoint, 0)), 0)
+			from Task t
+			where t.project.id = :projectId
+			  and t.assigneeStudent.id = :studentId
+			  and t.deletedAt is null
+			group by t.status
+			""")
+	List<Object[]> countStatusAndStoryPointsForAssignee(
+			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
+
+	/**
+	 * Needs-attention preview: personal non-DONE tasks. Sort is in JPQL; pass an unsorted pageable.
+	 * Order is exactly the final secondary keys: dueDate ASC null-last, business priority
+	 * HIGHEST→LOWEST→null, id ASC. Top 10 is enough because anomalies always rank first.
+	 */
+	@Query(
+			"""
+			select t from Task t
+			where t.project.id = :projectId
+			  and t.assigneeStudent.id = :studentId
+			  and t.deletedAt is null
+			  and t.status <> com.saga.be.entity.enums.TaskStatus.DONE
+			order by
+			  case when t.dueDate is null then 1 else 0 end,
+			  t.dueDate asc,
+			  case t.priority
+			    when com.saga.be.entity.enums.Priority.HIGHEST then 5
+			    when com.saga.be.entity.enums.Priority.HIGH then 4
+			    when com.saga.be.entity.enums.Priority.MEDIUM then 3
+			    when com.saga.be.entity.enums.Priority.LOW then 2
+			    when com.saga.be.entity.enums.Priority.LOWEST then 1
+			    else 0
+			  end desc,
+			  t.id asc
+			""")
+	List<Task> findAttentionNonDoneByProjectAndAssignee(
+			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId, Pageable pageable);
+
+	/**
+	 * All personal DONE tasks with zero V23 coding-evidence links. Uncapped lightweight projection
+	 * so Java can apply {@code ReservedContributionMarkerClassifier} without a hidden row cutoff.
+	 */
+	@Query(
+			"""
+			select new com.saga.be.repository.StudentDashboardAnomalyCandidateRow(
+			    t.id, t.externalKey, t.title, t.status, t.priority, t.storyPoint, t.dueDate, t.labelsJson)
+			from Task t
+			where t.project.id = :projectId
+			  and t.assigneeStudent.id = :studentId
+			  and t.deletedAt is null
+			  and t.status = com.saga.be.entity.enums.TaskStatus.DONE
+			  and not exists (
+			    select 1
+			    from TaskGitCommitLink l
+			    join l.gitCommit c
+			    where l.task = t
+			      and (c.parentCount is null or c.parentCount <= 1)
+			  )
+			""")
+	List<StudentDashboardAnomalyCandidateRow> findDoneWithoutV23EvidenceCandidates(
+			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
 }

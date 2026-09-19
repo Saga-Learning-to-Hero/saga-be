@@ -519,6 +519,7 @@ Breaking change phải được nêu rõ.
 | PUT | `/api/lecturer/courses/{courseId}/teams/{teamId}/leader` | Session + CSRF | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerTeamController` |
 | PATCH | `/api/lecturer/courses/{courseId}/team-members/{teamMemberId}/team` | Session + CSRF | LECTURER (assigned) or ADMIN | Lecturer Team V1 | `LecturerTeamController` |
 | GET | `/api/student/courses/{courseId}/team` | Session | STUDENT | Lecturer Team V1 | `StudentCourseTeamController` |
+| GET | `/api/student/courses/{courseId}/dashboard` | Session | STUDENT | Student Dashboard Phase A+B1 (`myMetrics.tasks/commits`, `myActiveTasks`, `recentCommits`; chưa có `weeklyCommits` / `contribution` / `actionableAlerts`) | `StudentDashboardController` |
 | GET | `/api/teams/{teamId}/contribution-evaluation` | Session | ADMIN; LECTURER assigned; STUDENT LEADER of that team | Contribution V1 | `TeamContributionController` |
 | POST | `/api/teams/{teamId}/contribution-override` | Session + CSRF | ADMIN; LECTURER assigned | Contribution V1 | `TeamContributionController` |
 | GET | `/api/peer-review-rubrics/default` | Session | Authenticated | Peer review V1 | `PeerReviewRubricController` |

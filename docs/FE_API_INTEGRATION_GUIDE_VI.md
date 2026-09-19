@@ -807,6 +807,142 @@ Dùng `myRole` để quyết định UI: hiện nút "Tạo Project"/"Cấu hìn
 - `403 STUDENT_COURSE_FORBIDDEN`: chưa ghi danh ACTIVE course này.
 - `404 TEAM_NOT_FOUND`: đã ghi danh nhưng Lecturer chưa gán nhóm.
 
+### `GET /api/student/courses/{courseId}/dashboard` — Phase A+B1
+
+Personal cockpit của **chính** sinh viên đang gọi API. **MEMBER / LEADER / MENTOR** đều gọi được — không dùng gate của `/progress` (leader-only).
+
+Không team / không project **không** phải 404: trả **200** với `team` / `integrations` / `currentSprint` / `myMetrics` = `null`, `myActiveTasks` = `[]`, `recentCommits` = `[]`. Không bịa personal metrics khi chưa có Project.
+
+```json
+{
+  "student": {
+    "studentId": "...",
+    "userId": "...",
+    "studentCode": "SE111111",
+    "fullName": "Alpha",
+    "avatarUrl": null,
+    "teamRole": "MEMBER"
+  },
+  "course": {
+    "courseId": "...",
+    "courseCode": "SWP391-SE18",
+    "subjectCode": "SWP391",
+    "subjectName": "Software Development Project",
+    "semesterCode": "FA26"
+  },
+  "team": {
+    "teamId": "...",
+    "teamNo": 1,
+    "teamName": "Alpha",
+    "projectId": "...",
+    "projectName": "SAGA",
+    "membersCount": 3
+  },
+  "integrations": { "jira": { "...": "..." }, "github": { "...": "..." } },
+  "currentSprint": { "...": "..." },
+  "myMetrics": {
+    "tasks": {
+      "totalAssigned": 7,
+      "todo": 1,
+      "inProgress": 2,
+      "inReview": 1,
+      "done": 3,
+      "blocked": 0,
+      "completionPercent": 42.857,
+      "totalStoryPoints": 18,
+      "completedStoryPoints": 8
+    },
+    "commits": {
+      "totalCommits": 34,
+      "linkedCommits": 31,
+      "unlinkedCommits": 3,
+      "traceabilityPercent": 91.176,
+      "lastCommittedAt": "2026-09-04T08:00:00"
+    }
+  },
+  "myActiveTasks": [
+    {
+      "id": "...",
+      "externalKey": "SAGA-1",
+      "title": "Fix login",
+      "status": "TODO",
+      "priority": "HIGH",
+      "storyPoints": 3,
+      "dueDate": "2026-09-10T00:00:00",
+      "linkedCommitCount": 2,
+      "evidenceCommitCount": 1,
+      "hasAnomaly": false
+    }
+  ],
+  "recentCommits": [
+    {
+      "sha": "abcdef123456",
+      "shortSha": "abcdef1",
+      "message": "fix login",
+      "repositoryName": "org/saga",
+      "committedAt": "2026-09-04T09:00:00",
+      "linkedTaskKeys": ["SAGA-1", "SAGA-2"]
+    }
+  ]
+}
+```
+
+Quy tắc Phase A (giữ nguyên):
+
+| Trường | Ý nghĩa |
+|---|---|
+| `teamRole` | `LEADER` / `MEMBER` / `MENTOR`, hoặc `null` khi chưa vào team |
+| `team` | `null` khi đã ACTIVE enrollment nhưng Lecturer chưa gán nhóm |
+| `team.projectId` / `projectName` | `null` khi team chưa có Project |
+| `integrations` | `null` khi chưa có Project. Có Project thì luôn có `jira` + `github` |
+| `jira.connected` / `github.connected` | **Nguồn sự thật live.** `true` chỉ khi có row `ACTIVE`. Legacy `CONNECTED` không phải live. FE **không** suy ra connected từ `status != null` |
+| `github.repositoryCount` / `lastSyncedAt` | Chỉ repo `ACTIVE` |
+| `github.status` | Aggregate mô tả, **không** phải cờ live. `ACTIVE` nếu có ≥1 repo ACTIVE; nếu không thì tên status chung của mọi repo còn lại (`REVOKED` / `DEGRADED` / `ERROR` / `CONNECTED` / …); `MIXED` nếu nhiều status khác nhau và không có ACTIVE; `null` nếu chưa có repo |
+| `jira.lastSyncedAt` | `lastSuccessfulSyncAt` (không dùng last-attempt) |
+| `currentSprint` | Sprint local `deletedAt IS NULL` và `state` = `"active"` ignore-case; nếu nhiều cái thì start mới nhất thắng. Future/closed → `null` |
+| `currentSprint.completionPercent` | `DONE / total * 100` trên **team + sprint hiện tại**, hoặc **`null` khi không có task**. Không trả 0 cho mẫu số 0 |
+| `daysRemaining` | **Chưa có** |
+
+Quy tắc Phase B1:
+
+| Trường | Ý nghĩa |
+|---|---|
+| `myMetrics` | `null` khi không team / không Project. Có Project nhưng chưa có việc cá nhân → object zero, **không** `null` |
+| `myMetrics.tasks` | Task **gán cho chính sinh viên**, **toàn project**, không giới hạn sprint hiện tại. Soft-delete loại. Teammate loại |
+| `tasks.todo` / `inProgress` / `inReview` / `done` / `blocked` | Đếm đúng `TaskStatus`. `totalAssigned` = tổng 5 bucket |
+| `tasks.completionPercent` | `done / totalAssigned * 100`. **`null` khi không có task được gán** |
+| `tasks.totalStoryPoints` / `completedStoryPoints` | `SUM(COALESCE(storyPoint, 0))`. Thiếu SP tính 0. `completedStoryPoints` chỉ status `DONE`. Không dùng rule contribution/default-SP |
+| `myMetrics.commits` | Commit **author = chính sinh viên** trên repo của Project. Author chưa map bị loại. Không resolve email lúc đọc |
+| V23 | `parentCount` null / 0 / 1 **tính**. `parentCount > 1` (merge) **loại**. Không đoán từ message |
+| `commits.linkedCommits` | Distinct commit V23 có ≥1 `task_git_commit_link` tới task chưa xoá. Một commit gắn 3 task vẫn +1 |
+| `commits.unlinkedCommits` | `totalCommits - linkedCommits` |
+| `commits.traceabilityPercent` | `linkedCommits / totalCommits * 100`. **`null` khi không có commit** |
+| `commits.lastCommittedAt` | `MAX(COALESCE(committedAt, createdAt))` — timestamp hoạt động, **có** fallback `createdAt`. Khác `recentCommits[].committedAt` |
+| `myActiveTasks` | Preview **cần chú ý**, **không** phải full list. Cap **10** đúng top 10 theo rule cuối. Gồm mọi task cá nhân `status != DONE` **cộng** task `DONE` mà classifier = CODE/TEST và `evidenceCommitCount = 0`. DONE thường / DOCUMENT / RESEARCH / AMBIGUOUS không vào preview chỉ vì thiếu commit. Ứng viên DONE được classify đủ, không cắt 50 row thô |
+| `linkedCommitCount` | Số link raw (kể cả merge) |
+| `evidenceCommitCount` | Số link tới commit V23 (`parentCount` null/0/1) |
+| `hasAnomaly` | `true` khi DONE CODE/TEST và `evidenceCommitCount = 0` (kể cả chỉ link merge) |
+| Thứ tự preview | `hasAnomaly` DESC, `dueDate` ASC (null last), priority HIGHEST→LOWEST, `id` ASC |
+| `recentCommits` | Cap **5**. Cùng population V23 với commit metrics. Thứ tự dùng timestamp hoạt động `COALESCE(committedAt, createdAt) DESC, id DESC`. `committedAt` trong JSON là **raw** `GitCommit.committedAt` — **có thể `null`**, không thay bằng `createdAt`. `shortSha` = 7 ký tự đầu (hoặc cả sha nếu ngắn hơn). `repositoryName` = `GitRepo.fullName` |
+| `linkedTaskKeys` | Mảng, không phải `linkedTaskKey`. Mọi `Task.externalKey` khác null, task chưa xoá, sort ổn định, không trùng. Commit chưa gắn task → `[]`. Không bịa key từ message |
+
+Project có Project nhưng không có task/commit cá nhân:
+
+- `myMetrics.tasks` = mọi count/SP = 0, `completionPercent` = `null`
+- `myMetrics.commits` = 0/0/0, `traceabilityPercent` = `null`, `lastCommittedAt` = `null`
+- `myActiveTasks` = `[]`, `recentCommits` = `[]`
+
+Lỗi:
+
+- UUID `courseId` sai cú pháp → `400 REQUEST_INVALID`
+- Không phải STUDENT / không session → `401` / `403 ACCESS_DENIED`
+- Account không ACTIVE → `403 ACCOUNT_DISABLED` (filter toàn cục)
+- Không profile / không enrollment / WITHDRAWN / COMPLETED / course đã xoá / course không tồn tại → **`403 STUDENT_COURSE_FORBIDDEN`** (không lộ `COURSE_NOT_FOUND`)
+
+Phase B1 **chưa** trả: `weeklyCommits` (để Phase B2 — timestamp naive, chưa freeze timezone), `contribution` / `mySlices` / `teamTotalSlices` / `contributionPercent` / `peerReviewAverageScore`, `actionableAlerts` (Phase D). Field này bị **omit**.
+
+Local DB only. Không gọi Jira/GitHub/Neo4j/FCM. Không cache Redis. Workload `INTERACTIVE_NORMAL`.
+
 ---
 
 ## 15. Project Creation / Project Access
@@ -1860,6 +1996,7 @@ export function subscribeProjectEvents(
 |---|---|---|
 | GET | `/api/student/courses` | STUDENT |
 | GET | `/api/student/courses/{courseId}/team` | STUDENT |
+| GET | `/api/student/courses/{courseId}/dashboard` | STUDENT (MEMBER/LEADER/MENTOR) |
 | GET | `/api/student/project-types` | STUDENT |
 
 ### PROJECT

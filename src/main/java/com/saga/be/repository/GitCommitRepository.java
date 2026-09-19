@@ -191,4 +191,34 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			@Param("semesterId") UUID semesterId,
 			@Param("startInclusive") LocalDateTime startInclusive,
 			@Param("endExclusive") LocalDateTime endExclusive);
+
+	/**
+	 * Student dashboard personal commit metrics — {@code Object[]{Long total, LocalDateTime lastAt}}.
+	 * Always one row. V23-included authored commits only.
+	 */
+	@Query(
+			"""
+			select count(c), max(coalesce(c.committedAt, c.createdAt))
+			from GitCommit c
+			where c.repo.project.id = :projectId
+			  and c.authorStudent.id = :studentId
+			  and (c.parentCount is null or c.parentCount <= 1)
+			""")
+	List<Object[]> countAndMaxCommittedAtByProjectAndAuthor(
+			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
+
+	/**
+	 * Recent personal V23 commits with repo fetched. Sort is in JPQL; pass an unsorted pageable.
+	 */
+	@Query(
+			"""
+			select c from GitCommit c
+			join fetch c.repo
+			where c.repo.project.id = :projectId
+			  and c.authorStudent.id = :studentId
+			  and (c.parentCount is null or c.parentCount <= 1)
+			order by coalesce(c.committedAt, c.createdAt) desc, c.id desc
+			""")
+	List<GitCommit> findRecentAuthoredV23ByProject(
+			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId, Pageable pageable);
 }

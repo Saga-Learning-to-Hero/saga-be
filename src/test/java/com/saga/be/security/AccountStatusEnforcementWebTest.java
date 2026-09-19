@@ -83,6 +83,11 @@ class AccountStatusEnforcementWebTest {
 				.andExpect(status().isForbidden())
 				.andExpect(content().json("{\"code\":\"ACCOUNT_DISABLED\",\"message\":\"Account is not available.\"}"));
 
+		mockMvc.perform(get("/api/student/courses/22222222-2222-4222-8222-222222222222/dashboard")
+						.with(authentication(SagaAuthentications.authenticated(account))))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.code").value("ACCOUNT_DISABLED"));
+
 		mockMvc.perform(get("/api/auth/me").with(authentication(SagaAuthentications.authenticated(account))))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.authenticated").value(true))
