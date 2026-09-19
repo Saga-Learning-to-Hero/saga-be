@@ -223,6 +223,7 @@ public class AdminDashboardService {
 				view.availableSemesters(),
 				view.kpis(),
 				view.weeklyTimeline(),
+				view.unconnectedTeamsAlert(),
 				metadata);
 	}
 

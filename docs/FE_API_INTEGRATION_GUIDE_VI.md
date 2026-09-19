@@ -14,7 +14,7 @@
 8. [Current User Profile](#8-current-user-profile)
 9. [Role Model](#9-role-model)
 10. [Admin — Subject / Syllabus / Semester / Class / Course](#10-admin--subject--syllabus--semester--class--course)
-10a. [Admin — Dashboard summary (Phase A+B)](#10a-admin--dashboard-summary-phase-ab)
+10a. [Admin — Dashboard summary (Phase A+B+C)](#10a-admin--dashboard-summary-phase-abc)
 11. [Admin — Course Roster](#11-admin--course-roster)
 12. [Remove Student — Chi tiết FE Flow](#12-remove-student--chi-tiết-fe-flow)
 13. [Lecturer — Course / Team Management](#13-lecturer--course--team-management)
@@ -436,13 +436,13 @@ Filter `semesterId` giữ semantics cũ. Semester không tồn tại / đã xóa
 
 ---
 
-## 10a. Admin — Dashboard summary (Phase A+B)
+## 10a. Admin — Dashboard summary (Phase A+B+C)
 
 `GET /api/admin/dashboard/summary?semesterId=<UUID optional>&forceRefresh=false`
 
 **ADMIN only.** Workload: `HEAVY_READ`. Không mở rộng authorization.
 
-Phase A+B trả `selectedSemester`, `availableSemesters`, `kpis`, `weeklyTimeline`, `cacheMetadata`. **Không** có `projectHealthDistribution`, `sprintMilestones`, `integrationsHealth`, `unconnectedTeamsAlert` — các field này bị **omit**, không trả mảng/object rỗng hay zero giả.
+Phase A+B+C trả `selectedSemester`, `availableSemesters`, `kpis`, `weeklyTimeline`, `unconnectedTeamsAlert`, `cacheMetadata`. **Không** có `projectHealthDistribution`, `sprintMilestones`, `integrationsHealth` — các field này bị **omit**, không trả mảng/object rỗng hay zero giả. `unconnectedTeamsAlert` luôn là mảng (rỗng khi không có team lệch).
 
 ### Lệch so với spec cũ (đọc kỹ)
 
@@ -450,7 +450,7 @@ Phase A+B trả `selectedSemester`, `availableSemesters`, `kpis`, `weeklyTimelin
 |---|---|
 | `Semester.isDefault` | **Không tồn tại.** Kỳ mặc định là `active_semester_setting.singleton_id=1` (`GET/PUT /api/admin/semesters/active`). |
 | Timestamp semester | API semester hiện tại expose **date-only** `LocalDate`. Dashboard cũng vậy (`startDate`/`endDate` là ngày, không có giờ). |
-| Health / sprint / integration / unconnected alert | **Chưa implement** — không có trong JSON Phase A+B. |
+| Health / sprint / integration | **Chưa implement** — không có trong JSON Phase A+B+C. |
 | `studentsGrowthPercentage` luôn là số | Có thể **`null`**: không có kỳ trước, hoặc kỳ trước có 0 sinh viên. |
 | Traceability theo `linkedCommitCount` raw | Dùng semantic V23: loại merge đã biết (`parentCount > 1`). `parentCount` null/0/1 vẫn vào mẫu số. |
 | `forceRefresh` luôn tính lại song song | Single-flight: một owner compute; follower chờ generation mới. Hết thời gian chờ → trả cache cũ + `refreshPending=true`. Không có cache cũ → `503 INTEGRATION_UNAVAILABLE`. |
@@ -499,6 +499,29 @@ Mảng tuần **liên tục 7 ngày**, neo vào `selectedSemester.startDate` (kh
 | `traceabilityRate` | Cùng họ semantic Phase A / V23: mẫu số = commit activity trong tuần; tử số = các commit đó hiện có ≥1 `task_git_commit_link` (link **không** cần được tạo trong tuần). Mẫu số 0 → `null`. Không dùng `linkedCommitCount` raw. |
 
 Tỷ lệ % dùng cùng công thức KPI: `(numerator * 100.0) / denominator` — `double` Java, không làm tròn thêm (ví dụ 2/3 → `66.666...`).
+
+### unconnectedTeamsAlert
+
+Mảng **mọi** Team disconnected trong kỳ — **không** lọc `daysSinceCreated > 7` (FE có thể highlight ngưỡng đó). Rỗng `[]` khi không có team lệch. Không `null`.
+
+Connected (KPI) = Team có Project **và** Jira `connectionStatus=ACTIVE` **và** EXISTS ≥1 GitRepo `ACTIVE`. Legacy `CONNECTED` **không** đủ.
+
+`connectedTeamsCount + unconnectedTeamsAlert.length === totalTeams` trên cùng snapshot.
+
+`missingService`:
+
+| Giá trị | Điều kiện |
+|---|---|
+| `PROJECT` | Team không có Project. Không classify thành `BOTH`. |
+| `JIRA` | Có Project, Jira không ACTIVE, GitHub ACTIVE. |
+| `GITHUB` | Có Project, Jira ACTIVE, không GitHub ACTIVE. |
+| `BOTH` | Có Project, Jira không ACTIVE **và** không GitHub ACTIVE. |
+
+"Không ACTIVE" gồm thiếu row, `REVOKED`, legacy `CONNECTED`, và mọi status khác `ACTIVE`. Nhiều repo: đủ **một** repo `ACTIVE`. Một Team chỉ một dòng.
+
+`courseCode` / `lecturerName` / `lecturerEmail` có thể `null` (Course.courseCode và instructor optional). `teamNo` / `teamName` luôn có. `createdAt` là `Team.createdAt` (LocalDateTime naive).
+
+`daysSinceCreated` = số ngày lịch đầy đủ giữa `createdAt.toLocalDate()` và `today` theo `saga.dashboard.zone` (default UTC), tối thiểu 0. Warm cache tính lại field này, không chạy lại SQL.
 
 Timezone: cột `LocalDateTime` (commit/task) so trực tiếp với biên `LocalDate.atStartOfDay()` (naive wall-clock, không convert cột). `today` / `now` lấy từ `Clock.system(saga.dashboard.zone)` — **default `UTC`**, không dùng timezone mặc định của OS/container. Cấu hình: `saga.dashboard.zone` / `SAGA_DASHBOARD_ZONE`. Cùng zone cho `periodStatus`, `currentWeekIndex`, `isCurrentWeek`.
 
@@ -549,6 +572,19 @@ Timezone: cột `LocalDateTime` (commit/task) so trực tiếp với biên `Loca
       "traceabilityRate": 83.333...
     }
   ],
+  "unconnectedTeamsAlert": [
+    {
+      "teamId": "...",
+      "teamNo": 7,
+      "teamName": "...",
+      "courseCode": "...",
+      "lecturerName": "...",
+      "lecturerEmail": "...",
+      "missingService": "BOTH",
+      "createdAt": "2026-09-05T00:00:00",
+      "daysSinceCreated": 14
+    }
+  ],
   "cacheMetadata": {
     "cachedAt": "2026-09-19T04:00:00Z",
     "expiresAt": "2026-09-19T04:10:00Z",
@@ -560,8 +596,8 @@ Timezone: cột `LocalDateTime` (commit/task) so trực tiếp với biên `Loca
 
 ### Cache
 
-- Key: `saga:admin:dashboard:summary:v2:{resolvedSemesterId}` (và `:lock`). **v2** vì payload Phase B thêm `weeklyTimeline`. Temporal decoration không đổi shape JSON nên **không** bump v3. TTL 600s. `generation` là thế hệ **aggregate** (KPI + weekly counts); không đổi chỉ vì tuần/ngày trôi.
-- Mỗi response (kể cả warm hit) **tính lại** `periodStatus`, `currentWeekIndex`, `isCurrentWeek` từ Clock — không chạy lại SQL tuần. `commits` / `tasksCompleted` / `traceabilityRate` giữ nguyên từ cache.
+- Key: `saga:admin:dashboard:summary:v3:{resolvedSemesterId}` (và `:lock`). **v3** vì Phase C thêm `unconnectedTeamsAlert` — cache v2 không được coi là hit thiếu/null alert. TTL 600s. `generation` là thế hệ **aggregate** (KPI + weekly counts + alert membership); không đổi chỉ vì tuần/ngày/`daysSinceCreated` trôi.
+- Mỗi response (kể cả warm hit) **tính lại** `periodStatus`, `currentWeekIndex`, `isCurrentWeek`, `daysSinceCreated` từ Clock — không chạy lại SQL tuần/alert. `commits` / `tasksCompleted` / `traceabilityRate` / membership alert giữ nguyên từ cache.
 - `forceRefresh=false`: resolve semester → GET cache → hit thì gắn `cacheMetadata` live (TTL đọc lúc trả lời, không cache `ttlSecondsRemaining`) rồi decorate temporal fields.
 - `forceRefresh=true`: không dùng fast-path hit; một lock owner (`SET NX`, TTL 45s, owner token + Lua compare-and-delete). Follower chờ generation đổi. Timeout + còn cache cũ → `refreshPending=true`. Timeout + không cache → `503 INTEGRATION_UNAVAILABLE`.
 - Redis down: convention hiện tại — `503 SESSION_STORE_UNAVAILABLE`.

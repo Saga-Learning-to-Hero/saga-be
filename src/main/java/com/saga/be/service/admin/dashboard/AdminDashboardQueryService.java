@@ -4,6 +4,7 @@ import com.saga.be.dto.admin.dashboard.AdminDashboardAvailableSemesterResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardCachedPayload;
 import com.saga.be.dto.admin.dashboard.AdminDashboardKpisResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSelectedSemesterResponse;
+import com.saga.be.dto.admin.dashboard.AdminDashboardUnconnectedTeamResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardWeeklyPointResponse;
 import com.saga.be.config.AdminDashboardProperties;
 import com.saga.be.entity.academic.Semester;
@@ -34,7 +35,8 @@ import org.springframework.stereotype.Service;
  * read-only JDBC block and release it before any Redis write.
  *
  * <p>Phase B adds three constant queries (V23 activity id+timestamp, distinct linked ids, DONE
- * completion timestamps) then buckets in memory. SQL count does not scale with {@code totalWeeks}.
+ * completion timestamps) then buckets in memory. Phase C adds one disconnected-team projection.
+ * SQL count does not scale with {@code totalWeeks} or alert cardinality.
  *
  * <p>Timestamps are naive {@link LocalDateTime} wall-clock values compared to semester
  * {@code LocalDate.atStartOfDay()} bounds. {@code now} is {@code LocalDateTime.now(clock)} from
@@ -158,6 +160,9 @@ public class AdminDashboardQueryService {
 				tasks.findDoneCompletionTimestampsByCourseSemester(selectedId, startInclusive, endExclusive);
 		List<AdminDashboardWeeklyPointResponse> weeklyTimeline = AdminDashboardWeeklyTimeline.bucket(
 				slices, AdminDashboardWeeklyTimeline.activities(activityRows, linkedIds), completions);
+		List<AdminDashboardUnconnectedTeamResponse> unconnectedTeamsAlert =
+				AdminDashboardUnconnectedAlerts.fromRows(
+						teams.findUnconnectedAlertRowsByCourseSemester(selectedId), today);
 
 		AdminDashboardSelectedSemesterResponse selectedDto = new AdminDashboardSelectedSemesterResponse(
 				selectedId,
@@ -185,7 +190,8 @@ public class AdminDashboardQueryService {
 						rawCommits,
 						activeTasks,
 						traceability),
-				weeklyTimeline);
+				weeklyTimeline,
+				unconnectedTeamsAlert);
 	}
 
 	private UUID activeSemesterId() {

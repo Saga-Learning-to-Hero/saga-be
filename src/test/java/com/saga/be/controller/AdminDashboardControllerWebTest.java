@@ -11,10 +11,13 @@ import com.saga.be.dto.admin.dashboard.AdminDashboardCacheMetadataResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardKpisResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSelectedSemesterResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSummaryResponse;
+import com.saga.be.dto.admin.dashboard.AdminDashboardMissingService;
+import com.saga.be.dto.admin.dashboard.AdminDashboardUnconnectedTeamResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardWeeklyPointResponse;
 import com.saga.be.service.admin.dashboard.AdminDashboardService;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,7 +42,7 @@ class AdminDashboardControllerWebTest {
 	}
 
 	@Test
-	void summaryExposesPhaseAContractAndOmitsLaterSections() throws Exception {
+	void summaryExposesPhaseCContractAndOmitsLaterSections() throws Exception {
 		UUID semesterId = UUID.fromString("11111111-1111-4111-8111-111111111111");
 		when(dashboard.summary(eq(semesterId), eq(false)))
 				.thenReturn(new AdminDashboardSummaryResponse(
@@ -63,6 +66,16 @@ class AdminDashboardControllerWebTest {
 								12,
 								4,
 								83.33d)),
+						List.of(new AdminDashboardUnconnectedTeamResponse(
+								UUID.fromString("22222222-2222-4222-8222-222222222222"),
+								7,
+								"Team 7",
+								"SWP391",
+								"Lecturer",
+								"lecturer@fe.edu.vn",
+								AdminDashboardMissingService.BOTH,
+								LocalDateTime.of(2026, 9, 5, 0, 0),
+								14)),
 						new AdminDashboardCacheMetadataResponse(
 								Instant.parse("2026-09-19T04:00:00Z"), Instant.parse("2026-09-19T04:10:00Z"), 600L, false)));
 		mockMvc.perform(get("/api/admin/dashboard/summary").param("semesterId", semesterId.toString()))
@@ -82,11 +95,13 @@ class AdminDashboardControllerWebTest {
 				.andExpect(jsonPath("$.weeklyTimeline[0].commits").value(12))
 				.andExpect(jsonPath("$.weeklyTimeline[0].tasksCompleted").value(4))
 				.andExpect(jsonPath("$.weeklyTimeline[0].traceabilityRate").value(83.33))
+				.andExpect(jsonPath("$.unconnectedTeamsAlert[0].teamNo").value(7))
+				.andExpect(jsonPath("$.unconnectedTeamsAlert[0].missingService").value("BOTH"))
+				.andExpect(jsonPath("$.unconnectedTeamsAlert[0].daysSinceCreated").value(14))
 				.andExpect(jsonPath("$.cacheMetadata.refreshPending").value(false))
 				.andExpect(jsonPath("$.projectHealthDistribution").doesNotExist())
 				.andExpect(jsonPath("$.sprintMilestones").doesNotExist())
-				.andExpect(jsonPath("$.integrationsHealth").doesNotExist())
-				.andExpect(jsonPath("$.unconnectedTeamsAlert").doesNotExist());
+				.andExpect(jsonPath("$.integrationsHealth").doesNotExist());
 	}
 
 	@Test
@@ -104,6 +119,7 @@ class AdminDashboardControllerWebTest {
 								true),
 						List.of(),
 						new AdminDashboardKpisResponse(0, null, null, 0, 0, 0, null, 0, 0, null),
+						List.of(),
 						List.of(),
 						new AdminDashboardCacheMetadataResponse(
 								Instant.parse("2026-09-19T04:00:00Z"), Instant.parse("2026-09-19T04:10:00Z"), 600L, false)));

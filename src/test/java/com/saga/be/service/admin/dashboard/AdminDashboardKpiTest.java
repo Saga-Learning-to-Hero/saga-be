@@ -237,9 +237,12 @@ class AdminDashboardKpiTest {
 		persistJira(legacy, IntegrationStatus.CONNECTED);
 		persistRepo(legacy, IntegrationStatus.CONNECTED);
 
-		AdminDashboardKpisResponse kpis = compute(semester).kpis();
+		AdminDashboardCachedPayload payload = compute(semester);
+		AdminDashboardKpisResponse kpis = payload.kpis();
 		assertThat(kpis.totalTeams()).isEqualTo(6);
 		assertThat(kpis.connectedTeamsCount()).isEqualTo(1);
+		assertThat(payload.unconnectedTeamsAlert()).hasSize(5);
+		assertThat(kpis.connectedTeamsCount() + payload.unconnectedTeamsAlert().size()).isEqualTo(kpis.totalTeams());
 		assertThat(kpis.connectedTeamsRate()).isEqualTo(100.0d / 6.0d);
 		assertThat(kpis.connectedTeamsRate()).isLessThanOrEqualTo(100.0d);
 	}

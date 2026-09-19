@@ -14,6 +14,8 @@ import com.saga.be.dto.admin.dashboard.AdminDashboardCachedPayload;
 import com.saga.be.dto.admin.dashboard.AdminDashboardKpisResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSelectedSemesterResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSummaryResponse;
+import com.saga.be.dto.admin.dashboard.AdminDashboardMissingService;
+import com.saga.be.dto.admin.dashboard.AdminDashboardUnconnectedTeamResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardWeeklyPointResponse;
 import com.saga.be.dto.admin.dashboard.SemesterPeriodStatus;
 import com.saga.be.entity.academic.Semester;
@@ -320,6 +322,50 @@ class AdminDashboardServiceCacheTest {
 	}
 
 	@Test
+	void warmHitRecomputesDaysSinceCreatedAcrossMidnightWithoutRecompute() {
+		Semester semester = semester();
+		when(semesters.findById(SEMESTER_ID)).thenReturn(Optional.of(semester));
+		UUID teamId = UUID.fromString("55555555-5555-4555-8555-555555555555");
+		AdminDashboardCachedPayload cached = new AdminDashboardCachedPayload(
+				"g1",
+				Instant.parse("2026-09-19T03:50:00Z"),
+				new AdminDashboardSelectedSemesterResponse(
+						SEMESTER_ID,
+						"FA26",
+						"Fall",
+						LocalDate.of(2026, 9, 1),
+						LocalDate.of(2026, 12, 15),
+						16,
+						3,
+						true),
+				List.of(),
+				new AdminDashboardKpisResponse(9, null, null, 0, 1, 0, null, 0, 0, null),
+				List.of(),
+				List.of(new AdminDashboardUnconnectedTeamResponse(
+						teamId,
+						1,
+						"No project",
+						"SWP",
+						null,
+						null,
+						AdminDashboardMissingService.PROJECT,
+						LocalDateTime.of(2026, 9, 1, 0, 0),
+						0)));
+		cache.values.put(SEMESTER_ID, cached);
+		cache.ttls.put(SEMESTER_ID, 600L);
+		clock.setInstant(Instant.parse("2026-09-08T00:00:00Z"));
+		AdminDashboardSummaryResponse day7 = service.summary(SEMESTER_ID, false);
+		assertThat(day7.unconnectedTeamsAlert().getFirst().daysSinceCreated()).isEqualTo(7);
+		clock.setInstant(Instant.parse("2026-09-09T00:00:00Z"));
+		AdminDashboardSummaryResponse day8 = service.summary(SEMESTER_ID, false);
+		assertThat(day8.unconnectedTeamsAlert().getFirst().daysSinceCreated()).isEqualTo(8);
+		assertThat(day8.unconnectedTeamsAlert().getFirst().missingService())
+				.isEqualTo(AdminDashboardMissingService.PROJECT);
+		assertThat(cache.values.get(SEMESTER_ID).generation()).isEqualTo("g1");
+		verify(queries, never()).compute(any(), any());
+	}
+
+	@Test
 	void liveTtlMetadataIsAttachedOnHit() {
 		Semester semester = semester();
 		when(semesters.findById(SEMESTER_ID)).thenReturn(Optional.of(semester));
@@ -400,7 +446,8 @@ class AdminDashboardServiceCacheTest {
 				List.of(
 						weekPoint(1, LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 7), 10),
 						weekPoint(2, LocalDate.of(2026, 9, 8), LocalDate.of(2026, 9, 14), 20),
-						weekPoint(3, LocalDate.of(2026, 9, 15), LocalDate.of(2026, 9, 21), 30)));
+						weekPoint(3, LocalDate.of(2026, 9, 15), LocalDate.of(2026, 9, 21), 30)),
+				List.of());
 	}
 
 	private static AdminDashboardWeeklyPointResponse weekPoint(
@@ -424,6 +471,7 @@ class AdminDashboardServiceCacheTest {
 						true),
 				List.of(),
 				new AdminDashboardKpisResponse(students, null, null, 0, 0, 0, null, 0, 0, null),
+				List.of(),
 				List.of());
 	}
 

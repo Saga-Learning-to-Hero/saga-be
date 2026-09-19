@@ -6,11 +6,14 @@ import com.saga.be.dto.admin.dashboard.AdminDashboardAvailableSemesterResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardCachedPayload;
 import com.saga.be.dto.admin.dashboard.AdminDashboardKpisResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardSelectedSemesterResponse;
+import com.saga.be.dto.admin.dashboard.AdminDashboardMissingService;
+import com.saga.be.dto.admin.dashboard.AdminDashboardUnconnectedTeamResponse;
 import com.saga.be.dto.admin.dashboard.AdminDashboardWeeklyPointResponse;
 import com.saga.be.dto.admin.dashboard.SemesterPeriodStatus;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -65,6 +68,50 @@ class AdminDashboardTemporalViewTest {
 	}
 
 	@Test
+	void daysSinceCreatedRecomputesAcrossMidnightWithoutChangingAlertMembership() {
+		UUID teamId = UUID.fromString("44444444-4444-4444-8444-444444444444");
+		AdminDashboardUnconnectedTeamResponse stale = new AdminDashboardUnconnectedTeamResponse(
+				teamId,
+				7,
+				"Old",
+				"SWP",
+				"Lecturer",
+				"lecturer@fe.edu.vn",
+				AdminDashboardMissingService.PROJECT,
+				LocalDateTime.of(2026, 9, 1, 8, 0),
+				0);
+		AdminDashboardCachedPayload cached = payload(WEEK2, 2, true, List.of(stale));
+		AdminDashboardCachedPayload day0 =
+				AdminDashboardTemporalView.decorate(cached, Clock.fixed(AT_START, ZoneOffset.UTC));
+		assertThat(day0.unconnectedTeamsAlert().getFirst().daysSinceCreated()).isZero();
+		AdminDashboardCachedPayload day7 = AdminDashboardTemporalView.decorate(
+				cached, Clock.fixed(Instant.parse("2026-09-08T00:00:00Z"), ZoneOffset.UTC));
+		assertThat(day7.unconnectedTeamsAlert().getFirst().daysSinceCreated()).isEqualTo(7);
+		AdminDashboardCachedPayload day8 = AdminDashboardTemporalView.decorate(
+				cached, Clock.fixed(Instant.parse("2026-09-09T00:00:00Z"), ZoneOffset.UTC));
+		assertThat(day8.unconnectedTeamsAlert().getFirst().daysSinceCreated()).isEqualTo(8);
+		assertThat(day8.unconnectedTeamsAlert()).hasSize(1);
+		assertThat(day8.unconnectedTeamsAlert().getFirst().teamId()).isEqualTo(teamId);
+		assertThat(day8.generation()).isEqualTo("gen-frozen");
+		Instant nearUtcMidnight = Instant.parse("2026-09-08T23:30:00Z");
+		assertThat(AdminDashboardTemporalView.decorate(cached, Clock.fixed(nearUtcMidnight, ZoneOffset.UTC))
+						.unconnectedTeamsAlert()
+						.getFirst()
+						.daysSinceCreated())
+				.isEqualTo(7);
+		assertThat(AdminDashboardTemporalView.decorate(cached, Clock.fixed(nearUtcMidnight, ZoneOffset.UTC))
+						.unconnectedTeamsAlert()
+						.getFirst()
+						.daysSinceCreated())
+				.isEqualTo(7);
+		assertThat(AdminDashboardTemporalView.decorate(cached, Clock.fixed(nearUtcMidnight, ZoneId.of("Asia/Tokyo")))
+						.unconnectedTeamsAlert()
+						.getFirst()
+						.daysSinceCreated())
+				.isEqualTo(8);
+	}
+
+	@Test
 	void configuredUtcClockIsIndependentOfADifferentHostZoneAtTheSameInstant() {
 		Instant nearUtcMidnight = Instant.parse("2026-09-07T23:30:00Z");
 		Clock utc = Clock.fixed(nearUtcMidnight, ZoneOffset.UTC);
@@ -81,6 +128,14 @@ class AdminDashboardTemporalViewTest {
 	}
 
 	private static AdminDashboardCachedPayload payload(Instant cachedAt, Integer staleWeek, boolean inProgress) {
+		return payload(cachedAt, staleWeek, inProgress, List.of());
+	}
+
+	private static AdminDashboardCachedPayload payload(
+			Instant cachedAt,
+			Integer staleWeek,
+			boolean inProgress,
+			List<AdminDashboardUnconnectedTeamResponse> alerts) {
 		return new AdminDashboardCachedPayload(
 				"gen-frozen",
 				cachedAt,
@@ -105,7 +160,8 @@ class AdminDashboardTemporalViewTest {
 				List.of(
 						point(1, LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 7), staleWeek != null && staleWeek == 1, 10),
 						point(2, LocalDate.of(2026, 9, 8), LocalDate.of(2026, 9, 14), staleWeek != null && staleWeek == 2, 20),
-						point(3, LocalDate.of(2026, 9, 15), LocalDate.of(2026, 9, 21), staleWeek != null && staleWeek == 3, 30)));
+						point(3, LocalDate.of(2026, 9, 15), LocalDate.of(2026, 9, 21), staleWeek != null && staleWeek == 3, 30)),
+				alerts);
 	}
 
 	private static AdminDashboardWeeklyPointResponse point(

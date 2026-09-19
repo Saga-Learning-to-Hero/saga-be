@@ -12,7 +12,8 @@ import java.util.List;
 
 /**
  * Re-derives time-sensitive display fields from cached aggregates using the dashboard
- * {@link Clock}. Does not touch KPIs, weekly commit/task/rate counts, or generation.
+ * {@link Clock}. Does not touch KPIs, weekly commit/task/rate counts, alert membership, or
+ * generation. {@code daysSinceCreated} is recomputed from cached {@code createdAt}.
  */
 public final class AdminDashboardTemporalView {
 
@@ -58,6 +59,7 @@ public final class AdminDashboardTemporalView {
 								point.commits(),
 								point.tasksCompleted(),
 								point.traceabilityRate()))
-						.toList());
+						.toList(),
+				AdminDashboardUnconnectedAlerts.withToday(payload.unconnectedTeamsAlert(), today));
 	}
 }

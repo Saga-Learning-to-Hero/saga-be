@@ -14,4 +14,5 @@ public record AdminDashboardCachedPayload(
 		AdminDashboardSelectedSemesterResponse selectedSemester,
 		List<AdminDashboardAvailableSemesterResponse> availableSemesters,
 		AdminDashboardKpisResponse kpis,
-		List<AdminDashboardWeeklyPointResponse> weeklyTimeline) {}
+		List<AdminDashboardWeeklyPointResponse> weeklyTimeline,
+		List<AdminDashboardUnconnectedTeamResponse> unconnectedTeamsAlert) {}

@@ -64,8 +64,8 @@ class AdminDashboardRedisCacheStoreTest {
 				.execute(
 						script.capture(),
 						eq(List.of(
-								"saga:admin:dashboard:summary:v2:" + semesterId + ":lock",
-								"saga:admin:dashboard:summary:v2:" + semesterId)),
+								"saga:admin:dashboard:summary:v3:" + semesterId + ":lock",
+								"saga:admin:dashboard:summary:v3:" + semesterId)),
 						eq("owner-a"),
 						json.capture(),
 						eq("600"));
@@ -88,8 +88,8 @@ class AdminDashboardRedisCacheStoreTest {
 				.execute(
 						any(RedisScript.class),
 						eq(List.of(
-								"saga:admin:dashboard:summary:v2:" + semesterId + ":lock",
-								"saga:admin:dashboard:summary:v2:" + semesterId)),
+								"saga:admin:dashboard:summary:v3:" + semesterId + ":lock",
+								"saga:admin:dashboard:summary:v3:" + semesterId)),
 						eq("old-owner"),
 						any(),
 						eq("600"));
@@ -99,7 +99,7 @@ class AdminDashboardRedisCacheStoreTest {
 	void tryLockUsesSetNxOwnerTokenAnd45sTtl() {
 		when(redis.opsForValue()).thenReturn(values);
 		when(values.setIfAbsent(
-						eq("saga:admin:dashboard:summary:v2:" + semesterId + ":lock"),
+						eq("saga:admin:dashboard:summary:v3:" + semesterId + ":lock"),
 						eq("owner-a"),
 						eq(Duration.ofSeconds(45))))
 				.thenReturn(true);
@@ -115,7 +115,7 @@ class AdminDashboardRedisCacheStoreTest {
 		verify(redis)
 				.execute(
 						script.capture(),
-						eq(List.of("saga:admin:dashboard:summary:v2:" + semesterId + ":lock")),
+						eq(List.of("saga:admin:dashboard:summary:v3:" + semesterId + ":lock")),
 						eq("owner-a"));
 		assertThat(script.getValue().getScriptAsString()).contains("GET");
 		assertThat(script.getValue().getScriptAsString()).contains("DEL");
@@ -130,10 +130,10 @@ class AdminDashboardRedisCacheStoreTest {
 
 	@Test
 	void negativeExpireIsNotExposed() {
-		when(redis.getExpire(eq("saga:admin:dashboard:summary:v2:" + semesterId), eq(TimeUnit.SECONDS)))
+		when(redis.getExpire(eq("saga:admin:dashboard:summary:v3:" + semesterId), eq(TimeUnit.SECONDS)))
 				.thenReturn(-1L);
 		assertThat(store.ttlSeconds(semesterId)).isEmpty();
-		when(redis.getExpire(eq("saga:admin:dashboard:summary:v2:" + semesterId), eq(TimeUnit.SECONDS)))
+		when(redis.getExpire(eq("saga:admin:dashboard:summary:v3:" + semesterId), eq(TimeUnit.SECONDS)))
 				.thenReturn(-2L);
 		assertThat(store.ttlSeconds(semesterId)).isEmpty();
 	}
@@ -160,6 +160,7 @@ class AdminDashboardRedisCacheStoreTest {
 						true),
 				List.of(),
 				new AdminDashboardKpisResponse(0, null, null, 0, 0, 0, null, 0, 0, null),
+				List.of(),
 				List.of());
 	}
 }

@@ -90,4 +90,55 @@ public interface TeamRepository extends JpaRepository<Team, UUID> {
 			  )
 			""")
 	long countConnectedByCourseSemester(@Param("semesterId") UUID semesterId);
+
+	/**
+	 * Phase C disconnected-team alert. Exact complement of {@link #countConnectedByCourseSemester}:
+	 * one row per in-scope Team that is not (Project + Jira ACTIVE + EXISTS GitRepo ACTIVE).
+	 *
+	 * <p>{@code Object[]}: teamId, teamNo, teamName, courseCode, lecturerName, lecturerEmail,
+	 * createdAt, hasProject, jiraActive, githubActive. Lecturer columns are left-joined and may
+	 * be null. Ordered {@code createdAt ASC, teamNo ASC, id ASC}.
+	 */
+	@Query(
+			"""
+			select t.id,
+			       t.teamNo,
+			       t.name,
+			       c.courseCode,
+			       ua.fullName,
+			       ua.email,
+			       t.createdAt,
+			       case when t.project is null then false else true end,
+			       exists (
+			         select 1 from JiraIntegration j
+			         where j.project = t.project
+			           and j.connectionStatus = com.saga.be.entity.enums.IntegrationStatus.ACTIVE
+			       ),
+			       exists (
+			         select 1 from GitRepo r
+			         where r.project = t.project
+			           and r.connectionStatus = com.saga.be.entity.enums.IntegrationStatus.ACTIVE
+			       )
+			from Team t
+			join t.course c
+			left join c.instructor i
+			left join i.userAccount ua
+			where c.semester.id = :semesterId
+			  and c.deletedAt is null
+			  and not (
+			    t.project is not null
+			    and exists (
+			      select 1 from JiraIntegration j
+			      where j.project = t.project
+			        and j.connectionStatus = com.saga.be.entity.enums.IntegrationStatus.ACTIVE
+			    )
+			    and exists (
+			      select 1 from GitRepo r
+			      where r.project = t.project
+			        and r.connectionStatus = com.saga.be.entity.enums.IntegrationStatus.ACTIVE
+			    )
+			  )
+			order by t.createdAt asc, t.teamNo asc, t.id asc
+			""")
+	List<Object[]> findUnconnectedAlertRowsByCourseSemester(@Param("semesterId") UUID semesterId);
 }

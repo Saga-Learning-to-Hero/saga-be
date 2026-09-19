@@ -155,7 +155,8 @@ class AdminDashboardQueryCountTest {
 		AdminDashboardCachedPayload first = tx.execute(status -> queries.compute(semester, CLOCK.instant()));
 		long cold = stats.getPrepareStatementCount();
 		assertThat(first.kpis().totalTeams()).isEqualTo(3);
-		assertThat(cold).as("cold compute grouped aggregates").isEqualTo(14L);
+		assertThat(first.unconnectedTeamsAlert()).hasSize(3);
+		assertThat(cold).as("cold compute grouped aggregates").isEqualTo(15L);
 
 		tx.executeWithoutResult(status -> {
 			Course course = courses.findAll().stream()
@@ -217,7 +218,7 @@ class AdminDashboardQueryCountTest {
 		stats.clear();
 		AdminDashboardCachedPayload payload = tx.execute(status -> queries.compute(semester, CLOCK.instant()));
 		assertThat(payload.kpis().comparedSemesterCode()).isNotNull();
-		assertThat(stats.getPrepareStatementCount()).as("cold compute with previous semester").isEqualTo(15L);
+		assertThat(stats.getPrepareStatementCount()).as("cold compute with previous semester").isEqualTo(16L);
 	}
 
 	@Test
@@ -245,7 +246,7 @@ class AdminDashboardQueryCountTest {
 		long sixteenCount = stats.getPrepareStatementCount();
 		assertThat(sixteen.selectedSemester().totalWeeks()).isEqualTo(16);
 		assertThat(sixteen.weeklyTimeline()).hasSize(16);
-		assertThat(sixteenCount).as("16-week far-future semester has a previous").isEqualTo(15L);
+		assertThat(sixteenCount).as("16-week far-future semester has a previous").isEqualTo(16L);
 
 		tx.executeWithoutResult(status -> entityManager.clear());
 		stats.clear();
@@ -373,6 +374,7 @@ class AdminDashboardQueryCountTest {
 						true),
 				List.of(),
 				new AdminDashboardKpisResponse(0, null, null, 0, 0, 0, null, 0, 0, null),
+				List.of(),
 				List.of());
 	}
 
