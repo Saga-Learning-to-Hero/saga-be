@@ -45,7 +45,12 @@ import com.saga.be.repository.StudentDashboardAnomalyCandidateRow;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
 import com.saga.be.repository.TeamMemberRepository;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -77,6 +82,8 @@ class StudentDashboardServiceTest {
 	@Mock
 	private TaskGitCommitLinkRepository commitLinks;
 
+	private static final Clock UTC_SUNDAY = Clock.fixed(Instant.parse("2026-09-20T12:00:00Z"), ZoneOffset.UTC);
+
 	private StudentDashboardService service;
 	private UserAccount account;
 	private StudentProfile profile;
@@ -86,7 +93,7 @@ class StudentDashboardServiceTest {
 	@BeforeEach
 	void setUp() {
 		service = new StudentDashboardService(
-				enrollments, members, jiraIntegrations, repos, sprints, tasks, commits, commitLinks);
+				enrollments, members, jiraIntegrations, repos, sprints, tasks, commits, commitLinks, UTC_SUNDAY);
 		account = new UserAccount();
 		account.setId(UUID.randomUUID());
 		account.setEmail("member@gmail.com");
@@ -134,6 +141,10 @@ class StudentDashboardServiceTest {
 		assertNull(response.myMetrics().commits().traceabilityPercent());
 		assertTrue(response.myActiveTasks().isEmpty());
 		assertTrue(response.recentCommits().isEmpty());
+		assertEquals(3, response.weeklyCommits().size());
+		assertEquals(LocalDate.of(2026, 8, 31), response.weeklyCommits().getFirst().startDate());
+		assertEquals(LocalDate.of(2026, 9, 20), response.weeklyCommits().get(2).endDate());
+		assertEquals(0L, response.weeklyCommits().getFirst().commits());
 	}
 
 	@Test
@@ -178,12 +189,14 @@ class StudentDashboardServiceTest {
 		assertNull(response.myMetrics());
 		assertTrue(response.myActiveTasks().isEmpty());
 		assertTrue(response.recentCommits().isEmpty());
+		assertTrue(response.weeklyCommits().isEmpty());
 		verify(members, never()).countActiveByTeam_Id(any());
 		verify(jiraIntegrations, never()).findByProject_Id(any());
 		verify(repos, never()).countAndMaxLastSyncedAtGroupedByStatus(any());
 		verify(sprints, never()).findActiveByProject_Id(any());
 		verify(tasks, never()).countStatusAndStoryPointsForAssignee(any(), any());
 		verify(commits, never()).countAndMaxCommittedAtByProjectAndAuthor(any(), any());
+		verify(commits, never()).findWeeklyCommittedAtByProjectAndAuthor(any(), any(), any(), any());
 	}
 
 	@Test
@@ -206,9 +219,11 @@ class StudentDashboardServiceTest {
 		assertNull(response.myMetrics());
 		assertTrue(response.myActiveTasks().isEmpty());
 		assertTrue(response.recentCommits().isEmpty());
+		assertTrue(response.weeklyCommits().isEmpty());
 		verify(jiraIntegrations, never()).findByProject_Id(any());
 		verify(tasks, never()).countStatusAndStoryPointsForAssignee(any(), any());
 		verify(commits, never()).countAndMaxCommittedAtByProjectAndAuthor(any(), any());
+		verify(commits, never()).findWeeklyCommittedAtByProjectAndAuthor(any(), any(), any(), any());
 	}
 
 	@Test
@@ -568,6 +583,90 @@ class StudentDashboardServiceTest {
 		assertEquals("org/saga", recent.getFirst().repositoryName());
 	}
 
+	@Test
+	void weeklyCommitsBucketOnlyCommittedAtAndExcludeFutureWeek() {
+		Team team = team(project());
+		UUID projectId = team.getProject().getId();
+		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
+				.thenReturn(Optional.of(enrollment));
+		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
+				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
+		when(members.countActiveByTeam_Id(team.getId())).thenReturn(1L);
+		stubEmptyIntegrations(projectId);
+		when(commits.findWeeklyCommittedAtByProjectAndAuthor(eq(projectId), eq(profile.getId()), any(), any()))
+				.thenReturn(List.of(
+						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 8, 31, 0, 0)},
+						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 9, 6, 23, 59)},
+						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 9, 7, 0, 0)},
+						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 9, 13, 23, 59, 59)},
+						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 9, 14, 0, 0)},
+						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 9, 20, 12, 0)},
+						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 9, 21, 0, 0)}));
+
+		var weeks = service.get(account.getId(), course.getId()).weeklyCommits();
+		assertEquals(3, weeks.size());
+		assertEquals(LocalDate.of(2026, 8, 31), weeks.get(0).startDate());
+		assertEquals(LocalDate.of(2026, 9, 6), weeks.get(0).endDate());
+		assertEquals(2L, weeks.get(0).commits());
+		assertEquals(2L, weeks.get(1).commits());
+		assertEquals(LocalDate.of(2026, 9, 14), weeks.get(2).startDate());
+		assertEquals(LocalDate.of(2026, 9, 20), weeks.get(2).endDate());
+		assertEquals(2L, weeks.get(2).commits());
+	}
+
+	@Test
+	void academicZoneChangesCurrentIsoWeekIdentity() {
+		service = new StudentDashboardService(
+				enrollments,
+				members,
+				jiraIntegrations,
+				repos,
+				sprints,
+				tasks,
+				commits,
+				commitLinks,
+				Clock.fixed(Instant.parse("2026-09-20T17:00:00Z"), ZoneId.of("Asia/Ho_Chi_Minh")));
+		Team team = team(project());
+		UUID projectId = team.getProject().getId();
+		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
+				.thenReturn(Optional.of(enrollment));
+		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
+				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
+		when(members.countActiveByTeam_Id(team.getId())).thenReturn(1L);
+		stubEmptyIntegrations(projectId);
+
+		var weeks = service.get(account.getId(), course.getId()).weeklyCommits();
+		assertEquals(LocalDate.of(2026, 9, 7), weeks.get(0).startDate());
+		assertEquals(LocalDate.of(2026, 9, 21), weeks.get(2).startDate());
+		assertEquals(LocalDate.of(2026, 9, 27), weeks.get(2).endDate());
+	}
+
+	@Test
+	void dstCapableZoneKeepsMondaySundayCalendarWeeks() {
+		service = new StudentDashboardService(
+				enrollments,
+				members,
+				jiraIntegrations,
+				repos,
+				sprints,
+				tasks,
+				commits,
+				commitLinks,
+				Clock.fixed(Instant.parse("2026-03-11T16:00:00Z"), ZoneId.of("America/New_York")));
+		Team team = team(project());
+		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
+				.thenReturn(Optional.of(enrollment));
+		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
+				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
+		when(members.countActiveByTeam_Id(team.getId())).thenReturn(1L);
+		stubEmptyIntegrations(team.getProject().getId());
+
+		var weeks = service.get(account.getId(), course.getId()).weeklyCommits();
+		assertEquals(LocalDate.of(2026, 2, 23), weeks.get(0).startDate());
+		assertEquals(LocalDate.of(2026, 3, 9), weeks.get(2).startDate());
+		assertEquals(LocalDate.of(2026, 3, 15), weeks.get(2).endDate());
+	}
+
 	private void stubEmptyIntegrations(UUID projectId) {
 		lenient().when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.empty());
 		lenient().when(repos.countAndMaxLastSyncedAtGroupedByStatus(projectId)).thenReturn(List.of());
@@ -582,6 +681,9 @@ class StudentDashboardServiceTest {
 				.thenReturn(List.<Object[]>of(new Object[] {0L, null}));
 		lenient()
 				.when(commits.findRecentAuthoredV23ByProject(eq(projectId), eq(profile.getId()), any(Pageable.class)))
+				.thenReturn(List.of());
+		lenient()
+				.when(commits.findWeeklyCommittedAtByProjectAndAuthor(eq(projectId), eq(profile.getId()), any(), any()))
 				.thenReturn(List.of());
 	}
 

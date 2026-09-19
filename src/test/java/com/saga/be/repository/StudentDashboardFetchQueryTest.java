@@ -52,8 +52,13 @@ class StudentDashboardFetchQueryTest {
 		String commits = Files.readString(Path.of("src/main/java/com/saga/be/repository/GitCommitRepository.java"));
 		assertTrue(commits.contains("countAndMaxCommittedAtByProjectAndAuthor"));
 		assertTrue(commits.contains("findRecentAuthoredV23ByProject"));
+		assertTrue(commits.contains("findWeeklyCommittedAtByProjectAndAuthor"));
+		assertTrue(commits.contains("c.committedAt is not null"));
 		assertTrue(commits.contains("c.parentCount is null or c.parentCount <= 1"));
 		assertTrue(commits.contains("c.authorStudent.id = :studentId"));
+		int weekly = commits.indexOf("findWeeklyCommittedAtByProjectAndAuthor");
+		assertTrue(weekly > 0);
+		assertFalse(commits.substring(weekly - 700, weekly).contains("coalesce(c.committedAt"));
 
 		String links = Files.readString(Path.of("src/main/java/com/saga/be/repository/TaskGitCommitLinkRepository.java"));
 		assertTrue(links.contains("countDistinctLinkedAuthoredV23"));
@@ -71,7 +76,10 @@ class StudentDashboardFetchQueryTest {
 		assertFalse(service.contains("RedisTemplate"));
 		assertFalse(service.contains("TeamContributionService"));
 		assertFalse(service.contains("evaluateTeam"));
-		assertFalse(service.contains("weeklyCommits"));
+		assertTrue(service.contains("weeklyCommits"));
+		assertTrue(service.contains("findWeeklyCommittedAtByProjectAndAuthor"));
+		assertTrue(service.contains("LocalDate.now(clock)"));
+		assertFalse(service.contains("LocalDateTime.now("));
 		assertFalse(service.contains("Neo4j"));
 		assertFalse(service.contains("Firebase"));
 		assertFalse(service.contains("GitHubClient"));

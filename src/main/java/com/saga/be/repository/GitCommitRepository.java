@@ -221,4 +221,25 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			""")
 	List<GitCommit> findRecentAuthoredV23ByProject(
 			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId, Pageable pageable);
+
+	/**
+	 * Student dashboard weekly commits — {@code Object[]{UUID id, LocalDateTime committedAt}}.
+	 * {@code committedAt} only (nulls excluded). V23 authored rows on the team project.
+	 */
+	@Query(
+			"""
+			select c.id, c.committedAt
+			from GitCommit c
+			where c.repo.project.id = :projectId
+			  and c.authorStudent.id = :studentId
+			  and (c.parentCount is null or c.parentCount <= 1)
+			  and c.committedAt is not null
+			  and c.committedAt >= :rangeStart
+			  and c.committedAt < :rangeEndExclusive
+			""")
+	List<Object[]> findWeeklyCommittedAtByProjectAndAuthor(
+			@Param("projectId") UUID projectId,
+			@Param("studentId") UUID studentId,
+			@Param("rangeStart") LocalDateTime rangeStart,
+			@Param("rangeEndExclusive") LocalDateTime rangeEndExclusive);
 }

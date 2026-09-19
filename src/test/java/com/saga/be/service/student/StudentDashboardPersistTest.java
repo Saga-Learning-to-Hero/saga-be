@@ -115,7 +115,15 @@ class StudentDashboardPersistTest {
 				com.saga.be.repository.GitCommitRepository commits,
 				com.saga.be.repository.TaskGitCommitLinkRepository commitLinks) {
 			return new StudentDashboardService(
-					enrollments, members, jiraIntegrations, repos, sprints, tasks, commits, commitLinks);
+					enrollments,
+					members,
+					jiraIntegrations,
+					repos,
+					sprints,
+					tasks,
+					commits,
+					commitLinks,
+					java.time.Clock.fixed(java.time.Instant.parse("2026-09-20T12:00:00Z"), java.time.ZoneOffset.UTC));
 		}
 	}
 
@@ -178,6 +186,9 @@ class StudentDashboardPersistTest {
 		assertThat(member.myMetrics().commits().traceabilityPercent()).isNull();
 		assertThat(member.myActiveTasks()).isEmpty();
 		assertThat(member.recentCommits()).isEmpty();
+		assertThat(member.weeklyCommits()).hasSize(3);
+		assertThat(member.weeklyCommits().get(0).startDate()).isEqualTo(java.time.LocalDate.of(2026, 8, 31));
+		assertThat(member.weeklyCommits()).allMatch(row -> row.commits() == 0);
 
 		StudentDashboardResponse leader = tx.execute(status -> service.get(fixture.leaderId, fixture.courseId));
 		assertThat(leader.student().teamRole()).isEqualTo("LEADER");
@@ -225,6 +236,7 @@ class StudentDashboardPersistTest {
 		assertThat(unassigned.myMetrics()).isNull();
 		assertThat(unassigned.myActiveTasks()).isEmpty();
 		assertThat(unassigned.recentCommits()).isEmpty();
+		assertThat(unassigned.weeklyCommits()).isEmpty();
 
 		StudentDashboardResponse noProject = tx.execute(status -> service.get(fixture.noProjectMemberId, fixture.noProjectCourseId));
 		assertThat(noProject.team().projectId()).isNull();
@@ -234,6 +246,7 @@ class StudentDashboardPersistTest {
 		assertThat(noProject.myMetrics()).isNull();
 		assertThat(noProject.myActiveTasks()).isEmpty();
 		assertThat(noProject.recentCommits()).isEmpty();
+		assertThat(noProject.weeklyCommits()).isEmpty();
 	}
 
 	@Test
@@ -384,7 +397,7 @@ class StudentDashboardPersistTest {
 		stats.clear();
 		tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
 		long first = stats.getPrepareStatementCount();
-		assertThat(first).as("Phase A+B1 empty personal work stays bounded").isEqualTo(13L);
+		assertThat(first).as("Phase A+B1+B2 empty personal work stays bounded").isEqualTo(14L);
 
 		tx.executeWithoutResult(status -> {
 			Course course = courses.findById(fixture.courseId).orElseThrow();
@@ -496,6 +509,10 @@ class StudentDashboardPersistTest {
 		assertThat(response.recentCommits().getFirst().committedAt()).isNull();
 		assertThat(response.recentCommits().getFirst().shortSha()).isEqualTo("aa00001");
 		assertThat(response.recentCommits().get(1).committedAt()).isEqualTo(LocalDateTime.of(2026, 9, 2, 8, 0));
+		assertThat(response.weeklyCommits()).hasSize(3);
+		assertThat(response.weeklyCommits().get(0).commits()).isEqualTo(2);
+		assertThat(response.weeklyCommits().get(1).commits()).isZero();
+		assertThat(response.weeklyCommits().get(2).commits()).isZero();
 	}
 
 	@Test
@@ -664,7 +681,7 @@ class StudentDashboardPersistTest {
 		stats.clear();
 		tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
 		long first = stats.getPrepareStatementCount();
-		assertThat(first).as("Phase A+B1 with 10 tasks / 5 commits stays bounded").isEqualTo(16L);
+		assertThat(first).as("Phase A+B1+B2 with 10 tasks / 5 commits stays bounded").isEqualTo(17L);
 
 		tx.executeWithoutResult(status -> {
 			Project project = projects.findById(fixture.projectId).orElseThrow();
@@ -789,7 +806,7 @@ class StudentDashboardPersistTest {
 						"SAGA-A09",
 						"SAGA-A10");
 		assertThat(response.myActiveTasks()).allMatch(row -> row.hasAnomaly());
-		assertThat(stats.getPrepareStatementCount()).isEqualTo(14L);
+		assertThat(stats.getPrepareStatementCount()).isEqualTo(15L);
 	}
 
 	@Test
@@ -819,7 +836,7 @@ class StudentDashboardPersistTest {
 		stats.clear();
 		tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
 		long first = stats.getPrepareStatementCount();
-		assertThat(first).as("Phase A+B1 with 10 coarse DONE candidates stays bounded").isEqualTo(14L);
+		assertThat(first).as("Phase A+B1+B2 with 10 coarse DONE candidates stays bounded").isEqualTo(15L);
 
 		tx.executeWithoutResult(status -> {
 			Project project = projects.findById(fixture.projectId).orElseThrow();
@@ -854,6 +871,78 @@ class StudentDashboardPersistTest {
 		assertThat(grown.myActiveTasks().getFirst().externalKey()).isEqualTo("SAGA-REAL");
 		assertThat(grown.myActiveTasks().getFirst().hasAnomaly()).isTrue();
 		assertThat(stats.getPrepareStatementCount()).isEqualTo(first);
+	}
+
+	@Test
+	void weeklyCommitsUseCommittedAtOnlyAndIsoMondayBounds() {
+		tx.executeWithoutResult(status -> {
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			StudentProfile member = profileOf(fixture.memberId);
+			StudentProfile leader = profileOf(fixture.leaderId);
+			GitRepo repo = repos.save(repo(project, 61L, "org/weekly", IntegrationStatus.ACTIVE));
+			Project other = new Project();
+			other.setCourse(courses.findById(fixture.otherCourseId).orElseThrow());
+			other.setName("OTHER-W");
+			other = projects.save(other);
+			GitRepo otherRepo = repos.save(repo(other, 62L, "org/weekly-other", IntegrationStatus.ACTIVE));
+			persistCommit(repo, member, "w-null", null, LocalDateTime.of(2026, 9, 14, 0, 0), "null-parent");
+			persistCommit(repo, member, "w-root", 0, LocalDateTime.of(2026, 8, 31, 0, 0), "root");
+			persistCommit(repo, member, "w-one", 1, LocalDateTime.of(2026, 9, 13, 23, 59, 59), "normal");
+			persistCommit(repo, member, "w-mon", 1, LocalDateTime.of(2026, 9, 14, 0, 0), "current-monday");
+			persistCommit(repo, member, "w-sun", 1, LocalDateTime.of(2026, 9, 20, 12, 0), "current-sunday");
+			persistCommit(repo, member, "w-before", 1, LocalDateTime.of(2026, 8, 30, 23, 59, 59), "before-window");
+			persistCommit(repo, member, "w-next", 1, LocalDateTime.of(2026, 9, 21, 0, 0), "next-monday");
+			persistCommit(repo, member, "w-merge", 2, LocalDateTime.of(2026, 9, 15, 0, 0), "merge");
+			persistCommit(repo, member, "w-nocommit", 1, null, "null-committedAt");
+			persistCommit(repo, leader, "w-lead", 1, LocalDateTime.of(2026, 9, 15, 0, 0), "teammate");
+			persistCommit(repo, null, "w-unmap", 1, LocalDateTime.of(2026, 9, 15, 0, 0), "unmapped");
+			persistCommit(otherRepo, member, "w-other", 1, LocalDateTime.of(2026, 9, 15, 0, 0), "other-project");
+			entityManager.flush();
+		});
+
+		StudentDashboardResponse response = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		assertThat(response.weeklyCommits()).hasSize(3);
+		assertThat(response.weeklyCommits().get(0).startDate()).isEqualTo(java.time.LocalDate.of(2026, 8, 31));
+		assertThat(response.weeklyCommits().get(0).endDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 6));
+		assertThat(response.weeklyCommits().get(0).commits()).isEqualTo(1);
+		assertThat(response.weeklyCommits().get(1).startDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 7));
+		assertThat(response.weeklyCommits().get(1).commits()).isEqualTo(1);
+		assertThat(response.weeklyCommits().get(2).startDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 14));
+		assertThat(response.weeklyCommits().get(2).endDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 20));
+		assertThat(response.weeklyCommits().get(2).commits()).isEqualTo(3);
+		assertThat(response.myMetrics().commits().lastCommittedAt()).isNotNull();
+	}
+
+	@Test
+	void weeklyCommitsAreThreeZerosWhenOnlyMergesOrNullCommittedAt() {
+		tx.executeWithoutResult(status -> {
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			StudentProfile member = profileOf(fixture.memberId);
+			GitRepo repo = repos.save(repo(project, 71L, "org/weekly-empty", IntegrationStatus.ACTIVE));
+			persistCommit(repo, member, "m1", 2, LocalDateTime.of(2026, 9, 15, 0, 0), "merge");
+			persistCommit(repo, member, "n1", 1, null, "null-at");
+			entityManager.flush();
+		});
+		StudentDashboardResponse response = tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
+		assertThat(response.weeklyCommits()).hasSize(3);
+		assertThat(response.weeklyCommits()).allMatch(row -> row.commits() == 0);
+	}
+
+	@Test
+	void academicZoneClockMovesCurrentIsoWeek() {
+		StudentDashboardService ict = new StudentDashboardService(
+				enrollments,
+				members,
+				jiraIntegrations,
+				repos,
+				sprints,
+				tasks,
+				commits,
+				commitLinks,
+				java.time.Clock.fixed(java.time.Instant.parse("2026-09-20T17:00:00Z"), java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
+		StudentDashboardResponse response = tx.execute(status -> ict.get(fixture.memberId, fixture.courseId));
+		assertThat(response.weeklyCommits().get(2).startDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 21));
+		assertThat(response.weeklyCommits().get(2).endDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 27));
 	}
 
 	private void assertForbidden(UUID userId, UUID courseId) {

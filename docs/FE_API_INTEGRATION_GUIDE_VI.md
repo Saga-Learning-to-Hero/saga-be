@@ -807,7 +807,7 @@ Dùng `myRole` để quyết định UI: hiện nút "Tạo Project"/"Cấu hìn
 - `403 STUDENT_COURSE_FORBIDDEN`: chưa ghi danh ACTIVE course này.
 - `404 TEAM_NOT_FOUND`: đã ghi danh nhưng Lecturer chưa gán nhóm.
 
-### `GET /api/student/courses/{courseId}/dashboard` — Phase A+B1
+### `GET /api/student/courses/{courseId}/dashboard` — Phase A+B1+B2
 
 Personal cockpit của **chính** sinh viên đang gọi API. **MEMBER / LEADER / MENTOR** đều gọi được — không dùng gate của `/progress` (leader-only).
 
@@ -883,6 +883,11 @@ Không team / không project **không** phải 404: trả **200** với `team` /
       "committedAt": "2026-09-04T09:00:00",
       "linkedTaskKeys": ["SAGA-1", "SAGA-2"]
     }
+  ],
+  "weeklyCommits": [
+    { "startDate": "2026-08-31", "endDate": "2026-09-06", "commits": 4 },
+    { "startDate": "2026-09-07", "endDate": "2026-09-13", "commits": 7 },
+    { "startDate": "2026-09-14", "endDate": "2026-09-20", "commits": 2 }
   ]
 }
 ```
@@ -926,11 +931,30 @@ Quy tắc Phase B1:
 | `recentCommits` | Cap **5**. Cùng population V23 với commit metrics. Thứ tự dùng timestamp hoạt động `COALESCE(committedAt, createdAt) DESC, id DESC`. `committedAt` trong JSON là **raw** `GitCommit.committedAt` — **có thể `null`**, không thay bằng `createdAt`. `shortSha` = 7 ký tự đầu (hoặc cả sha nếu ngắn hơn). `repositoryName` = `GitRepo.fullName` |
 | `linkedTaskKeys` | Mảng, không phải `linkedTaskKey`. Mọi `Task.externalKey` khác null, task chưa xoá, sort ổn định, không trùng. Commit chưa gắn task → `[]`. Không bịa key từ message |
 
+Quy tắc Phase B2 — `weeklyCommits`:
+
+| Trường | Ý nghĩa |
+|---|---|
+| Số điểm | **Đúng 3** tuần ISO gần nhất khi đã có Project: tuần hiện tại + 2 tuần trước. Oldest → newest. **Không** có tuần tương lai |
+| `startDate` / `endDate` | `LocalDate`. Monday → Sunday (`endDate = Monday + 6`). FE tự format label — **không** có field `label` |
+| Tuần hiện tại | `LocalDate.now(saga.dashboard.zone)` (default UTC). Monday 00:00 zone đó mở tuần mới. Tuần hiện tại **có thể đang dở** |
+| Population | Cùng V23 + author + project như B1. Merge `parentCount > 1` loại. Unmapped author loại |
+| Timestamp | **Chỉ `GitCommit.committedAt`**. `committedAt = null` **không** vào weekly. **Không** `COALESCE(..., createdAt)` |
+| Giới hạn timestamp | Provider offset đã bị strip trước khi persist. Bucket theo wall-clock đã lưu, **không** chuẩn hoá Instant / không convert zone sang SQL |
+| `lastCommittedAt` / `recentCommits` | **Không đổi**: vẫn `COALESCE(committedAt, createdAt)`. `totalCommits` có thể **lớn hơn** tổng 3 tuần (commit cũ hơn 3 tuần, hoặc `committedAt` null) |
+
+Không team / không Project: `weeklyCommits = []`.
+
+Có Project nhưng không có commit đủ điều kiện (kể cả chỉ merge / chỉ `committedAt` null): **đúng 3 điểm `commits = 0`**.
+
+Phase B2 **chưa** trả: `contribution` / `mySlices` / `peerReviewAverageScore`, `actionableAlerts`.
+
 Project có Project nhưng không có task/commit cá nhân:
 
 - `myMetrics.tasks` = mọi count/SP = 0, `completionPercent` = `null`
 - `myMetrics.commits` = 0/0/0, `traceabilityPercent` = `null`, `lastCommittedAt` = `null`
 - `myActiveTasks` = `[]`, `recentCommits` = `[]`
+- `weeklyCommits` = 3 điểm zero
 
 Lỗi:
 
@@ -939,7 +963,7 @@ Lỗi:
 - Account không ACTIVE → `403 ACCOUNT_DISABLED` (filter toàn cục)
 - Không profile / không enrollment / WITHDRAWN / COMPLETED / course đã xoá / course không tồn tại → **`403 STUDENT_COURSE_FORBIDDEN`** (không lộ `COURSE_NOT_FOUND`)
 
-Phase B1 **chưa** trả: `weeklyCommits` (để Phase B2 — timestamp naive, chưa freeze timezone), `contribution` / `mySlices` / `teamTotalSlices` / `contributionPercent` / `peerReviewAverageScore`, `actionableAlerts` (Phase D). Field này bị **omit**.
+Phase B2 **chưa** trả: `contribution` / `mySlices` / `teamTotalSlices` / `contributionPercent` / `peerReviewAverageScore`, `actionableAlerts` (Phase D). Field này bị **omit**.
 
 Local DB only. Không gọi Jira/GitHub/Neo4j/FCM. Không cache Redis. Workload `INTERACTIVE_NORMAL`.
 

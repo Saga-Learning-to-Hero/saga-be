@@ -19,6 +19,8 @@ import com.saga.be.dto.student.dashboard.StudentDashboardSprintResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardStudentResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardTaskMetricsResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardTeamResponse;
+import com.saga.be.dto.student.dashboard.StudentDashboardWeeklyCommitResponse;
+import java.time.LocalDate;
 import java.util.List;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
@@ -123,7 +125,11 @@ class StudentDashboardControllerWebTest {
 								"fix login",
 								"org/saga",
 								LocalDateTime.of(2026, 9, 4, 9, 0),
-								List.of("SAGA-1", "SAGA-2")))));
+								List.of("SAGA-1", "SAGA-2"))),
+						List.of(
+								new StudentDashboardWeeklyCommitResponse(LocalDate.of(2026, 8, 31), LocalDate.of(2026, 9, 6), 4),
+								new StudentDashboardWeeklyCommitResponse(LocalDate.of(2026, 9, 7), LocalDate.of(2026, 9, 13), 7),
+								new StudentDashboardWeeklyCommitResponse(LocalDate.of(2026, 9, 14), LocalDate.of(2026, 9, 20), 2))));
 
 		mockMvc.perform(get("/api/student/courses/" + courseId + "/dashboard"))
 				.andExpect(status().isOk())
@@ -138,8 +144,10 @@ class StudentDashboardControllerWebTest {
 				.andExpect(jsonPath("$.myMetrics.commits.linkedCommits").value(31))
 				.andExpect(jsonPath("$.myActiveTasks[0].evidenceCommitCount").value(1))
 				.andExpect(jsonPath("$.recentCommits[0].linkedTaskKeys[1]").value("SAGA-2"))
+				.andExpect(jsonPath("$.weeklyCommits[0].startDate").value("2026-08-31"))
+				.andExpect(jsonPath("$.weeklyCommits[2].commits").value(2))
+				.andExpect(jsonPath("$.weeklyCommits[0].label").doesNotExist())
 				.andExpect(jsonPath("$.contribution").doesNotExist())
-				.andExpect(jsonPath("$.weeklyCommits").doesNotExist())
 				.andExpect(jsonPath("$.actionableAlerts").doesNotExist());
 	}
 
@@ -154,6 +162,7 @@ class StudentDashboardControllerWebTest {
 						null,
 						null,
 						List.of(),
+						List.of(),
 						List.of()));
 
 		mockMvc.perform(get("/api/student/courses/" + courseId + "/dashboard"))
@@ -165,6 +174,7 @@ class StudentDashboardControllerWebTest {
 				.andExpect(jsonPath("$.myActiveTasks").isArray())
 				.andExpect(jsonPath("$.myActiveTasks").isEmpty())
 				.andExpect(jsonPath("$.recentCommits").isEmpty())
+				.andExpect(jsonPath("$.weeklyCommits").isEmpty())
 				.andExpect(jsonPath("$.student.teamRole").value(Matchers.nullValue()));
 	}
 

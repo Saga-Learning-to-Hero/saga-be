@@ -13,6 +13,8 @@ import com.saga.be.dto.student.dashboard.StudentDashboardSprintResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardStudentResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardTaskMetricsResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardTeamResponse;
+import com.saga.be.dto.student.dashboard.StudentDashboardWeeklyCommitResponse;
+import com.saga.be.config.DashboardProperties;
 import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.academic.Course;
@@ -43,7 +45,11 @@ import com.saga.be.repository.TaskRepository;
 import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.service.contribution.ReservedContributionMarkerClassifier;
 import com.saga.be.service.contribution.TaskLabelParser;
+import java.time.Clock;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -60,9 +66,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Phase A+B1 student personal dashboard. Course-scoped identity/team/project/integrations/current
- * sprint plus personal task/commit metrics and previews. Ordinary MEMBER is allowed; this path
- * does not reuse lecturer/leader project-data gates or contribution evaluation.
+ * Phase A+B1+B2 student personal dashboard. Course-scoped identity/team/project/integrations/current
+ * sprint plus personal task/commit metrics, previews, and last-3 ISO weekly commits. Ordinary MEMBER
+ * is allowed; this path does not reuse lecturer/leader project-data gates or contribution evaluation.
  */
 @Service
 @Profile("!test")
@@ -70,6 +76,7 @@ public class StudentDashboardService {
 
 	static final int ACTIVE_TASK_PREVIEW_LIMIT = 10;
 	static final int RECENT_COMMIT_LIMIT = 5;
+	static final int WEEKLY_COMMIT_WEEKS = 3;
 
 	private final CourseEnrollmentRepository enrollments;
 	private final TeamMemberRepository members;
@@ -79,6 +86,7 @@ public class StudentDashboardService {
 	private final TaskRepository tasks;
 	private final GitCommitRepository commits;
 	private final TaskGitCommitLinkRepository commitLinks;
+	private final Clock clock;
 
 	public StudentDashboardService(
 			CourseEnrollmentRepository enrollments,
@@ -88,7 +96,21 @@ public class StudentDashboardService {
 			SprintRepository sprints,
 			TaskRepository tasks,
 			GitCommitRepository commits,
-			TaskGitCommitLinkRepository commitLinks) {
+			TaskGitCommitLinkRepository commitLinks,
+			DashboardProperties dashboard) {
+		this(enrollments, members, jiraIntegrations, repos, sprints, tasks, commits, commitLinks, dashboard.clock());
+	}
+
+	StudentDashboardService(
+			CourseEnrollmentRepository enrollments,
+			TeamMemberRepository members,
+			JiraIntegrationRepository jiraIntegrations,
+			GitRepoRepository repos,
+			SprintRepository sprints,
+			TaskRepository tasks,
+			GitCommitRepository commits,
+			TaskGitCommitLinkRepository commitLinks,
+			Clock clock) {
 		this.enrollments = enrollments;
 		this.members = members;
 		this.jiraIntegrations = jiraIntegrations;
@@ -97,6 +119,7 @@ public class StudentDashboardService {
 		this.tasks = tasks;
 		this.commits = commits;
 		this.commitLinks = commitLinks;
+		this.clock = clock;
 	}
 
 	@Transactional(readOnly = true)
@@ -125,7 +148,7 @@ public class StudentDashboardService {
 
 		if (team == null) {
 			return new StudentDashboardResponse(
-					student, courseDto, null, null, null, null, List.of(), List.of());
+					student, courseDto, null, null, null, null, List.of(), List.of(), List.of());
 		}
 
 		Project project = team.getProject();
@@ -138,7 +161,7 @@ public class StudentDashboardService {
 				members.countActiveByTeam_Id(team.getId()));
 		if (project == null) {
 			return new StudentDashboardResponse(
-					student, courseDto, teamDto, null, null, null, List.of(), List.of());
+					student, courseDto, teamDto, null, null, null, List.of(), List.of(), List.of());
 		}
 
 		UUID projectId = project.getId();
@@ -151,7 +174,8 @@ public class StudentDashboardService {
 				currentSprint(projectId),
 				new StudentDashboardMetricsResponse(taskMetrics(projectId, studentId), commitMetrics(projectId, studentId)),
 				activeTasks(projectId, studentId),
-				recentCommits(projectId, studentId));
+				recentCommits(projectId, studentId),
+				weeklyCommits(projectId, studentId));
 	}
 
 	private static StudentDashboardCourseResponse toCourse(Course course) {
@@ -398,6 +422,41 @@ public class StudentDashboardService {
 					List.copyOf(keysByCommit.getOrDefault(commit.getId(), List.of()))));
 		}
 		return out;
+	}
+
+	/**
+	 * Last 3 ISO weeks by stored {@code committedAt} wall-clock only. Offsets were stripped at
+	 * persist time, so this is not Instant-normalized.
+	 */
+	private List<StudentDashboardWeeklyCommitResponse> weeklyCommits(UUID projectId, UUID studentId) {
+		LocalDate today = LocalDate.now(clock);
+		LocalDate currentWeekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+		LocalDateTime week0Start = currentWeekStart.minusWeeks(2).atStartOfDay();
+		LocalDateTime week1Start = currentWeekStart.minusWeeks(1).atStartOfDay();
+		LocalDateTime week2Start = currentWeekStart.atStartOfDay();
+		LocalDateTime week3End = currentWeekStart.plusWeeks(1).atStartOfDay();
+		long[] counts = new long[WEEKLY_COMMIT_WEEKS];
+		for (Object[] row : commits.findWeeklyCommittedAtByProjectAndAuthor(projectId, studentId, week0Start, week3End)) {
+			LocalDateTime at = row == null || row.length < 2 ? null : (LocalDateTime) row[1];
+			if (at == null) {
+				continue;
+			}
+			if (!at.isBefore(week0Start) && at.isBefore(week1Start)) {
+				counts[0]++;
+			} else if (!at.isBefore(week1Start) && at.isBefore(week2Start)) {
+				counts[1]++;
+			} else if (!at.isBefore(week2Start) && at.isBefore(week3End)) {
+				counts[2]++;
+			}
+		}
+		return List.of(
+				point(currentWeekStart.minusWeeks(2), counts[0]),
+				point(currentWeekStart.minusWeeks(1), counts[1]),
+				point(currentWeekStart, counts[2]));
+	}
+
+	private static StudentDashboardWeeklyCommitResponse point(LocalDate monday, long commits) {
+		return new StudentDashboardWeeklyCommitResponse(monday, monday.plusDays(6), commits);
 	}
 
 	private static boolean isCodeOrTest(String labelsJson) {
