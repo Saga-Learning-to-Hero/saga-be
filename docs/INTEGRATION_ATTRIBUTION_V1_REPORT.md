@@ -84,7 +84,7 @@ No audit update/delete API.
 5. Leader lists/selects repos that belong to **that project's** verified installation. Repo identity = GitHub repository numeric id. Roles: FRONTEND / BACKEND / OTHER (multiple allowed).
 6. Installation access tokens are minted from App JWT and are **not** domain columns. Cache TTL ~50 minutes when Redis is present.
 
-Webhook: verify `X-Hub-Signature-256` **before** parsing. Idempotent on `X-GitHub-Delivery` via `webhook_receipt`. Duplicate delivery returns 202 without reprocessing.
+Webhook: verify `X-Hub-Signature-256` **before** parsing. `X-GitHub-Delivery` is **required** (trim-to-nonblank) for GitHub idempotency identity `(provider, deliveryId)`; missing/blank → `400 REQUEST_INVALID` and no `webhook_receipt` write. Duplicate delivery returns 202 without reprocessing. Jira still falls back to `UUID.nameUUIDFromBytes(body)` when `X-Atlassian-Webhook-Identifier` is absent.
 
 **Initial sync boundary:** `COALESCE(semester.start_date, project.created_at, now() - 90 days)`. Sync is paginated and keyed by native ids / SHA.
 

@@ -1,6 +1,8 @@
 package com.saga.be.controller;
 
 import com.saga.be.entity.enums.IntegrationProvider;
+import com.saga.be.exception.AcademicErrorCode;
+import com.saga.be.exception.AcademicException;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.github.GitHubWebhookSignature;
@@ -84,10 +86,11 @@ public class ProviderWebhookController {
 			throw new IntegrationException(
 					IntegrationErrorCode.WEBHOOK_SIGNATURE_INVALID, HttpStatus.UNAUTHORIZED, "Invalid webhook signature.");
 		}
+		String deliveryId = requireGitHubDeliveryId(delivery);
 		String payload = new String(body, StandardCharsets.UTF_8);
 		String eventType = event == null ? "unknown" : event;
 		WebhookReceiptService.IngestResult result = receipts.ingest(
-				IntegrationProvider.GITHUB, delivery, eventType, null, payload, null, LocalDateTime.now());
+				IntegrationProvider.GITHUB, deliveryId, eventType, null, payload, null, LocalDateTime.now());
 		if (!result.duplicate()) {
 			projection.projectGithub(result.receipt(), eventType, payload);
 		}
@@ -138,5 +141,20 @@ public class ProviderWebhookController {
 					"Jira evidence backlog is full.");
 		}
 		return ResponseEntity.accepted().build();
+	}
+
+	/**
+	 * GitHub idempotency identity is the provider-supplied delivery id only. Header stays
+	 * {@code required = false} so Spring does not emit an unmapped {@code MissingRequestHeaderException};
+	 * blank/whitespace is rejected here as the same controlled 400.
+	 */
+	static String requireGitHubDeliveryId(String delivery) {
+		if (delivery == null || delivery.isBlank()) {
+			throw new AcademicException(
+					AcademicErrorCode.REQUEST_INVALID,
+					HttpStatus.BAD_REQUEST,
+					"X-GitHub-Delivery header is required.");
+		}
+		return delivery.trim();
 	}
 }
