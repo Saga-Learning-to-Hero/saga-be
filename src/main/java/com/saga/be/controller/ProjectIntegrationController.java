@@ -9,6 +9,8 @@ import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraBoardOption;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraProjectOption;
 import com.saga.be.dto.integration.SelectGitHubRepositoryRequest;
 import com.saga.be.dto.integration.SelectJiraIntegrationRequest;
+import com.saga.be.dto.integration.failover.JiraFailoverPreviewRequest;
+import com.saga.be.dto.integration.failover.JiraFailoverPreviewResponse;
 import com.saga.be.dto.project.ProjectSyncEnqueueResponse;
 import com.saga.be.dto.project.ProjectTaskOptionsResponse;
 import com.saga.be.exception.IntegrationException;
@@ -17,6 +19,7 @@ import com.saga.be.integration.jira.JiraOAuthClient;
 import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.identity.ProjectIntegrationService;
+import com.saga.be.service.projection.JiraFailoverPreviewService;
 import com.saga.be.service.projection.ProjectJiraTaskCommandService;
 import com.saga.be.service.sync.ProjectManualSyncService;
 import com.saga.be.workload.Workload;
@@ -57,16 +60,19 @@ public class ProjectIntegrationController {
 	private final ProjectIntegrationService integrations;
 	private final ProjectJiraTaskCommandService taskCommands;
 	private final ProjectManualSyncService manualSync;
+	private final JiraFailoverPreviewService jiraFailoverPreview;
 	private final IntegrationProperties properties;
 
 	public ProjectIntegrationController(
 			ProjectIntegrationService integrations,
 			ProjectJiraTaskCommandService taskCommands,
 			ProjectManualSyncService manualSync,
+			JiraFailoverPreviewService jiraFailoverPreview,
 			IntegrationProperties properties) {
 		this.integrations = integrations;
 		this.taskCommands = taskCommands;
 		this.manualSync = manualSync;
+		this.jiraFailoverPreview = jiraFailoverPreview;
 		this.properties = properties;
 	}
 
@@ -311,6 +317,22 @@ public class ProjectIntegrationController {
 			@PathVariable UUID projectId,
 			@PathVariable UUID integrationId) {
 		return taskCommands.optionsForIntegration(principal.getUserId(), projectId, integrationId);
+	}
+
+	@PostMapping("/jira-sources/{sourceIntegrationId}/failover/preview")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
+	@Operation(
+			summary = "Preview unfinished-task failover from a source Jira integration to a target.",
+			description =
+					"Team Leader only. Classifies source tasks and maps fields against target provider options. "
+							+ "Does not create/update/transition/delete remote issues. Items are paged "
+							+ "(page/size/hasNext/totalPages); a single page is never an execution snapshot.")
+	public JiraFailoverPreviewResponse failoverPreview(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@PathVariable UUID sourceIntegrationId,
+			@Valid @RequestBody JiraFailoverPreviewRequest body) {
+		return jiraFailoverPreview.preview(principal.getUserId(), projectId, sourceIntegrationId, body);
 	}
 
 	@DeleteMapping("/jira")

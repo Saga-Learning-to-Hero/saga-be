@@ -45,6 +45,16 @@ public enum IntegrationErrorCode {
 	JIRA_SOURCE_NOT_FOUND,
 	/** Named Jira source exists but is not ACTIVE / usable for provider writes. */
 	JIRA_SOURCE_NOT_ACTIVE,
+	/** Failover preview/execute: source and target integrations must differ. */
+	JIRA_FAILOVER_SOURCE_TARGET_SAME,
+	/** Failover target integration is not ACTIVE. */
+	JIRA_FAILOVER_TARGET_NOT_ACTIVE,
+	/** Failover target is missing cloudId / jiraProjectId. */
+	JIRA_FAILOVER_TARGET_IDENTITY_INCOMPLETE,
+	/** Optional target sprint is missing, soft-deleted, or not on the target integration. */
+	JIRA_FAILOVER_SPRINT_INVALID,
+	/** Failover request body is incomplete or otherwise invalid. */
+	JIRA_FAILOVER_INVALID_REQUEST,
 	JIRA_ISSUE_CREATE_FAILED,
 	JIRA_ISSUE_UPDATE_FAILED,
 	JIRA_ISSUE_DELETE_FAILED,

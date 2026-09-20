@@ -24,6 +24,19 @@ public interface IdentityMapRepository extends JpaRepository<IdentityMap, UUID> 
 			"""
 			select m from IdentityMap m
 			join fetch m.userAccount
+			where m.userAccount.id in :userIds
+			  and m.provider = :provider
+			  and m.mappingStatus in :statuses
+			""")
+	List<IdentityMap> findFetchedByUserAccount_IdInAndProviderAndMappingStatusIn(
+			@Param("userIds") Collection<UUID> userIds,
+			@Param("provider") IntegrationProvider provider,
+			@Param("statuses") Collection<IdentityMappingStatus> statuses);
+
+	@Query(
+			"""
+			select m from IdentityMap m
+			join fetch m.userAccount
 			where m.provider = :provider
 			  and m.externalAccountId in :externalIds
 			  and m.mappingStatus in :statuses

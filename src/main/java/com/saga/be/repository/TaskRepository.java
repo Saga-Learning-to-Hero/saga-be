@@ -53,6 +53,21 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 	@Query(
 			"""
 			select t from Task t
+			join fetch t.jiraIntegration
+			left join fetch t.assigneeStudent ass
+			left join fetch ass.userAccount
+			left join fetch t.parentTask
+			left join fetch t.sprint
+			where t.project.id = :projectId
+			  and t.jiraIntegration.id = :jiraIntegrationId
+			  and t.deletedAt is null
+			""")
+	List<Task> findActiveFetchedByProjectAndJiraIntegration(
+			@Param("projectId") UUID projectId, @Param("jiraIntegrationId") UUID jiraIntegrationId);
+
+	@Query(
+			"""
+			select t from Task t
 			join fetch t.project p
 			join fetch p.course c
 			left join fetch c.instructor ins
