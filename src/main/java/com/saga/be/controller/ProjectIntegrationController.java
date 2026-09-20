@@ -84,16 +84,6 @@ public class ProjectIntegrationController {
 		this.properties = properties;
 	}
 
-	/** Compatibility constructor for existing focused MVC tests. */
-	public ProjectIntegrationController(
-			ProjectIntegrationService integrations,
-			ProjectJiraTaskCommandService taskCommands,
-			ProjectManualSyncService manualSync,
-			JiraFailoverPreviewService jiraFailoverPreview,
-			IntegrationProperties properties) {
-		this(integrations, taskCommands, manualSync, jiraFailoverPreview, null, properties);
-	}
-
 	@GetMapping
 	public ProjectIntegrationsResponse summary(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
