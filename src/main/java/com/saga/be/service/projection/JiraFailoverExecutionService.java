@@ -93,6 +93,7 @@ public class JiraFailoverExecutionService {
 	public JiraFailoverExecuteResponse retry(UUID userId, UUID projectId, UUID sourceIntegrationId, UUID runId) {
 		authorization.requireStudentLeader(userId, projectId);
 		JiraTaskFailoverRun run = requireRun(projectId, sourceIntegrationId, runId);
+		requireSourceRevoked(run);
 		worker.processRun(run.getId());
 		List<Task> safeFailedSources = state.loadRunItems(run.getId()).stream()
 				.filter(item -> item.getStatus() == JiraFailoverItemStatus.FAILED)
@@ -152,6 +153,12 @@ public class JiraFailoverExecutionService {
 		JiraTaskFailoverRun run = runs.findFetchedByIdAndProject_Id(runId, projectId).orElseThrow(() -> invalid("Failover run was not found."));
 		if (!run.getSourceJiraIntegration().getId().equals(sourceId)) throw invalid("Failover run does not belong to this source.");
 		return run;
+	}
+	/** A retry may resume remote work only after the original source cutover remains effective. */
+	private static void requireSourceRevoked(JiraTaskFailoverRun run) {
+		if (run.getSourceJiraIntegration().getConnectionStatus() != IntegrationStatus.REVOKED) {
+			throw invalid("Source Jira integration must remain revoked before retrying failover.");
+		}
 	}
 	private JiraIntegration requireIntegration(UUID projectId, UUID id) { return integrations.findByIdAndProject_Id(id, projectId)
 		.orElseThrow(() -> new IntegrationException(IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND, HttpStatus.NOT_FOUND, "Jira source was not found.")); }
