@@ -24,6 +24,7 @@ import com.saga.be.entity.enums.TraceLinkSource;
 import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.github.GitCommitBranch;
 import com.saga.be.entity.github.GitRepo;
+import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
@@ -128,11 +129,14 @@ class ProjectTaskCommitLinkQueryCountTest {
 	@Autowired
 	private TaskRepository tasks;
 	@Autowired
+	private JiraIntegrationRepository jiraIntegrations;
+	@Autowired
 	private TaskGitCommitLinkRepository links;
 
 	private TransactionTemplate tx;
 	private UserAccount student;
 	private Project project;
+	private JiraIntegration jiraIntegration;
 	private GitRepo repo;
 	private ProjectTaskCommitLinkReadService readService;
 
@@ -164,6 +168,7 @@ class ProjectTaskCommitLinkQueryCountTest {
 			repos.save(managedRepo);
 			Task task = new Task();
 			task.setProject(project);
+			task.setJiraIntegration(jiraIntegration);
 			task.setExternalKey("SAGA-PARTIAL");
 			task.setExternalId("ext-partial");
 			task.setTitle("Partial sync commit");
@@ -228,6 +233,7 @@ class ProjectTaskCommitLinkQueryCountTest {
 				long n = existing + i + 1;
 				Task task = new Task();
 				task.setProject(project);
+				task.setJiraIntegration(jiraIntegration);
 				task.setExternalKey("SAGA-" + n);
 				task.setExternalId("ext-" + n);
 				task.setTitle("T" + n);
@@ -313,6 +319,8 @@ class ProjectTaskCommitLinkQueryCountTest {
 		project.setCreatedBy(student);
 		project = projects.save(project);
 
+		jiraIntegration = jiraIntegrations.save(jiraFor(project));
+
 		Team team = new Team();
 		team.setCourse(course);
 		team.setProject(project);
@@ -337,6 +345,17 @@ class ProjectTaskCommitLinkQueryCountTest {
 		repo.setConnectionStatus(IntegrationStatus.ACTIVE);
 		repo.setConsecutiveFailures(0);
 		repo = repos.save(repo);
+	}
+
+	private static JiraIntegration jiraFor(Project project) {
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setCloudId("cloud-" + UUID.randomUUID());
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
+		integration.setConsecutiveFailures(0);
+		return integration;
 	}
 
 	private Statistics statistics() {

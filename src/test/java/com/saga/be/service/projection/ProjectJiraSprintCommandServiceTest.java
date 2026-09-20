@@ -96,8 +96,8 @@ class ProjectJiraSprintCommandServiceTest {
 	void patch_renameOnly_sendsOnlyNameToProvider() {
 		stubLeader();
 		JiraIntegration integration = activeJira();
-		Sprint local = sprintRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		Sprint local = sprintRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(sprints.findActiveByIdAndProject_Id(local.getId(), projectId)).thenReturn(Optional.of(local));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		SprintDetail updated = new SprintDetail(31L, "Sprint Renamed", "active", null, null, null, null, null);
@@ -116,8 +116,8 @@ class ProjectJiraSprintCommandServiceTest {
 	void patch_goalOnly_sendsOnlyGoalToProvider() {
 		stubLeader();
 		JiraIntegration integration = activeJira();
-		Sprint local = sprintRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		Sprint local = sprintRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(sprints.findActiveByIdAndProject_Id(local.getId(), projectId)).thenReturn(Optional.of(local));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		SprintDetail updated = new SprintDetail(31L, "Sprint 1", "active", null, null, null, "Ship auth", null);
@@ -136,8 +136,8 @@ class ProjectJiraSprintCommandServiceTest {
 	void patch_datesOnly_sendsOnlyDatesToProvider() {
 		stubLeader();
 		JiraIntegration integration = activeJira();
-		Sprint local = sprintRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		Sprint local = sprintRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(sprints.findActiveByIdAndProject_Id(local.getId(), projectId)).thenReturn(Optional.of(local));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		SprintDetail updated =
@@ -166,8 +166,8 @@ class ProjectJiraSprintCommandServiceTest {
 		// requested state is forwarded as-is, not reinterpreted or blocked locally.
 		stubLeader();
 		JiraIntegration integration = activeJira();
-		Sprint local = sprintRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		Sprint local = sprintRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(sprints.findActiveByIdAndProject_Id(local.getId(), projectId)).thenReturn(Optional.of(local));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		SprintDetail updated = new SprintDetail(31L, "Sprint 1", "active", null, null, null, null, null);
@@ -185,8 +185,8 @@ class ProjectJiraSprintCommandServiceTest {
 	void patch_jiraRejectsSprintUpdate_localSprintNotMutated() {
 		stubLeader();
 		JiraIntegration integration = activeJira();
-		Sprint local = sprintRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		Sprint local = sprintRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(sprints.findActiveByIdAndProject_Id(local.getId(), projectId)).thenReturn(Optional.of(local));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.updateSprint(any(), any(), any(), any(), any(), any(), any(), any()))
@@ -207,7 +207,7 @@ class ProjectJiraSprintCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Sprint local = sprintRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		SprintDetail created = new SprintDetail(31L, "Sprint 1", "future", null, null, null, null, null);
 		when(jiraWrite.createSprint("token", "cloud", "68", "Sprint 1", null, null, null)).thenReturn(created);
@@ -226,8 +226,8 @@ class ProjectJiraSprintCommandServiceTest {
 	void delete_leader_callsJiraThenSoftDeletesProjection() {
 		stubLeader();
 		JiraIntegration integration = activeJira();
-		Sprint local = sprintRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		Sprint local = sprintRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(sprints.findActiveByIdAndProject_Id(local.getId(), projectId)).thenReturn(Optional.of(local));
 		when(tokens.accessToken(integration)).thenReturn("token");
 
@@ -314,6 +314,90 @@ class ProjectJiraSprintCommandServiceTest {
 		verifyZeroProviderInteraction();
 	}
 
+	@Test
+	void create_withExplicitJiraIntegrationId_usesThatSource() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		integration.setCloudId("cloud-b");
+		Sprint local = sprintRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		SprintDetail created = new SprintDetail(31L, "Sprint 1", "future", null, null, null, null, null);
+		when(jiraWrite.createSprint("token", "cloud-b", "68", "Sprint 1", null, null, null)).thenReturn(created);
+		when(jiraWrite.getSprint("token", "cloud-b", "31")).thenReturn(created);
+		when(projection.upsertSprint(eq(integration), eq("31"), eq("Sprint 1"), eq("future"), any(), any(), any(), any()))
+				.thenReturn(local);
+
+		service.create(
+				userId,
+				projectId,
+				new CreateProjectSprintRequest("Sprint 1", null, null, null, integration.getId()));
+
+		verify(jiraWrite).createSprint("token", "cloud-b", "68", "Sprint 1", null, null, null);
+		verify(jiraIntegrations, never()).findAllByProject_Id(any());
+	}
+
+	@Test
+	void create_omittedSource_withTwoIntegrations_requiresExplicitId() {
+		stubLeader();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(activeJira(), activeJira()));
+
+		assertThatThrownBy(() -> service.create(userId, projectId, new CreateProjectSprintRequest("Sprint X", null, null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_SOURCE_REQUIRED);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void patch_usesSprintProvenanceCloudId() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		integration.setCloudId("sprint-cloud");
+		Sprint local = sprintRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(sprints.findActiveByIdAndProject_Id(local.getId(), projectId)).thenReturn(Optional.of(local));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		SprintDetail updated = new SprintDetail(31L, "Sprint Renamed", "active", null, null, null, null, null);
+		when(jiraWrite.updateSprint("token", "sprint-cloud", "31", "Sprint Renamed", null, null, null, null))
+				.thenReturn(updated);
+		when(jiraWrite.getSprint("token", "sprint-cloud", "31")).thenReturn(updated);
+		when(projection.upsertSprint(eq(integration), eq("31"), eq("Sprint Renamed"), eq("active"), any(), any(), any(), any()))
+				.thenReturn(local);
+
+		service.patch(userId, projectId, local.getId(), new PatchProjectSprintRequest("Sprint Renamed", null, null, null, null));
+
+		verify(jiraWrite).updateSprint("token", "sprint-cloud", "31", "Sprint Renamed", null, null, null, null);
+		verify(jiraIntegrations, never()).findAllByProject_Id(any());
+		verify(jiraIntegrations, never()).findByProject_Id(any());
+	}
+
+	@Test
+	void syncAndList_multipleActiveSources_requiresExplicitId() {
+		stubReader();
+		JiraIntegration first = activeJira();
+		JiraIntegration second = activeJira();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(first, second));
+
+		assertThatThrownBy(() -> service.syncAndList(userId, projectId))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_SOURCE_REQUIRED);
+		verify(jiraWrite, never()).listBoardSprints(any(), any(), any());
+	}
+
+	@Test
+	void syncAndList_zeroActive_returnsLocalOnly() {
+		stubReader();
+		JiraIntegration revoked = activeJira();
+		revoked.setConnectionStatus(IntegrationStatus.REVOKED);
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(revoked));
+		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of());
+
+		assertThat(service.syncAndList(userId, projectId)).isEmpty();
+		verify(jiraWrite, never()).listBoardSprints(any(), any(), any());
+	}
+
 	private void verifyZeroProviderInteraction() {
 		verify(tokens, never()).accessToken(any());
 		verify(jiraWrite, never()).createSprint(any(), any(), any(), any(), any(), any(), any());
@@ -359,6 +443,14 @@ class ProjectJiraSprintCommandServiceTest {
 		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.LEADER));
 	}
 
+	private void stubReader() {
+		UserAccount student = new UserAccount();
+		student.setId(userId);
+		student.setAccountRole(AccountRole.STUDENT);
+		when(users.findById(userId)).thenReturn(Optional.of(student));
+		when(members.existsActiveByProjectIdAndUserId(projectId, userId)).thenReturn(true);
+	}
+
 	private JiraIntegration activeJira() {
 		JiraIntegration integration = new JiraIntegration();
 		integration.setId(UUID.randomUUID());
@@ -371,13 +463,19 @@ class ProjectJiraSprintCommandServiceTest {
 	}
 
 	private Sprint sprintRow() {
+		return sprintRow(activeJira());
+	}
+
+	private Sprint sprintRow(JiraIntegration integration) {
 		Project project = new Project();
 		project.setId(projectId);
+		integration.setProject(project);
 		Sprint sprint = new Sprint();
 		sprint.setId(UUID.randomUUID());
 		sprint.setExternalSprintId("31");
 		sprint.setName("Sprint 1");
 		sprint.setState("active");
+		sprint.setJiraIntegration(integration);
 		return sprint;
 	}
 }

@@ -20,15 +20,26 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 
 	Optional<Task> findByProject_IdAndExternalKeyIgnoreCase(UUID projectId, String externalKey);
 
+	/**
+	 * Legacy project-scoped lookup. Prefer {@link #findByJiraIntegration_IdAndExternalId} for
+	 * provider upsert identity — the same {@code externalId} may exist under two sources.
+	 */
 	Optional<Task> findByProject_IdAndExternalId(UUID projectId, String externalId);
 
 	List<Task> findByProject_IdAndExternalIdIn(UUID projectId, Collection<String> externalIds);
 
+	Optional<Task> findByJiraIntegration_IdAndExternalId(UUID jiraIntegrationId, String externalId);
+
+	List<Task> findByJiraIntegration_IdAndExternalIdIn(UUID jiraIntegrationId, Collection<String> externalIds);
+
 	List<Task> findByProject_IdAndExternalKeyIgnoreCaseIn(UUID projectId, Collection<String> externalKeys);
+
+	Optional<Task> findByIdAndProject_Id(UUID id, UUID projectId);
 
 	@Query(
 			"""
 			select t from Task t
+			join fetch t.jiraIntegration
 			left join fetch t.sprint
 			left join fetch t.assigneeStudent ass
 			left join fetch ass.userAccount
@@ -46,6 +57,7 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			join fetch p.course c
 			left join fetch c.instructor ins
 			left join fetch ins.userAccount
+			left join fetch t.jiraIntegration
 			left join fetch t.sprint
 			left join fetch t.assigneeStudent ass
 			left join fetch ass.userAccount

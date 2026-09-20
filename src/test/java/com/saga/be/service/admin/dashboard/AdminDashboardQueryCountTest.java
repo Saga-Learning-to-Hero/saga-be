@@ -20,6 +20,7 @@ import com.saga.be.entity.enums.SyllabusStatus;
 import com.saga.be.entity.enums.TaskStatus;
 import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.github.GitRepo;
+import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
@@ -29,6 +30,7 @@ import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.CourseRepository;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.GitRepoRepository;
+import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.SemesterRepository;
 import com.saga.be.repository.SubjectRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
@@ -126,6 +128,8 @@ class AdminDashboardQueryCountTest {
 	private GitCommitRepository commits;
 	@Autowired
 	private TaskRepository tasks;
+	@Autowired
+	private JiraIntegrationRepository jiras;
 	@Autowired
 	private TaskGitCommitLinkRepository links;
 	@Autowired
@@ -399,6 +403,7 @@ class AdminDashboardQueryCountTest {
 			repo.setConnectionStatus(IntegrationStatus.ACTIVE);
 			repo.setConsecutiveFailures(0);
 			repo = repos.save(repo);
+			JiraIntegration jira = jiras.save(jiraFor(project, IntegrationStatus.CONNECTED));
 			GitCommit commit = new GitCommit();
 			commit.setRepo(repo);
 			commit.setShaHash("sha" + i);
@@ -407,6 +412,7 @@ class AdminDashboardQueryCountTest {
 			commits.save(commit);
 			Task task = new Task();
 			task.setProject(project);
+			task.setJiraIntegration(jira);
 			task.setExternalKey("SAGA-" + i);
 			task.setExternalId(UUID.randomUUID().toString());
 			task.setTitle("t");
@@ -415,6 +421,17 @@ class AdminDashboardQueryCountTest {
 		}
 		entityManager.flush();
 		return row;
+	}
+
+	private static JiraIntegration jiraFor(Project project, IntegrationStatus status) {
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setCloudId("cloud-" + UUID.randomUUID());
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setConnectionStatus(status);
+		integration.setConsecutiveFailures(0);
+		return integration;
 	}
 
 	private AdminDashboardService dashboardService(

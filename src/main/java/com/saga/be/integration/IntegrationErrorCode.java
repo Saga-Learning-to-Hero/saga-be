@@ -28,6 +28,20 @@ public enum IntegrationErrorCode {
 	JIRA_PROJECT_KEY_AMBIGUOUS,
 	JIRA_PROJECT_IN_USE,
 	JIRA_SOURCE_REPLACE_BLOCKED_BY_EVIDENCE,
+	/**
+	 * Reconnect/configure selected a different Jira cloud or project than the established source
+	 * identity ({@code cloudId} + {@code jiraProjectId}). The row is not repointed; use ADD for a
+	 * new source when multi-source is available.
+	 */
+	JIRA_SOURCE_IDENTITY_MISMATCH,
+	/** Project already has a Jira source; multi-source sync/webhook isolation is not ready (Phase 3). */
+	JIRA_MULTI_SOURCE_NOT_READY,
+	/** Explicit jiraIntegrationId is required when the project has multiple Jira sources. */
+	JIRA_SOURCE_REQUIRED,
+	/** Named Jira source was not found for this project. */
+	JIRA_SOURCE_NOT_FOUND,
+	/** Named Jira source exists but is not ACTIVE / usable for provider writes. */
+	JIRA_SOURCE_NOT_ACTIVE,
 	JIRA_ISSUE_CREATE_FAILED,
 	JIRA_ISSUE_UPDATE_FAILED,
 	JIRA_ISSUE_DELETE_FAILED,

@@ -59,6 +59,11 @@ public record ProjectTaskResponse(
 		/** Native SAGA parent (id + title). Null when unset or the parent row is deleted. Distinct from {@link #parent()}. */
 		ParentTask parentTask,
 		/**
+		 * Compact Jira source provenance. Null only when the Task row has no integration (should not
+		 * occur after V24). REVOKED sources remain visible — lists are not filtered by ACTIVE.
+		 */
+		TaskJiraSourceSummary source,
+		/**
 		 * Direct active children only. Null on list/create/patch (omitted from JSON). Populated on
 		 * detail. Never recursive.
 		 */

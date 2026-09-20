@@ -29,9 +29,14 @@ public record CreateProjectTaskRequest(
 		 */
 		LocalDate startDate,
 		/** Optional native SAGA parent. Null = no native parent. Never written to Jira fields.parent. */
-		UUID parentTaskId) {
+		UUID parentTaskId,
+		/**
+		 * Optional Jira source for create. Required when the project has more than one Jira
+		 * integration; when omitted and exactly one source exists, that source is used.
+		 */
+		UUID jiraIntegrationId) {
 
-	/** Legacy overload (no labels/dueDate/startDate) for existing callers/tests. */
+	/** Legacy overload (no labels/dueDate/startDate/parent/source) for existing callers/tests. */
 	public CreateProjectTaskRequest(
 			String summary,
 			String description,
@@ -43,10 +48,10 @@ public record CreateProjectTaskRequest(
 			String sprintExternalId) {
 		this(
 				summary, description, issueTypeId, assigneeAccountId, priorityId, storyPoints, sprintId,
-				sprintExternalId, null, null, null, null);
+				sprintExternalId, null, null, null, null, null);
 	}
 
-	/** Legacy overload (no dueDate/startDate) for existing callers/tests. */
+	/** Legacy overload (no dueDate/startDate/parent/source) for existing callers/tests. */
 	public CreateProjectTaskRequest(
 			String summary,
 			String description,
@@ -59,10 +64,10 @@ public record CreateProjectTaskRequest(
 			List<String> labels) {
 		this(
 				summary, description, issueTypeId, assigneeAccountId, priorityId, storyPoints, sprintId,
-				sprintExternalId, labels, null, null, null);
+				sprintExternalId, labels, null, null, null, null);
 	}
 
-	/** Legacy overload (no startDate) for existing callers/tests -- equivalent to {@code startDate=null}. */
+	/** Legacy overload (no startDate/parent/source) for existing callers/tests -- equivalent to {@code startDate=null}. */
 	public CreateProjectTaskRequest(
 			String summary,
 			String description,
@@ -76,10 +81,10 @@ public record CreateProjectTaskRequest(
 			LocalDate dueDate) {
 		this(
 				summary, description, issueTypeId, assigneeAccountId, priorityId, storyPoints, sprintId,
-				sprintExternalId, labels, dueDate, null, null);
+				sprintExternalId, labels, dueDate, null, null, null);
 	}
 
-	/** Legacy overload (no native parent) for existing callers/tests. */
+	/** Legacy overload (no native parent/source) for existing callers/tests. */
 	public CreateProjectTaskRequest(
 			String summary,
 			String description,
@@ -94,7 +99,26 @@ public record CreateProjectTaskRequest(
 			LocalDate startDate) {
 		this(
 				summary, description, issueTypeId, assigneeAccountId, priorityId, storyPoints, sprintId,
-				sprintExternalId, labels, dueDate, startDate, null);
+				sprintExternalId, labels, dueDate, startDate, null, null);
+	}
+
+	/** Legacy overload (no jiraIntegrationId) for existing callers/tests. */
+	public CreateProjectTaskRequest(
+			String summary,
+			String description,
+			String issueTypeId,
+			String assigneeAccountId,
+			String priorityId,
+			Integer storyPoints,
+			Long sprintId,
+			String sprintExternalId,
+			List<String> labels,
+			LocalDate dueDate,
+			LocalDate startDate,
+			UUID parentTaskId) {
+		this(
+				summary, description, issueTypeId, assigneeAccountId, priorityId, storyPoints, sprintId,
+				sprintExternalId, labels, dueDate, startDate, parentTaskId, null);
 	}
 
 	/** Prefer sprintId; sprintExternalId kept for compatibility. */

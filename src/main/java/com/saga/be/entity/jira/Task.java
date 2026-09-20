@@ -32,14 +32,17 @@ import lombok.Setter;
 @Table(
 	name = "task",
 	uniqueConstraints = {
-		@UniqueConstraint(name = "uk_task_project_external_id", columnNames = {"project_id", "external_id"})
+		@UniqueConstraint(
+				name = "uk_task_jira_integration_external_id",
+				columnNames = {"jira_integration_id", "external_id"})
 	},
 	indexes = {
 		@Index(name = "ix_task_project_sprint", columnList = "project_id, sprint_id"),
 		@Index(name = "ix_task_assignee", columnList = "assignee_student_id"),
 		@Index(name = "ix_task_due_date", columnList = "due_date"),
 		@Index(name = "ix_task_external_key", columnList = "external_key"),
-		@Index(name = "ix_task_parent_task_id", columnList = "parent_task_id")
+		@Index(name = "ix_task_parent_task_id", columnList = "parent_task_id"),
+		@Index(name = "ix_task_project_jira_integration", columnList = "project_id, jira_integration_id")
 	}
 )
 public class Task extends BaseEntity {
@@ -47,6 +50,14 @@ public class Task extends BaseEntity {
 	@ManyToOne(fetch = FetchType.LAZY, optional = false)
 	@JoinColumn(name = "project_id", nullable = false)
 	private Project project;
+
+	/**
+	 * Explicit Jira source provenance. Distinct from {@link #project}: two sources under one Project
+	 * may both expose the same provider {@code external_id} as different Task rows.
+	 */
+	@ManyToOne(fetch = FetchType.LAZY, optional = false)
+	@JoinColumn(name = "jira_integration_id", nullable = false)
+	private JiraIntegration jiraIntegration;
 
 	@ManyToOne(fetch = FetchType.LAZY, optional = true)
 	@JoinColumn(name = "sprint_id", nullable = true)

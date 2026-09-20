@@ -2,18 +2,21 @@ package com.saga.be.controller;
 
 import com.saga.be.config.IntegrationProperties;
 import com.saga.be.dto.ApiErrorResponse;
-import com.saga.be.exception.IntegrationException;
-import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
 import com.saga.be.dto.integration.OAuthStartResponse;
+import com.saga.be.dto.integration.JiraSourceSummary;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraBoardOption;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraProjectOption;
 import com.saga.be.dto.integration.SelectGitHubRepositoryRequest;
 import com.saga.be.dto.integration.SelectJiraIntegrationRequest;
+import com.saga.be.dto.project.ProjectTaskOptionsResponse;
+import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.github.GitHubOAuthClient;
 import com.saga.be.integration.jira.JiraOAuthClient;
+import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.identity.ProjectIntegrationService;
+import com.saga.be.service.projection.ProjectJiraTaskCommandService;
 import com.saga.be.workload.Workload;
 import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
@@ -49,10 +52,15 @@ import org.springframework.web.bind.annotation.RestController;
 public class ProjectIntegrationController {
 
 	private final ProjectIntegrationService integrations;
+	private final ProjectJiraTaskCommandService taskCommands;
 	private final IntegrationProperties properties;
 
-	public ProjectIntegrationController(ProjectIntegrationService integrations, IntegrationProperties properties) {
+	public ProjectIntegrationController(
+			ProjectIntegrationService integrations,
+			ProjectJiraTaskCommandService taskCommands,
+			IntegrationProperties properties) {
 		this.integrations = integrations;
+		this.taskCommands = taskCommands;
 		this.properties = properties;
 	}
 
@@ -155,11 +163,72 @@ public class ProjectIntegrationController {
 
 	@PostMapping("/jira/connect")
 	@Workload(WorkloadClass.INTERACTIVE_WRITE)
+	@Operation(
+			summary = "Start Jira OAuth to ADD the first source for the project. Team Leader only.",
+			description =
+					"Fails with JIRA_MULTI_SOURCE_NOT_READY when any jira_integration row already exists. "
+							+ "To reconnect an existing source use POST /jira-sources/{integrationId}/reconnect.")
 	public OAuthStartResponse jiraConnect(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
 			@RequestParam(required = false) String returnPath) {
 		return integrations.startJira(principal.getUserId(), projectId, returnPath);
+	}
+
+	@GetMapping("/jira-sources")
+	@Operation(summary = "List Jira sources for the project (no secrets). Member or admin.")
+	public List<JiraSourceSummary> listJiraSources(
+			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
+		return integrations.listJiraSources(principal.getUserId(), projectId);
+	}
+
+	@PostMapping("/jira-sources/connect")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
+	@Operation(
+			summary = "Start Jira OAuth to ADD a new source. Team Leader only.",
+			description =
+					"Same ADD guard as POST /jira/connect: fails with JIRA_MULTI_SOURCE_NOT_READY when any source already exists.")
+	public OAuthStartResponse jiraSourceConnect(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@RequestParam(required = false) String returnPath) {
+		return integrations.startJiraSourceConnect(principal.getUserId(), projectId, returnPath);
+	}
+
+	@PostMapping("/jira-sources/{integrationId}/reconnect")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
+	@Operation(
+			summary = "Start Jira OAuth to reconnect a named existing source. Team Leader only.",
+			description = "Validates the integration belongs to the project before OAuth.")
+	public OAuthStartResponse jiraSourceReconnect(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@PathVariable UUID integrationId,
+			@RequestParam(required = false) String returnPath) {
+		return integrations.startJiraSourceReconnect(principal.getUserId(), projectId, integrationId, returnPath);
+	}
+
+	@PutMapping("/jira-sources/{integrationId}")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
+	@Operation(summary = "Save Jira site/project/board for a named source only. Team Leader only.")
+	public ResponseEntity<Void> saveJiraSource(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@PathVariable UUID integrationId,
+			@Valid @RequestBody SelectJiraIntegrationRequest selection) {
+		integrations.saveJiraSourceSelection(principal.getUserId(), projectId, integrationId, selection);
+		return ResponseEntity.noContent().build();
+	}
+
+	@DeleteMapping("/jira-sources/{integrationId}")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
+	@Operation(summary = "Soft-disconnect a named Jira source. Team Leader only.")
+	public ResponseEntity<Void> deleteJiraSource(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@PathVariable UUID integrationId) {
+		integrations.disconnectJiraSource(principal.getUserId(), projectId, integrationId);
+		return ResponseEntity.noContent().build();
 	}
 
 	@GetMapping("/jira/sites")
@@ -217,8 +286,21 @@ public class ProjectIntegrationController {
 		return ResponseEntity.noContent().build();
 	}
 
+	@GetMapping("/jira-sources/{integrationId}/task-options")
+	@Operation(summary = "Provider-backed task options for a specific Jira source on this project.")
+	public ProjectTaskOptionsResponse jiraSourceTaskOptions(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@PathVariable UUID integrationId) {
+		return taskCommands.optionsForIntegration(principal.getUserId(), projectId, integrationId);
+	}
+
 	@DeleteMapping("/jira")
 	@Workload(WorkloadClass.INTERACTIVE_WRITE)
+	@Operation(
+			summary = "Soft-disconnect the singular Jira source. Team Leader only.",
+			description =
+					"When multiple sources exist, fails with JIRA_SOURCE_REQUIRED — use DELETE /jira-sources/{integrationId}.")
 	public ResponseEntity<Void> deleteJira(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
 		integrations.disconnectJira(principal.getUserId(), projectId);

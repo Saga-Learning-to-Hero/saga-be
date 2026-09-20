@@ -26,6 +26,7 @@ import com.saga.be.entity.enums.TaskStatus;
 import com.saga.be.entity.enums.TraceLinkSource;
 import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.github.GitRepo;
+import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
@@ -38,6 +39,7 @@ import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.CourseRepository;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.GitRepoRepository;
+import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.ProjectRepository;
 import com.saga.be.repository.SemesterRepository;
 import com.saga.be.repository.StudentProfileRepository;
@@ -145,6 +147,8 @@ class TaskCommitListQueryCountTest {
 	@Autowired
 	private TaskRepository tasks;
 	@Autowired
+	private JiraIntegrationRepository jiraIntegrations;
+	@Autowired
 	private TaskGitCommitLinkRepository links;
 	@Autowired
 	private TaskFileRepository files;
@@ -156,6 +160,7 @@ class TaskCommitListQueryCountTest {
 	private Project project;
 	private GitRepo repo;
 	private StudentProfile author;
+	private JiraIntegration jiraIntegration;
 	private Task task;
 	private ProjectProjectionReadService readService;
 	private ProjectTaskEvidenceReadService evidenceService;
@@ -292,6 +297,7 @@ class TaskCommitListQueryCountTest {
 			assertThat(unlinked.getId()).isNotNull();
 			Task other = new Task();
 			other.setProject(project);
+			other.setJiraIntegration(jiraIntegration);
 			other.setTitle("Other");
 			other.setStatus(TaskStatus.TODO);
 			other.setExternalKey("SAGA-OTHER");
@@ -519,6 +525,8 @@ class TaskCommitListQueryCountTest {
 		project.setCreatedBy(student);
 		project = projects.save(project);
 
+		jiraIntegration = jiraIntegrations.save(jiraFor(project));
+
 		Team team = new Team();
 		team.setCourse(course);
 		team.setProject(project);
@@ -546,10 +554,22 @@ class TaskCommitListQueryCountTest {
 
 		task = new Task();
 		task.setProject(project);
+		task.setJiraIntegration(jiraIntegration);
 		task.setTitle("Login");
 		task.setStatus(TaskStatus.TODO);
 		task.setExternalKey("SAGA-1");
 		task = tasks.save(task);
+	}
+
+	private static JiraIntegration jiraFor(Project project) {
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setCloudId("cloud-" + UUID.randomUUID());
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
+		integration.setConsecutiveFailures(0);
+		return integration;
 	}
 
 	private Statistics statistics() {

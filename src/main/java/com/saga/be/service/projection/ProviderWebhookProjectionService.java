@@ -213,7 +213,7 @@ public class ProviderWebhookProjectionService {
 				LocalDateTime now = LocalDateTime.now();
 				writes.executeWithoutResult(status -> {
 					for (JiraIntegration integration : matches) {
-						tasks.softDelete(integration.getProject(), externalId, now);
+						tasks.softDelete(integration, externalId, now);
 						realtime.publish(
 								ProjectRealtimeEventType.TASKS_CHANGED,
 								integration.getProject().getId(),
@@ -248,7 +248,7 @@ public class ProviderWebhookProjectionService {
 				for (Map.Entry<JiraIntegration, IssueSummary> entry : summaries.entrySet()) {
 					JiraIntegration integration = entry.getKey();
 					int applied = tasks.upsertBatch(
-							integration.getProject(), integration.getProjectKey(), List.of(entry.getValue()));
+							integration, integration.getProjectKey(), List.of(entry.getValue()));
 					if (applied > 0) {
 						realtime.publish(
 								ProjectRealtimeEventType.TASKS_CHANGED,

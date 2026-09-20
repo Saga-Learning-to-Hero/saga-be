@@ -16,10 +16,12 @@ import com.saga.be.entity.academic.SubjectSyllabusVersion;
 import com.saga.be.entity.enums.AccountRole;
 import com.saga.be.entity.enums.AccountStatus;
 import com.saga.be.entity.enums.EnrollmentStatus;
+import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.RoleInTeam;
 import com.saga.be.entity.enums.SubjectStatus;
 import com.saga.be.entity.enums.SyllabusStatus;
 import com.saga.be.entity.enums.TaskStatus;
+import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
@@ -30,6 +32,7 @@ import com.saga.be.repository.AcademicClassRepository;
 import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.CourseRepository;
 import com.saga.be.repository.GitCommitRepository;
+import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.ProjectRepository;
 import com.saga.be.repository.SemesterRepository;
 import com.saga.be.repository.StudentProfileRepository;
@@ -128,6 +131,8 @@ class ParentOptionsPagingQueryCountTest {
 	@Autowired
 	private TaskRepository tasks;
 	@Autowired
+	private JiraIntegrationRepository jiraIntegrations;
+	@Autowired
 	private GitCommitRepository commits;
 	@Autowired
 	private TaskGitCommitLinkRepository links;
@@ -136,6 +141,8 @@ class ParentOptionsPagingQueryCountTest {
 	private UserAccount student;
 	private Project project;
 	private Project otherProject;
+	private JiraIntegration jiraIntegration;
+	private JiraIntegration otherJiraIntegration;
 	private ProjectProjectionReadService readService;
 
 	@BeforeEach
@@ -267,6 +274,7 @@ class ParentOptionsPagingQueryCountTest {
 			Task foreign = new Task();
 			foreign.setId(UUID.fromString("00000000-0000-4000-8000-0000000000ee"));
 			foreign.setProject(otherProject);
+			foreign.setJiraIntegration(otherJiraIntegration);
 			foreign.setTitle("Foreign");
 			foreign.setStatus(TaskStatus.TODO);
 			foreign.setExternalKey("SAGA-F");
@@ -319,6 +327,7 @@ class ParentOptionsPagingQueryCountTest {
 				long n = existing + i + 1;
 				Task task = new Task();
 				task.setProject(managed);
+				task.setJiraIntegration(jiraIntegration);
 				task.setTitle("T" + n);
 				task.setStatus(TaskStatus.TODO);
 				task.setExternalKey("SAGA-" + n);
@@ -364,6 +373,7 @@ class ParentOptionsPagingQueryCountTest {
 		Task task = new Task();
 		task.setId(id);
 		task.setProject(projects.findById(project.getId()).orElseThrow());
+		task.setJiraIntegration(jiraIntegration);
 		task.setTitle(title);
 		task.setStatus(TaskStatus.TODO);
 		task.setExternalKey(key);
@@ -433,11 +443,14 @@ class ParentOptionsPagingQueryCountTest {
 		project.setCreatedBy(student);
 		project = projects.save(project);
 
+		jiraIntegration = jiraIntegrations.save(jiraFor(project));
+
 		otherProject = new Project();
 		otherProject.setName("Other");
 		otherProject.setCourse(course);
 		otherProject.setCreatedBy(student);
 		otherProject = projects.save(otherProject);
+		otherJiraIntegration = jiraIntegrations.save(jiraFor(otherProject));
 
 		Team team = new Team();
 		team.setCourse(course);
@@ -452,6 +465,17 @@ class ParentOptionsPagingQueryCountTest {
 		member.setCourseEnrollment(enrollment);
 		member.setRoleInTeam(RoleInTeam.MEMBER);
 		members.save(member);
+	}
+
+	private static JiraIntegration jiraFor(Project project) {
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setCloudId("cloud-" + UUID.randomUUID());
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
+		integration.setConsecutiveFailures(0);
+		return integration;
 	}
 
 	private Statistics statistics() {

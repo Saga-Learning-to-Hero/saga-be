@@ -107,7 +107,6 @@ class ProjectJiraTaskCommandServiceTest {
 		});
 		service = new ProjectJiraTaskCommandService(
 				authorization,
-				projects,
 				jiraIntegrations,
 				tasks,
 				workSessions,
@@ -134,8 +133,7 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.createIssue(
 						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(), any(),
@@ -148,7 +146,7 @@ class ProjectJiraTaskCommandServiceTest {
 		saved.setExternalId("10001");
 		saved.setExternalKey("SAGA-1");
 		saved.setTitle("Login");
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(saved);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(saved);
 
 		ProjectTaskResponse response = service.create(
 				userId, projectId, new CreateProjectTaskRequest("Login", null, null, null, null, null, null, null));
@@ -158,7 +156,7 @@ class ProjectJiraTaskCommandServiceTest {
 				.createIssue(
 						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(), any(),
 						any(), any());
-		verify(projection).upsertOne(project, "SAGA", canonical);
+		verify(projection).upsertOne(integration, "SAGA", canonical);
 		assertThat(lastEvent.get()).isNotNull();
 		assertThat(lastEvent.get().type()).isEqualTo(ProjectRealtimeEventType.TASKS_CHANGED);
 	}
@@ -167,8 +165,7 @@ class ProjectJiraTaskCommandServiceTest {
 	void create_providerFailure_doesNotPersistLocalTask() {
 		stubLeader();
 		JiraIntegration integration = activeJira();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
 				.thenThrow(new IntegrationException(
@@ -192,8 +189,7 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.createIssue(
 						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
@@ -201,7 +197,7 @@ class ProjectJiraTaskCommandServiceTest {
 				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(taskRow());
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(taskRow());
 
 		service.create(
 				userId,
@@ -222,8 +218,7 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.createIssue(
 						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
@@ -231,7 +226,7 @@ class ProjectJiraTaskCommandServiceTest {
 				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(taskRow());
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(taskRow());
 
 		service.create(
 				userId, projectId, new CreateProjectTaskRequest("Login", null, null, null, null, null, null, null));
@@ -247,14 +242,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "New title");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -275,14 +269,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -304,14 +297,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -333,9 +325,8 @@ class ProjectJiraTaskCommandServiceTest {
 	void patch_jiraRejectsLabelUpdate_localTaskNotMutated() {
 		stubLeader();
 		JiraIntegration integration = activeJira();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		org.mockito.Mockito.doThrow(new IntegrationException(
@@ -365,8 +356,7 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		java.time.LocalDate dueDate = java.time.LocalDate.of(2026, 9, 18);
 		when(jiraWrite.createIssue(
@@ -375,7 +365,7 @@ class ProjectJiraTaskCommandServiceTest {
 				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(taskRow());
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(taskRow());
 
 		service.create(
 				userId,
@@ -393,14 +383,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "New title");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -422,14 +411,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -452,14 +440,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -481,9 +468,8 @@ class ProjectJiraTaskCommandServiceTest {
 	void patch_jiraRejectsDueDateUpdate_localTaskNotMutated() {
 		stubLeader();
 		JiraIntegration integration = activeJira();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		org.mockito.Mockito.doThrow(new IntegrationException(
@@ -513,8 +499,7 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		java.time.LocalDate startDate = java.time.LocalDate.of(2026, 9, 14);
 		when(jiraWrite.createIssue(
@@ -523,7 +508,7 @@ class ProjectJiraTaskCommandServiceTest {
 				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(taskRow());
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(taskRow());
 
 		service.create(
 				userId,
@@ -542,8 +527,7 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.createIssue(
 						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
@@ -551,7 +535,7 @@ class ProjectJiraTaskCommandServiceTest {
 				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(taskRow());
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(taskRow());
 
 		service.create(
 				userId, projectId, new CreateProjectTaskRequest("Login", null, null, null, null, null, null, null));
@@ -567,14 +551,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "New title");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -600,15 +583,14 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.requireStartDateFieldId("token", "cloud")).thenReturn("customfield_10015");
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -631,15 +613,14 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.requireStartDateFieldId("token", "cloud")).thenReturn("customfield_10015");
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -662,9 +643,8 @@ class ProjectJiraTaskCommandServiceTest {
 	void patch_unresolvedStartDateField_doesNotGuessOrWrite() {
 		stubLeader();
 		JiraIntegration integration = activeJira();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.requireStartDateFieldId("token", "cloud"))
@@ -693,9 +673,8 @@ class ProjectJiraTaskCommandServiceTest {
 	void patch_jiraRejectsStartDateUpdate_localTaskNotMutated() {
 		stubLeader();
 		JiraIntegration integration = activeJira();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.requireStartDateFieldId("token", "cloud")).thenReturn("customfield_10015");
@@ -726,16 +705,15 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.listTransitions("token", "cloud", "10001"))
 				.thenReturn(List.of(new TransitionOption("21", "Start", "3", "In Progress")));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.transition(userId, projectId, task.getId(), new TransitionProjectTaskRequest(null, "3"));
@@ -747,8 +725,8 @@ class ProjectJiraTaskCommandServiceTest {
 	void delete_blockedByProtectedEvidence() {
 		stubLeader();
 		JiraIntegration integration = activeJira();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(workSessions.existsByTask_Id(task.getId())).thenReturn(true);
 
@@ -764,9 +742,8 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(workSessions.existsByTask_Id(task.getId())).thenReturn(false);
 		when(confirmations.existsByTask_Id(task.getId())).thenReturn(false);
@@ -775,7 +752,7 @@ class ProjectJiraTaskCommandServiceTest {
 		service.delete(userId, projectId, task.getId());
 
 		verify(jiraWrite).deleteIssue("token", "cloud", "10001");
-		verify(projection).softDelete(eq(project), eq("10001"), any());
+		verify(projection).softDelete(eq(integration), eq("10001"), any());
 	}
 
 	@Test
@@ -783,14 +760,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -800,7 +776,7 @@ class ProjectJiraTaskCommandServiceTest {
 				new PatchProjectTaskRequest(null, null, null, null, null, null, null, "31", null, null, null));
 
 		verify(jiraWrite).moveIssuesToSprint("token", "cloud", "31", List.of("10001"));
-		verify(projection).upsertOne(project, "SAGA", canonical);
+		verify(projection).upsertOne(integration, "SAGA", canonical);
 	}
 
 	@Test
@@ -808,14 +784,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.moveSprint(userId, projectId, task.getId(), new PutProjectTaskSprintRequest(null));
@@ -828,14 +803,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -852,14 +826,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "New title");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -885,14 +858,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -913,14 +885,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -941,14 +912,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -970,14 +940,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 
 		service.patch(
@@ -994,9 +963,8 @@ class ProjectJiraTaskCommandServiceTest {
 	void patch_jiraRejectsFieldUpdate_localTaskNotMutated() {
 		stubLeader();
 		JiraIntegration integration = activeJira();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		org.mockito.Mockito.doThrow(new IntegrationException(
@@ -1139,14 +1107,13 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
 				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(taskRow());
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(taskRow());
 
 		ProjectTaskResponse response = service.create(
 				userId, projectId, new CreateProjectTaskRequest("Login", null, null, null, null, null, null, null));
@@ -1160,8 +1127,7 @@ class ProjectJiraTaskCommandServiceTest {
 	void create_invalidParent_failsBeforeJiraCreateIssue() {
 		stubLeader();
 		UUID parentId = UUID.randomUUID();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(activeJira()));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project()));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(activeJira()));
 		when(tasks.findParentIdentity(parentId)).thenReturn(Optional.empty());
 
 		assertThatThrownBy(() -> service.create(
@@ -1188,8 +1154,7 @@ class ProjectJiraTaskCommandServiceTest {
 		parent.setTitle("Parent");
 		parent.setProject(project);
 		Task saved = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
 		when(tasks.findParentIdentity(parentId)).thenReturn(Optional.of(identity(parentId, projectId, null)));
 		when(tasks.findParentIdentity(saved.getId())).thenReturn(Optional.of(identity(saved.getId(), projectId, null)));
 		when(tasks.findParentTaskIdById(parentId)).thenReturn(Optional.empty());
@@ -1201,7 +1166,7 @@ class ProjectJiraTaskCommandServiceTest {
 				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(saved);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(saved);
 
 		ProjectTaskResponse response = service.create(
 				userId,
@@ -1226,8 +1191,7 @@ class ProjectJiraTaskCommandServiceTest {
 		Task parent = new Task();
 		parent.setId(parentId);
 		parent.setTitle("Parent");
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
 		when(tasks.findParentIdentity(parentId))
 				.thenReturn(Optional.of(identity(parentId, projectId, null)))
 				.thenReturn(Optional.of(identity(parentId, projectId, java.time.LocalDateTime.now())));
@@ -1237,7 +1201,7 @@ class ProjectJiraTaskCommandServiceTest {
 				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(saved);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(saved);
 
 		IntegrationException thrown = org.assertj.core.api.Assertions.catchThrowableOfType(
 				() -> service.create(
@@ -1254,7 +1218,7 @@ class ProjectJiraTaskCommandServiceTest {
 		assertThat(thrown.getDetails()).isEqualTo(JiraWriteIncompleteDetails.nativeParentNotApplied(saved.getId()));
 		verify(jiraWrite, times(1))
 				.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
-		verify(projection, times(1)).upsertOne(project, "SAGA", canonical);
+		verify(projection, times(1)).upsertOne(integration, "SAGA", canonical);
 		verify(tasks, never()).save(any());
 		assertThat(saved.getParentTask()).isNull();
 
@@ -1307,7 +1271,8 @@ class ProjectJiraTaskCommandServiceTest {
 						parentId, null));
 
 		verifyZeroProviderInteraction();
-		verify(jiraIntegrations, never()).findByProject_Id(any());
+		verify(jiraIntegrations, never()).findAllByProject_Id(any());
+		verify(jiraIntegrations, never()).findByIdAndProject_Id(any(), any());
 		verify(projection, never()).upsertOne(any(), any(), any());
 		verify(projects).lockById(projectId);
 		verify(tasks).save(task);
@@ -1365,13 +1330,12 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
+		Task task = taskRow(integration);
 		UUID parentId = UUID.randomUUID();
 		Task parent = new Task();
 		parent.setId(parentId);
 		parent.setTitle("Parent");
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tasks.findParentIdentity(parentId))
 				.thenReturn(Optional.of(identity(parentId, projectId, null)))
@@ -1381,7 +1345,7 @@ class ProjectJiraTaskCommandServiceTest {
 		when(tokens.accessToken(integration)).thenReturn("token");
 		IssueSummary canonical = summary("10001", "SAGA-1", "New title");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
-		when(projection.upsertOne(project, "SAGA", canonical)).thenReturn(task);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
 
 		IntegrationException thrown = org.assertj.core.api.Assertions.catchThrowableOfType(
 				() -> service.patch(
@@ -1401,7 +1365,7 @@ class ProjectJiraTaskCommandServiceTest {
 		verify(jiraWrite, times(1)).updateIssueFields(any(), any(), any(), any());
 		verify(jiraWrite, never())
 				.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
-		verify(projection, times(1)).upsertOne(project, "SAGA", canonical);
+		verify(projection, times(1)).upsertOne(integration, "SAGA", canonical);
 		verify(tasks, never()).save(any());
 		assertThat(task.getParentTask()).isNull();
 
@@ -1447,8 +1411,9 @@ class ProjectJiraTaskCommandServiceTest {
 	@Test
 	void delete_blockedByActiveNativeChildren_beforeJiraDelete() {
 		stubLeader();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(activeJira()));
+		JiraIntegration integration = activeJira();
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(workSessions.existsByTask_Id(task.getId())).thenReturn(false);
 		when(confirmations.existsByTask_Id(task.getId())).thenReturn(false);
@@ -1466,9 +1431,8 @@ class ProjectJiraTaskCommandServiceTest {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
-		Task task = taskRow();
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(projects.findFetchedById(projectId)).thenReturn(Optional.of(project));
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(workSessions.existsByTask_Id(task.getId())).thenReturn(false);
 		when(confirmations.existsByTask_Id(task.getId())).thenReturn(false);
@@ -1479,7 +1443,7 @@ class ProjectJiraTaskCommandServiceTest {
 
 		verify(tasks).existsByParentTask_IdAndDeletedAtIsNull(task.getId());
 		verify(jiraWrite).deleteIssue("token", "cloud", "10001");
-		verify(projection).softDelete(eq(project), eq("10001"), any());
+		verify(projection).softDelete(eq(integration), eq("10001"), any());
 	}
 
 	@Test
@@ -1495,6 +1459,140 @@ class ProjectJiraTaskCommandServiceTest {
 								null)))
 				.isInstanceOf(IntegrationException.class);
 		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void create_withExplicitJiraIntegrationId_usesThatSource() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		integration.setCloudId("cloud-b");
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.createIssue(
+						eq("token"), eq("cloud-b"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(), any(),
+						any(), any()))
+				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud-b", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(taskRow(integration));
+
+		service.create(
+				userId,
+				projectId,
+				new CreateProjectTaskRequest(
+						"Login", null, null, null, null, null, null, null, null, null, null, null, integration.getId()));
+
+		verify(jiraWrite)
+				.createIssue(
+						eq("token"), eq("cloud-b"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(), any(),
+						any(), any());
+		verify(jiraIntegrations, never()).findAllByProject_Id(any());
+	}
+
+	@Test
+	void create_omittedSource_withTwoIntegrations_requiresExplicitId() {
+		stubLeader();
+		JiraIntegration first = activeJira();
+		JiraIntegration second = activeJira();
+		second.setCloudId("cloud-2");
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(first, second));
+
+		assertThatThrownBy(() -> service.create(
+						userId,
+						projectId,
+						new CreateProjectTaskRequest("Login", null, null, null, null, null, null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_SOURCE_REQUIRED);
+		verify(jiraWrite, never())
+				.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void options_wrongProjectIntegration_failsNotFound() {
+		stubReader();
+		UUID foreignId = UUID.randomUUID();
+		when(jiraIntegrations.findByIdAndProject_Id(foreignId, projectId)).thenReturn(Optional.empty());
+
+		assertThatThrownBy(() -> service.options(userId, projectId, foreignId))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND);
+	}
+
+	@Test
+	void optionsForIntegration_wrongProject_failsNotFound() {
+		stubReader();
+		UUID foreignId = UUID.randomUUID();
+		when(jiraIntegrations.findByIdAndProject_Id(foreignId, projectId)).thenReturn(Optional.empty());
+
+		assertThatThrownBy(() -> service.optionsForIntegration(userId, projectId, foreignId))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND);
+	}
+
+	@Test
+	void patch_usesTaskProvenanceCloudId_notProjectSingular() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		integration.setCloudId("task-cloud");
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "Renamed");
+		when(jiraWrite.getIssue("token", "task-cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest("Renamed", null, null, null, null, null, null, null, null, null, null));
+
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("task-cloud"), eq("10001"), any());
+		verify(jiraIntegrations, never()).findAllByProject_Id(any());
+		verify(jiraIntegrations, never()).findByProject_Id(any());
+	}
+
+	@Test
+	void delete_revokedTaskSource_failsNotActive_withoutRedirect() {
+		stubLeader();
+		JiraIntegration revoked = activeJira();
+		revoked.setConnectionStatus(IntegrationStatus.REVOKED);
+		Task task = taskRow(revoked);
+		when(jiraIntegrations.findByIdAndProject_Id(revoked.getId(), projectId)).thenReturn(Optional.of(revoked));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+
+		assertThatThrownBy(() -> service.delete(userId, projectId, task.getId()))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_SOURCE_NOT_ACTIVE);
+		verify(jiraWrite, never()).deleteIssue(any(), any(), any());
+		verify(jiraIntegrations, never()).findAllByProject_Id(any());
+	}
+
+	@Test
+	void transition_usesTaskProvenanceCloudId() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		integration.setCloudId("transition-cloud");
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.listTransitions("token", "transition-cloud", "10001"))
+				.thenReturn(List.of(new TransitionOption("21", "Start", "3", "In Progress")));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "transition-cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.transition(userId, projectId, task.getId(), new TransitionProjectTaskRequest(null, "3"));
+
+		verify(jiraWrite).transitionIssue("token", "transition-cloud", "10001", "21");
 	}
 
 	@Test
@@ -1529,6 +1627,14 @@ class ProjectJiraTaskCommandServiceTest {
 		student.setAccountRole(AccountRole.STUDENT);
 		when(users.findById(userId)).thenReturn(Optional.of(student));
 		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.LEADER));
+	}
+
+	private void stubReader() {
+		UserAccount student = new UserAccount();
+		student.setId(userId);
+		student.setAccountRole(AccountRole.STUDENT);
+		when(users.findById(userId)).thenReturn(Optional.of(student));
+		when(members.existsActiveByProjectIdAndUserId(projectId, userId)).thenReturn(true);
 	}
 
 	private void stubMember() {
@@ -1579,11 +1685,17 @@ class ProjectJiraTaskCommandServiceTest {
 	}
 
 	private Task taskRow() {
+		return taskRow(activeJira());
+	}
+
+	private Task taskRow(JiraIntegration integration) {
 		Task task = new Task();
 		task.setId(UUID.randomUUID());
 		task.setExternalId("10001");
 		task.setExternalKey("SAGA-1");
 		task.setTitle("Login");
+		task.setProject(project());
+		task.setJiraIntegration(integration);
 		return task;
 	}
 

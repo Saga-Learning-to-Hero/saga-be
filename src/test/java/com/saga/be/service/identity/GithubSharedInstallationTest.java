@@ -113,8 +113,6 @@ class GithubSharedInstallationTest {
 	@Mock
 	private com.saga.be.service.sync.IntegrationInitialSyncLauncher initialSyncLauncher;
 	@Mock
-	private JiraTaskProjectionHardReset taskProjectionReset;
-	@Mock
 	private com.saga.be.service.jira.JiraDynamicWebhookService jiraWebhooks;
 
 	@InjectMocks
@@ -132,7 +130,6 @@ class GithubSharedInstallationTest {
 	void setUp() {
 		lenient().when(transactionManager.getTransaction(any(TransactionDefinition.class)))
 				.thenReturn(new SimpleTransactionStatus());
-		lenient().when(taskProjectionReset.protectedEvidenceExists(any())).thenReturn(false);
 		lenient().when(repos.findByProject_IdWithInstallation(any())).thenReturn(List.of());
 		lenient().when(reconnectCandidates.find(any(), any())).thenReturn(List.of());
 		lenient().when(projectInstallations.findByProject_IdWithInstallation(any())).thenReturn(List.of());

@@ -27,6 +27,7 @@ import com.saga.be.entity.enums.TraceLinkSource;
 import com.saga.be.entity.enums.WorkSessionStatus;
 import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.github.GitRepo;
+import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
@@ -41,6 +42,7 @@ import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.CourseRepository;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.GitRepoRepository;
+import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.LecturerProfileRepository;
 import com.saga.be.repository.ProjectRepository;
 import com.saga.be.repository.SemesterRepository;
@@ -147,6 +149,8 @@ class TaskWorkSessionTimelineQueryCountTest {
 	@Autowired
 	private TaskRepository tasks;
 	@Autowired
+	private JiraIntegrationRepository jiraIntegrations;
+	@Autowired
 	private TaskGitCommitLinkRepository links;
 	@Autowired
 	private TaskWorkSessionRepository sessions;
@@ -163,6 +167,8 @@ class TaskWorkSessionTimelineQueryCountTest {
 	private Course course;
 	private GitRepo repo;
 	private GitRepo repoB;
+	private JiraIntegration jiraIntegration;
+	private JiraIntegration otherJiraIntegration;
 	private Task task;
 	private Task otherProjectTask;
 
@@ -282,6 +288,7 @@ class TaskWorkSessionTimelineQueryCountTest {
 		UUID deletedId = tx.execute(status -> {
 			Task soft = new Task();
 			soft.setProject(project);
+			soft.setJiraIntegration(jiraIntegration);
 			soft.setTitle("Gone");
 			soft.setStatus(TaskStatus.TODO);
 			soft.setExternalKey("SAGA-GONE");
@@ -660,6 +667,8 @@ class TaskWorkSessionTimelineQueryCountTest {
 		project.setCreatedBy(student);
 		project = projects.save(project);
 
+		jiraIntegration = jiraIntegrations.save(jiraFor(project));
+
 		Team team = new Team();
 		team.setCourse(course);
 		team.setProject(project);
@@ -675,6 +684,7 @@ class TaskWorkSessionTimelineQueryCountTest {
 
 		task = new Task();
 		task.setProject(project);
+		task.setJiraIntegration(jiraIntegration);
 		task.setTitle("Login");
 		task.setStatus(TaskStatus.TODO);
 		task.setExternalKey("SAGA-1");
@@ -685,12 +695,25 @@ class TaskWorkSessionTimelineQueryCountTest {
 		other.setCourse(course);
 		other.setCreatedBy(student);
 		other = projects.save(other);
+		otherJiraIntegration = jiraIntegrations.save(jiraFor(other));
 		otherProjectTask = new Task();
 		otherProjectTask.setProject(other);
+		otherProjectTask.setJiraIntegration(otherJiraIntegration);
 		otherProjectTask.setTitle("Foreign");
 		otherProjectTask.setStatus(TaskStatus.TODO);
 		otherProjectTask.setExternalKey("OTH-1");
 		otherProjectTask = tasks.save(otherProjectTask);
+	}
+
+	private static JiraIntegration jiraFor(Project project) {
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setCloudId("cloud-" + UUID.randomUUID());
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
+		integration.setConsecutiveFailures(0);
+		return integration;
 	}
 
 	private UserAccount saveUser(String prefix, AccountRole role, String name) {

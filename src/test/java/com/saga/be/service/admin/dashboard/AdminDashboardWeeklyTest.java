@@ -18,6 +18,7 @@ import com.saga.be.entity.enums.TaskStatus;
 import com.saga.be.entity.enums.TraceLinkSource;
 import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.github.GitRepo;
+import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.traceability.TaskGitCommitLink;
@@ -27,6 +28,7 @@ import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.CourseRepository;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.GitRepoRepository;
+import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.SemesterRepository;
 import com.saga.be.repository.SubjectRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
@@ -118,6 +120,8 @@ class AdminDashboardWeeklyTest {
 	private GitCommitRepository commits;
 	@Autowired
 	private TaskRepository tasks;
+	@Autowired
+	private JiraIntegrationRepository jiras;
 	@Autowired
 	private TaskGitCommitLinkRepository links;
 
@@ -395,8 +399,11 @@ class AdminDashboardWeeklyTest {
 			LocalDateTime completedAt,
 			LocalDateTime resolvedAt,
 			LocalDateTime deletedAt) {
+		JiraIntegration jira = jiras.findByProject_Id(project.getId())
+				.orElseGet(() -> persistJira(project, IntegrationStatus.ACTIVE));
 		Task task = new Task();
 		task.setProject(project);
+		task.setJiraIntegration(jira);
 		task.setExternalKey(key);
 		task.setExternalId(UUID.randomUUID().toString());
 		task.setTitle(key);
@@ -413,6 +420,17 @@ class AdminDashboardWeeklyTest {
 		row.setGitCommit(commit);
 		row.setLinkSource(TraceLinkSource.MANUAL);
 		links.save(row);
+	}
+
+	private JiraIntegration persistJira(Project project, IntegrationStatus status) {
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setCloudId("cloud-" + UUID.randomUUID());
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setConnectionStatus(status);
+		integration.setConsecutiveFailures(0);
+		return jiras.save(integration);
 	}
 
 	private void stampCreatedAt(String table, UUID id, LocalDateTime createdAt) {

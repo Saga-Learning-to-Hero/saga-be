@@ -93,8 +93,8 @@ class JiraIssueEvidenceSyncServiceTest {
 
 	@Test
 	void syncIntegration_singlePage_processesAllIssuesAndStops() {
-		when(tasks.findByProject_IdAndExternalId(any(), eq("10001"))).thenReturn(Optional.empty());
-		when(tasks.findByProject_IdAndExternalId(any(), eq("10002"))).thenReturn(Optional.empty());
+		when(tasks.findByJiraIntegration_IdAndExternalId(any(), eq("10001"))).thenReturn(Optional.empty());
+		when(tasks.findByJiraIntegration_IdAndExternalId(any(), eq("10002"))).thenReturn(Optional.empty());
 		when(jira.searchIssues("token", "cloud-1", "SAGA", null, 50))
 				.thenReturn(new EvidenceSearchPage(List.of(issue("10001", "SAGA-1"), issue("10002", "SAGA-2")), null, true));
 
@@ -106,7 +106,7 @@ class JiraIssueEvidenceSyncServiceTest {
 
 	@Test
 	void syncIntegration_multiplePages_followsNextPageTokenUntilLast() {
-		when(tasks.findByProject_IdAndExternalId(any(), any())).thenReturn(Optional.empty());
+		when(tasks.findByJiraIntegration_IdAndExternalId(any(), any())).thenReturn(Optional.empty());
 		when(jira.searchIssues("token", "cloud-1", "SAGA", null, 50))
 				.thenReturn(new EvidenceSearchPage(List.of(issue("10001", "SAGA-1")), "tok-2", false));
 		when(jira.searchIssues("token", "cloud-1", "SAGA", "tok-2", 50))
@@ -137,7 +137,7 @@ class JiraIssueEvidenceSyncServiceTest {
 		TrackingPlatformTransactionManager tm = new TrackingPlatformTransactionManager();
 		service = new JiraIssueEvidenceSyncService(
 				integrations, tokens, jira, tasks, links, files, attachments, new TaskFileProperties(), new ObjectMapper(), tm);
-		when(tasks.findByProject_IdAndExternalId(any(), eq("10001"))).thenReturn(Optional.empty());
+		when(tasks.findByJiraIntegration_IdAndExternalId(any(), eq("10001"))).thenReturn(Optional.empty());
 		when(jira.searchIssues("token", "cloud-1", "SAGA", null, 50)).thenAnswer(inv -> {
 			assertThat(TransactionSynchronizationManager.isActualTransactionActive())
 					.as("jira search HTTP must be outside JDBC TX")
@@ -175,7 +175,7 @@ class JiraIssueEvidenceSyncServiceTest {
 		props.setDirectory(blocked);
 		service = new JiraIssueEvidenceSyncService(
 				integrations, tokens, jira, tasks, links, files, attachments, props, new ObjectMapper());
-		when(tasks.findByProject_IdAndExternalId(any(), eq("10001"))).thenReturn(Optional.empty());
+		when(tasks.findByJiraIntegration_IdAndExternalId(any(), eq("10001"))).thenReturn(Optional.empty());
 		when(tasks.findById(any())).thenAnswer(inv -> {
 			Task task = new Task();
 			task.setId((UUID) inv.getArgument(0));
@@ -196,7 +196,7 @@ class JiraIssueEvidenceSyncServiceTest {
 		props.setDirectory(temp);
 		service = new JiraIssueEvidenceSyncService(
 				integrations, tokens, jira, tasks, links, files, attachments, props, new ObjectMapper());
-		when(tasks.findByProject_IdAndExternalId(any(), eq("10001"))).thenReturn(Optional.empty());
+		when(tasks.findByJiraIntegration_IdAndExternalId(any(), eq("10001"))).thenReturn(Optional.empty());
 		when(tasks.findById(any())).thenAnswer(inv -> {
 			Task task = new Task();
 			task.setId((UUID) inv.getArgument(0));

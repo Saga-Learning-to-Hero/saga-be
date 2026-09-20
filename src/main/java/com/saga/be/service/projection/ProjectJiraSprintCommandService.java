@@ -60,7 +60,19 @@ public class ProjectJiraSprintCommandService {
 
 	public List<ProjectSprintResponse> syncAndList(UUID userId, UUID projectId) {
 		authorization.requireReader(userId, projectId);
-		JiraIntegration integration = requireActiveJira(projectId);
+		List<JiraIntegration> active = jiraIntegrations.findAllByProject_Id(projectId).stream()
+				.filter(row -> row.getConnectionStatus() == IntegrationStatus.ACTIVE)
+				.toList();
+		if (active.size() > 1) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_SOURCE_REQUIRED,
+					HttpStatus.CONFLICT,
+					"jiraIntegrationId is required when the project has multiple active Jira sources.");
+		}
+		if (active.isEmpty()) {
+			return sprints.findActiveByProject_Id(projectId).stream().map(this::toResponse).toList();
+		}
+		JiraIntegration integration = active.get(0);
 		if (integration.getJiraBoardId() == null || integration.getJiraBoardId().isBlank()) {
 			return sprints.findActiveByProject_Id(projectId).stream().map(this::toResponse).toList();
 		}
@@ -85,7 +97,7 @@ public class ProjectJiraSprintCommandService {
 
 	public ProjectSprintResponse create(UUID userId, UUID projectId, CreateProjectSprintRequest request) {
 		authorization.requireStudentLeader(userId, projectId);
-		JiraIntegration integration = requireActiveJira(projectId);
+		JiraIntegration integration = resolveJiraForCreate(projectId, request.jiraIntegrationId());
 		requireBoard(integration);
 		String access = tokens.accessToken(integration);
 		SprintDetail created = jiraWrite.createSprint(
@@ -116,10 +128,10 @@ public class ProjectJiraSprintCommandService {
 
 	public ProjectSprintResponse patch(UUID userId, UUID projectId, UUID sprintId, PatchProjectSprintRequest request) {
 		authorization.requireStudentLeader(userId, projectId);
-		JiraIntegration integration = requireActiveJira(projectId);
 		Sprint local = sprints.findActiveByIdAndProject_Id(sprintId, projectId)
 				.orElseThrow(() -> new AcademicException(
 						AcademicErrorCode.PROJECT_NOT_FOUND, HttpStatus.NOT_FOUND, "Sprint was not found for this project."));
+		JiraIntegration integration = requireJiraForSprint(projectId, local);
 		String access = tokens.accessToken(integration);
 		SprintDetail updated = jiraWrite.updateSprint(
 				access,
@@ -150,10 +162,10 @@ public class ProjectJiraSprintCommandService {
 
 	public void delete(UUID userId, UUID projectId, UUID sprintId) {
 		authorization.requireStudentLeader(userId, projectId);
-		JiraIntegration integration = requireActiveJira(projectId);
 		Sprint local = sprints.findActiveByIdAndProject_Id(sprintId, projectId)
 				.orElseThrow(() -> new AcademicException(
 						AcademicErrorCode.PROJECT_NOT_FOUND, HttpStatus.NOT_FOUND, "Sprint was not found for this project."));
+		JiraIntegration integration = requireJiraForSprint(projectId, local);
 		String access = tokens.accessToken(integration);
 		String externalSprintId = local.getExternalSprintId();
 		jiraWrite.deleteSprint(access, integration.getCloudId(), externalSprintId);
@@ -164,12 +176,61 @@ public class ProjectJiraSprintCommandService {
 		});
 	}
 
-	private JiraIntegration requireActiveJira(UUID projectId) {
-		JiraIntegration integration = jiraIntegrations.findByProject_Id(projectId).orElseThrow(() -> new IntegrationException(
-				IntegrationErrorCode.INTEGRATION_REVOKED, HttpStatus.BAD_REQUEST, "Jira is not connected."));
+	private JiraIntegration resolveJiraForCreate(UUID projectId, UUID jiraIntegrationId) {
+		if (jiraIntegrationId != null) {
+			JiraIntegration integration = jiraIntegrations
+					.findByIdAndProject_Id(jiraIntegrationId, projectId)
+					.orElseThrow(() -> new IntegrationException(
+							IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
+							HttpStatus.NOT_FOUND,
+							"Jira source was not found for this project."));
+			return requireUsableJira(integration);
+		}
+		List<JiraIntegration> sources = jiraIntegrations.findAllByProject_Id(projectId);
+		if (sources == null || sources.isEmpty()) {
+			throw new IntegrationException(
+					IntegrationErrorCode.INTEGRATION_REVOKED, HttpStatus.BAD_REQUEST, "Jira is not connected.");
+		}
+		if (sources.size() > 1) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_SOURCE_REQUIRED,
+					HttpStatus.CONFLICT,
+					"jiraIntegrationId is required when the project has multiple Jira sources.");
+		}
+		return requireUsableJira(sources.get(0));
+	}
+
+	private JiraIntegration requireJiraForSprint(UUID projectId, Sprint sprint) {
+		JiraIntegration linked = sprint.getJiraIntegration();
+		if (linked == null || linked.getId() == null) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
+					HttpStatus.NOT_FOUND,
+					"Sprint has no Jira source provenance.");
+		}
+		JiraIntegration integration = jiraIntegrations
+				.findByIdAndProject_Id(linked.getId(), projectId)
+				.orElseThrow(() -> new IntegrationException(
+						IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
+						HttpStatus.NOT_FOUND,
+						"Jira source was not found for this project."));
+		return requireUsableJira(integration);
+	}
+
+	private JiraIntegration requireUsableJira(JiraIntegration integration) {
 		if (integration.getConnectionStatus() != IntegrationStatus.ACTIVE) {
 			throw new IntegrationException(
-					IntegrationErrorCode.INTEGRATION_REVOKED, HttpStatus.BAD_REQUEST, "Jira integration is not active.");
+					IntegrationErrorCode.JIRA_SOURCE_NOT_ACTIVE,
+					HttpStatus.BAD_REQUEST,
+					"Jira source is not active.");
+		}
+		if (integration.getCloudId() == null
+				|| integration.getJiraProjectId() == null
+				|| integration.getProjectKey() == null) {
+			throw new IntegrationException(
+					IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
+					HttpStatus.BAD_REQUEST,
+					"Jira integration is incomplete.");
 		}
 		return integration;
 	}

@@ -135,6 +135,9 @@ public class RedisPendingJiraConnectStore implements PendingJiraConnectStore {
 		}
 		node.put("scope", pending.scope());
 		node.put("createdAt", pending.createdAt().toString());
+		if (pending.targetIntegrationId() != null) {
+			node.put("targetIntegrationId", pending.targetIntegrationId().toString());
+		}
 		return mapper.writeValueAsString(node);
 	}
 
@@ -151,13 +154,17 @@ public class RedisPendingJiraConnectStore implements PendingJiraConnectStore {
 			String refresh = node.hasNonNull("refreshEnvelope")
 					? encryptor.decrypt(node.path("refreshEnvelope").asText(), aad)
 					: null;
+			UUID targetIntegrationId = node.hasNonNull("targetIntegrationId")
+					? UUID.fromString(node.path("targetIntegrationId").asText())
+					: null;
 			return Optional.of(new PendingJiraConnect(
 					userId,
 					projectId,
 					access,
 					refresh,
 					node.path("scope").asText(""),
-					Instant.parse(node.path("createdAt").asText(Instant.now().toString()))));
+					Instant.parse(node.path("createdAt").asText(Instant.now().toString())),
+					targetIntegrationId));
 		} catch (Exception ex) {
 			return Optional.empty();
 		}

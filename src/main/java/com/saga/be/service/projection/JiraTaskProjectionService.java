@@ -4,16 +4,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.enums.IdentityMappingStatus;
 import com.saga.be.entity.enums.IntegrationProvider;
-import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.TaskStatus;
 import com.saga.be.entity.integration.IdentityMap;
 import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Sprint;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
+import com.saga.be.exception.IntegrationException;
+import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
 import com.saga.be.repository.IdentityMapRepository;
-import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.SprintRepository;
 import com.saga.be.repository.StudentProfileRepository;
 import com.saga.be.repository.TaskRepository;
@@ -30,6 +30,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.context.annotation.Profile;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,7 +45,6 @@ public class JiraTaskProjectionService {
 	private final IdentityMapRepository identities;
 	private final StudentProfileRepository students;
 	private final CommitTaskAutoLinkService autoLink;
-	private final JiraIntegrationRepository jiraIntegrations;
 	private final SprintRepository sprints;
 	private final ObjectMapper mapper;
 
@@ -53,23 +53,32 @@ public class JiraTaskProjectionService {
 			IdentityMapRepository identities,
 			StudentProfileRepository students,
 			CommitTaskAutoLinkService autoLink,
-			JiraIntegrationRepository jiraIntegrations,
 			SprintRepository sprints,
 			ObjectMapper mapper) {
 		this.tasks = tasks;
 		this.identities = identities;
 		this.students = students;
 		this.autoLink = autoLink;
-		this.jiraIntegrations = jiraIntegrations;
 		this.sprints = sprints;
 		this.mapper = mapper;
 	}
 
+	/**
+	 * Provider-backed upsert identity is {@code (jiraIntegrationId, externalId)}. Same Jira issue id
+	 * from two sources under one Project remains two distinct Task UUIDs.
+	 */
 	@Transactional
-	public int upsertBatch(Project project, String jiraProjectKey, List<IssueSummary> issues) {
-		if (project == null || project.getId() == null || issues == null || issues.isEmpty()) {
+	public int upsertBatch(JiraIntegration integration, String jiraProjectKey, List<IssueSummary> issues) {
+		if (integration == null
+				|| integration.getId() == null
+				|| integration.getProject() == null
+				|| integration.getProject().getId() == null
+				|| issues == null
+				|| issues.isEmpty()) {
 			return 0;
 		}
+		assertIntegrationBelongsToItsProject(integration);
+		Project project = integration.getProject();
 		List<IssueSummary> valid = issues.stream()
 				.filter(item -> item != null && item.id() != null && !item.id().isBlank())
 				.toList();
@@ -77,10 +86,12 @@ public class JiraTaskProjectionService {
 			return 0;
 		}
 		Set<String> externalIds = valid.stream().map(IssueSummary::id).collect(Collectors.toCollection(HashSet::new));
-		Map<String, Task> existing = tasks.findByProject_IdAndExternalIdIn(project.getId(), externalIds).stream()
+		Map<String, Task> existing = tasks
+				.findByJiraIntegration_IdAndExternalIdIn(integration.getId(), externalIds)
+				.stream()
 				.collect(Collectors.toMap(Task::getExternalId, Function.identity(), (a, b) -> a));
 		Map<String, StudentProfile> assignees = resolveJiraAssignees(valid);
-		Map<String, Sprint> sprintByExternalId = resolveSprints(project.getId(), valid);
+		Map<String, Sprint> sprintByExternalId = resolveSprints(integration, valid);
 		List<Task> toSave = new ArrayList<>();
 		Set<String> reverseLinkExternalIds = new HashSet<>();
 		for (IssueSummary issue : valid) {
@@ -93,9 +104,11 @@ public class JiraTaskProjectionService {
 			String previousKey = task.getExternalKey();
 			if (newlyCreated) {
 				task.setProject(project);
+				task.setJiraIntegration(integration);
 				task.setExternalId(issue.id());
 			}
 			applyIssueFields(task, issue, assignees, sprintByExternalId);
+			assertTaskProvenance(task, integration);
 			toSave.add(task);
 			if (newlyCreated || externalKeyChanged(previousKey, issue.key())) {
 				reverseLinkExternalIds.add(issue.id());
@@ -104,7 +117,7 @@ public class JiraTaskProjectionService {
 		if (toSave.isEmpty()) {
 			return 0;
 		}
-		List<Task> persisted = saveAllConflictSafe(project.getId(), toSave);
+		List<Task> persisted = saveAllConflictSafe(integration.getId(), toSave);
 		List<Task> forReverseLink = persisted.stream()
 				.filter(task -> reverseLinkExternalIds.contains(task.getExternalId()))
 				.toList();
@@ -114,24 +127,18 @@ public class JiraTaskProjectionService {
 		return persisted.size();
 	}
 
-	/** Backward-compatible overload used by tests/callers that omit projectKey. */
 	@Transactional
-	public int upsertBatch(Project project, List<IssueSummary> issues) {
-		return upsertBatch(project, null, issues);
+	public Task upsertOne(JiraIntegration integration, String jiraProjectKey, IssueSummary issue) {
+		upsertBatch(integration, jiraProjectKey, List.of(issue));
+		return tasks.findByJiraIntegration_IdAndExternalId(integration.getId(), issue.id()).orElseThrow();
 	}
 
 	@Transactional
-	public Task upsertOne(Project project, String jiraProjectKey, IssueSummary issue) {
-		upsertBatch(project, jiraProjectKey, List.of(issue));
-		return tasks.findByProject_IdAndExternalId(project.getId(), issue.id()).orElseThrow();
-	}
-
-	@Transactional
-	public void softDelete(Project project, String externalId, LocalDateTime when) {
-		if (project == null || externalId == null || externalId.isBlank()) {
+	public void softDelete(JiraIntegration integration, String externalId, LocalDateTime when) {
+		if (integration == null || integration.getId() == null || externalId == null || externalId.isBlank()) {
 			return;
 		}
-		tasks.findByProject_IdAndExternalId(project.getId(), externalId).ifPresent(task -> {
+		tasks.findByJiraIntegration_IdAndExternalId(integration.getId(), externalId).ifPresent(task -> {
 			LocalDateTime deletedAt = when == null ? LocalDateTime.now() : when;
 			if (task.getDeletedAt() != null && task.getDeletedAt().isAfter(deletedAt)) {
 				return;
@@ -190,6 +197,56 @@ public class JiraTaskProjectionService {
 			return false;
 		}
 		return !previous.equalsIgnoreCase(incoming);
+	}
+
+	/**
+	 * Task.project and Task.jiraIntegration.project must be the same SAGA Project. When a Sprint is
+	 * set, Task.jiraIntegration must equal Sprint.jiraIntegration. Backlog (null sprint) is allowed.
+	 */
+	public static void assertTaskProvenance(Task task, JiraIntegration expectedIntegration) {
+		if (task == null || expectedIntegration == null || expectedIntegration.getId() == null) {
+			throw new IntegrationException(
+					IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
+					HttpStatus.BAD_REQUEST,
+					"Task Jira source is required");
+		}
+		if (task.getJiraIntegration() == null
+				|| task.getJiraIntegration().getId() == null
+				|| !expectedIntegration.getId().equals(task.getJiraIntegration().getId())) {
+			throw new IntegrationException(
+					IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
+					HttpStatus.BAD_REQUEST,
+					"Task Jira source does not match the upsert integration");
+		}
+		assertIntegrationBelongsToItsProject(expectedIntegration);
+		if (task.getProject() == null
+				|| task.getProject().getId() == null
+				|| !expectedIntegration.getProject().getId().equals(task.getProject().getId())) {
+			throw new IntegrationException(
+					IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
+					HttpStatus.BAD_REQUEST,
+					"Task project must match its Jira integration project");
+		}
+		Sprint sprint = task.getSprint();
+		if (sprint != null) {
+			if (sprint.getJiraIntegration() == null
+					|| sprint.getJiraIntegration().getId() == null
+					|| !expectedIntegration.getId().equals(sprint.getJiraIntegration().getId())) {
+				throw new IntegrationException(
+						IntegrationErrorCode.JIRA_SPRINT_INVALID,
+						HttpStatus.BAD_REQUEST,
+						"Task Jira source must match Sprint Jira source");
+			}
+		}
+	}
+
+	static void assertIntegrationBelongsToItsProject(JiraIntegration integration) {
+		if (integration.getProject() == null || integration.getProject().getId() == null) {
+			throw new IntegrationException(
+					IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
+					HttpStatus.BAD_REQUEST,
+					"Jira integration project is required");
+		}
 	}
 
 	private void applyIssueFields(
@@ -281,14 +338,7 @@ public class JiraTaskProjectionService {
 		}
 	}
 
-	private Map<String, Sprint> resolveSprints(UUID projectId, List<IssueSummary> issues) {
-		JiraIntegration integration = jiraIntegrations
-				.findByProject_Id(projectId)
-				.filter(row -> row.getConnectionStatus() == IntegrationStatus.ACTIVE)
-				.orElse(null);
-		if (integration == null) {
-			return Map.of();
-		}
+	private Map<String, Sprint> resolveSprints(JiraIntegration integration, List<IssueSummary> issues) {
 		Set<String> sprintIds = issues.stream()
 				.map(IssueSummary::sprintExternalId)
 				.filter(Objects::nonNull)
@@ -340,12 +390,14 @@ public class JiraTaskProjectionService {
 		return resolved;
 	}
 
-	private List<Task> saveAllConflictSafe(UUID projectId, List<Task> toSave) {
+	private List<Task> saveAllConflictSafe(UUID jiraIntegrationId, List<Task> toSave) {
 		try {
 			return tasks.saveAll(toSave);
 		} catch (DataIntegrityViolationException ex) {
 			Set<String> ids = toSave.stream().map(Task::getExternalId).collect(Collectors.toSet());
-			Map<String, Task> reloaded = tasks.findByProject_IdAndExternalIdIn(projectId, ids).stream()
+			Map<String, Task> reloaded = tasks
+					.findByJiraIntegration_IdAndExternalIdIn(jiraIntegrationId, ids)
+					.stream()
 					.collect(Collectors.toMap(Task::getExternalId, Function.identity(), (a, b) -> a));
 			List<Task> merged = new ArrayList<>();
 			for (Task candidate : toSave) {

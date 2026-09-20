@@ -206,6 +206,7 @@ class JiraSourceReplacementAtomicRollbackTest {
 	private static Task task(Project project, Sprint sprint) {
 		Task task = new Task();
 		task.setProject(project);
+		task.setJiraIntegration(sprint.getJiraIntegration());
 		task.setSprint(sprint);
 		task.setExternalKey("SAGA-" + UUID.randomUUID().toString().substring(0, 6));
 		task.setExternalId(UUID.randomUUID().toString());

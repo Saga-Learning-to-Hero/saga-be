@@ -218,7 +218,7 @@ class ProviderWebhookProjectionServiceTest {
 		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
 				.thenReturn(List.of(integration));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+		when(tasks.upsertBatch(eq(integration), eq("SAGA"), any())).thenReturn(1);
 
 		String payload =
 				"""
@@ -226,7 +226,7 @@ class ProviderWebhookProjectionServiceTest {
 				""";
 		service.projectJira(receipt, payload);
 
-		verify(tasks).upsertBatch(eq(project), eq("SAGA"), any());
+		verify(tasks).upsertBatch(eq(integration), eq("SAGA"), any());
 		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.PROCESSED);
 		verify(realtime)
 				.publish(com.saga.be.realtime.ProjectRealtimeEventType.TASKS_CHANGED, project.getId(), "200");
@@ -247,7 +247,7 @@ class ProviderWebhookProjectionServiceTest {
 		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
 				.thenReturn(List.of(integration));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+		when(tasks.upsertBatch(eq(integration), eq("SAGA"), any())).thenReturn(1);
 		// Cache IS warm (discovery already ran and found nothing -- "" -- not "never tried"/null),
 		// so this stays on the fast payload-only path and never calls the provider.
 		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn("");
@@ -261,7 +261,7 @@ class ProviderWebhookProjectionServiceTest {
 
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
-		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		verify(tasks).upsertBatch(eq(integration), eq("SAGA"), captor.capture());
 		IssueSummary summary = captor.getValue().getFirst();
 		assertThat(summary.storyPointsProvided()).isFalse();
 		assertThat(summary.sprintProvided()).isFalse();
@@ -285,7 +285,7 @@ class ProviderWebhookProjectionServiceTest {
 		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
 				.thenReturn(List.of(integration));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+		when(tasks.upsertBatch(eq(integration), eq("SAGA"), any())).thenReturn(1);
 		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn(null);
 		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn(null);
 		when(tokens.accessToken(integration)).thenThrow(new RuntimeException("token unavailable"));
@@ -298,7 +298,7 @@ class ProviderWebhookProjectionServiceTest {
 
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
-		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		verify(tasks).upsertBatch(eq(integration), eq("SAGA"), captor.capture());
 		IssueSummary summary = captor.getValue().getFirst();
 		assertThat(summary.storyPointsProvided()).isFalse();
 		assertThat(summary.sprintProvided()).isFalse();
@@ -321,7 +321,7 @@ class ProviderWebhookProjectionServiceTest {
 		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
 				.thenReturn(List.of(integration));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+		when(tasks.upsertBatch(eq(integration), eq("SAGA"), any())).thenReturn(1);
 		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn(null);
 		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn("");
 		when(tokens.accessToken(integration)).thenReturn("token-1");
@@ -338,7 +338,7 @@ class ProviderWebhookProjectionServiceTest {
 
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
-		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		verify(tasks).upsertBatch(eq(integration), eq("SAGA"), captor.capture());
 		assertThat(captor.getValue().getFirst()).isSameAs(refreshed);
 		assertThat(captor.getValue().getFirst().storyPoints()).isEqualTo(8);
 	}
@@ -356,7 +356,7 @@ class ProviderWebhookProjectionServiceTest {
 		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
 				.thenReturn(List.of(integration));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+		when(tasks.upsertBatch(eq(integration), eq("SAGA"), any())).thenReturn(1);
 		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn("customfield_777");
 		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn("");
 
@@ -368,7 +368,7 @@ class ProviderWebhookProjectionServiceTest {
 
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
-		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		verify(tasks).upsertBatch(eq(integration), eq("SAGA"), captor.capture());
 		IssueSummary summary = captor.getValue().getFirst();
 		assertThat(summary.storyPointsProvided()).isTrue();
 		assertThat(summary.storyPoints()).isEqualTo(5);
@@ -389,7 +389,7 @@ class ProviderWebhookProjectionServiceTest {
 		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
 				.thenReturn(List.of(integration));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+		when(tasks.upsertBatch(eq(integration), eq("SAGA"), any())).thenReturn(1);
 		when(jiraFields.peekCachedStoryPointsFieldId("cloud-1")).thenReturn("");
 		when(jiraFields.peekCachedSprintFieldId("cloud-1")).thenReturn("");
 
@@ -401,7 +401,7 @@ class ProviderWebhookProjectionServiceTest {
 
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
-		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		verify(tasks).upsertBatch(eq(integration), eq("SAGA"), captor.capture());
 		IssueSummary summary = captor.getValue().getFirst();
 		assertThat(summary.sprintProvided()).isTrue();
 		assertThat(summary.sprintExternalId()).isNull();
@@ -423,7 +423,7 @@ class ProviderWebhookProjectionServiceTest {
 		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
 				.thenReturn(List.of(integration));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+		when(tasks.upsertBatch(eq(integration), eq("SAGA"), any())).thenReturn(1);
 
 		String payload =
 				"""
@@ -433,7 +433,7 @@ class ProviderWebhookProjectionServiceTest {
 
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
-		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		verify(tasks).upsertBatch(eq(integration), eq("SAGA"), captor.capture());
 		assertThat(captor.getValue().getFirst().parentProvided()).isFalse();
 	}
 
@@ -450,7 +450,7 @@ class ProviderWebhookProjectionServiceTest {
 		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
 				.thenReturn(List.of(integration));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+		when(tasks.upsertBatch(eq(integration), eq("SAGA"), any())).thenReturn(1);
 
 		String payload =
 				"""
@@ -460,7 +460,7 @@ class ProviderWebhookProjectionServiceTest {
 
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
-		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		verify(tasks).upsertBatch(eq(integration), eq("SAGA"), captor.capture());
 		IssueSummary summary = captor.getValue().getFirst();
 		assertThat(summary.parentProvided()).isTrue();
 		assertThat(summary.parentExternalId()).isEqualTo("10060");
@@ -483,7 +483,7 @@ class ProviderWebhookProjectionServiceTest {
 		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
 				.thenReturn(List.of(integration));
 		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-		when(tasks.upsertBatch(eq(project), eq("SAGA"), any())).thenReturn(1);
+		when(tasks.upsertBatch(eq(integration), eq("SAGA"), any())).thenReturn(1);
 
 		String payload =
 				"""
@@ -493,7 +493,7 @@ class ProviderWebhookProjectionServiceTest {
 
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<List<IssueSummary>> captor = ArgumentCaptor.forClass(List.class);
-		verify(tasks).upsertBatch(eq(project), eq("SAGA"), captor.capture());
+		verify(tasks).upsertBatch(eq(integration), eq("SAGA"), captor.capture());
 		IssueSummary summary = captor.getValue().getFirst();
 		assertThat(summary.parentProvided()).isTrue();
 		assertThat(summary.parentExternalId()).isNull();

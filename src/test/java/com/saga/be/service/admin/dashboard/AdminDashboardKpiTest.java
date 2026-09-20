@@ -487,6 +487,7 @@ class AdminDashboardKpiTest {
 		integration.setProject(project);
 		integration.setCloudId("cloud-" + UUID.randomUUID());
 		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
 		integration.setConnectionStatus(status);
 		integration.setConsecutiveFailures(0);
 		return jiras.save(integration);
@@ -514,8 +515,11 @@ class AdminDashboardKpiTest {
 	}
 
 	private Task persistTask(Project project, String key, LocalDateTime deletedAt) {
+		JiraIntegration jira = jiras.findByProject_Id(project.getId())
+				.orElseGet(() -> persistJira(project, IntegrationStatus.ACTIVE));
 		Task task = new Task();
 		task.setProject(project);
+		task.setJiraIntegration(jira);
 		task.setExternalKey(key);
 		task.setExternalId(UUID.randomUUID().toString());
 		task.setTitle(key);

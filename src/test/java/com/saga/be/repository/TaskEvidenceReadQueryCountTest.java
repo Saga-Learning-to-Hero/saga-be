@@ -33,6 +33,7 @@ import com.saga.be.entity.enums.TraceLinkSource;
 import com.saga.be.entity.enums.WorkSessionStatus;
 import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.github.GitRepo;
+import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.jira.TaskAttachment;
 import com.saga.be.entity.jira.TaskFile;
@@ -134,6 +135,8 @@ class TaskEvidenceReadQueryCountTest {
 	@Autowired
 	private TaskRepository tasks;
 	@Autowired
+	private JiraIntegrationRepository jiraIntegrations;
+	@Autowired
 	private TaskGitCommitLinkRepository commitLinks;
 	@Autowired
 	private TaskFileRepository files;
@@ -152,6 +155,7 @@ class TaskEvidenceReadQueryCountTest {
 	private UserAccount lecturerUser;
 	private Project project;
 	private Project otherProject;
+	private JiraIntegration jiraIntegration;
 	private Task task;
 	private GitRepo repo;
 
@@ -484,6 +488,8 @@ class TaskEvidenceReadQueryCountTest {
 		project.setCreatedBy(student);
 		project = projects.save(project);
 
+		jiraIntegration = jiraIntegrations.save(jiraFor(project));
+
 		otherProject = new Project();
 		otherProject.setName("Other");
 		otherProject.setCourse(course);
@@ -517,10 +523,22 @@ class TaskEvidenceReadQueryCountTest {
 
 		task = new Task();
 		task.setProject(project);
+		task.setJiraIntegration(jiraIntegration);
 		task.setTitle("Login");
 		task.setStatus(TaskStatus.TODO);
 		task.setExternalKey("SAGA-1");
 		task = tasks.save(task);
+	}
+
+	private static JiraIntegration jiraFor(Project project) {
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setCloudId("cloud-" + UUID.randomUUID());
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
+		integration.setConsecutiveFailures(0);
+		return integration;
 	}
 
 	private UserAccount account(AccountRole role, String prefix) {

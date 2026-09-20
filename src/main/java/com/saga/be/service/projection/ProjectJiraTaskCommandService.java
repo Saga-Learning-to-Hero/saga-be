@@ -10,7 +10,6 @@ import com.saga.be.dto.project.TransitionProjectTaskRequest;
 import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
-import com.saga.be.entity.project.Project;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.exception.IntegrationException;
@@ -25,7 +24,6 @@ import com.saga.be.realtime.ProjectRealtimeEventType;
 import com.saga.be.realtime.ProjectRealtimePublisher;
 import com.saga.be.repository.ContributionConfirmationRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
-import com.saga.be.repository.ProjectRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
 import com.saga.be.repository.TaskWorkSessionRepository;
@@ -46,7 +44,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class ProjectJiraTaskCommandService {
 
 	private final ProjectDataAuthorization authorization;
-	private final ProjectRepository projects;
 	private final JiraIntegrationRepository jiraIntegrations;
 	private final TaskRepository tasks;
 	private final TaskWorkSessionRepository workSessions;
@@ -61,7 +58,6 @@ public class ProjectJiraTaskCommandService {
 
 	public ProjectJiraTaskCommandService(
 			ProjectDataAuthorization authorization,
-			ProjectRepository projects,
 			JiraIntegrationRepository jiraIntegrations,
 			TaskRepository tasks,
 			TaskWorkSessionRepository workSessions,
@@ -74,7 +70,6 @@ public class ProjectJiraTaskCommandService {
 			TaskHierarchyService hierarchy,
 			PlatformTransactionManager transactionManager) {
 		this.authorization = authorization;
-		this.projects = projects;
 		this.jiraIntegrations = jiraIntegrations;
 		this.tasks = tasks;
 		this.workSessions = workSessions;
@@ -88,9 +83,25 @@ public class ProjectJiraTaskCommandService {
 		this.writes = new TransactionTemplate(transactionManager);
 	}
 
-	public ProjectTaskOptionsResponse options(UUID userId, UUID projectId) {
+	public ProjectTaskOptionsResponse options(UUID userId, UUID projectId, UUID jiraIntegrationId) {
 		authorization.requireReader(userId, projectId);
-		JiraIntegration integration = requireActiveJira(projectId);
+		JiraIntegration integration = resolveJiraForCreate(projectId, jiraIntegrationId);
+		return optionsFor(integration);
+	}
+
+	/** Path-scoped options: always uses the named integration (no singular omission). */
+	public ProjectTaskOptionsResponse optionsForIntegration(UUID userId, UUID projectId, UUID jiraIntegrationId) {
+		authorization.requireReader(userId, projectId);
+		JiraIntegration integration = jiraIntegrations
+				.findByIdAndProject_Id(jiraIntegrationId, projectId)
+				.orElseThrow(() -> new IntegrationException(
+						IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
+						HttpStatus.NOT_FOUND,
+						"Jira source was not found for this project."));
+		return optionsFor(requireUsableJira(integration));
+	}
+
+	private ProjectTaskOptionsResponse optionsFor(JiraIntegration integration) {
 		String access = tokens.accessToken(integration);
 		EstimationInfo estimation = jiraWrite.boardEstimationCapability(
 				access, integration.getCloudId(), integration.getJiraBoardId());
@@ -129,8 +140,7 @@ public class ProjectJiraTaskCommandService {
 
 	public ProjectTaskResponse create(UUID userId, UUID projectId, CreateProjectTaskRequest request) {
 		authorization.requireStudentLeader(userId, projectId);
-		JiraIntegration integration = requireActiveJira(projectId);
-		Project project = requireProject(projectId);
+		JiraIntegration integration = resolveJiraForCreate(projectId, request.jiraIntegrationId());
 		UUID nativeParentId = request.parentTaskId();
 		if (nativeParentId != null) {
 			hierarchy.validateAssignable(projectId, null, nativeParentId);
@@ -179,7 +189,7 @@ public class ProjectJiraTaskCommandService {
 			if (nativeParentId != null) {
 				hierarchy.acquireHierarchyMutationLock(projectId);
 			}
-			Task row = projection.upsertOne(project, integration.getProjectKey(), canonical);
+			Task row = projection.upsertOne(integration, integration.getProjectKey(), canonical);
 			if (nativeParentId != null) {
 				row = applyParentAfterProviderSuccess(projectId, row, nativeParentId, nativeParentFailed);
 			}
@@ -222,9 +232,8 @@ public class ProjectJiraTaskCommandService {
 			requireTask(projectId, taskId);
 			hierarchy.validateAssignable(projectId, taskId, nativeParentId);
 		}
-		JiraIntegration integration = requireActiveJira(projectId);
-		Project project = requireProject(projectId);
 		Task task = requireTask(projectId, taskId);
+		JiraIntegration integration = requireJiraForTask(projectId, task);
 		String access = tokens.accessToken(integration);
 		String issueRef = issueRef(task);
 
@@ -320,7 +329,7 @@ public class ProjectJiraTaskCommandService {
 			if (persistNativeParent) {
 				hierarchy.acquireHierarchyMutationLock(projectId);
 			}
-			Task row = projection.upsertOne(project, integration.getProjectKey(), canonical);
+			Task row = projection.upsertOne(integration, integration.getProjectKey(), canonical);
 			if (persistNativeParent) {
 				row = applyParentAfterProviderSuccess(projectId, row, persistParentId, nativeParentFailed);
 			}
@@ -339,9 +348,8 @@ public class ProjectJiraTaskCommandService {
 	public ProjectTaskResponse moveSprint(
 			UUID userId, UUID projectId, UUID taskId, PutProjectTaskSprintRequest request) {
 		authorization.requireStudentLeader(userId, projectId);
-		JiraIntegration integration = requireActiveJira(projectId);
-		Project project = requireProject(projectId);
 		Task task = requireTask(projectId, taskId);
+		JiraIntegration integration = requireJiraForTask(projectId, task);
 		String access = tokens.accessToken(integration);
 		String issueRef = issueRef(task);
 		if (request == null || request.sprintId() == null) {
@@ -354,7 +362,7 @@ public class ProjectJiraTaskCommandService {
 		}
 		IssueSummary canonical = jiraWrite.getIssue(access, integration.getCloudId(), issueRef);
 		Task saved = writes.execute(status -> {
-			Task row = projection.upsertOne(project, integration.getProjectKey(), canonical);
+			Task row = projection.upsertOne(integration, integration.getProjectKey(), canonical);
 			realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, projectId, row.getId().toString());
 			realtime.publish(ProjectRealtimeEventType.SPRINTS_CHANGED, projectId);
 			return row;
@@ -365,16 +373,15 @@ public class ProjectJiraTaskCommandService {
 	public ProjectTaskResponse transition(
 			UUID userId, UUID projectId, UUID taskId, TransitionProjectTaskRequest request) {
 		authorization.requireStudentLeader(userId, projectId);
-		JiraIntegration integration = requireActiveJira(projectId);
-		Project project = requireProject(projectId);
 		Task task = requireTask(projectId, taskId);
+		JiraIntegration integration = requireJiraForTask(projectId, task);
 		String access = tokens.accessToken(integration);
 		String issueRef = issueRef(task);
 		transitionInternal(
 				access, integration.getCloudId(), issueRef, request.transitionId(), request.targetStatusId());
 		IssueSummary canonical = jiraWrite.getIssue(access, integration.getCloudId(), issueRef);
 		Task saved = writes.execute(status -> {
-			Task row = projection.upsertOne(project, integration.getProjectKey(), canonical);
+			Task row = projection.upsertOne(integration, integration.getProjectKey(), canonical);
 			realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, projectId, row.getId().toString());
 			return row;
 		});
@@ -383,8 +390,8 @@ public class ProjectJiraTaskCommandService {
 
 	public void delete(UUID userId, UUID projectId, UUID taskId) {
 		authorization.requireStudentLeader(userId, projectId);
-		JiraIntegration integration = requireActiveJira(projectId);
 		Task task = requireTask(projectId, taskId);
+		JiraIntegration integration = requireJiraForTask(projectId, task);
 		if (workSessions.existsByTask_Id(taskId) || confirmations.existsByTask_Id(taskId)) {
 			throw new IntegrationException(
 					IntegrationErrorCode.TASK_DELETE_BLOCKED_BY_EVIDENCE,
@@ -395,9 +402,8 @@ public class ProjectJiraTaskCommandService {
 		String access = tokens.accessToken(integration);
 		String externalId = task.getExternalId();
 		jiraWrite.deleteIssue(access, integration.getCloudId(), issueRef(task));
-		Project project = requireProject(projectId);
 		writes.executeWithoutResult(status -> {
-			projection.softDelete(project, externalId, LocalDateTime.now());
+			projection.softDelete(integration, externalId, LocalDateTime.now());
 			realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, projectId, taskId.toString());
 			realtime.publish(ProjectRealtimeEventType.TASK_LINKS_CHANGED, projectId, taskId.toString());
 		});
@@ -405,8 +411,8 @@ public class ProjectJiraTaskCommandService {
 
 	public List<TransitionOption> listTransitions(UUID userId, UUID projectId, UUID taskId) {
 		authorization.requireStudentLeader(userId, projectId);
-		JiraIntegration integration = requireActiveJira(projectId);
 		Task task = requireTask(projectId, taskId);
+		JiraIntegration integration = requireJiraForTask(projectId, task);
 		String access = tokens.accessToken(integration);
 		return jiraWrite.listTransitions(access, integration.getCloudId(), issueRef(task));
 	}
@@ -433,12 +439,61 @@ public class ProjectJiraTaskCommandService {
 		jiraWrite.transitionIssue(access, cloudId, issueRef, resolved);
 	}
 
-	private JiraIntegration requireActiveJira(UUID projectId) {
-		JiraIntegration integration = jiraIntegrations.findByProject_Id(projectId).orElseThrow(() -> new IntegrationException(
-				IntegrationErrorCode.INTEGRATION_REVOKED, HttpStatus.BAD_REQUEST, "Jira is not connected."));
+	/**
+	 * Create/options source selection: explicit id when provided; otherwise singular project source
+	 * only. Never picks among multiple sources.
+	 */
+	private JiraIntegration resolveJiraForCreate(UUID projectId, UUID jiraIntegrationId) {
+		if (jiraIntegrationId != null) {
+			JiraIntegration integration = jiraIntegrations
+					.findByIdAndProject_Id(jiraIntegrationId, projectId)
+					.orElseThrow(() -> new IntegrationException(
+							IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
+							HttpStatus.NOT_FOUND,
+							"Jira source was not found for this project."));
+			return requireUsableJira(integration);
+		}
+		List<JiraIntegration> sources = jiraIntegrations.findAllByProject_Id(projectId);
+		if (sources == null || sources.isEmpty()) {
+			throw new IntegrationException(
+					IntegrationErrorCode.INTEGRATION_REVOKED, HttpStatus.BAD_REQUEST, "Jira is not connected.");
+		}
+		if (sources.size() > 1) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_SOURCE_REQUIRED,
+					HttpStatus.CONFLICT,
+					"jiraIntegrationId is required when the project has multiple Jira sources.");
+		}
+		return requireUsableJira(sources.get(0));
+	}
+
+	/**
+	 * Existing-task mutations always use the task's own provenance. REVOKED sources fail closed —
+	 * never redirect to another project Jira.
+	 */
+	private JiraIntegration requireJiraForTask(UUID projectId, Task task) {
+		JiraIntegration linked = task.getJiraIntegration();
+		if (linked == null || linked.getId() == null) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
+					HttpStatus.NOT_FOUND,
+					"Task has no Jira source provenance.");
+		}
+		JiraIntegration integration = jiraIntegrations
+				.findByIdAndProject_Id(linked.getId(), projectId)
+				.orElseThrow(() -> new IntegrationException(
+						IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
+						HttpStatus.NOT_FOUND,
+						"Jira source was not found for this project."));
+		return requireUsableJira(integration);
+	}
+
+	private JiraIntegration requireUsableJira(JiraIntegration integration) {
 		if (integration.getConnectionStatus() != IntegrationStatus.ACTIVE) {
 			throw new IntegrationException(
-					IntegrationErrorCode.INTEGRATION_REVOKED, HttpStatus.BAD_REQUEST, "Jira integration is not active.");
+					IntegrationErrorCode.JIRA_SOURCE_NOT_ACTIVE,
+					HttpStatus.BAD_REQUEST,
+					"Jira source is not active.");
 		}
 		if (integration.getCloudId() == null
 				|| integration.getJiraProjectId() == null
@@ -458,11 +513,6 @@ public class ProjectJiraTaskCommandService {
 					HttpStatus.BAD_REQUEST,
 					"Jira board is required for backlog moves.");
 		}
-	}
-
-	private Project requireProject(UUID projectId) {
-		return projects.findFetchedById(projectId).orElseThrow(() -> new AcademicException(
-				AcademicErrorCode.PROJECT_NOT_FOUND, HttpStatus.NOT_FOUND, "Project was not found."));
 	}
 
 	private Task requireTask(UUID projectId, UUID taskId) {

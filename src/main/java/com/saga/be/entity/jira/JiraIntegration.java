@@ -10,10 +10,10 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
 import java.time.LocalDateTime;
 import lombok.Getter;
@@ -27,6 +27,10 @@ import lombok.Setter;
  * longer permanently blocks another SAGA Project from later connecting the same Jira provider
  * project. Those generated columns are DB-only (never written or read through JPA) so they are
  * intentionally not mapped as entity fields.
+ *
+ * <p>Since V24, a Project may hold N {@code jira_integration} rows ({@code
+ * ix_jira_integration_project}); the former forever-one-row {@code uk_jira_integration_project}
+ * was dropped. Singular project-scoped repository lookups fail closed when multiple rows exist.
  */
 @Getter
 @Setter
@@ -34,7 +38,7 @@ import lombok.Setter;
 @Entity
 @Table(
 	name = "jira_integration",
-	uniqueConstraints = {@UniqueConstraint(name = "uk_jira_integration_project", columnNames = {"project_id"})}
+	indexes = {@Index(name = "ix_jira_integration_project", columnList = "project_id")}
 )
 public class JiraIntegration extends BaseEntity {
 

@@ -8,7 +8,9 @@ import com.saga.be.entity.academic.AcademicClass;
 import com.saga.be.entity.academic.Course;
 import com.saga.be.entity.academic.Semester;
 import com.saga.be.entity.academic.Subject;
+import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.TaskStatus;
+import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
 import com.saga.be.exception.AcademicErrorCode;
@@ -71,6 +73,7 @@ class TaskHierarchyV22MysqlIT {
 	private static final String SUBJECT_ID = "cccccccc-0000-4000-8000-000000000022";
 	private static final String COURSE_ID = "dddddddd-0000-4000-8000-000000000022";
 	private static final String PROJECT_ID = "eeeeeeee-0000-4000-8000-000000000022";
+	private static final String LEGACY_JIRA_INTEGRATION_ID = "11111111-0000-4000-8000-000000000022";
 	private static final String LEGACY_TASK_ID = "ffffffff-0000-4000-8000-000000000022";
 
 	@SpringBootConfiguration
@@ -108,6 +111,8 @@ class TaskHierarchyV22MysqlIT {
 	private ProjectRepository projects;
 	@Autowired
 	private TaskRepository tasks;
+	@Autowired
+	private JiraIntegrationRepository jiraIntegrations;
 	@Autowired
 	private PlatformTransactionManager transactionManager;
 
@@ -287,6 +292,16 @@ class TaskHierarchyV22MysqlIT {
 				project.setString(2, COURSE_ID);
 				project.executeUpdate();
 			}
+			try (PreparedStatement jira = connection.prepareStatement(
+					"""
+					INSERT INTO jira_integration
+					  (id, project_id, cloud_id, jira_project_id, project_key, connection_status, consecutive_failures, version, created_at, updated_at)
+					VALUES (?, ?, 'cloud-v22', '10022', 'V22', 'ACTIVE', 0, 0, NOW(6), NOW(6))
+					""")) {
+				jira.setString(1, LEGACY_JIRA_INTEGRATION_ID);
+				jira.setString(2, PROJECT_ID);
+				jira.executeUpdate();
+			}
 			try (PreparedStatement task = connection.prepareStatement(
 					"INSERT INTO task (id, project_id, title, created_at, updated_at) VALUES (?, ?, 'Legacy task', NOW(6), NOW(6))")) {
 				task.setString(1, LEGACY_TASK_ID);
@@ -323,13 +338,28 @@ class TaskHierarchyV22MysqlIT {
 	}
 
 	private Task persistTask(Project project, String title) {
+		JiraIntegration jira = jiraIntegrations
+				.findByProject_Id(project.getId())
+				.orElseGet(() -> jiraIntegrations.save(jiraFor(project)));
 		Task task = new Task();
 		task.setProject(project);
+		task.setJiraIntegration(jira);
 		task.setTitle(title);
 		task.setStatus(TaskStatus.TODO);
 		task.setExternalId(UUID.randomUUID().toString());
 		task.setExternalKey("SAGA-" + title);
 		return tasks.saveAndFlush(task);
+	}
+
+	private static JiraIntegration jiraFor(Project project) {
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setCloudId("cloud-" + UUID.randomUUID());
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
+		integration.setConsecutiveFailures(0);
+		return integration;
 	}
 
 	private Map<Integer, Integer> checksumsByVersion() throws SQLException {

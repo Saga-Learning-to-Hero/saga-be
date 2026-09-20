@@ -13,7 +13,8 @@ public record OAuthState(
 		UUID teamId,
 		String pkceVerifier,
 		Instant createdAt,
-		Long githubInstallationId) {
+		Long githubInstallationId,
+		UUID jiraIntegrationId) {
 
 	/** Backward-compatible constructor for flows that do not bind a GitHub installation id. */
 	public OAuthState(
@@ -25,6 +26,30 @@ public record OAuthState(
 			UUID teamId,
 			String pkceVerifier,
 			Instant createdAt) {
-		this(state, sagaUserId, flowType, frontendReturnPath, projectId, teamId, pkceVerifier, createdAt, null);
+		this(state, sagaUserId, flowType, frontendReturnPath, projectId, teamId, pkceVerifier, createdAt, null, null);
+	}
+
+	/** Backward-compatible constructor for GitHub reconnect without a Jira target id. */
+	public OAuthState(
+			String state,
+			UUID sagaUserId,
+			OAuthFlowType flowType,
+			String frontendReturnPath,
+			UUID projectId,
+			UUID teamId,
+			String pkceVerifier,
+			Instant createdAt,
+			Long githubInstallationId) {
+		this(
+				state,
+				sagaUserId,
+				flowType,
+				frontendReturnPath,
+				projectId,
+				teamId,
+				pkceVerifier,
+				createdAt,
+				githubInstallationId,
+				null);
 	}
 }

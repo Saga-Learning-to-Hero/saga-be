@@ -14,9 +14,11 @@ import com.saga.be.entity.attribution.TaskWorkSession;
 import com.saga.be.entity.enums.AccountRole;
 import com.saga.be.entity.enums.AccountStatus;
 import com.saga.be.entity.enums.EnrollmentStatus;
+import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.RoleInTeam;
 import com.saga.be.entity.enums.TaskStatus;
 import com.saga.be.entity.enums.WorkSessionStatus;
+import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
@@ -118,6 +120,8 @@ class TaskWorkSessionConcurrencyTest {
 	@Autowired
 	private TaskRepository tasks;
 	@Autowired
+	private JiraIntegrationRepository jiraIntegrations;
+	@Autowired
 	private TaskWorkSessionRepository sessions;
 	@Autowired
 	private ContributionConfirmationRepository confirmations;
@@ -147,11 +151,11 @@ class TaskWorkSessionConcurrencyTest {
 		Project project = projects.save(project(course));
 		UserAccount student = users.save(studentAccount());
 		StudentProfile profile = students.save(studentProfile(student));
+		JiraIntegration jira = jiraIntegrations.save(jiraFor(project));
 		CourseEnrollment enrollment = enrollments.save(activeEnrollment(profile, course));
 		Team team = teams.save(team(course, project));
 		members.save(teamMember(team, course, enrollment));
-		Task task = tasks.save(task(project));
-
+		Task task = tasks.save(task(project, jira));
 		userId = student.getId();
 		taskId = task.getId();
 	}
@@ -276,9 +280,21 @@ class TaskWorkSessionConcurrencyTest {
 		return member;
 	}
 
-	private static Task task(Project project) {
+	private static JiraIntegration jiraFor(Project project) {
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setCloudId("cloud-" + UUID.randomUUID());
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
+		integration.setConsecutiveFailures(0);
+		return integration;
+	}
+
+	private static Task task(Project project, JiraIntegration jira) {
 		Task task = new Task();
 		task.setProject(project);
+		task.setJiraIntegration(jira);
 		task.setExternalKey("SAGA-" + UUID.randomUUID().toString().substring(0, 6));
 		task.setExternalId(UUID.randomUUID().toString());
 		task.setTitle("Work session task");

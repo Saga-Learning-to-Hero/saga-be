@@ -109,6 +109,7 @@ class TaskProgressSoftDeleteQueryTest {
 	private SprintRepository sprintRows;
 
 	private Project project;
+	private JiraIntegration jiraIntegration;
 	private StudentProfile student;
 	private GitRepo repo;
 	private Task activeTask;
@@ -122,11 +123,13 @@ class TaskProgressSoftDeleteQueryTest {
 		Course course = courses.save(course(academicClass, subject, semester));
 		project = projects.save(project(course));
 
+		jiraIntegration = jiraIntegrations.save(jiraFor(project));
+
 		UserAccount account = users.save(studentAccount());
 		student = students.save(studentProfile(account));
 
-		activeTask = tasks.save(task(project, student, TaskStatus.DONE, null));
-		deletedTask = tasks.save(task(project, student, TaskStatus.DONE, LocalDateTime.now()));
+		activeTask = tasks.save(task(project, jiraIntegration, student, TaskStatus.DONE, null));
+		deletedTask = tasks.save(task(project, jiraIntegration, student, TaskStatus.DONE, LocalDateTime.now()));
 
 		GitRepo repo = repos.save(gitRepo(project));
 		this.repo = repo;
@@ -182,7 +185,7 @@ class TaskProgressSoftDeleteQueryTest {
 		deletedTask.setSprint(sprint);
 		tasks.save(activeTask);
 		tasks.save(deletedTask);
-		Task backlog = tasks.save(task(project, student, TaskStatus.TODO, null));
+		Task backlog = tasks.save(task(project, jiraIntegration, student, TaskStatus.TODO, null));
 
 		List<Object[]> rows = tasks.countGroupedBySprintAndStatus(project.getId());
 		assertThat(rows).hasSize(1);
@@ -199,7 +202,7 @@ class TaskProgressSoftDeleteQueryTest {
 		tasks.save(activeTask);
 		UserAccount otherAccount = users.save(studentAccount());
 		StudentProfile other = students.save(studentProfile(otherAccount));
-		Task otherTask = task(project, other, TaskStatus.TODO, null);
+		Task otherTask = task(project, jiraIntegration, other, TaskStatus.TODO, null);
 		otherTask.setSprint(sprint);
 		tasks.save(otherTask);
 
@@ -270,12 +273,12 @@ class TaskProgressSoftDeleteQueryTest {
 
 	@Test
 	void findActiveDirectChildSummaries_excludesSoftDeletedChildren() {
-		Task parent = tasks.save(task(project, student, TaskStatus.TODO, null));
-		Task activeChild = task(project, student, TaskStatus.IN_PROGRESS, null);
+		Task parent = tasks.save(task(project, jiraIntegration, student, TaskStatus.TODO, null));
+		Task activeChild = task(project, jiraIntegration, student, TaskStatus.IN_PROGRESS, null);
 		activeChild.setTitle("C1");
 		activeChild.setParentTask(parent);
 		activeChild = tasks.save(activeChild);
-		Task deletedChild = task(project, student, TaskStatus.TODO, LocalDateTime.now());
+		Task deletedChild = task(project, jiraIntegration, student, TaskStatus.TODO, LocalDateTime.now());
 		deletedChild.setTitle("C2");
 		deletedChild.setParentTask(parent);
 		tasks.save(deletedChild);
@@ -288,8 +291,8 @@ class TaskProgressSoftDeleteQueryTest {
 
 	@Test
 	void existsByParentTask_ignoresSoftDeletedChildren() {
-		Task parent = tasks.save(task(project, student, TaskStatus.TODO, null));
-		Task deletedChild = task(project, student, TaskStatus.TODO, LocalDateTime.now());
+		Task parent = tasks.save(task(project, jiraIntegration, student, TaskStatus.TODO, null));
+		Task deletedChild = task(project, jiraIntegration, student, TaskStatus.TODO, LocalDateTime.now());
 		deletedChild.setParentTask(parent);
 		tasks.save(deletedChild);
 
@@ -297,14 +300,8 @@ class TaskProgressSoftDeleteQueryTest {
 	}
 
 	private Sprint persistSprint() {
-		JiraIntegration integration = new JiraIntegration();
-		integration.setProject(project);
-		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
-		integration.setConsecutiveFailures(0);
-		integration.setVersion(0L);
-		integration = jiraIntegrations.save(integration);
 		Sprint sprint = new Sprint();
-		sprint.setJiraIntegration(integration);
+		sprint.setJiraIntegration(jiraIntegration);
 		sprint.setName("Sprint 1");
 		sprint.setState("active");
 		sprint.setExternalSprintId("10001");
@@ -367,9 +364,23 @@ class TaskProgressSoftDeleteQueryTest {
 		return profile;
 	}
 
-	private static Task task(Project project, StudentProfile assignee, TaskStatus status, LocalDateTime deletedAt) {
+	private static JiraIntegration jiraFor(Project project) {
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setCloudId("cloud-" + UUID.randomUUID());
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
+		integration.setConsecutiveFailures(0);
+		integration.setVersion(0L);
+		return integration;
+	}
+
+	private static Task task(
+			Project project, JiraIntegration jiraIntegration, StudentProfile assignee, TaskStatus status, LocalDateTime deletedAt) {
 		Task task = new Task();
 		task.setProject(project);
+		task.setJiraIntegration(jiraIntegration);
 		task.setAssigneeStudent(assignee);
 		task.setExternalKey("SAGA-" + UUID.randomUUID().toString().substring(0, 6));
 		task.setTitle("Task");

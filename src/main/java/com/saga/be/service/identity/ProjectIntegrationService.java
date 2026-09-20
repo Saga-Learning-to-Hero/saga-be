@@ -2,6 +2,7 @@ package com.saga.be.service.identity;
 
 import com.saga.be.config.IntegrationProperties;
 import com.saga.be.dto.integration.GithubReconnectCandidateResponse;
+import com.saga.be.dto.integration.JiraSourceSummary;
 import com.saga.be.dto.integration.OAuthStartResponse;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse;
 import com.saga.be.dto.integration.SelectGitHubRepositoryRequest;
@@ -59,6 +60,7 @@ import com.saga.be.service.sync.IntegrationInitialSyncLauncher;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -102,7 +104,6 @@ public class ProjectIntegrationService {
 	private final AuditService audit;
 	private final OutboxPublisher outbox;
 	private final IntegrationInitialSyncLauncher initialSyncLauncher;
-	private final JiraTaskProjectionHardReset taskProjectionReset;
 	private final JiraDynamicWebhookService jiraWebhooks;
 	private final TransactionTemplate writes;
 
@@ -128,7 +129,6 @@ public class ProjectIntegrationService {
 			AuditService audit,
 			OutboxPublisher outbox,
 			IntegrationInitialSyncLauncher initialSyncLauncher,
-			JiraTaskProjectionHardReset taskProjectionReset,
 			JiraDynamicWebhookService jiraWebhooks,
 			PlatformTransactionManager transactionManager) {
 		this.users = users;
@@ -152,7 +152,6 @@ public class ProjectIntegrationService {
 		this.audit = audit;
 		this.outbox = outbox;
 		this.initialSyncLauncher = initialSyncLauncher;
-		this.taskProjectionReset = taskProjectionReset;
 		this.jiraWebhooks = jiraWebhooks;
 		this.writes = new TransactionTemplate(Objects.requireNonNull(transactionManager, "transactionManager"));
 	}
@@ -176,16 +175,25 @@ public class ProjectIntegrationService {
 						installation.getAccountLogin(),
 						installation.getInstallationStatus() == null ? null : installation.getInstallationStatus().name(),
 						connected);
-		JiraIntegration jiraRow = jiraIntegrations.findByProject_Id(projectId).orElse(null);
-		JiraIntegrationSummary jiraSummary = jiraRow == null
-				? null
-				: new JiraIntegrationSummary(
-						jiraRow.getCloudId(),
-						jiraRow.getSiteName(),
-						jiraRow.getProjectKey(),
-						jiraRow.getJiraBoardId(),
-						jiraRow.getConnectionStatus() == null ? null : jiraRow.getConnectionStatus().name());
-		return new ProjectIntegrationsResponse(githubSummary, jiraSummary);
+		List<JiraIntegration> jiraRows = jiraIntegrations.findAllByProject_Id(projectId);
+		List<JiraSourceSummary> jiraSources = toOrderedJiraSourceSummaries(jiraRows);
+		JiraIntegrationSummary jiraSummary = null;
+		if (jiraRows.size() == 1) {
+			JiraIntegration jiraRow = jiraRows.getFirst();
+			jiraSummary = new JiraIntegrationSummary(
+					jiraRow.getCloudId(),
+					jiraRow.getSiteName(),
+					jiraRow.getProjectKey(),
+					jiraRow.getJiraBoardId(),
+					jiraRow.getConnectionStatus() == null ? null : jiraRow.getConnectionStatus().name());
+		}
+		return new ProjectIntegrationsResponse(githubSummary, jiraSummary, jiraSources);
+	}
+
+	@Transactional(readOnly = true)
+	public List<JiraSourceSummary> listJiraSources(UUID userId, UUID projectId) {
+		requireMember(userId, projectId);
+		return toOrderedJiraSourceSummaries(jiraIntegrations.findAllFetchedByProject_Id(projectId));
 	}
 
 	@Transactional(readOnly = true)
@@ -793,11 +801,59 @@ public class ProjectIntegrationService {
 
 	@Transactional(readOnly = true)
 	public OAuthStartResponse startJira(UUID userId, UUID projectId, String returnPath) {
+		return startJiraConnect(userId, projectId, returnPath);
+	}
+
+	/** ADD intent: fails closed when any Jira source row already exists for the project. */
+	@Transactional(readOnly = true)
+	public OAuthStartResponse startJiraSourceConnect(UUID userId, UUID projectId, String returnPath) {
+		return startJiraConnect(userId, projectId, returnPath);
+	}
+
+	/**
+	 * Reconnect OAuth for a named existing integration. Validates ownership before OAuth and stores the
+	 * target id in OAuth state / pending so save updates that row only.
+	 */
+	@Transactional(readOnly = true)
+	public OAuthStartResponse startJiraSourceReconnect(
+			UUID userId, UUID projectId, UUID integrationId, String returnPath) {
 		requireLeader(userId, projectId);
+		jiraIntegrations
+				.findByIdAndProject_Id(integrationId, projectId)
+				.orElseThrow(() -> new IntegrationException(
+						IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
+						HttpStatus.NOT_FOUND,
+						"Jira source was not found for this project."));
+		return beginJiraOAuth(userId, projectId, returnPath, integrationId);
+	}
+
+	private OAuthStartResponse startJiraConnect(UUID userId, UUID projectId, String returnPath) {
+		requireLeader(userId, projectId);
+		assertNoExistingJiraSourceForAdd(projectId);
+		return beginJiraOAuth(userId, projectId, returnPath, null);
+	}
+
+	private OAuthStartResponse beginJiraOAuth(
+			UUID userId, UUID projectId, String returnPath, UUID targetIntegrationId) {
 		Team team = requireTeamForProject(projectId);
 		String verifier = Pkce.newVerifier();
-		OAuthState state = oauthStates.start(
-				userId, OAuthFlowType.JIRA_TEAM_CONNECT, safeReturnPath(returnPath), projectId, team.getId(), verifier);
+		OAuthState state = targetIntegrationId == null
+				? oauthStates.start(
+						userId,
+						OAuthFlowType.JIRA_TEAM_CONNECT,
+						safeReturnPath(returnPath),
+						projectId,
+						team.getId(),
+						verifier)
+				: oauthStates.start(
+						userId,
+						OAuthFlowType.JIRA_TEAM_CONNECT,
+						safeReturnPath(returnPath),
+						projectId,
+						team.getId(),
+						verifier,
+						null,
+						targetIntegrationId);
 		return new OAuthStartResponse(
 				jira.authorizationUrl(
 						state.state(),
@@ -805,6 +861,15 @@ public class ProjectIntegrationService {
 						callback(properties.getJira().getTeamOauthCallbackUrl(), "/api/integrations/jira/team/callback"),
 						true),
 				state.state());
+	}
+
+	private void assertNoExistingJiraSourceForAdd(UUID projectId) {
+		if (!jiraIntegrations.findAllByProject_Id(projectId).isEmpty()) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_MULTI_SOURCE_NOT_READY,
+					HttpStatus.CONFLICT,
+					"Project already has a Jira source; adding another is not ready until multi-source sync/webhook isolation.");
+		}
 	}
 
 	public String completeJiraTeamCallback(UUID userId, String code, String rawState) {
@@ -835,7 +900,13 @@ public class ProjectIntegrationService {
 		}
 		pendingJira.save(
 				new PendingJiraConnect(
-						userId, state.projectId(), tokens.accessToken(), tokens.refreshToken(), tokens.scope(), Instant.now()),
+						userId,
+						state.projectId(),
+						tokens.accessToken(),
+						tokens.refreshToken(),
+						tokens.scope(),
+						Instant.now(),
+						state.jiraIntegrationId()),
 				properties.getOauthStateTtl());
 		return redirect(state.frontendReturnPath());
 	}
@@ -871,6 +942,31 @@ public class ProjectIntegrationService {
 
 	public void saveJiraSelection(UUID userId, UUID projectId, SelectJiraIntegrationRequest selection) {
 		requireLeader(userId, projectId);
+		List<JiraIntegration> existingRows = jiraIntegrations.findAllByProject_Id(projectId);
+		if (existingRows.size() > 1) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_SOURCE_REQUIRED,
+					HttpStatus.CONFLICT,
+					"Multiple Jira sources exist; use the named source endpoint to update one.");
+		}
+		UUID targetIntegrationId = existingRows.isEmpty() ? null : existingRows.getFirst().getId();
+		saveJiraSelectionInternal(userId, projectId, selection, targetIntegrationId);
+	}
+
+	public void saveJiraSourceSelection(
+			UUID userId, UUID projectId, UUID integrationId, SelectJiraIntegrationRequest selection) {
+		requireLeader(userId, projectId);
+		jiraIntegrations
+				.findByIdAndProject_Id(integrationId, projectId)
+				.orElseThrow(() -> new IntegrationException(
+						IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
+						HttpStatus.NOT_FOUND,
+						"Jira source was not found for this project."));
+		saveJiraSelectionInternal(userId, projectId, selection, integrationId);
+	}
+
+	private void saveJiraSelectionInternal(
+			UUID userId, UUID projectId, SelectJiraIntegrationRequest selection, UUID targetIntegrationId) {
 		// Peek pending for provider validation so a failed site/project/board check does not burn the
 		// one-shot OAuth grant and leave a REVOKED row stuck without credentials.
 		PendingJiraConnect pending = pendingJira
@@ -879,6 +975,20 @@ public class ProjectIntegrationService {
 						IntegrationErrorCode.OAUTH_STATE_EXPIRED,
 						HttpStatus.BAD_REQUEST,
 						"Jira team authorization has expired. Start the connection again."));
+		if (pending.targetIntegrationId() != null
+				&& targetIntegrationId != null
+				&& !pending.targetIntegrationId().equals(targetIntegrationId)) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
+					HttpStatus.CONFLICT,
+					"Pending Jira authorization targets a different source.");
+		}
+		UUID effectiveTarget =
+				targetIntegrationId != null ? targetIntegrationId : pending.targetIntegrationId();
+		JiraIntegration existing = effectiveTarget == null
+				? null
+				: jiraIntegrations.findByIdAndProject_Id(effectiveTarget, projectId).orElse(null);
+		assertEstablishedSourceIdentityMatches(existing, selection.cloudId(), selection.jiraProjectId());
 		JiraOAuthClient.AccessibleResource site = requireAccessibleSite(pending.accessToken(), selection.cloudId());
 		JiraOAuthClient.JiraProjectResponse projectNode =
 				jira.getProject(pending.accessToken(), site.id(), selection.jiraProjectId());
@@ -886,6 +996,7 @@ public class ProjectIntegrationService {
 			throw new IntegrationException(
 					IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira project is not accessible.");
 		}
+		assertEstablishedSourceIdentityMatches(existing, site.id(), projectNode.id());
 		if (selection.boardId() != null && !selection.boardId().isBlank()) {
 			JiraOAuthClient.JiraBoardResponse board = jira.getBoard(pending.accessToken(), site.id(), selection.boardId());
 			if (board == null || board.id() == null) {
@@ -893,35 +1004,34 @@ public class ProjectIntegrationService {
 						IntegrationErrorCode.JIRA_BOARD_NOT_ACCESSIBLE, HttpStatus.FORBIDDEN, "Jira board is not accessible.");
 			}
 		}
-		JiraIntegration existing = jiraIntegrations.findByProject_Id(projectId).orElse(null);
-		String priorCloudId = existing == null ? null : existing.getCloudId();
-		String priorWebhookId = existing == null ? null : existing.getWebhookId();
-		boolean priorSource = priorCloudId != null && existing.getJiraProjectId() != null;
-		boolean sameSource = priorSource
-				&& Objects.equals(priorCloudId, site.id())
-				&& Objects.equals(existing.getJiraProjectId(), projectNode.id());
-		boolean sourceReplacement = priorSource && !sameSource;
-		// Consume pending only after source-replace gates inside the write transaction.
-		persistAtomically(() -> persistJiraIntegration(userId, projectId, site, projectNode, selection.boardId()));
-		if (sourceReplacement && priorCloudId != null && priorWebhookId != null) {
-			jiraWebhooks.unregisterRemote(priorCloudId, priorWebhookId, pending.accessToken());
-		}
+		// Consume pending only after identity / accessibility gates inside the write transaction.
+		persistAtomically(
+				() -> persistJiraIntegration(userId, projectId, site, projectNode, selection.boardId(), effectiveTarget));
 		// Provider HTTP outside JDBC: register/reuse dynamic OAuth webhook for realtime delivery.
 		jiraWebhooks.ensureRegistered(projectId, pending.accessToken());
 		triggerJiraInitialSync(projectId, pending.accessToken());
 	}
 
 	/**
-	 * Persists or reactivates the single {@code jira_integration} row for THIS SAGA project only
-	 * (looked up by {@code projectId}, never by provider identity) — soft-revoked rows are reused
-	 * in place: {@code REVOKED -> ACTIVE} with refreshed credentials and selection. Different Jira
-	 * source (cloudId / jiraProjectId) hard-resets Task projection when safe; same projectKey
-	 * across sources and protected evidence block replacement without consuming pending OAuth.
-	 * A Jira provider project previously connected — then disconnected — by a <em>different</em>
-	 * SAGA project is a distinct case: this project has no row of its own for it yet, so it falls
-	 * into the "no existing integration" branch below and gets a brand-new {@code JiraIntegration}
-	 * row (new id, its own webhook/sync-cursor lifecycle); the other project's REVOKED row is never
-	 * read, reused, or re-parented (see {@link #assertJiraProviderProjectAvailableForSagaProject}).
+	 * Persists or reactivates a {@code jira_integration} row for THIS SAGA project.
+	 *
+	 * <p>{@code targetIntegrationId}:
+	 * <ul>
+	 *   <li>{@code null} + 0 rows → create the first source
+	 *   <li>{@code null} + 1 row → update that singular row (legacy)
+	 *   <li>{@code null} + &gt;1 rows → fail closed ({@code JIRA_MULTI_SOURCE_NOT_READY})
+	 *   <li>non-null → update that named row only; never create another
+	 * </ul>
+	 *
+	 * Soft-revoked rows are reused in place: {@code REVOKED -> ACTIVE} with refreshed credentials.
+	 * Once {@code cloudId} + {@code jiraProjectId} are established on a row, they are immutable —
+	 * reconnect must target the same provider identity; a different cloud/project is rejected with
+	 * {@code JIRA_SOURCE_IDENTITY_MISMATCH} (no hard-reset, no history deletion). Board may change
+	 * within the same Jira project. A Jira provider project previously connected — then
+	 * disconnected — by a <em>different</em> SAGA project is a distinct case: this project has no
+	 * row of its own for it yet, so it falls into the "no existing integration" branch below and
+	 * gets a brand-new {@code JiraIntegration} row (see {@link
+	 * #assertJiraProviderProjectAvailableForSagaProject}).
 	 */
 	protected void persistJiraIntegration(
 			UUID userId,
@@ -929,64 +1039,34 @@ public class ProjectIntegrationService {
 			JiraOAuthClient.AccessibleResource site,
 			JiraOAuthClient.JiraProjectResponse projectNode,
 			String boardId) {
+		persistJiraIntegration(userId, projectId, site, projectNode, boardId, null);
+	}
+
+	protected void persistJiraIntegration(
+			UUID userId,
+			UUID projectId,
+			JiraOAuthClient.AccessibleResource site,
+			JiraOAuthClient.JiraProjectResponse projectNode,
+			String boardId,
+			UUID targetIntegrationId) {
 		requireLeader(userId, projectId);
 		Project project = requireFetchedProject(projectId);
 		UserAccount actor = users.findById(userId).orElseThrow();
-		JiraIntegration integration = jiraIntegrations.findByProject_Id(project.getId()).orElse(null);
-		if (integration != null && integration.getId() != null) {
+		JiraIntegration integration = resolveJiraIntegrationForPersist(projectId, targetIntegrationId);
+		if (integration.getId() != null) {
 			integration = jiraIntegrations.lockById(integration.getId()).orElse(integration);
-		} else {
-			integration = new JiraIntegration();
-			if (integration.getConsecutiveFailures() == null) {
-				integration.setConsecutiveFailures(0);
-			}
+		} else if (integration.getConsecutiveFailures() == null) {
+			integration.setConsecutiveFailures(0);
 		}
 
-		String oldCloudId = integration.getCloudId();
-		String oldJiraProjectId = integration.getJiraProjectId();
-		String oldProjectKey = integration.getProjectKey();
 		String newCloudId = site.id();
 		String newJiraProjectId = projectNode.id();
 		String newProjectKey = projectNode.key();
-		boolean hasExistingSource = oldCloudId != null && oldJiraProjectId != null;
-		boolean sameSource = hasExistingSource
-				&& Objects.equals(oldCloudId, newCloudId)
-				&& Objects.equals(oldJiraProjectId, newJiraProjectId);
-		boolean sourceReplacement = hasExistingSource && !sameSource;
+		assertEstablishedSourceIdentityMatches(integration, newCloudId, newJiraProjectId);
 
 		// Ownership is cloudId + jiraProjectId (not projectKey). Reject before claim so a conflict
 		// does not burn the pending OAuth grant or mutate this project's integration/tasks.
 		assertJiraProviderProjectAvailableForSagaProject(newCloudId, newJiraProjectId, projectId);
-
-		if (sourceReplacement) {
-			if (oldProjectKey != null
-					&& newProjectKey != null
-					&& oldProjectKey.equalsIgnoreCase(newProjectKey)) {
-				throw new IntegrationException(
-						IntegrationErrorCode.JIRA_PROJECT_KEY_AMBIGUOUS,
-						HttpStatus.CONFLICT,
-						"Cannot switch to a different Jira site or project that reuses the same project key.");
-			}
-			if (taskProjectionReset.protectedEvidenceExists(projectId)) {
-				throw new IntegrationException(
-						IntegrationErrorCode.JIRA_SOURCE_REPLACE_BLOCKED_BY_EVIDENCE,
-						HttpStatus.CONFLICT,
-						"Cannot replace Jira source while work sessions or contribution confirmations exist for this project.");
-			}
-			try {
-				// Reset before consume so FK RESTRICT / concurrent evidence keeps the pending grant usable.
-				taskProjectionReset.hardDeleteAllTasksForProject(projectId);
-				// Sprint is reached only via jira_integration_id (this row is reused, not re-created),
-				// so the old source's Sprints must be purged too or they'd survive misattributed to
-				// the new source (see JiraTaskProjectionHardReset#hardDeleteAllSprintsForIntegration).
-				taskProjectionReset.hardDeleteAllSprintsForIntegration(integration.getId());
-			} catch (DataIntegrityViolationException ex) {
-				throw new IntegrationException(
-						IntegrationErrorCode.JIRA_SOURCE_REPLACE_BLOCKED_BY_EVIDENCE,
-						HttpStatus.CONFLICT,
-						"Cannot replace Jira source while work sessions or contribution confirmations exist for this project.");
-			}
-		}
 
 		PendingJiraClaim claim = pendingJira
 				.claim(userId, projectId)
@@ -1076,6 +1156,55 @@ public class ProjectIntegrationService {
 	}
 
 	/**
+	 * Established source identity is {@code cloudId + jiraProjectId}. Reconnect/configure may refresh
+	 * credentials and board within that identity; a different cloud or Jira project is rejected.
+	 * Unestablished rows (null cloud or null jira project id) may set identity for the first time.
+	 */
+	static void assertEstablishedSourceIdentityMatches(
+			JiraIntegration existing, String cloudId, String jiraProjectId) {
+		if (existing == null) {
+			return;
+		}
+		String establishedCloud = existing.getCloudId();
+		String establishedProject = existing.getJiraProjectId();
+		if (establishedCloud == null
+				|| establishedCloud.isBlank()
+				|| establishedProject == null
+				|| establishedProject.isBlank()) {
+			return;
+		}
+		if (Objects.equals(establishedCloud, cloudId) && Objects.equals(establishedProject, jiraProjectId)) {
+			return;
+		}
+		throw new IntegrationException(
+				IntegrationErrorCode.JIRA_SOURCE_IDENTITY_MISMATCH,
+				HttpStatus.CONFLICT,
+				"Cannot change Jira source identity (cloudId/jiraProjectId) on an established integration; reconnect the same source or add a new source.");
+	}
+
+	private JiraIntegration resolveJiraIntegrationForPersist(UUID projectId, UUID targetIntegrationId) {
+		if (targetIntegrationId != null) {
+			return jiraIntegrations
+					.findByIdAndProject_Id(targetIntegrationId, projectId)
+					.orElseThrow(() -> new IntegrationException(
+							IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
+							HttpStatus.NOT_FOUND,
+							"Jira source was not found for this project."));
+		}
+		List<JiraIntegration> rows = jiraIntegrations.findAllByProject_Id(projectId);
+		if (rows.size() > 1) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_MULTI_SOURCE_NOT_READY,
+					HttpStatus.CONFLICT,
+					"Project has multiple Jira sources; named source id is required.");
+		}
+		if (rows.size() == 1) {
+			return rows.getFirst();
+		}
+		return new JiraIntegration();
+	}
+
+	/**
 	 * One Jira provider project ({@code cloudId} + {@code jiraProjectId}) may be ACTIVE in at
 	 * most one SAGA project at a time (V14). A REVOKED integration owned by another SAGA project
 	 * does not block reuse — that project's own {@code jira_integration} row, and everything
@@ -1143,8 +1272,33 @@ public class ProjectIntegrationService {
 	@Transactional
 	public void disconnectJira(UUID userId, UUID projectId) {
 		requireLeader(userId, projectId);
-		JiraIntegration integration = jiraIntegrations.findByProject_Id(projectId).orElseThrow(() -> new IntegrationException(
-				IntegrationErrorCode.INTEGRATION_REVOKED, HttpStatus.NOT_FOUND, "Jira is not connected."));
+		List<JiraIntegration> rows = jiraIntegrations.findAllByProject_Id(projectId);
+		if (rows.isEmpty()) {
+			throw new IntegrationException(
+					IntegrationErrorCode.INTEGRATION_REVOKED, HttpStatus.NOT_FOUND, "Jira is not connected.");
+		}
+		if (rows.size() > 1) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_SOURCE_REQUIRED,
+					HttpStatus.CONFLICT,
+					"Multiple Jira sources exist; disconnect a named source instead.");
+		}
+		softRevokeJiraIntegration(userId, projectId, rows.getFirst());
+	}
+
+	@Transactional
+	public void disconnectJiraSource(UUID userId, UUID projectId, UUID integrationId) {
+		requireLeader(userId, projectId);
+		JiraIntegration integration = jiraIntegrations
+				.findByIdAndProject_Id(integrationId, projectId)
+				.orElseThrow(() -> new IntegrationException(
+						IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
+						HttpStatus.NOT_FOUND,
+						"Jira source was not found for this project."));
+		softRevokeJiraIntegration(userId, projectId, integration);
+	}
+
+	private void softRevokeJiraIntegration(UUID userId, UUID projectId, JiraIntegration integration) {
 		// Delete remote dynamic webhook while credentials still work; ignore remote failures.
 		jiraWebhooks.unregisterIfPresent(integration, null);
 		integration.setConnectionStatus(IntegrationStatus.REVOKED);
@@ -1168,6 +1322,30 @@ public class ProjectIntegrationService {
 				null,
 				null,
 				null);
+	}
+
+	static JiraSourceSummary toJiraSourceSummary(JiraIntegration row) {
+		return new JiraSourceSummary(
+				row.getId(),
+				row.getCloudId(),
+				row.getSiteName(),
+				row.getJiraProjectId(),
+				row.getProjectKey(),
+				row.getJiraBoardId(),
+				row.getConnectionStatus() == null ? null : row.getConnectionStatus().name(),
+				row.getLastSuccessfulSyncAt(),
+				row.getLastSyncedAt(),
+				row.getConsecutiveFailures(),
+				row.getLastErrorCode());
+	}
+
+	private static List<JiraSourceSummary> toOrderedJiraSourceSummaries(List<JiraIntegration> rows) {
+		return rows.stream()
+				.sorted(Comparator
+						.comparing(JiraIntegration::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+						.thenComparing(JiraIntegration::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+				.map(ProjectIntegrationService::toJiraSourceSummary)
+				.toList();
 	}
 
 	void persistAtomically(Runnable action) {

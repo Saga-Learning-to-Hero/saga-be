@@ -5,6 +5,7 @@ import com.saga.be.dto.project.ProjectCommitResponse;
 import com.saga.be.dto.project.ProjectSprintResponse;
 import com.saga.be.dto.project.ProjectTaskResponse;
 import com.saga.be.dto.project.ProjectTaskSprintResponse;
+import com.saga.be.dto.project.TaskJiraSourceSummary;
 import com.saga.be.dto.project.TaskParentOptionsResponse;
 import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.jira.Sprint;
@@ -222,6 +223,15 @@ public class ProjectProjectionReadService {
 		// Same truncation rule as dueDate -- task.getStartDate() is stored at local midnight (Jira's
 		// Start Date custom field is also date-only, no time component).
 		java.time.LocalDate startDate = task.getStartDate() == null ? null : task.getStartDate().toLocalDate();
+		TaskJiraSourceSummary source = null;
+		if (task.getJiraIntegration() != null) {
+			var jira = task.getJiraIntegration();
+			source = new TaskJiraSourceSummary(
+					jira.getId(),
+					jira.getSiteName(),
+					jira.getProjectKey(),
+					jira.getConnectionStatus() == null ? null : jira.getConnectionStatus().name());
+		}
 		return new ProjectTaskResponse(
 				task.getId(),
 				task.getExternalId(),
@@ -249,6 +259,7 @@ public class ProjectProjectionReadService {
 				task.getCreatedAt(),
 				task.getUpdatedAt(),
 				parentTask,
+				source,
 				subtasks);
 	}
 

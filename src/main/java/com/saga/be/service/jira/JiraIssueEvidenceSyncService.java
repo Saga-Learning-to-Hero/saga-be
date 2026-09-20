@@ -171,7 +171,7 @@ public class JiraIssueEvidenceSyncService {
 		JsonNode remote = jira.listRemoteLinks(access, integration.getCloudId(), ref.issueId());
 		List<RemoteLink> remoteLinks = JiraIssueEvidenceParser.remoteLinks(remote);
 		List<Attachment> jiraFiles = JiraIssueEvidenceParser.attachments(issue);
-		IssuePersist persisted = inTx(() -> persistIssueCore(integration.getProject(), issue, ref, remoteLinks, jiraFiles));
+		IssuePersist persisted = inTx(() -> persistIssueCore(integration, issue, ref, remoteLinks, jiraFiles));
 		if (persisted == null) {
 			return;
 		}
@@ -208,8 +208,8 @@ public class JiraIssueEvidenceSyncService {
 	}
 
 	private IssuePersist persistIssueCore(
-			Project project, JsonNode issue, IssueRef ref, List<RemoteLink> remoteLinks, List<Attachment> jiraFiles) {
-		Task task = upsertTask(project, issue, ref);
+			JiraIntegration integration, JsonNode issue, IssueRef ref, List<RemoteLink> remoteLinks, List<Attachment> jiraFiles) {
+		Task task = upsertTask(integration, issue, ref);
 		syncLinks(task, remoteLinks);
 		syncAttachmentMetadata(task, jiraFiles);
 		Set<String> keep = new HashSet<>();
@@ -308,9 +308,11 @@ public class JiraIssueEvidenceSyncService {
 		return pruned;
 	}
 
-	private Task upsertTask(Project project, JsonNode issue, IssueRef ref) {
-		Task task = tasks.findByProject_IdAndExternalId(project.getId(), ref.issueId()).orElseGet(Task::new);
+	private Task upsertTask(JiraIntegration integration, JsonNode issue, IssueRef ref) {
+		Project project = integration.getProject();
+		Task task = tasks.findByJiraIntegration_IdAndExternalId(integration.getId(), ref.issueId()).orElseGet(Task::new);
 		task.setProject(project);
+		task.setJiraIntegration(integration);
 		task.setExternalId(ref.issueId());
 		task.setExternalKey(ref.issueKey());
 		task.setTitle(JiraIssueEvidenceParser.summary(issue));

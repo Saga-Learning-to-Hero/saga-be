@@ -137,7 +137,7 @@ class JiraTaskSyncServiceTest {
 				.thenReturn(Optional.of(integration));
 		org.mockito.Mockito.lenient().when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
 		org.mockito.Mockito.lenient()
-				.when(projection.upsertBatch(eq(project), eq("SAGA"), any()))
+				.when(projection.upsertBatch(eq(integration), eq("SAGA"), any()))
 				.thenAnswer(inv -> {
 					assertThat(openTx.get()).as("upsert inside short JDBC TX").isPositive();
 					return ((List<?>) inv.getArgument(2)).size();
@@ -174,7 +174,7 @@ class JiraTaskSyncServiceTest {
 		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
 		assertThat(job.getItemsProcessed()).isEqualTo(520);
 		verify(jira, times(11)).searchIssues(anyString(), anyString(), anyString(), nullable(String.class), anyInt(), nullable(String.class), nullable(String.class), nullable(String.class));
-		verify(projection, times(11)).upsertBatch(eq(project), eq("SAGA"), any());
+		verify(projection, times(11)).upsertBatch(eq(integration), eq("SAGA"), any());
 	}
 
 	@Test
@@ -200,7 +200,7 @@ class JiraTaskSyncServiceTest {
 
 		assertThat(service.initialSync(projectId, "token").getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
 		assertThat(service.initialSync(projectId, "token").getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
-		verify(projection, times(2)).upsertBatch(eq(project), eq("SAGA"), any());
+		verify(projection, times(2)).upsertBatch(eq(integration), eq("SAGA"), any());
 	}
 
 	@Test
@@ -215,7 +215,7 @@ class JiraTaskSyncServiceTest {
 
 		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.FAILED);
 		assertThat(job.getErrorCategory()).isEqualTo("JIRA_PROJECT_NOT_ACCESSIBLE");
-		verify(projection, times(1)).upsertBatch(eq(project), eq("SAGA"), any());
+		verify(projection, times(1)).upsertBatch(eq(integration), eq("SAGA"), any());
 	}
 
 	@Test
@@ -225,7 +225,7 @@ class JiraTaskSyncServiceTest {
 
 		service.initialSync(projectId, "token");
 
-		verify(projection, times(1)).upsertBatch(eq(project), eq("SAGA"), any());
+		verify(projection, times(1)).upsertBatch(eq(integration), eq("SAGA"), any());
 	}
 
 	@Test
@@ -236,7 +236,7 @@ class JiraTaskSyncServiceTest {
 		});
 
 		assertThat(service.initialSync(projectId, "token").getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
-		verify(projection, atLeastOnce()).upsertBatch(eq(project), eq("SAGA"), any());
+		verify(projection, atLeastOnce()).upsertBatch(eq(integration), eq("SAGA"), any());
 	}
 
 	@Test
@@ -329,7 +329,7 @@ class JiraTaskSyncServiceTest {
 
 			assertThat(job.getStatus()).isEqualTo(SyncJobStatus.FAILED);
 			assertThat(job.getErrorCategory()).isEqualTo("JIRA_SYNC_INCOMPLETE");
-			verify(projection, times(3)).upsertBatch(eq(project), eq("SAGA"), any());
+			verify(projection, times(3)).upsertBatch(eq(integration), eq("SAGA"), any());
 		} finally {
 			JiraTaskSyncService.maxIssuePages = previous;
 		}

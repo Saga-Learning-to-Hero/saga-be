@@ -2,6 +2,8 @@ package com.saga.be.repository;
 
 import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.jira.JiraIntegration;
+import com.saga.be.exception.IntegrationException;
+import com.saga.be.integration.IntegrationErrorCode;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -11,10 +13,22 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.http.HttpStatus;
 
 public interface JiraIntegrationRepository extends JpaRepository<JiraIntegration, UUID> {
 
-	Optional<JiraIntegration> findByProject_Id(UUID projectId);
+	List<JiraIntegration> findAllByProject_Id(UUID projectId);
+
+	Optional<JiraIntegration> findByIdAndProject_Id(UUID id, UUID projectId);
+
+	/**
+	 * Singular Project → JiraIntegration lookup for APIs that remain one-source until Phase 2.
+	 * Empty when none; exactly one when the project still has a single row; fails closed when
+	 * multiple sources exist (never silently picks "first" / ACTIVE / oldest).
+	 */
+	default Optional<JiraIntegration> findByProject_Id(UUID projectId) {
+		return requireSingular(findAllByProject_Id(projectId), projectId);
+	}
 
 	/**
 	 * Since V14, {@code (cloud_id, jira_project_id)} is unique only among ACTIVE rows
@@ -42,7 +56,14 @@ public interface JiraIntegrationRepository extends JpaRepository<JiraIntegration
 			left join fetch j.connectedBy
 			where j.project.id = :projectId
 			""")
-	Optional<JiraIntegration> findFetchedByProject_Id(@Param("projectId") UUID projectId);
+	List<JiraIntegration> findAllFetchedByProject_Id(@Param("projectId") UUID projectId);
+
+	/**
+	 * Singular fetched lookup. Same fail-closed semantics as {@link #findByProject_Id}.
+	 */
+	default Optional<JiraIntegration> findFetchedByProject_Id(UUID projectId) {
+		return requireSingular(findAllFetchedByProject_Id(projectId), projectId);
+	}
 
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("select j from JiraIntegration j left join fetch j.connectedBy where j.id = :id")
@@ -108,4 +129,18 @@ public interface JiraIntegrationRepository extends JpaRepository<JiraIntegration
 			@Param("status") IntegrationStatus status,
 			@Param("cloudId") String cloudId,
 			@Param("boardId") String boardId);
+
+	private static Optional<JiraIntegration> requireSingular(List<JiraIntegration> rows, UUID projectId) {
+		if (rows == null || rows.isEmpty()) {
+			return Optional.empty();
+		}
+		if (rows.size() > 1) {
+			throw new IntegrationException(
+					IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
+					HttpStatus.CONFLICT,
+					"Project has multiple Jira sources; singular project-scoped lookup is blocked until multi-source APIs are enabled",
+					projectId);
+		}
+		return Optional.of(rows.get(0));
+	}
 }

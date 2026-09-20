@@ -113,8 +113,10 @@ public class ProjectProjectionController {
 	@GetMapping("/tasks/options")
 	@Operation(summary = "Provider-backed create/edit options (issue types, priorities, assignable users, estimation, sprints).")
 	public ProjectTaskOptionsResponse taskOptions(
-			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
-		return taskCommands.options(principal.getUserId(), projectId);
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@RequestParam(required = false) UUID jiraIntegrationId) {
+		return taskCommands.options(principal.getUserId(), projectId, jiraIntegrationId);
 	}
 
 	@GetMapping("/tasks/parent-options")

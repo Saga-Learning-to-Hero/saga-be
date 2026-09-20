@@ -163,7 +163,7 @@ public class JiraTaskSyncService {
 					break;
 				}
 				Integer upserted = writes.execute(status ->
-						projection.upsertBatch(integration.getProject(), integration.getProjectKey(), issues));
+						projection.upsertBatch(integration, integration.getProjectKey(), issues));
 				processed += upserted == null ? 0 : upserted;
 				if (page.last() || page.nextPageToken() == null || page.nextPageToken().isBlank()) {
 					exhausted = true;

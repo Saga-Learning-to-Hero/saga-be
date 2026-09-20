@@ -11,15 +11,29 @@ public final class PendingJiraConnect {
 	private final String refreshToken;
 	private final String scope;
 	private final Instant createdAt;
+	/** When set, selection/save must update this existing integration row (reconnect), never create another. */
+	private final UUID targetIntegrationId;
 
 	public PendingJiraConnect(
 			UUID userId, UUID projectId, String accessToken, String refreshToken, String scope, Instant createdAt) {
+		this(userId, projectId, accessToken, refreshToken, scope, createdAt, null);
+	}
+
+	public PendingJiraConnect(
+			UUID userId,
+			UUID projectId,
+			String accessToken,
+			String refreshToken,
+			String scope,
+			Instant createdAt,
+			UUID targetIntegrationId) {
 		this.userId = userId;
 		this.projectId = projectId;
 		this.accessToken = accessToken;
 		this.refreshToken = refreshToken;
 		this.scope = scope;
 		this.createdAt = createdAt;
+		this.targetIntegrationId = targetIntegrationId;
 	}
 
 	public UUID userId() {
@@ -46,8 +60,17 @@ public final class PendingJiraConnect {
 		return createdAt;
 	}
 
+	public UUID targetIntegrationId() {
+		return targetIntegrationId;
+	}
+
 	@Override
 	public String toString() {
-		return "PendingJiraConnect[userId=" + userId + ", projectId=" + projectId + "]";
+		return "PendingJiraConnect[userId="
+				+ userId
+				+ ", projectId="
+				+ projectId
+				+ (targetIntegrationId == null ? "" : ", targetIntegrationId=" + targetIntegrationId)
+				+ "]";
 	}
 }

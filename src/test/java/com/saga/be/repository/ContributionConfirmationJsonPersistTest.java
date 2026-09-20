@@ -14,7 +14,9 @@ import com.saga.be.entity.enums.AccountRole;
 import com.saga.be.entity.enums.AccountStatus;
 import com.saga.be.entity.enums.ConfirmationEvent;
 import com.saga.be.entity.enums.ConfirmationMethod;
+import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.TaskStatus;
+import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
 import com.saga.be.service.confirmation.EvidenceHasher;
@@ -95,6 +97,8 @@ class ContributionConfirmationJsonPersistTest {
 	@Autowired
 	private TaskRepository tasks;
 	@Autowired
+	private JiraIntegrationRepository jiraIntegrations;
+	@Autowired
 	private ContributionConfirmationRepository confirmations;
 	@Autowired
 	private EntityManager entityManager;
@@ -173,6 +177,8 @@ class ContributionConfirmationJsonPersistTest {
 		project.setCourse(course);
 		project = projects.save(project);
 
+		JiraIntegration jira = jiraIntegrations.save(jiraFor(project));
+
 		user = new UserAccount();
 		user.setEmail("confirm-" + UUID.randomUUID() + "@fe.edu.vn");
 		user.setFullName("Student");
@@ -182,11 +188,23 @@ class ContributionConfirmationJsonPersistTest {
 
 		task = new Task();
 		task.setProject(project);
+		task.setJiraIntegration(jira);
 		task.setExternalKey("SAGA-1");
 		task.setExternalId(UUID.randomUUID().toString());
 		task.setTitle("Task");
 		task.setStatus(TaskStatus.TODO);
 		task = tasks.save(task);
+	}
+
+	private static JiraIntegration jiraFor(Project project) {
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setCloudId("cloud-" + UUID.randomUUID());
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
+		integration.setConsecutiveFailures(0);
+		return integration;
 	}
 
 	private ContributionConfirmation confirmation(String snapshot) {

@@ -1825,9 +1825,16 @@ class StudentDashboardPersistTest {
 		return sprint;
 	}
 
-	private static Task task(Project project, Sprint sprint, TaskStatus status, Task parent) {
+	private JiraIntegration requireJira(Project project) {
+		return jiraIntegrations
+				.findByProject_Id(project.getId())
+				.orElseGet(() -> jiraIntegrations.save(jira(project, IntegrationStatus.ACTIVE)));
+	}
+
+	private Task task(Project project, Sprint sprint, TaskStatus status, Task parent) {
 		Task task = new Task();
 		task.setProject(project);
+		task.setJiraIntegration(requireJira(project));
 		task.setSprint(sprint);
 		task.setStatus(status);
 		task.setTitle(status.name());
@@ -1840,7 +1847,7 @@ class StudentDashboardPersistTest {
 		return students.findByUserAccount_Id(userId).orElseThrow();
 	}
 
-	private static Task assigned(
+	private Task assigned(
 			Project project,
 			Sprint sprint,
 			StudentProfile assignee,
