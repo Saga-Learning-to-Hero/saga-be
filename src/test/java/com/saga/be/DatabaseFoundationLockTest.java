@@ -57,7 +57,7 @@ class DatabaseFoundationLockTest {
 	}
 
 	@Test
-	void versionedFlywayMigrationsHaveUniqueVersionsThroughV25() throws IOException {
+	void versionedFlywayMigrationsHaveUniqueVersionsThroughV26() throws IOException {
 		Pattern versioned = Pattern.compile("^V(\\d+)__.+\\.sql$");
 		Map<Integer, List<String>> byVersion = new TreeMap<>();
 		try (Stream<Path> files = Files.list(Path.of("src/main/resources/db/migration"))) {
@@ -81,7 +81,8 @@ class DatabaseFoundationLockTest {
 		assertEquals(List.of("V23__git_commit_parent_count.sql"), byVersion.get(23));
 		assertEquals(List.of("V24__multi_jira_task_provenance.sql"), byVersion.get(24));
 		assertEquals(List.of("V25__jira_task_failover.sql"), byVersion.get(25));
-		assertEquals(25, byVersion.keySet().stream().mapToInt(Integer::intValue).max().orElse(0));
+		assertEquals(List.of("V26__jira_task_failover_remote_issue_binding.sql"), byVersion.get(26));
+		assertEquals(26, byVersion.keySet().stream().mapToInt(Integer::intValue).max().orElse(0));
 	}
 
 	private static String allMigrations() throws IOException {

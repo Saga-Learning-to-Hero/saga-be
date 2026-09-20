@@ -11,6 +11,10 @@ import com.saga.be.dto.integration.SelectGitHubRepositoryRequest;
 import com.saga.be.dto.integration.SelectJiraIntegrationRequest;
 import com.saga.be.dto.integration.failover.JiraFailoverPreviewRequest;
 import com.saga.be.dto.integration.failover.JiraFailoverPreviewResponse;
+import com.saga.be.dto.integration.failover.JiraFailoverExecuteRequest;
+import com.saga.be.dto.integration.failover.JiraFailoverExecuteResponse;
+import com.saga.be.dto.integration.failover.JiraFailoverReconcileRequest;
+import com.saga.be.dto.integration.failover.JiraFailoverRunResponse;
 import com.saga.be.dto.project.ProjectSyncEnqueueResponse;
 import com.saga.be.dto.project.ProjectTaskOptionsResponse;
 import com.saga.be.exception.IntegrationException;
@@ -20,6 +24,7 @@ import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.identity.ProjectIntegrationService;
 import com.saga.be.service.projection.JiraFailoverPreviewService;
+import com.saga.be.service.projection.JiraFailoverExecutionService;
 import com.saga.be.service.projection.ProjectJiraTaskCommandService;
 import com.saga.be.service.sync.ProjectManualSyncService;
 import com.saga.be.workload.Workload;
@@ -61,6 +66,7 @@ public class ProjectIntegrationController {
 	private final ProjectJiraTaskCommandService taskCommands;
 	private final ProjectManualSyncService manualSync;
 	private final JiraFailoverPreviewService jiraFailoverPreview;
+	private final JiraFailoverExecutionService jiraFailoverExecution;
 	private final IntegrationProperties properties;
 
 	public ProjectIntegrationController(
@@ -68,12 +74,24 @@ public class ProjectIntegrationController {
 			ProjectJiraTaskCommandService taskCommands,
 			ProjectManualSyncService manualSync,
 			JiraFailoverPreviewService jiraFailoverPreview,
+			JiraFailoverExecutionService jiraFailoverExecution,
 			IntegrationProperties properties) {
 		this.integrations = integrations;
 		this.taskCommands = taskCommands;
 		this.manualSync = manualSync;
 		this.jiraFailoverPreview = jiraFailoverPreview;
+		this.jiraFailoverExecution = jiraFailoverExecution;
 		this.properties = properties;
+	}
+
+	/** Compatibility constructor for existing focused MVC tests. */
+	public ProjectIntegrationController(
+			ProjectIntegrationService integrations,
+			ProjectJiraTaskCommandService taskCommands,
+			ProjectManualSyncService manualSync,
+			JiraFailoverPreviewService jiraFailoverPreview,
+			IntegrationProperties properties) {
+		this(integrations, taskCommands, manualSync, jiraFailoverPreview, null, properties);
 	}
 
 	@GetMapping
@@ -333,6 +351,45 @@ public class ProjectIntegrationController {
 			@PathVariable UUID sourceIntegrationId,
 			@Valid @RequestBody JiraFailoverPreviewRequest body) {
 		return jiraFailoverPreview.preview(principal.getUserId(), projectId, sourceIntegrationId, body);
+	}
+
+	@PostMapping("/jira-sources/{sourceIntegrationId}/failover")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
+	@Operation(summary = "Create a durable Jira failover snapshot and enqueue bounded remote processing. Team Leader only.")
+	public ResponseEntity<JiraFailoverExecuteResponse> executeFailover(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@PathVariable UUID sourceIntegrationId,
+			@Valid @RequestBody JiraFailoverExecuteRequest body) {
+		return ResponseEntity.status(HttpStatus.ACCEPTED)
+				.body(jiraFailoverExecution.execute(principal.getUserId(), projectId, sourceIntegrationId, body));
+	}
+
+	@PostMapping("/jira-sources/{sourceIntegrationId}/failover/runs/{runId}/retry")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
+	public ResponseEntity<JiraFailoverExecuteResponse> retryFailover(
+			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId,
+			@PathVariable UUID sourceIntegrationId, @PathVariable UUID runId) {
+		return ResponseEntity.accepted()
+				.body(jiraFailoverExecution.retry(principal.getUserId(), projectId, sourceIntegrationId, runId));
+	}
+
+	@PostMapping("/jira-sources/{sourceIntegrationId}/failover/runs/{runId}/items/{itemId}/reconcile")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
+	public ResponseEntity<Void> reconcileFailover(
+			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId,
+			@PathVariable UUID sourceIntegrationId, @PathVariable UUID runId, @PathVariable UUID itemId,
+			@Valid @RequestBody JiraFailoverReconcileRequest body) {
+		jiraFailoverExecution.reconcile(principal.getUserId(), projectId, sourceIntegrationId, runId, itemId, body);
+		return ResponseEntity.noContent().build();
+	}
+
+	@GetMapping("/jira-sources/{sourceIntegrationId}/failover/runs/{runId}")
+	public JiraFailoverRunResponse failoverRun(
+			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId,
+			@PathVariable UUID sourceIntegrationId, @PathVariable UUID runId,
+			@RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size) {
+		return jiraFailoverExecution.read(principal.getUserId(), projectId, sourceIntegrationId, runId, page, size);
 	}
 
 	@DeleteMapping("/jira")

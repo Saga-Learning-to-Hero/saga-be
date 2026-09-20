@@ -9,10 +9,37 @@ import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Page;
 
 public interface JiraTaskFailoverItemRepository extends JpaRepository<JiraTaskFailoverItem, UUID> {
 
 	Optional<JiraTaskFailoverItem> findByIdAndRun_Project_Id(UUID id, UUID projectId);
+
+	@Query("""
+			select i from JiraTaskFailoverItem i
+			join fetch i.run r
+			join fetch r.targetJiraIntegration t
+			join fetch t.project
+			left join fetch r.targetSprint
+			join fetch i.sourceTask
+			left join fetch i.targetTask
+			where i.id = :id
+			""")
+	Optional<JiraTaskFailoverItem> findFetchedById(@Param("id") UUID id);
+
+	@Query("""
+			select i from JiraTaskFailoverItem i
+			join fetch i.run r
+			join fetch r.targetJiraIntegration t
+			join fetch t.project
+			left join fetch r.targetSprint
+			join fetch i.sourceTask
+			left join fetch i.targetTask
+			where r.id = :runId
+			order by i.createdAt, i.id
+			""")
+	List<JiraTaskFailoverItem> findAllFetchedByRun_Id(@Param("runId") UUID runId);
 
 	List<JiraTaskFailoverItem> findBySourceTask_IdAndStatus(UUID sourceTaskId, JiraFailoverItemStatus status);
 

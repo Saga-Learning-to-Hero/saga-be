@@ -111,6 +111,28 @@ public class JiraIssueWriteClient {
 		}
 	}
 
+	/**
+	 * Reconciliation guard: an issue key is not accepted merely because it resolves in the target
+	 * cloud. The provider's immutable Jira project id must equal the run's target project id.
+	 */
+	public boolean issueBelongsToProject(String accessToken, String cloudId, String issueIdOrKey, String jiraProjectId) {
+		try {
+			JsonNode node = restClient
+					.get()
+					.uri("https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issue}?fields=project", cloudId, issueIdOrKey)
+					.header("Authorization", "Bearer " + accessToken)
+					.retrieve()
+					.body(JsonNode.class);
+			return node != null && jiraProjectId != null
+					&& jiraProjectId.equals(node.path("fields").path("project").path("id").asText(null));
+		} catch (RestClientResponseException ex) {
+			throw mapIssueFailure("verifyIssueProject", ex);
+		} catch (HttpMessageConversionException ex) {
+			throw new IntegrationException(
+					IntegrationErrorCode.INTEGRATION_UNAVAILABLE, HttpStatus.BAD_GATEWAY, "Jira issue could not be parsed.");
+		}
+	}
+
 	public CreatedIssue createIssue(
 			String accessToken,
 			String cloudId,

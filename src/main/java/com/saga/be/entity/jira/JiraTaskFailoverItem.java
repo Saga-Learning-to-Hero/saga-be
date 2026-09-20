@@ -137,7 +137,7 @@ public class JiraTaskFailoverItem extends BaseEntity {
 		};
 	}
 
-	void transitionTo(JiraFailoverItemStatus next) {
+	public void transitionTo(JiraFailoverItemStatus next) {
 		if (!canTransitionTo(next)) {
 			throw new IllegalStateException(
 					"Illegal failover item transition from " + status + " to " + next);

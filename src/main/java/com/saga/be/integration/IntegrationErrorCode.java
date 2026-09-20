@@ -55,6 +55,16 @@ public enum IntegrationErrorCode {
 	JIRA_FAILOVER_SPRINT_INVALID,
 	/** Failover request body is incomplete or otherwise invalid. */
 	JIRA_FAILOVER_INVALID_REQUEST,
+	/** A requested source task is already held by another canonical failover item. */
+	JIRA_FAILOVER_SOURCE_ALREADY_CLAIMED,
+	/** An operator attempted an unsafe failover recovery action. */
+	JIRA_FAILOVER_RECONCILIATION_REQUIRED,
+	/** A verified remote issue is not in the target Jira project for this run. */
+	JIRA_FAILOVER_REMOTE_ISSUE_INVALID,
+	/** A target Jira issue has already been bound to a different failover item. */
+	JIRA_FAILOVER_REMOTE_ISSUE_ALREADY_BOUND,
+	/** A failover item already has a durable remote Jira identity and cannot be rebound. */
+	JIRA_FAILOVER_REMOTE_IDENTITY_IMMUTABLE,
 	JIRA_ISSUE_CREATE_FAILED,
 	JIRA_ISSUE_UPDATE_FAILED,
 	JIRA_ISSUE_DELETE_FAILED,
