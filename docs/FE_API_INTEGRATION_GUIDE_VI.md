@@ -948,7 +948,9 @@ Quy tắc Phase A (giữ nguyên):
 | `team` | `null` khi đã ACTIVE enrollment nhưng Lecturer chưa gán nhóm |
 | `team.projectId` / `projectName` | `null` khi team chưa có Project |
 | `integrations` | `null` khi chưa có Project. Có Project thì luôn có `jira` + `github` |
-| `jira.connected` / `github.connected` | **Nguồn sự thật live.** `true` chỉ khi có row `ACTIVE`. Legacy `CONNECTED` không phải live. FE **không** suy ra connected từ `status != null` |
+| `jira.connected` / `github.connected` | **Nguồn sự thật live.** `true` khi có **bất kỳ** row `ACTIVE` (Jira multi-source: ANY ACTIVE). Legacy `CONNECTED` không phải live. FE **không** suy ra connected từ `status != null` |
+| `jira.projectKey` | Chỉ set khi đúng **một** `jira_integration` row; multi-source → `null` (dùng `jiraSources[]`) |
+| `jira.status` | `ACTIVE` nếu có bất kỳ ACTIVE; không thì aggregate (`REVOKED` / `MIXED` / …) giống GitHub projection |
 | `github.repositoryCount` / `lastSyncedAt` | Chỉ repo `ACTIVE` |
 | `github.status` | Aggregate mô tả, **không** phải cờ live. `ACTIVE` nếu có ≥1 repo ACTIVE; nếu không thì tên status chung của mọi repo còn lại (`REVOKED` / `DEGRADED` / `ERROR` / `CONNECTED` / …); `MIXED` nếu nhiều status khác nhau và không có ACTIVE; `null` nếu chưa có repo |
 | `jira.lastSyncedAt` | `lastSuccessfulSyncAt` (không dùng last-attempt) |
@@ -1076,15 +1078,21 @@ Base: `/api/projects/{projectId}/integrations` (yêu cầu là thành viên proj
 
 | Method | Path | Role | Mục đích |
 |---|---|---|---|
-| GET | `` (gốc) | thành viên | Trạng thái tích hợp Jira + GitHub (mục 18) |
-| POST | `/jira/connect?returnPath=` | Leader | Bắt đầu OAuth Jira → trả `{authorizationUrl, state}` |
+| GET | `` (gốc) | thành viên | Trạng thái tích hợp Jira + GitHub (mục 18). `jiraSources[]` là canonical cho multi-source |
+| POST | `/jira/connect?returnPath=` | Leader | Bắt đầu OAuth Jira để **ADD** một source (đầu tiên hoặc thêm) |
+| POST | `/jira-sources/connect?returnPath=` | Leader | **Preferred ADD** — cùng OAuth như `/jira/connect` |
+| POST | `/jira-sources/{integrationId}/reconnect?returnPath=` | Leader | Reconnect một source đã có (named) |
+| GET | `/jira-sources` | thành viên | Liệt kê mọi Jira source (không secrets) |
+| PUT | `/jira-sources/{integrationId}` | Leader | Lưu site/project/board cho source đã đặt tên |
+| DELETE | `/jira-sources/{integrationId}` | Leader | Soft-disconnect một source |
+| POST | `/jira-sources/{integrationId}/sync` | Leader | Recovery enqueue **một** source → 202 (`github=SKIPPED_NOT_CONFIGURED`) |
 | GET | `/jira/sites` | Leader | Danh sách Cloud site truy cập được (sau khi OAuth xong) |
 | GET | `/jira/projects?cloudId=` | Leader | Danh sách Jira Project trong 1 site |
 | GET | `/jira/boards?cloudId=&jiraProjectId=` | Leader | Danh sách board trong 1 Jira Project |
-| PUT | `/jira` | Leader | **Lưu lựa chọn cuối cùng** — body: `{ "cloudId", "jiraProjectId", "boardId"? }` → 204 |
-| DELETE | `/jira` | Leader | Ngắt kết nối (soft-revoke, xem 16.4) |
+| PUT | `/jira` | Leader | Lưu lựa chọn — dùng cho ADD (tạo source mới) hoặc update singular cùng identity |
+| DELETE | `/jira` | Leader | Soft-disconnect singular; multi-source → `JIRA_SOURCE_REQUIRED` |
 
-**Không có** endpoint "reconnect" riêng cho Jira — reconnect = gọi lại đúng `POST /jira/connect` → chọn lại site/project/board → `PUT /jira`.
+**Multi-Jira:** một SAGA project **được** gắn nhiều Jira source ACTIVE (cloud/project khác nhau). Canonical list = `jiraSources[]` trên GET integrations. Reconnect source đã có → `POST /jira-sources/{id}/reconnect`, không dùng ADD.
 
 ### 16.2. Luồng "Connect Jira từ đầu"
 
@@ -1221,9 +1229,14 @@ Nếu muốn cài đặt installation **hoàn toàn mới** thay vì chọn lạ
 ```json
 {
   "github": { "installationId": ..., "accountLogin": ..., "status": "ACTIVE", "repositories": [...] },
-  "jira": { "cloudId": ..., "siteName": ..., "projectKey": ..., "boardId": ..., "status": "ACTIVE" }
+  "jira": { "cloudId": ..., "siteName": ..., "projectKey": ..., "boardId": ..., "status": "ACTIVE" },
+  "jiraSources": [
+    { "integrationId": "...", "cloudId": "...", "projectKey": "SAGA", "connectionStatus": "ACTIVE", "...": "..." }
+  ]
 }
 ```
+
+`jiraSources[]` là **canonical** khi multi-source. Field `jira` legacy vẫn có (singular projection) — FE mới nên ưu tiên `jiraSources`.
 
 **Nguyên tắc bắt buộc**: sau bất kỳ hành động connect/disconnect/reconnect nào (thành công hay quay lại từ redirect), FE phải **gọi lại (refetch)** endpoint này để lấy trạng thái chuẩn từ backend — **không được** tự suy đoán/giữ state cũ ở FE, vì các thao tác kết nối chạy qua redirect trình duyệt (không phải XHR) nên FE không có cách nào biết kết quả ngoài việc hỏi lại backend.
 
@@ -1365,7 +1378,7 @@ Base: `/api/projects/{projectId}/sprints`.
 
 | Method | Path | Ghi chú |
 |---|---|---|
-| GET | `/sprints` | **Không phải đọc thuần** — backend tự đồng bộ với board Jira trước khi trả danh sách, nên gọi endpoint này cũng có độ trễ mạng nhất định |
+| GET | `/sprints?jiraIntegrationId=` | **Không phải đọc thuần** — khi có `jiraIntegrationId` thì live-sync board của source đó rồi trả **tất cả** sprint local của project; khi omit và có >1 ACTIVE source → `JIRA_SOURCE_REQUIRED` |
 | GET | `/sprints/{sprintId}` | Đọc thuần từ DB |
 | POST | `/sprints` | Leader-only, 201 |
 | PATCH | `/sprints/{sprintId}` | Leader-only |
@@ -1531,12 +1544,16 @@ Lập trình viên push code lên GitHub
 
 ```
 POST /api/projects/{projectId}/sync    (Leader only) → 202 Accepted
+POST /api/projects/{projectId}/integrations/jira-sources/{integrationId}/sync  (Leader) → 202
 GET  /api/projects/{projectId}/sync-status
 ```
 
 **ĐÂY KHÔNG PHẢI LUỒNG KẾT NỐI BÌNH THƯỜNG.** Kết nối Jira (mục 16) và GitHub (mục 17) đã **tự động** kích hoạt đồng bộ ban đầu ngay khi hoàn tất — endpoint `/sync` ở đây chỉ là **cơ chế khôi phục thủ công** (recovery/backfill), dùng khi:
-- Có webhook bị lỡ/mất do sự cố tạm thời từ Jira/GitHub.
-- Cần đồng bộ lại toàn bộ dữ liệu sau một khoảng thời gian gián đoạn.
+
+- nghi ngờ webhook miss / dữ liệu lệch
+- sau khi reconnect credentials
+
+`POST .../jira-sources/{integrationId}/sync` enqueue **một** source (field `jira` = `QUEUED|SKIPPED_*`, `github` = `SKIPPED_NOT_CONFIGURED`).
 
 **Không nên thiết kế UI bắt người dùng phải bấm "Sync" sau mỗi lần kết nối provider** — điều đó là thừa và sai với thiết kế thực tế của backend.
 
@@ -1822,8 +1839,9 @@ function handleSseEvent(type: string, projectId: string, queryClient: QueryClien
 
 ### K. Kết nối lại Jira đã bị revoke
 ```
-1. GET /api/projects/{projectId}/integrations → thấy jira.status === "REVOKED"
-2. POST .../jira/connect  (chạy lại y hệt luồng kết nối mới — mục 16.2)
+1. GET /api/projects/{projectId}/integrations → jiraSources[] / jira.status === "REVOKED"
+2. Singular REVOKED: POST .../jira-sources/connect (hoặc /jira/connect) rồi PUT /jira
+3. Named source: POST .../jira-sources/{integrationId}/reconnect rồi PUT .../jira-sources/{id}
 ```
 
 ### L. Kết nối GitHub từ đầu tới lúc chọn xong repo
@@ -2130,7 +2148,12 @@ export function subscribeProjectEvents(
 ### JIRA
 | Method | Path | Role |
 |---|---|---|
-| POST | `/api/projects/{projectId}/integrations/jira/connect` | Leader |
+| POST | `/api/projects/{projectId}/integrations/jira/connect` | Leader (ADD) |
+| POST | `.../jira-sources/connect` | Leader (preferred ADD) |
+| POST | `.../jira-sources/{id}/reconnect` | Leader |
+| GET | `.../jira-sources` | thành viên |
+| PUT/DELETE | `.../jira-sources/{id}` | Leader |
+| POST | `.../jira-sources/{id}/sync` | Leader → 202 |
 | GET | `.../jira/sites`, `.../jira/projects`, `.../jira/boards` | Leader |
 | PUT/DELETE | `.../jira` | Leader |
 | POST/PATCH/DELETE/GET | `/api/integrations/jira/link`, `/{identityId}/primary`, `/{identityId}`, `/oauth/callback` | any (personal) |
@@ -2155,7 +2178,7 @@ export function subscribeProjectEvents(
 ### SPRINT
 | Method | Path | Role |
 |---|---|---|
-| GET | `/api/projects/{projectId}/sprints`, `/{sprintId}` | thành viên |
+| GET | `/api/projects/{projectId}/sprints?jiraIntegrationId=`, `/{sprintId}` | thành viên |
 | POST/PATCH/DELETE | `/api/projects/{projectId}/sprints`, `/{sprintId}` | Leader |
 
 ### COMMIT

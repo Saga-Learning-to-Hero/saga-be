@@ -829,7 +829,6 @@ public class ProjectIntegrationService {
 
 	private OAuthStartResponse startJiraConnect(UUID userId, UUID projectId, String returnPath) {
 		requireLeader(userId, projectId);
-		assertNoExistingJiraSourceForAdd(projectId);
 		return beginJiraOAuth(userId, projectId, returnPath, null);
 	}
 
@@ -861,15 +860,6 @@ public class ProjectIntegrationService {
 						callback(properties.getJira().getTeamOauthCallbackUrl(), "/api/integrations/jira/team/callback"),
 						true),
 				state.state());
-	}
-
-	private void assertNoExistingJiraSourceForAdd(UUID projectId) {
-		if (!jiraIntegrations.findAllByProject_Id(projectId).isEmpty()) {
-			throw new IntegrationException(
-					IntegrationErrorCode.JIRA_MULTI_SOURCE_NOT_READY,
-					HttpStatus.CONFLICT,
-					"Project already has a Jira source; adding another is not ready until multi-source sync/webhook isolation.");
-		}
 	}
 
 	public String completeJiraTeamCallback(UUID userId, String code, String rawState) {
@@ -943,13 +933,19 @@ public class ProjectIntegrationService {
 	public void saveJiraSelection(UUID userId, UUID projectId, SelectJiraIntegrationRequest selection) {
 		requireLeader(userId, projectId);
 		List<JiraIntegration> existingRows = jiraIntegrations.findAllByProject_Id(projectId);
-		if (existingRows.size() > 1) {
-			throw new IntegrationException(
-					IntegrationErrorCode.JIRA_SOURCE_REQUIRED,
-					HttpStatus.CONFLICT,
-					"Multiple Jira sources exist; use the named source endpoint to update one.");
+		// Legacy PUT /jira: bind the singular row only when the selection matches that row's
+		// established provider identity (reconnect-compatible). Never bind solely because the
+		// singular row is REVOKED — that blocked ADD of a distinct source and treated ADD as
+		// overwrite of historical provenance. Preferred same-source path remains named reconnect.
+		UUID targetIntegrationId = null;
+		if (existingRows.size() == 1) {
+			JiraIntegration only = existingRows.getFirst();
+			boolean sameIdentity = Objects.equals(only.getCloudId(), selection.cloudId())
+					&& Objects.equals(only.getJiraProjectId(), selection.jiraProjectId());
+			if (sameIdentity) {
+				targetIntegrationId = only.getId();
+			}
 		}
-		UUID targetIntegrationId = existingRows.isEmpty() ? null : existingRows.getFirst().getId();
 		saveJiraSelectionInternal(userId, projectId, selection, targetIntegrationId);
 	}
 
@@ -1005,11 +1001,11 @@ public class ProjectIntegrationService {
 			}
 		}
 		// Consume pending only after identity / accessibility gates inside the write transaction.
-		persistAtomically(
-				() -> persistJiraIntegration(userId, projectId, site, projectNode, selection.boardId(), effectiveTarget));
-		// Provider HTTP outside JDBC: register/reuse dynamic OAuth webhook for realtime delivery.
-		jiraWebhooks.ensureRegistered(projectId, pending.accessToken());
-		triggerJiraInitialSync(projectId, pending.accessToken());
+		UUID jiraIntegrationId = persistAtomically(() -> persistJiraIntegration(
+				userId, projectId, site, projectNode, selection.boardId(), effectiveTarget));
+		// Provider HTTP outside JDBC: register/reuse dynamic OAuth webhook for this source only.
+		jiraWebhooks.ensureRegistered(jiraIntegrationId, pending.accessToken());
+		triggerJiraInitialSync(jiraIntegrationId, pending.accessToken());
 	}
 
 	/**
@@ -1017,13 +1013,13 @@ public class ProjectIntegrationService {
 	 *
 	 * <p>{@code targetIntegrationId}:
 	 * <ul>
-	 *   <li>{@code null} + 0 rows → create the first source
-	 *   <li>{@code null} + 1 row → update that singular row (legacy)
-	 *   <li>{@code null} + &gt;1 rows → fail closed ({@code JIRA_MULTI_SOURCE_NOT_READY})
 	 *   <li>non-null → update that named row only; never create another
+	 *   <li>{@code null} → always create a new source row (first connect or ADD)
 	 * </ul>
 	 *
-	 * Soft-revoked rows are reused in place: {@code REVOKED -> ACTIVE} with refreshed credentials.
+	 * <p>ADD never reuses a REVOKED historical row. Soft-revoked reactivation is named reconnect
+	 * ({@code /jira-sources/{id}/reconnect}) or legacy PUT /jira when the selection matches that
+	 * row's established {@code cloudId}+{@code jiraProjectId} (same-identity bind only).
 	 * Once {@code cloudId} + {@code jiraProjectId} are established on a row, they are immutable —
 	 * reconnect must target the same provider identity; a different cloud/project is rejected with
 	 * {@code JIRA_SOURCE_IDENTITY_MISMATCH} (no hard-reset, no history deletion). Board may change
@@ -1033,16 +1029,16 @@ public class ProjectIntegrationService {
 	 * gets a brand-new {@code JiraIntegration} row (see {@link
 	 * #assertJiraProviderProjectAvailableForSagaProject}).
 	 */
-	protected void persistJiraIntegration(
+	protected UUID persistJiraIntegration(
 			UUID userId,
 			UUID projectId,
 			JiraOAuthClient.AccessibleResource site,
 			JiraOAuthClient.JiraProjectResponse projectNode,
 			String boardId) {
-		persistJiraIntegration(userId, projectId, site, projectNode, boardId, null);
+		return persistJiraIntegration(userId, projectId, site, projectNode, boardId, null);
 	}
 
-	protected void persistJiraIntegration(
+	protected UUID persistJiraIntegration(
 			UUID userId,
 			UUID projectId,
 			JiraOAuthClient.AccessibleResource site,
@@ -1066,7 +1062,8 @@ public class ProjectIntegrationService {
 
 		// Ownership is cloudId + jiraProjectId (not projectKey). Reject before claim so a conflict
 		// does not burn the pending OAuth grant or mutate this project's integration/tasks.
-		assertJiraProviderProjectAvailableForSagaProject(newCloudId, newJiraProjectId, projectId);
+		assertJiraProviderProjectAvailableForSagaProject(
+				newCloudId, newJiraProjectId, integration.getId());
 
 		PendingJiraClaim claim = pendingJira
 				.claim(userId, projectId)
@@ -1145,6 +1142,7 @@ public class ProjectIntegrationService {
 					null);
 			outbox.publish(
 					"jira_integration", saved.getId(), "JIRA_INTEGRATION_CONNECTED", Map.of("projectId", projectId.toString()));
+			return saved.getId();
 		} catch (RuntimeException ex) {
 			// When JDBC sync is inactive (e.g. unit tests), restore immediately. When active,
 			// afterCompletion(STATUS_ROLLED_BACK) also restores; restoreIfAbsent is idempotent NX.
@@ -1191,30 +1189,22 @@ public class ProjectIntegrationService {
 							HttpStatus.NOT_FOUND,
 							"Jira source was not found for this project."));
 		}
-		List<JiraIntegration> rows = jiraIntegrations.findAllByProject_Id(projectId);
-		if (rows.size() > 1) {
-			throw new IntegrationException(
-					IntegrationErrorCode.JIRA_MULTI_SOURCE_NOT_READY,
-					HttpStatus.CONFLICT,
-					"Project has multiple Jira sources; named source id is required.");
-		}
-		if (rows.size() == 1) {
-			return rows.getFirst();
-		}
+		// ADD / first connect: always a new row. Never reuse a REVOKED historical source just
+		// because it is the only row — that would repoint provenance-bearing identity on distinct ADD.
+		// Same-provider reactivation must pass targetIntegrationId (named reconnect or same-identity
+		// legacy PUT bind).
 		return new JiraIntegration();
 	}
 
 	/**
-	 * One Jira provider project ({@code cloudId} + {@code jiraProjectId}) may be ACTIVE in at
-	 * most one SAGA project at a time (V14). A REVOKED integration owned by another SAGA project
-	 * does not block reuse — that project's own {@code jira_integration} row, and everything
-	 * reachable only through it (Sprint history, webhook state, sync cursor), stays untouched
-	 * under its original owner; the connecting project always gets its own brand-new row (see
-	 * {@link #persistJiraIntegration}), never a re-parented one. Matching {@code projectKey}
-	 * alone across different clouds is not a conflict.
+	 * One Jira provider project ({@code cloudId} + {@code jiraProjectId}) may be ACTIVE on at most
+	 * one {@code jira_integration} row at a time (V14 + multi-source). Reject when an ACTIVE row
+	 * already holds that identity unless it is the row being updated ({@code selfIntegrationId}).
+	 * A REVOKED integration (same or other SAGA project) does not block reuse. Matching
+	 * {@code projectKey} alone across different clouds is not a conflict.
 	 */
 	private void assertJiraProviderProjectAvailableForSagaProject(
-			String cloudId, String jiraProjectId, UUID sagaProjectId) {
+			String cloudId, String jiraProjectId, UUID selfIntegrationId) {
 		if (cloudId == null || cloudId.isBlank() || jiraProjectId == null || jiraProjectId.isBlank()) {
 			return;
 		}
@@ -1225,7 +1215,7 @@ public class ProjectIntegrationService {
 		jiraIntegrations
 				.findByConnectionStatusAndCloudIdAndJiraProjectId(IntegrationStatus.ACTIVE, cloudId, jiraProjectId)
 				.ifPresent(existing -> {
-					if (existing.getProject() != null && !existing.getProject().getId().equals(sagaProjectId)) {
+					if (!Objects.equals(existing.getId(), selfIntegrationId)) {
 						throw jiraProjectInUse();
 					}
 				});
@@ -1352,8 +1342,12 @@ public class ProjectIntegrationService {
 		writes.executeWithoutResult(status -> action.run());
 	}
 
-	private void triggerJiraInitialSync(UUID projectId, String accessToken) {
-		initialSyncLauncher.enqueueJiraInitialSync(projectId, accessToken);
+	<T> T persistAtomically(java.util.function.Supplier<T> action) {
+		return writes.execute(status -> action.get());
+	}
+
+	private void triggerJiraInitialSync(UUID jiraIntegrationId, String accessToken) {
+		initialSyncLauncher.enqueueJiraInitialSync(jiraIntegrationId, accessToken);
 	}
 
 	private void triggerGithubInitialSync(UUID projectId) {

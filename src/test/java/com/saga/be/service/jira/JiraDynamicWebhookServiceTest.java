@@ -70,7 +70,7 @@ class JiraDynamicWebhookServiceTest {
 
 	@Test
 	void ensureRegistered_registersOneWebhookWithIssueAndSprintEvents() {
-		when(integrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(integrations.findFetchedById(integration.getId())).thenReturn(Optional.of(integration));
 		RegisteredWebhook created = new RegisteredWebhook(
 				42L,
 				"https://saga-be-production.up.railway.app/api/webhooks/jira",
@@ -88,7 +88,7 @@ class JiraDynamicWebhookServiceTest {
 		when(integrations.findById(integration.getId())).thenReturn(Optional.of(integration));
 		when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-		service.ensureRegistered(projectId, "token");
+		service.ensureRegistered(integration.getId(), "token");
 
 		ArgumentCaptor<List<String>> events = ArgumentCaptor.forClass(List.class);
 		verify(client)
@@ -106,7 +106,7 @@ class JiraDynamicWebhookServiceTest {
 
 	@Test
 	void ensureRegistered_reusesExistingWebhookWithoutCreatingDuplicate() {
-		when(integrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(integrations.findFetchedById(integration.getId())).thenReturn(Optional.of(integration));
 		RegisteredWebhook existing = new RegisteredWebhook(
 				99L,
 				"https://saga-be-production.up.railway.app/api/webhooks/jira",
@@ -118,7 +118,7 @@ class JiraDynamicWebhookServiceTest {
 		when(integrations.findById(integration.getId())).thenReturn(Optional.of(integration));
 		when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-		service.ensureRegistered(projectId, "token");
+		service.ensureRegistered(integration.getId(), "token");
 
 		verify(client, never()).registerWebhook(any(), any(), any(), any(), anyList());
 		verify(client).refreshWebhooks("token", "cloud-1", List.of(99L));
@@ -127,7 +127,7 @@ class JiraDynamicWebhookServiceTest {
 
 	@Test
 	void ensureRegistered_providerFailureSetsLastErrorWithoutClearingActive() {
-		when(integrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(integrations.findFetchedById(integration.getId())).thenReturn(Optional.of(integration));
 		when(client.listWebhooks("token", "cloud-1"))
 				.thenThrow(new com.saga.be.exception.IntegrationException(
 						IntegrationErrorCode.JIRA_WEBHOOK_REGISTER_FAILED,
@@ -136,7 +136,7 @@ class JiraDynamicWebhookServiceTest {
 		when(integrations.findById(integration.getId())).thenReturn(Optional.of(integration));
 		when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-		service.ensureRegistered(projectId, "token");
+		service.ensureRegistered(integration.getId(), "token");
 
 		assertThat(integration.getConnectionStatus()).isEqualTo(IntegrationStatus.ACTIVE);
 		assertThat(integration.getLastErrorCode())
@@ -198,11 +198,11 @@ class JiraDynamicWebhookServiceTest {
 		// stayed NULL forever, with no scheduled repair path able to find it (a NULL column never
 		// satisfies the refresh scheduler's "< threshold" comparison).
 		properties.getJira().setWebhookUrl("");
-		when(integrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(integrations.findFetchedById(integration.getId())).thenReturn(Optional.of(integration));
 		when(integrations.findById(integration.getId())).thenReturn(Optional.of(integration));
 		when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-		service.ensureRegistered(projectId, "token");
+		service.ensureRegistered(integration.getId(), "token");
 
 		assertThat(integration.getConnectionStatus()).isEqualTo(IntegrationStatus.ACTIVE);
 		assertThat(integration.getWebhookId()).isNull();
@@ -216,11 +216,11 @@ class JiraDynamicWebhookServiceTest {
 	void ensureRegistered_blankProjectKey_persistsControlledFailure_notSilentNull() {
 		// Same failure-boundary bug, triggered via jqlForProject() instead of requireCallbackUrl().
 		integration.setProjectKey("");
-		when(integrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(integrations.findFetchedById(integration.getId())).thenReturn(Optional.of(integration));
 		when(integrations.findById(integration.getId())).thenReturn(Optional.of(integration));
 		when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-		service.ensureRegistered(projectId, "token");
+		service.ensureRegistered(integration.getId(), "token");
 
 		assertThat(integration.getWebhookId()).isNull();
 		assertThat(integration.getLastErrorCode()).isEqualTo(IntegrationErrorCode.JIRA_WEBHOOK_REGISTER_FAILED.name());

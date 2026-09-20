@@ -30,13 +30,14 @@ class IntegrationInitialSyncLauncherTest {
 
 	@Test
 	void enqueueMethodsInvokeSyncServices() {
+		UUID integrationId = UUID.randomUUID();
 		UUID projectId = UUID.randomUUID();
 		launcher.enqueueGithubInitialSync(projectId);
-		launcher.enqueueJiraInitialSync(projectId, "token");
-		launcher.enqueueJiraInitialSync(projectId);
+		launcher.enqueueJiraInitialSync(integrationId, "token");
+		launcher.enqueueJiraInitialSync(integrationId);
 		verify(githubCommitSync).initialSync(projectId);
-		verify(jiraTaskSync).initialSync(projectId, "token");
-		verify(jiraTaskSync).initialSync(projectId);
+		verify(jiraTaskSync).initialSync(integrationId, "token");
+		verify(jiraTaskSync).initialSync(integrationId);
 	}
 
 	/**

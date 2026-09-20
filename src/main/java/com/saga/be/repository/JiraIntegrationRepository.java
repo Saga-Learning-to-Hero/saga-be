@@ -22,13 +22,49 @@ public interface JiraIntegrationRepository extends JpaRepository<JiraIntegration
 	Optional<JiraIntegration> findByIdAndProject_Id(UUID id, UUID projectId);
 
 	/**
-	 * Singular Project → JiraIntegration lookup for APIs that remain one-source until Phase 2.
+	 * Singular Project → JiraIntegration lookup for legacy one-source callers.
 	 * Empty when none; exactly one when the project still has a single row; fails closed when
 	 * multiple sources exist (never silently picks "first" / ACTIVE / oldest).
 	 */
 	default Optional<JiraIntegration> findByProject_Id(UUID projectId) {
 		return requireSingular(findAllByProject_Id(projectId), projectId);
 	}
+
+	@Query(
+			"""
+			select j from JiraIntegration j
+			join fetch j.project
+			left join fetch j.connectedBy
+			where j.id = :id
+			""")
+	Optional<JiraIntegration> findFetchedById(@Param("id") UUID id);
+
+	@Query(
+			"""
+			select j from JiraIntegration j
+			join fetch j.project
+			left join fetch j.connectedBy
+			where j.connectionStatus = :status
+			  and j.cloudId = :cloudId
+			  and j.jiraProjectId = :jiraProjectId
+			""")
+	List<JiraIntegration> findFetchedActiveByCloudAndJiraProject(
+			@Param("status") IntegrationStatus status,
+			@Param("cloudId") String cloudId,
+			@Param("jiraProjectId") String jiraProjectId);
+
+	@Query(
+			"""
+			select j from JiraIntegration j
+			join fetch j.project
+			left join fetch j.connectedBy
+			where j.connectionStatus = :status
+			  and j.webhookId = :webhookId
+			""")
+	List<JiraIntegration> findFetchedActiveByWebhookId(
+			@Param("status") IntegrationStatus status, @Param("webhookId") String webhookId);
+
+	List<JiraIntegration> findAllByProject_IdAndConnectionStatus(UUID projectId, IntegrationStatus status);
 
 	/**
 	 * Since V14, {@code (cloud_id, jira_project_id)} is unique only among ACTIVE rows

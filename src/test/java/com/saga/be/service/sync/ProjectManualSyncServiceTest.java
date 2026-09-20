@@ -26,7 +26,6 @@ import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.service.projection.ProjectDataAuthorization;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -73,9 +72,9 @@ class ProjectManualSyncServiceTest {
 	void leader_enqueuesBothWithoutProviderHttp() {
 		stubLeader();
 		JiraIntegration jira = activeJira();
-		when(jiraIntegrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(jira));
-		when(credentials.hasRefreshOrAccessCredential(projectId)).thenReturn(true);
-		when(claims.tryReserveEnqueue("JIRA", projectId)).thenReturn(true);
+		when(jiraIntegrations.findAllFetchedByProject_Id(projectId)).thenReturn(List.of(jira));
+		when(credentials.hasRefreshOrAccessCredential(jira.getId())).thenReturn(true);
+		when(claims.tryReserveEnqueue("JIRA", jira.getId())).thenReturn(true);
 		GitRepo repo = new GitRepo();
 		repo.setConnectionStatus(IntegrationStatus.ACTIVE);
 		when(repos.findByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE)).thenReturn(List.of(repo));
@@ -85,14 +84,14 @@ class ProjectManualSyncServiceTest {
 
 		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
 		assertThat(response.github()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
-		verify(launcher).enqueueJiraInitialSync(projectId);
+		verify(launcher).enqueueJiraInitialSync(jira.getId());
 		verify(launcher).enqueueGithubInitialSync(projectId);
 	}
 
 	@Test
 	void admin_forbidden() {
 		UserAccount admin = account(AccountRole.ADMIN);
-		when(users.findById(userId)).thenReturn(Optional.of(admin));
+		when(users.findById(userId)).thenReturn(java.util.Optional.of(admin));
 		assertThatThrownBy(() -> service.enqueue(userId, projectId))
 				.isInstanceOf(IntegrationException.class)
 				.extracting(ex -> ((IntegrationException) ex).getCode())
@@ -102,8 +101,8 @@ class ProjectManualSyncServiceTest {
 	@Test
 	void member_forbidden() {
 		UserAccount student = account(AccountRole.STUDENT);
-		when(users.findById(userId)).thenReturn(Optional.of(student));
-		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.MEMBER));
+		when(users.findById(userId)).thenReturn(java.util.Optional.of(student));
+		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(java.util.Optional.of(RoleInTeam.MEMBER));
 		assertThatThrownBy(() -> service.enqueue(userId, projectId))
 				.isInstanceOf(IntegrationException.class)
 				.extracting(ex -> ((IntegrationException) ex).getCode())
@@ -113,7 +112,7 @@ class ProjectManualSyncServiceTest {
 	@Test
 	void lecturer_forbidden() {
 		UserAccount lecturer = account(AccountRole.LECTURER);
-		when(users.findById(userId)).thenReturn(Optional.of(lecturer));
+		when(users.findById(userId)).thenReturn(java.util.Optional.of(lecturer));
 		assertThatThrownBy(() -> service.enqueue(userId, projectId))
 				.isInstanceOf(IntegrationException.class)
 				.extracting(ex -> ((IntegrationException) ex).getCode())
@@ -126,24 +125,25 @@ class ProjectManualSyncServiceTest {
 		JiraIntegration jira = activeJira();
 		jira.setEncryptedAccessToken(null);
 		jira.setEncryptedRefreshToken("refresh-envelope");
-		when(jiraIntegrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(jira));
-		when(credentials.hasRefreshOrAccessCredential(projectId)).thenReturn(true);
-		when(claims.tryReserveEnqueue("JIRA", projectId)).thenReturn(true);
+		when(jiraIntegrations.findAllFetchedByProject_Id(projectId)).thenReturn(List.of(jira));
+		when(credentials.hasRefreshOrAccessCredential(jira.getId())).thenReturn(true);
+		when(claims.tryReserveEnqueue("JIRA", jira.getId())).thenReturn(true);
 		when(repos.findByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE)).thenReturn(List.of());
 		when(repos.findByProject_Id(projectId)).thenReturn(List.of());
 
 		ProjectSyncEnqueueResponse response = service.enqueue(userId, projectId);
 
 		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
-		verify(launcher).enqueueJiraInitialSync(projectId);
+		verify(launcher).enqueueJiraInitialSync(jira.getId());
 	}
 
 	@Test
 	void jiraOnlyActive_githubSkipped() {
 		stubLeader();
-		when(jiraIntegrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(activeJira()));
-		when(credentials.hasRefreshOrAccessCredential(projectId)).thenReturn(true);
-		when(claims.tryReserveEnqueue("JIRA", projectId)).thenReturn(true);
+		JiraIntegration jira = activeJira();
+		when(jiraIntegrations.findAllFetchedByProject_Id(projectId)).thenReturn(List.of(jira));
+		when(credentials.hasRefreshOrAccessCredential(jira.getId())).thenReturn(true);
+		when(claims.tryReserveEnqueue("JIRA", jira.getId())).thenReturn(true);
 		when(repos.findByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE)).thenReturn(List.of());
 		when(repos.findByProject_Id(projectId)).thenReturn(List.of());
 
@@ -151,16 +151,17 @@ class ProjectManualSyncServiceTest {
 
 		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
 		assertThat(response.github()).isEqualTo(ProjectSyncEnqueueResponse.SKIPPED_NOT_CONFIGURED);
-		verify(launcher).enqueueJiraInitialSync(projectId);
+		verify(launcher).enqueueJiraInitialSync(jira.getId());
 		verify(launcher, never()).enqueueGithubInitialSync(any());
 	}
 
 	@Test
 	void alreadyRunning_skipsDuplicateEnqueue() {
 		stubLeader();
-		when(jiraIntegrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(activeJira()));
-		when(credentials.hasRefreshOrAccessCredential(projectId)).thenReturn(true);
-		when(claims.tryReserveEnqueue("JIRA", projectId)).thenReturn(false);
+		JiraIntegration jira = activeJira();
+		when(jiraIntegrations.findAllFetchedByProject_Id(projectId)).thenReturn(List.of(jira));
+		when(credentials.hasRefreshOrAccessCredential(jira.getId())).thenReturn(true);
+		when(claims.tryReserveEnqueue("JIRA", jira.getId())).thenReturn(false);
 		when(repos.findByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE)).thenReturn(List.of());
 		when(repos.findByProject_Id(projectId)).thenReturn(List.of());
 
@@ -175,7 +176,7 @@ class ProjectManualSyncServiceTest {
 		stubLeader();
 		JiraIntegration jira = activeJira();
 		jira.setConnectionStatus(IntegrationStatus.REVOKED);
-		when(jiraIntegrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(jira));
+		when(jiraIntegrations.findAllFetchedByProject_Id(projectId)).thenReturn(List.of(jira));
 		when(repos.findByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE)).thenReturn(List.of());
 		when(repos.findByProject_Id(projectId)).thenReturn(List.of());
 
@@ -189,22 +190,90 @@ class ProjectManualSyncServiceTest {
 	void leader_enqueuesJiraAfterReconnectActive() {
 		stubLeader();
 		JiraIntegration jira = activeJira();
-		when(jiraIntegrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(jira));
-		when(credentials.hasRefreshOrAccessCredential(projectId)).thenReturn(true);
-		when(claims.tryReserveEnqueue("JIRA", projectId)).thenReturn(true);
+		when(jiraIntegrations.findAllFetchedByProject_Id(projectId)).thenReturn(List.of(jira));
+		when(credentials.hasRefreshOrAccessCredential(jira.getId())).thenReturn(true);
+		when(claims.tryReserveEnqueue("JIRA", jira.getId())).thenReturn(true);
 		when(repos.findByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE)).thenReturn(List.of());
 		when(repos.findByProject_Id(projectId)).thenReturn(List.of());
 
 		ProjectSyncEnqueueResponse response = service.enqueue(userId, projectId);
 
 		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
-		verify(launcher).enqueueJiraInitialSync(projectId);
+		verify(launcher).enqueueJiraInitialSync(jira.getId());
+	}
+
+	@Test
+	void enqueueJiraSource_queuesNamedActiveOnly() {
+		stubLeader();
+		JiraIntegration jira = activeJira();
+		when(jiraIntegrations.findByIdAndProject_Id(jira.getId(), projectId)).thenReturn(java.util.Optional.of(jira));
+		when(credentials.hasRefreshOrAccessCredential(jira.getId())).thenReturn(true);
+		when(claims.tryReserveEnqueue("JIRA", jira.getId())).thenReturn(true);
+
+		ProjectSyncEnqueueResponse response = service.enqueueJiraSource(userId, projectId, jira.getId());
+
+		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
+		assertThat(response.github()).isEqualTo(ProjectSyncEnqueueResponse.SKIPPED_NOT_CONFIGURED);
+		verify(launcher).enqueueJiraInitialSync(jira.getId());
+		verify(launcher, never()).enqueueGithubInitialSync(any());
+	}
+
+	@Test
+	void enqueue_twoActiveJiraSources_enqueuesBothIndependently() {
+		stubLeader();
+		JiraIntegration sourceA = activeJira();
+		JiraIntegration sourceB = activeJira();
+		when(jiraIntegrations.findAllFetchedByProject_Id(projectId)).thenReturn(List.of(sourceA, sourceB));
+		when(credentials.hasRefreshOrAccessCredential(sourceA.getId())).thenReturn(true);
+		when(credentials.hasRefreshOrAccessCredential(sourceB.getId())).thenReturn(true);
+		when(claims.tryReserveEnqueue("JIRA", sourceA.getId())).thenReturn(true);
+		when(claims.tryReserveEnqueue("JIRA", sourceB.getId())).thenReturn(true);
+		when(repos.findByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE)).thenReturn(List.of());
+		when(repos.findByProject_Id(projectId)).thenReturn(List.of());
+
+		ProjectSyncEnqueueResponse response = service.enqueue(userId, projectId);
+
+		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
+		verify(launcher).enqueueJiraInitialSync(sourceA.getId());
+		verify(launcher).enqueueJiraInitialSync(sourceB.getId());
+	}
+
+	@Test
+	void enqueue_sourceAAlreadyRunning_stillEnqueuesSourceB() {
+		stubLeader();
+		JiraIntegration sourceA = activeJira();
+		JiraIntegration sourceB = activeJira();
+		when(jiraIntegrations.findAllFetchedByProject_Id(projectId)).thenReturn(List.of(sourceA, sourceB));
+		when(credentials.hasRefreshOrAccessCredential(sourceA.getId())).thenReturn(true);
+		when(credentials.hasRefreshOrAccessCredential(sourceB.getId())).thenReturn(true);
+		when(claims.tryReserveEnqueue("JIRA", sourceA.getId())).thenReturn(false);
+		when(claims.tryReserveEnqueue("JIRA", sourceB.getId())).thenReturn(true);
+		when(repos.findByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE)).thenReturn(List.of());
+		when(repos.findByProject_Id(projectId)).thenReturn(List.of());
+
+		ProjectSyncEnqueueResponse response = service.enqueue(userId, projectId);
+
+		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
+		verify(launcher, never()).enqueueJiraInitialSync(sourceA.getId());
+		verify(launcher).enqueueJiraInitialSync(sourceB.getId());
+	}
+
+	@Test
+	void enqueueJiraSource_missingSource_notFound() {
+		stubLeader();
+		UUID missing = UUID.randomUUID();
+		when(jiraIntegrations.findByIdAndProject_Id(missing, projectId)).thenReturn(java.util.Optional.empty());
+
+		assertThatThrownBy(() -> service.enqueueJiraSource(userId, projectId, missing))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND);
 	}
 
 	private void stubLeader() {
 		UserAccount student = account(AccountRole.STUDENT);
-		when(users.findById(userId)).thenReturn(Optional.of(student));
-		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.LEADER));
+		when(users.findById(userId)).thenReturn(java.util.Optional.of(student));
+		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(java.util.Optional.of(RoleInTeam.LEADER));
 	}
 
 	private JiraIntegration activeJira() {

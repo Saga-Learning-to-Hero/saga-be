@@ -275,10 +275,16 @@ public class ProjectProjectionController {
 	}
 
 	@GetMapping("/sprints")
-	@Operation(summary = "List/reconcile Jira Software sprints for the project's board.")
+	@Operation(
+			summary = "List/reconcile Jira Software sprints for the project's board.",
+			description =
+					"Optional jiraIntegrationId live-syncs that named ACTIVE source's board, then returns all local "
+							+ "project sprints. When omitted and multiple ACTIVE sources exist, fails with JIRA_SOURCE_REQUIRED.")
 	public List<ProjectSprintResponse> sprints(
-			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
-		return sprintCommands.syncAndList(principal.getUserId(), projectId);
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@RequestParam(required = false) UUID jiraIntegrationId) {
+		return sprintCommands.syncAndList(principal.getUserId(), projectId, jiraIntegrationId);
 	}
 
 	@GetMapping("/sprints/{sprintId}")

@@ -30,9 +30,10 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Complete Jira issue reconciliation for the selected ACTIVE project.
+ * Complete Jira issue reconciliation for one ACTIVE integration source.
  * Pages via enhanced {@code /rest/api/3/search/jql} until {@code isLast}/empty token.
  * No product backfill cap — SUCCESS only after complete traversal.
+ * Claims and stamps are keyed by {@code jiraIntegrationId}; realtime events still publish to projectId.
  */
 @Service
 @Profile("!test")
@@ -84,22 +85,23 @@ public class JiraTaskSyncService {
 	}
 
 	/** Resolve credentials from DB (refresh if needed). */
-	public SyncJobLog initialSync(UUID projectId) {
-		return initialSync(projectId, null);
+	public SyncJobLog initialSync(UUID jiraIntegrationId) {
+		return initialSync(jiraIntegrationId, null);
 	}
 
 	/**
 	 * Provider HTTP outside JDBC TX. Optional preferredAccess avoids refresh right after connect.
 	 * On 401: one credential refresh + one provider retry maximum.
+	 * Upsert-only — does not soft-delete missing issues across pages. Does not auto-REVOKE on failure.
 	 */
-	public SyncJobLog initialSync(UUID projectId, String preferredAccess) {
-		SyncJobLog job = beginJob(projectId);
+	public SyncJobLog initialSync(UUID jiraIntegrationId, String preferredAccess) {
+		SyncJobLog job = beginJob(jiraIntegrationId);
 		if (job == null) {
-			return alreadyRunning(projectId);
+			return alreadyRunning(jiraIntegrationId);
 		}
 		boolean finalized = false;
 		try {
-			JiraIntegration integration = integrations.findFetchedByProject_Id(projectId).orElse(null);
+			JiraIntegration integration = integrations.findFetchedById(jiraIntegrationId).orElse(null);
 			if (integration == null
 					|| integration.getConnectionStatus() != IntegrationStatus.ACTIVE
 					|| integration.getProjectKey() == null
@@ -107,9 +109,10 @@ public class JiraTaskSyncService {
 				finalized = true;
 				return claims.markFailed(job, "JIRA_INTEGRATION_INACTIVE", "persist");
 			}
+			UUID projectId = integration.getProject() == null ? null : integration.getProject().getId();
 			String accessToken = preferredAccess != null && !preferredAccess.isBlank()
 					? preferredAccess
-					: credentials.resolveAccessToken(projectId);
+					: credentials.resolveAccessToken(jiraIntegrationId);
 			probeProjectAccess(accessToken, integration);
 			// Resolved once per sync/cloud (JiraIssueWriteClient caches per-cloudId across syncs
 			// too) and reused for every page -- never hardcoded, since these custom field IDs
@@ -141,7 +144,7 @@ public class JiraTaskSyncService {
 				} catch (IntegrationException ex) {
 					if (ex.getCode() == IntegrationErrorCode.JIRA_UNAUTHORIZED && !refreshedForUnauthorized) {
 						String rejected = accessToken;
-						accessToken = credentials.forceRefresh(projectId, rejected);
+						accessToken = credentials.forceRefresh(jiraIntegrationId, rejected);
 						refreshedForUnauthorized = true;
 						page = jira.searchIssues(
 								accessToken,
@@ -178,8 +181,9 @@ public class JiraTaskSyncService {
 						"Jira issue pagination exceeded defensive guard.");
 			}
 			final int processedCount = processed;
+			final UUID publishProjectId = projectId;
 			writes.executeWithoutResult(status -> {
-				JiraIntegration row = integrations.findByProject_Id(projectId).orElse(null);
+				JiraIntegration row = integrations.findById(jiraIntegrationId).orElse(null);
 				if (row != null) {
 					row.setLastSyncedAt(LocalDateTime.now());
 					row.setLastSuccessfulSyncAt(LocalDateTime.now());
@@ -187,23 +191,28 @@ public class JiraTaskSyncService {
 					row.setLastErrorCode(null);
 					integrations.save(row);
 				}
-				realtime.publish(ProjectRealtimeEventType.SYNC_STATUS_CHANGED, projectId);
-				if (processedCount > 0) {
-					realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, projectId);
-					realtime.publish(ProjectRealtimeEventType.SPRINTS_CHANGED, projectId);
-					realtime.publish(ProjectRealtimeEventType.TASK_LINKS_CHANGED, projectId);
+				if (publishProjectId != null) {
+					realtime.publish(ProjectRealtimeEventType.SYNC_STATUS_CHANGED, publishProjectId);
+					if (processedCount > 0) {
+						realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, publishProjectId);
+						realtime.publish(ProjectRealtimeEventType.SPRINTS_CHANGED, publishProjectId);
+						realtime.publish(ProjectRealtimeEventType.TASK_LINKS_CHANGED, publishProjectId);
+					}
 				}
 			});
 			finalized = true;
 			return claims.markSucceeded(job, processed);
 		} catch (IntegrationException ex) {
-			log.warn("jira initial sync failed projectId={} code={}", projectId, ex.getCode());
-			markIntegrationFailure(projectId, ex.getCode().name());
+			log.warn("jira initial sync failed integrationId={} code={}", jiraIntegrationId, ex.getCode());
+			markIntegrationFailure(jiraIntegrationId, ex.getCode().name());
 			finalized = true;
 			return claims.markFailed(job, ex.getCode().name(), "provider");
 		} catch (RuntimeException ex) {
-			log.warn("jira initial sync failed projectId={} type={}", projectId, ex.getClass().getSimpleName());
-			markIntegrationFailure(projectId, "JIRA_SYNC_FAILED");
+			log.warn(
+					"jira initial sync failed integrationId={} type={}",
+					jiraIntegrationId,
+					ex.getClass().getSimpleName());
+			markIntegrationFailure(jiraIntegrationId, "JIRA_SYNC_FAILED");
 			finalized = true;
 			return claims.markFailed(job, "JIRA_SYNC_FAILED", "provider");
 		} finally {
@@ -251,9 +260,9 @@ public class JiraTaskSyncService {
 		}
 	}
 
-	private void markIntegrationFailure(UUID projectId, String code) {
+	private void markIntegrationFailure(UUID jiraIntegrationId, String code) {
 		writes.executeWithoutResult(status -> {
-			JiraIntegration row = integrations.findByProject_Id(projectId).orElse(null);
+			JiraIntegration row = integrations.findById(jiraIntegrationId).orElse(null);
 			if (row != null) {
 				row.setConsecutiveFailures(row.getConsecutiveFailures() == null ? 1 : row.getConsecutiveFailures() + 1);
 				row.setLastErrorCode(code);
@@ -263,14 +272,14 @@ public class JiraTaskSyncService {
 		});
 	}
 
-	private SyncJobLog beginJob(UUID projectId) {
-		return claims.tryClaim("JIRA", projectId, SyncJobType.INITIAL).orElse(null);
+	private SyncJobLog beginJob(UUID jiraIntegrationId) {
+		return claims.tryClaim("JIRA", jiraIntegrationId, SyncJobType.INITIAL).orElse(null);
 	}
 
-	private SyncJobLog alreadyRunning(UUID projectId) {
+	private SyncJobLog alreadyRunning(UUID jiraIntegrationId) {
 		SyncJobLog job = new SyncJobLog();
 		job.setTargetSystem("JIRA");
-		job.setTargetId(projectId);
+		job.setTargetId(jiraIntegrationId);
 		job.setJobType(SyncJobType.INITIAL);
 		job.setStatus(SyncJobStatus.FAILED);
 		job.setErrorCategory("JIRA_SYNC_ALREADY_RUNNING");

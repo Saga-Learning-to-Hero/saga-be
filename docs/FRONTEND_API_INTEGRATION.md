@@ -1020,17 +1020,21 @@ PUT /api/projects/{projectId}/integrations/github/repositories
 `repositoryId` is required and must be the numeric GitHub `id` from `GET /api/projects/{projectId}/integrations/github/repositories`. Do not send `fullName`, `name`, or `owner` as selection authority.
 
 `role` is optional. Allowed values: `FRONTEND`, `BACKEND`, `OTHER`. Omit or `null` leaves `repository_role` unset. Invalid values such as `frontend` or `FE` return `400 REQUEST_INVALID`.
-9. `POST /api/projects/{projectId}/integrations/jira/connect`
+9. Jira: ADD source via `POST /api/projects/{projectId}/integrations/jira-sources/connect` (or `/jira/connect`). Multi-source allowed; canonical list is `jiraSources[]` on GET integrations.
 10. Jira team callback, then select the site/project/board:
 
 ```text
-POST /api/projects/{projectId}/integrations/jira/connect
+POST /api/projects/{projectId}/integrations/jira-sources/connect
 → authorize at Atlassian
 → GET /api/projects/{projectId}/integrations/jira/sites
 → GET /api/projects/{projectId}/integrations/jira/projects?cloudId=...
 → GET /api/projects/{projectId}/integrations/jira/boards?cloudId=...&jiraProjectId=...
 → PUT /api/projects/{projectId}/integrations/jira
 ```
+
+Reconnect a named source: `POST .../jira-sources/{integrationId}/reconnect` then `PUT .../jira-sources/{integrationId}`.
+Per-source recovery sync: `POST .../jira-sources/{integrationId}/sync` → 202.
+Sprint live-sync with multi-source: `GET .../sprints?jiraIntegrationId={id}` (omit only when 0–1 ACTIVE).
 
 ```json
 PUT /api/projects/{projectId}/integrations/jira

@@ -237,14 +237,34 @@ public class StudentDashboardService {
 	}
 
 	private StudentDashboardJiraIntegrationResponse jiraSummary(UUID projectId) {
-		JiraIntegration row = jiraIntegrations.findByProject_Id(projectId).orElse(null);
-		if (row == null) {
+		List<JiraIntegration> rows = jiraIntegrations.findAllByProject_Id(projectId);
+		if (rows.isEmpty()) {
 			return new StudentDashboardJiraIntegrationResponse(false, null, null, null);
 		}
-		boolean connected = row.getConnectionStatus() == IntegrationStatus.ACTIVE;
-		String status = row.getConnectionStatus() == null ? null : row.getConnectionStatus().name();
+		boolean anyActive = false;
+		Set<IntegrationStatus> nonActive = new LinkedHashSet<>();
+		LocalDateTime lastSyncedAt = null;
+		LocalDateTime lastSyncedActive = null;
+		for (JiraIntegration row : rows) {
+			IntegrationStatus status = row.getConnectionStatus();
+			LocalDateTime synced = row.getLastSuccessfulSyncAt();
+			if (synced != null && (lastSyncedAt == null || synced.isAfter(lastSyncedAt))) {
+				lastSyncedAt = synced;
+			}
+			if (status == IntegrationStatus.ACTIVE) {
+				anyActive = true;
+				if (synced != null && (lastSyncedActive == null || synced.isAfter(lastSyncedActive))) {
+					lastSyncedActive = synced;
+				}
+			} else {
+				nonActive.add(status);
+			}
+		}
+		boolean connected = anyActive;
+		String status = githubAggregateStatus(connected, true, nonActive);
+		String projectKey = rows.size() == 1 ? rows.getFirst().getProjectKey() : null;
 		return new StudentDashboardJiraIntegrationResponse(
-				connected, row.getProjectKey(), status, row.getLastSuccessfulSyncAt());
+				connected, projectKey, status, anyActive ? lastSyncedActive : lastSyncedAt);
 	}
 
 	/**

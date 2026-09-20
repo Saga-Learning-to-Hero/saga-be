@@ -22,6 +22,7 @@ import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.identity.PersonalIntegrationService;
 import com.saga.be.service.identity.ProjectIntegrationService;
 import com.saga.be.service.projection.ProjectJiraTaskCommandService;
+import com.saga.be.service.sync.ProjectManualSyncService;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
@@ -47,6 +48,8 @@ class IntegrationCallbackRedirectWebTest {
 	@Mock
 	private ProjectJiraTaskCommandService taskCommands;
 	@Mock
+	private ProjectManualSyncService manualSync;
+	@Mock
 	private PersonalIntegrationService personal;
 	@Mock
 	private OAuthStateService oauthStates;
@@ -71,10 +74,11 @@ class IntegrationCallbackRedirectWebTest {
 		callbacks = MockMvcBuilders.standaloneSetup(
 						new IntegrationCallbackController(projects, properties),
 						new PersonalIntegrationController(personal, projects, oauthStates, users, properties),
-						new ProjectIntegrationController(projects, taskCommands, properties))
+						new ProjectIntegrationController(projects, taskCommands, manualSync, properties))
 				.setCustomArgumentResolvers(new PrincipalResolver(principal))
 				.build();
-		rest = MockMvcBuilders.standaloneSetup(new ProjectIntegrationController(projects, taskCommands, properties))
+		rest = MockMvcBuilders.standaloneSetup(
+						new ProjectIntegrationController(projects, taskCommands, manualSync, properties))
 				.setControllerAdvice(new GlobalExceptionHandler())
 				.setCustomArgumentResolvers(new PrincipalResolver(principal))
 				.build();

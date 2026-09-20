@@ -9,6 +9,7 @@ import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraBoardOption;
 import com.saga.be.dto.integration.ProjectIntegrationsResponse.JiraProjectOption;
 import com.saga.be.dto.integration.SelectGitHubRepositoryRequest;
 import com.saga.be.dto.integration.SelectJiraIntegrationRequest;
+import com.saga.be.dto.project.ProjectSyncEnqueueResponse;
 import com.saga.be.dto.project.ProjectTaskOptionsResponse;
 import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.github.GitHubOAuthClient;
@@ -17,6 +18,7 @@ import com.saga.be.integration.oauth.IntegrationFrontendRedirects;
 import com.saga.be.security.SagaUserPrincipal;
 import com.saga.be.service.identity.ProjectIntegrationService;
 import com.saga.be.service.projection.ProjectJiraTaskCommandService;
+import com.saga.be.service.sync.ProjectManualSyncService;
 import com.saga.be.workload.Workload;
 import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
@@ -31,6 +33,7 @@ import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -53,14 +56,17 @@ public class ProjectIntegrationController {
 
 	private final ProjectIntegrationService integrations;
 	private final ProjectJiraTaskCommandService taskCommands;
+	private final ProjectManualSyncService manualSync;
 	private final IntegrationProperties properties;
 
 	public ProjectIntegrationController(
 			ProjectIntegrationService integrations,
 			ProjectJiraTaskCommandService taskCommands,
+			ProjectManualSyncService manualSync,
 			IntegrationProperties properties) {
 		this.integrations = integrations;
 		this.taskCommands = taskCommands;
+		this.manualSync = manualSync;
 		this.properties = properties;
 	}
 
@@ -164,10 +170,10 @@ public class ProjectIntegrationController {
 	@PostMapping("/jira/connect")
 	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(
-			summary = "Start Jira OAuth to ADD the first source for the project. Team Leader only.",
+			summary = "Start Jira OAuth to ADD a Jira source for the project. Team Leader only.",
 			description =
-					"Fails with JIRA_MULTI_SOURCE_NOT_READY when any jira_integration row already exists. "
-							+ "To reconnect an existing source use POST /jira-sources/{integrationId}/reconnect.")
+					"Adds a new source (first or additional). To reconnect an existing named source use "
+							+ "POST /jira-sources/{integrationId}/reconnect.")
 	public OAuthStartResponse jiraConnect(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
@@ -186,8 +192,7 @@ public class ProjectIntegrationController {
 	@Workload(WorkloadClass.INTERACTIVE_WRITE)
 	@Operation(
 			summary = "Start Jira OAuth to ADD a new source. Team Leader only.",
-			description =
-					"Same ADD guard as POST /jira/connect: fails with JIRA_MULTI_SOURCE_NOT_READY when any source already exists.")
+			description = "Preferred ADD path when the project may already have Jira sources. Same OAuth as POST /jira/connect.")
 	public OAuthStartResponse jiraSourceConnect(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
@@ -229,6 +234,19 @@ public class ProjectIntegrationController {
 			@PathVariable UUID integrationId) {
 		integrations.disconnectJiraSource(principal.getUserId(), projectId, integrationId);
 		return ResponseEntity.noContent().build();
+	}
+
+	@PostMapping("/jira-sources/{integrationId}/sync")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
+	@Operation(
+			summary = "Team Leader recovery enqueue for one Jira source. Does not wait for provider HTTP.",
+			description = "Same auth as POST /api/projects/{projectId}/sync. github field is SKIPPED_NOT_CONFIGURED.")
+	public ResponseEntity<ProjectSyncEnqueueResponse> syncJiraSource(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID projectId,
+			@PathVariable UUID integrationId) {
+		return ResponseEntity.status(HttpStatus.ACCEPTED)
+				.body(manualSync.enqueueJiraSource(principal.getUserId(), projectId, integrationId));
 	}
 
 	@GetMapping("/jira/sites")

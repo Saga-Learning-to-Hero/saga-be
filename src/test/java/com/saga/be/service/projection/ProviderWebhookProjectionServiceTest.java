@@ -558,6 +558,159 @@ class ProviderWebhookProjectionServiceTest {
 		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.PROCESSED);
 	}
 
+	@Test
+	void jiraIssue_ambiguousProjectKeyMatch_failsClosed() {
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		Project projectA = new Project();
+		projectA.setId(UUID.randomUUID());
+		Project projectB = new Project();
+		projectB.setId(UUID.randomUUID());
+		JiraIntegration a = new JiraIntegration();
+		a.setId(UUID.randomUUID());
+		a.setProject(projectA);
+		a.setCloudId("cloud-a");
+		a.setJiraProjectId("10000");
+		a.setProjectKey("SAGA");
+		JiraIntegration b = new JiraIntegration();
+		b.setId(UUID.randomUUID());
+		b.setProject(projectB);
+		b.setCloudId("cloud-b");
+		b.setJiraProjectId("10000");
+		b.setProjectKey("SAGA");
+		when(jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, "10000", "SAGA"))
+				.thenReturn(List.of(a, b));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		String payload =
+				"""
+				{"webhookEvent":"jira:issue_updated","issue":{"id":"200","key":"SAGA-9","fields":{"summary":"Auth","project":{"id":"10000","key":"SAGA"}}}}
+				""";
+		service.projectJira(receipt, payload);
+
+		verify(tasks, never()).upsertBatch(any(), any(), any());
+		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.FAILED);
+		assertThat(receipt.getErrorCategory()).isEqualTo("JIRA_WEBHOOK_SOURCE_AMBIGUOUS");
+	}
+
+	@Test
+	void jiraIssue_routesByCloudAndJiraProjectWhenCloudPresent() {
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		JiraIntegration integration = new JiraIntegration();
+		integration.setId(UUID.randomUUID());
+		integration.setProject(project);
+		integration.setCloudId("cloud-1");
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		when(jiraIntegrations.findFetchedActiveByCloudAndJiraProject(IntegrationStatus.ACTIVE, "cloud-1", "10000"))
+				.thenReturn(List.of(integration));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tasks.upsertBatch(eq(integration), eq("SAGA"), any())).thenReturn(1);
+
+		String payload =
+				"""
+				{"webhookEvent":"jira:issue_updated","cloudId":"cloud-1","issue":{"id":"200","key":"SAGA-9","fields":{"summary":"Auth","status":{"id":"3","name":"In Progress","statusCategory":{"key":"indeterminate"}},"issuetype":{"name":"Story"},"project":{"id":"10000","key":"SAGA"},"updated":"2026-01-02T00:00:00.000+0000"}}}
+				""";
+		service.projectJira(receipt, payload);
+
+		verify(tasks).upsertBatch(eq(integration), eq("SAGA"), any());
+		verify(jiraIntegrations, never()).findFetchedActiveByJiraProject(any(), any(), any());
+		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.PROCESSED);
+	}
+
+	@Test
+	void jiraIssue_sameProjectKeyDifferentClouds_routesOnlyMatchingCloud() {
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		JiraIntegration sourceA = new JiraIntegration();
+		sourceA.setId(UUID.randomUUID());
+		sourceA.setProject(project);
+		sourceA.setCloudId("cloud-a");
+		sourceA.setJiraProjectId("10000");
+		sourceA.setProjectKey("SAGA");
+		JiraIntegration sourceB = new JiraIntegration();
+		sourceB.setId(UUID.randomUUID());
+		sourceB.setProject(project);
+		sourceB.setCloudId("cloud-b");
+		sourceB.setJiraProjectId("10000");
+		sourceB.setProjectKey("SAGA");
+		when(jiraIntegrations.findFetchedActiveByCloudAndJiraProject(IntegrationStatus.ACTIVE, "cloud-a", "10000"))
+				.thenReturn(List.of(sourceA));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tasks.upsertBatch(eq(sourceA), eq("SAGA"), any())).thenReturn(1);
+
+		String payload =
+				"""
+				{"webhookEvent":"jira:issue_updated","cloudId":"cloud-a","issue":{"id":"200","key":"SAGA-9","fields":{"summary":"Auth","status":{"id":"3","name":"In Progress","statusCategory":{"key":"indeterminate"}},"issuetype":{"name":"Story"},"project":{"id":"10000","key":"SAGA"},"updated":"2026-01-02T00:00:00.000+0000"}}}
+				""";
+		service.projectJira(receipt, payload);
+
+		verify(tasks).upsertBatch(eq(sourceA), eq("SAGA"), any());
+		verify(tasks, never()).upsertBatch(eq(sourceB), any(), any());
+		verify(jiraIntegrations, never()).findFetchedActiveByCloudAndJiraProject(eq(IntegrationStatus.ACTIVE), eq("cloud-b"), any());
+		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.PROCESSED);
+	}
+
+	@Test
+	void jiraIssue_routesByMatchedWebhookId() {
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		JiraIntegration integration = new JiraIntegration();
+		integration.setId(UUID.randomUUID());
+		integration.setProject(project);
+		integration.setCloudId("cloud-1");
+		integration.setJiraProjectId("10000");
+		integration.setProjectKey("SAGA");
+		integration.setWebhookId("42");
+		when(jiraIntegrations.findFetchedActiveByWebhookId(IntegrationStatus.ACTIVE, "42"))
+				.thenReturn(List.of(integration));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tasks.upsertBatch(eq(integration), eq("SAGA"), any())).thenReturn(1);
+
+		String payload =
+				"""
+				{"webhookEvent":"jira:issue_updated","matchedWebhookIds":[42],"cloudId":"cloud-1","issue":{"id":"200","key":"SAGA-9","fields":{"summary":"Auth","status":{"id":"3","name":"In Progress","statusCategory":{"key":"indeterminate"}},"issuetype":{"name":"Story"},"project":{"id":"10000","key":"SAGA"},"updated":"2026-01-02T00:00:00.000+0000"}}}
+				""";
+		service.projectJira(receipt, payload);
+
+		verify(tasks).upsertBatch(eq(integration), eq("SAGA"), any());
+		verify(jiraIntegrations, never()).findFetchedActiveByCloudAndJiraProject(any(), any(), any());
+		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.PROCESSED);
+	}
+
+	@Test
+	void jiraSprint_ambiguousBoardMatch_failsClosed() {
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		Project projectA = new Project();
+		projectA.setId(UUID.randomUUID());
+		Project projectB = new Project();
+		projectB.setId(UUID.randomUUID());
+		JiraIntegration a = new JiraIntegration();
+		a.setId(UUID.randomUUID());
+		a.setProject(projectA);
+		a.setJiraBoardId("68");
+		JiraIntegration b = new JiraIntegration();
+		b.setId(UUID.randomUUID());
+		b.setProject(projectB);
+		b.setJiraBoardId("68");
+		when(jiraIntegrations.findFetchedActiveByBoardId(IntegrationStatus.ACTIVE, "68"))
+				.thenReturn(List.of(a, b));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		String payload =
+				"""
+				{"webhookEvent":"sprint_created","sprint":{"id":31,"name":"Sprint 1","state":"future","originBoardId":68}}
+				""";
+		service.projectJira(receipt, payload);
+
+		verify(tasks, never()).upsertSprint(any(), any(), any(), any(), any(), any(), any(), any());
+		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.FAILED);
+		assertThat(receipt.getErrorCategory()).isEqualTo("JIRA_WEBHOOK_SOURCE_AMBIGUOUS");
+	}
+
 	private static WebhookReceipt receipt(IntegrationProvider provider) {
 		WebhookReceipt receipt = new WebhookReceipt();
 		receipt.setProvider(provider);

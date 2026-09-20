@@ -65,9 +65,10 @@ public interface TeamRepository extends JpaRepository<Team, UUID> {
 	 * Canonical connected-team count for admin dashboard / unconnected-team alert.
 	 *
 	 * <p>Counts <strong>teams</strong>, not repositories. A team is connected when it has a
-	 * Project, a Jira integration with {@code connectionStatus = ACTIVE}, and {@code EXISTS} at
-	 * least one GitRepo with {@code connectionStatus = ACTIVE}. Multiple ACTIVE repos on one
-	 * project still contribute one team ({@code count(distinct t.id)} + {@code EXISTS}). Legacy
+	 * Project, {@code EXISTS} any Jira integration with {@code connectionStatus = ACTIVE}
+	 * (multi-source safe — one ACTIVE source is enough), and {@code EXISTS} at least one GitRepo
+	 * with {@code connectionStatus = ACTIVE}. Multiple ACTIVE repos on one project still
+	 * contribute one team ({@code count(distinct t.id)} + {@code EXISTS}). Legacy
 	 * {@code CONNECTED} is not sufficient.
 	 */
 	@Query(

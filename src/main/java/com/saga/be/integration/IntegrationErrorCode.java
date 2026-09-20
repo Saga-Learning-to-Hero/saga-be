@@ -34,7 +34,10 @@ public enum IntegrationErrorCode {
 	 * new source when multi-source is available.
 	 */
 	JIRA_SOURCE_IDENTITY_MISMATCH,
-	/** Project already has a Jira source; multi-source sync/webhook isolation is not ready (Phase 3). */
+	/**
+	 * Retired Phase 2 ADD guard. Kept for wire compatibility; ADD is allowed after Phase 3
+	 * source-scoped sync/webhook isolation.
+	 */
 	JIRA_MULTI_SOURCE_NOT_READY,
 	/** Explicit jiraIntegrationId is required when the project has multiple Jira sources. */
 	JIRA_SOURCE_REQUIRED,

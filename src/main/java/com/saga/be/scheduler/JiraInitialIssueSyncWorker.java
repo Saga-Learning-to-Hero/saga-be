@@ -40,7 +40,7 @@ public class JiraInitialIssueSyncWorker {
 				syncJobs.findByTargetSystemAndJobTypeAndStatus("JIRA", SyncJobType.INITIAL, SyncJobStatus.RUNNING);
 		for (SyncJobLog job : jobs) {
 			try {
-				JiraIntegration integration = integrations.findFetchedByProject_Id(job.getTargetId()).orElse(null);
+				JiraIntegration integration = integrations.findFetchedById(job.getTargetId()).orElse(null);
 				int processed = integration == null ? 0 : evidence.syncIntegration(integration);
 				job.setStatus(SyncJobStatus.SUCCEEDED);
 				job.setItemsProcessed(processed);

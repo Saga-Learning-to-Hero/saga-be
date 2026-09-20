@@ -104,6 +104,34 @@ class SyncJobStaleRecoveryTest {
 	}
 
 	@Test
+	void tryClaim_runningOnIntegrationA_doesNotBlockIntegrationB() {
+		UUID integrationA = UUID.randomUUID();
+		UUID integrationB = UUID.randomUUID();
+		SyncJobLog runningA = runningJob(LocalDateTime.now().minusMinutes(2));
+		runningA.setTargetId(integrationA);
+		when(syncJobs.findByTargetSystemAndTargetIdAndStatus("JIRA", integrationA, SyncJobStatus.RUNNING))
+				.thenReturn(List.of(runningA));
+		when(syncJobs.existsByTargetSystemAndTargetIdAndStatus("JIRA", integrationA, SyncJobStatus.RUNNING))
+				.thenReturn(true);
+		when(syncJobs.findByTargetSystemAndTargetIdAndStatus("JIRA", integrationB, SyncJobStatus.RUNNING))
+				.thenReturn(List.of());
+		when(syncJobs.existsByTargetSystemAndTargetIdAndStatus("JIRA", integrationB, SyncJobStatus.RUNNING))
+				.thenReturn(false);
+		when(syncJobs.save(any(SyncJobLog.class))).thenAnswer(inv -> {
+			SyncJobLog job = inv.getArgument(0);
+			if (job.getId() == null) {
+				job.setId(UUID.randomUUID());
+			}
+			return job;
+		});
+
+		assertThat(claims.tryClaim("JIRA", integrationA, SyncJobType.INITIAL)).isEmpty();
+		assertThat(claims.tryClaim("JIRA", integrationB, SyncJobType.INITIAL)).isPresent();
+		assertThat(claims.tryReserveEnqueue("JIRA", integrationA)).isFalse();
+		assertThat(claims.tryReserveEnqueue("JIRA", integrationB)).isTrue();
+	}
+
+	@Test
 	void staleRunning_isFailedAndNoLongerBlocks() {
 		SyncJobLog stale = runningJob(LocalDateTime.now().minusHours(2));
 		when(syncJobs.findByTargetSystemAndTargetIdAndStatus("JIRA", projectId, SyncJobStatus.RUNNING))
@@ -169,18 +197,21 @@ class SyncJobStaleRecoveryTest {
 				mockClaims,
 				transactionManager,
 				new com.saga.be.realtime.ProjectRealtimePublisher(event -> {}));
+		UUID integrationId = UUID.randomUUID();
 		SyncJobLog running = runningJob(LocalDateTime.now());
 		running.setId(UUID.randomUUID());
-		when(mockClaims.tryClaim("JIRA", projectId, SyncJobType.INITIAL)).thenReturn(Optional.of(running));
+		running.setTargetId(integrationId);
+		when(mockClaims.tryClaim("JIRA", integrationId, SyncJobType.INITIAL)).thenReturn(Optional.of(running));
 		Project project = new Project();
 		project.setId(projectId);
 		JiraIntegration integration = new JiraIntegration();
+		integration.setId(integrationId);
 		integration.setProject(project);
 		integration.setCloudId("cloud");
 		integration.setProjectKey("SAGA");
 		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
-		when(jiraIntegrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(integration));
-		when(credentials.resolveAccessToken(projectId)).thenReturn("token");
+		when(jiraIntegrations.findFetchedById(integrationId)).thenReturn(Optional.of(integration));
+		when(credentials.resolveAccessToken(integrationId)).thenReturn("token");
 		when(jira.searchIssues(
 						any(),
 						any(),
@@ -192,7 +223,7 @@ class SyncJobStaleRecoveryTest {
 						org.mockito.ArgumentMatchers.nullable(String.class)))
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.BAD_GATEWAY, "down"));
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(jiraIntegrations.findById(integrationId)).thenReturn(Optional.of(integration));
 		when(jiraIntegrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
 		when(mockClaims.markFailed(eq(running), eq("JIRA_PROJECT_NOT_ACCESSIBLE"), eq("provider")))
 				.thenAnswer(inv -> {
@@ -203,7 +234,7 @@ class SyncJobStaleRecoveryTest {
 					return running;
 				});
 
-		SyncJobLog result = service.initialSync(projectId);
+		SyncJobLog result = service.initialSync(integrationId);
 		assertThat(result.getStatus()).isEqualTo(SyncJobStatus.FAILED);
 		assertThat(result.getErrorCategory()).isEqualTo("JIRA_PROJECT_NOT_ACCESSIBLE");
 		verify(mockClaims, never()).markSucceeded(any(), org.mockito.ArgumentMatchers.anyInt());
@@ -215,15 +246,17 @@ class SyncJobStaleRecoveryTest {
 		ProjectManualSyncService manual = new ProjectManualSyncService(
 				authorization, jiraIntegrations, repos, syncJobs, launcher, credentials, claims);
 		UUID userId = UUID.randomUUID();
+		UUID integrationId = UUID.randomUUID();
 		UserAccount leader = new UserAccount();
 		leader.setId(userId);
 		leader.setAccountRole(AccountRole.STUDENT);
 		when(users.findById(userId)).thenReturn(Optional.of(leader));
 		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.LEADER));
 		JiraIntegration jiraRow = new JiraIntegration();
+		jiraRow.setId(integrationId);
 		jiraRow.setConnectionStatus(IntegrationStatus.ACTIVE);
-		when(jiraIntegrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(jiraRow));
-		when(credentials.hasRefreshOrAccessCredential(projectId)).thenReturn(true);
+		when(jiraIntegrations.findAllFetchedByProject_Id(projectId)).thenReturn(List.of(jiraRow));
+		when(credentials.hasRefreshOrAccessCredential(integrationId)).thenReturn(true);
 		org.mockito.Mockito.lenient()
 				.when(syncJobs.findByTargetSystemAndTargetIdAndStatus(any(), any(), eq(SyncJobStatus.RUNNING)))
 				.thenReturn(List.of());
@@ -234,11 +267,11 @@ class SyncJobStaleRecoveryTest {
 				.when(repos.findByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE))
 				.thenReturn(List.of());
 		org.mockito.Mockito.lenient().when(repos.findByProject_Id(projectId)).thenReturn(List.of());
-		doThrow(new RejectedExecutionException("queue full")).when(launcher).enqueueJiraInitialSync(projectId);
+		doThrow(new RejectedExecutionException("queue full")).when(launcher).enqueueJiraInitialSync(integrationId);
 
 		org.assertj.core.api.Assertions.assertThatThrownBy(() -> manual.enqueue(userId, projectId))
 				.isInstanceOf(RejectedExecutionException.class);
-		assertThat(claims.tryReserveEnqueue("JIRA", projectId)).isTrue();
+		assertThat(claims.tryReserveEnqueue("JIRA", integrationId)).isTrue();
 		verify(syncJobs, never()).save(any());
 	}
 
@@ -248,20 +281,23 @@ class SyncJobStaleRecoveryTest {
 		ProjectManualSyncService manual = new ProjectManualSyncService(
 				authorization, jiraIntegrations, repos, syncJobs, launcher, credentials, claims);
 		UUID userId = UUID.randomUUID();
+		UUID integrationId = UUID.randomUUID();
 		UserAccount leader = new UserAccount();
 		leader.setId(userId);
 		leader.setAccountRole(AccountRole.STUDENT);
 		when(users.findById(userId)).thenReturn(Optional.of(leader));
 		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.LEADER));
 		JiraIntegration jiraRow = new JiraIntegration();
+		jiraRow.setId(integrationId);
 		jiraRow.setConnectionStatus(IntegrationStatus.ACTIVE);
-		when(jiraIntegrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(jiraRow));
-		when(credentials.hasRefreshOrAccessCredential(projectId)).thenReturn(true);
+		when(jiraIntegrations.findAllFetchedByProject_Id(projectId)).thenReturn(List.of(jiraRow));
+		when(credentials.hasRefreshOrAccessCredential(integrationId)).thenReturn(true);
 		SyncJobLog stale = runningJob(LocalDateTime.now().minusDays(5));
-		when(syncJobs.findByTargetSystemAndTargetIdAndStatus("JIRA", projectId, SyncJobStatus.RUNNING))
+		stale.setTargetId(integrationId);
+		when(syncJobs.findByTargetSystemAndTargetIdAndStatus("JIRA", integrationId, SyncJobStatus.RUNNING))
 				.thenReturn(List.of(stale))
 				.thenReturn(List.of());
-		when(syncJobs.existsByTargetSystemAndTargetIdAndStatus("JIRA", projectId, SyncJobStatus.RUNNING))
+		when(syncJobs.existsByTargetSystemAndTargetIdAndStatus("JIRA", integrationId, SyncJobStatus.RUNNING))
 				.thenReturn(false);
 		when(syncJobs.save(any(SyncJobLog.class))).thenAnswer(inv -> inv.getArgument(0));
 		when(repos.findByProject_IdAndConnectionStatus(projectId, IntegrationStatus.ACTIVE))
@@ -275,7 +311,7 @@ class SyncJobStaleRecoveryTest {
 		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
 		assertThat(response.github()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
 		assertThat(stale.getStatus()).isEqualTo(SyncJobStatus.FAILED);
-		verify(launcher).enqueueJiraInitialSync(projectId);
+		verify(launcher).enqueueJiraInitialSync(integrationId);
 		verify(launcher).enqueueGithubInitialSync(projectId);
 	}
 

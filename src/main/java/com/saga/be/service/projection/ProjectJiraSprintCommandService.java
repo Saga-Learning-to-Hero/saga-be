@@ -59,7 +59,26 @@ public class ProjectJiraSprintCommandService {
 	}
 
 	public List<ProjectSprintResponse> syncAndList(UUID userId, UUID projectId) {
+		return syncAndList(userId, projectId, null);
+	}
+
+	public List<ProjectSprintResponse> syncAndList(UUID userId, UUID projectId, UUID jiraIntegrationId) {
 		authorization.requireReader(userId, projectId);
+		if (jiraIntegrationId != null) {
+			JiraIntegration integration = jiraIntegrations
+					.findByIdAndProject_Id(jiraIntegrationId, projectId)
+					.orElseThrow(() -> new IntegrationException(
+							IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
+							HttpStatus.NOT_FOUND,
+							"Jira source was not found for this project."));
+			if (integration.getConnectionStatus() != IntegrationStatus.ACTIVE) {
+				throw new IntegrationException(
+						IntegrationErrorCode.JIRA_SOURCE_NOT_ACTIVE,
+						HttpStatus.BAD_REQUEST,
+						"Jira source is not active.");
+			}
+			return syncNamedSourceThenListLocal(integration, projectId);
+		}
 		List<JiraIntegration> active = jiraIntegrations.findAllByProject_Id(projectId).stream()
 				.filter(row -> row.getConnectionStatus() == IntegrationStatus.ACTIVE)
 				.toList();
@@ -72,7 +91,10 @@ public class ProjectJiraSprintCommandService {
 		if (active.isEmpty()) {
 			return sprints.findActiveByProject_Id(projectId).stream().map(this::toResponse).toList();
 		}
-		JiraIntegration integration = active.get(0);
+		return syncNamedSourceThenListLocal(active.get(0), projectId);
+	}
+
+	private List<ProjectSprintResponse> syncNamedSourceThenListLocal(JiraIntegration integration, UUID projectId) {
 		if (integration.getJiraBoardId() == null || integration.getJiraBoardId().isBlank()) {
 			return sprints.findActiveByProject_Id(projectId).stream().map(this::toResponse).toList();
 		}

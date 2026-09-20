@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -191,34 +192,25 @@ public class ProviderWebhookProjectionService {
 				receipts.markFailed(receipt, "JIRA_ISSUE_INCOMPLETE");
 				return;
 			}
-			List<JiraIntegration> matches =
-					jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, jiraProjectId, projectKey);
-			if (matches.isEmpty()) {
-				log.info(
-						"jira webhook ingress event={} issueKey={} projectKey={} result=SKIPPED reason=NO_ACTIVE_INTEGRATION_MATCHED",
-						webhookEvent,
-						issueKey,
-						projectKey);
-				receipts.markProcessed(receipt, LocalDateTime.now());
+			JiraIntegration match = resolveIssueSource(receipt, root, jiraProjectId, projectKey, webhookEvent, issueKey);
+			if (match == null) {
 				return;
 			}
 			log.info(
-					"jira webhook ingress event={} issueKey={} projectKey={} result=ROUTED matchedIntegrationIds={} matchedProjectIds={}",
+					"jira webhook ingress event={} issueKey={} projectKey={} result=ROUTED matchedIntegrationId={} matchedProjectId={}",
 					webhookEvent,
 					issueKey,
 					projectKey,
-					matches.stream().map(JiraIntegration::getId).toList(),
-					matches.stream().map(match -> match.getProject().getId()).toList());
+					match.getId(),
+					match.getProject().getId());
 			if (webhookEvent != null && webhookEvent.toLowerCase(Locale.ROOT).contains("deleted")) {
 				LocalDateTime now = LocalDateTime.now();
 				writes.executeWithoutResult(status -> {
-					for (JiraIntegration integration : matches) {
-						tasks.softDelete(integration, externalId, now);
-						realtime.publish(
-								ProjectRealtimeEventType.TASKS_CHANGED,
-								integration.getProject().getId(),
-								externalId);
-					}
+					tasks.softDelete(match, externalId, now);
+					realtime.publish(
+							ProjectRealtimeEventType.TASKS_CHANGED,
+							match.getProject().getId(),
+							externalId);
 					receipts.markProcessed(receipt, LocalDateTime.now());
 				});
 				return;
@@ -227,34 +219,24 @@ public class ProviderWebhookProjectionService {
 			// payload read (no provider HTTP at all), but for a cold cache (see
 			// refreshFromProvider) it performs a single-issue provider fetch that must not hold a
 			// JDBC connection open for its duration.
-			Map<JiraIntegration, IssueSummary> summaries = new LinkedHashMap<>();
-			for (JiraIntegration integration : matches) {
-				// Cache-peek only -- never triggers provider HTTP field discovery on its own.
-				// Before any sync has warmed the cache for this cloud, both come back null and
-				// toSummary(authoritative=false) below simply cannot mark those fields "provided",
-				// which correctly preserves whatever SAGA already has -- UNLESS refreshFromProvider
-				// resolves the true current value with a targeted single-issue fetch instead.
-				// (Start date's cache is peeked the same way; a cold Start date cache alone also
-				// triggers the same targeted single-issue refresh rather than a guess.)
-				String storyField = jiraFields.peekCachedStoryPointsFieldId(integration.getCloudId());
-				String sprintField = jiraFields.peekCachedSprintFieldId(integration.getCloudId());
-				String startField = jiraFields.peekCachedStartDateFieldId(integration.getCloudId());
-				IssueSummary summary = storyField == null || sprintField == null || startField == null
-						? refreshFromProvider(integration, externalId, issue, storyField, sprintField, startField)
-						: JiraIssueWriteClient.toSummary(issue, storyField, sprintField, startField, false);
-				summaries.put(integration, summary);
-			}
+			// Cache-peek only -- never triggers provider HTTP field discovery on its own.
+			// Before any sync has warmed the cache for this cloud, fields come back null and
+			// toSummary(authoritative=false) below simply cannot mark those fields "provided",
+			// which correctly preserves whatever SAGA already has -- UNLESS refreshFromProvider
+			// resolves the true current value with a targeted single-issue fetch instead.
+			String storyField = jiraFields.peekCachedStoryPointsFieldId(match.getCloudId());
+			String sprintField = jiraFields.peekCachedSprintFieldId(match.getCloudId());
+			String startField = jiraFields.peekCachedStartDateFieldId(match.getCloudId());
+			IssueSummary summary = storyField == null || sprintField == null || startField == null
+					? refreshFromProvider(match, externalId, issue, storyField, sprintField, startField)
+					: JiraIssueWriteClient.toSummary(issue, storyField, sprintField, startField, false);
 			writes.executeWithoutResult(status -> {
-				for (Map.Entry<JiraIntegration, IssueSummary> entry : summaries.entrySet()) {
-					JiraIntegration integration = entry.getKey();
-					int applied = tasks.upsertBatch(
-							integration, integration.getProjectKey(), List.of(entry.getValue()));
-					if (applied > 0) {
-						realtime.publish(
-								ProjectRealtimeEventType.TASKS_CHANGED,
-								integration.getProject().getId(),
-								externalId);
-					}
+				int applied = tasks.upsertBatch(match, match.getProjectKey(), List.of(summary));
+				if (applied > 0) {
+					realtime.publish(
+							ProjectRealtimeEventType.TASKS_CHANGED,
+							match.getProject().getId(),
+							externalId);
 				}
 				receipts.markProcessed(receipt, LocalDateTime.now());
 			});
@@ -296,17 +278,123 @@ public class ProviderWebhookProjectionService {
 		}
 	}
 
+	/**
+	 * Fail-closed unique source resolution for issue webhooks.
+	 * Order: matchedWebhookIds → cloudId+jiraProjectId → jiraProjectId+projectKey (never pick first).
+	 *
+	 * @return the single matching integration, or {@code null} after marking the receipt
+	 */
+	private JiraIntegration resolveIssueSource(
+			WebhookReceipt receipt,
+			JsonNode root,
+			String jiraProjectId,
+			String projectKey,
+			String webhookEvent,
+			String issueKey) {
+		JiraIntegration byWebhook = resolveByMatchedWebhookIds(receipt, root, webhookEvent, issueKey);
+		if (byWebhook != null || receipt.getReceiptStatus() != com.saga.be.entity.enums.WebhookReceiptStatus.RECEIVED) {
+			// Non-null = unique hit; receipt no longer RECEIVED means already failed/processed.
+			return byWebhook;
+		}
+		String cloudId = extractCloudId(root);
+		if (cloudId != null && !cloudId.isBlank()) {
+			List<JiraIntegration> byCloud = jiraIntegrations.findFetchedActiveByCloudAndJiraProject(
+					IntegrationStatus.ACTIVE, cloudId, jiraProjectId);
+			if (byCloud.isEmpty()) {
+				log.info(
+						"jira webhook ingress event={} issueKey={} projectKey={} result=SKIPPED reason=NO_ACTIVE_INTEGRATION_MATCHED routing=cloud+jiraProject",
+						webhookEvent,
+						issueKey,
+						projectKey);
+				receipts.markProcessed(receipt, LocalDateTime.now());
+				return null;
+			}
+			if (byCloud.size() > 1) {
+				log.warn(
+						"jira webhook ingress event={} issueKey={} result=FAILED reason=JIRA_WEBHOOK_SOURCE_AMBIGUOUS routing=cloud+jiraProject",
+						webhookEvent,
+						issueKey);
+				receipts.markFailed(receipt, "JIRA_WEBHOOK_SOURCE_AMBIGUOUS");
+				return null;
+			}
+			return byCloud.getFirst();
+		}
+		List<JiraIntegration> candidates =
+				jiraIntegrations.findFetchedActiveByJiraProject(IntegrationStatus.ACTIVE, jiraProjectId, projectKey);
+		if (candidates.isEmpty()) {
+			log.info(
+					"jira webhook ingress event={} issueKey={} projectKey={} result=SKIPPED reason=NO_ACTIVE_INTEGRATION_MATCHED routing=jiraProject+key",
+					webhookEvent,
+					issueKey,
+					projectKey);
+			receipts.markProcessed(receipt, LocalDateTime.now());
+			return null;
+		}
+		Set<String> clouds = new LinkedHashSet<>();
+		for (JiraIntegration row : candidates) {
+			if (row.getCloudId() != null && !row.getCloudId().isBlank()) {
+				clouds.add(row.getCloudId());
+			}
+		}
+		if (clouds.size() > 1 || candidates.size() > 1) {
+			log.warn(
+					"jira webhook ingress event={} issueKey={} result=FAILED reason=JIRA_WEBHOOK_SOURCE_AMBIGUOUS routing=jiraProject+key candidates={} clouds={}",
+					webhookEvent,
+					issueKey,
+					candidates.size(),
+					clouds.size());
+			receipts.markFailed(receipt, "JIRA_WEBHOOK_SOURCE_AMBIGUOUS");
+			return null;
+		}
+		return candidates.getFirst();
+	}
+
+	/**
+	 * Prefer {@code matchedWebhookIds} when present. Returns the unique integration, or {@code null}
+	 * when absent / empty (caller continues). Marks failed when ids map to &gt;1 integrations.
+	 */
+	private JiraIntegration resolveByMatchedWebhookIds(
+			WebhookReceipt receipt, JsonNode root, String webhookEvent, String issueKey) {
+		List<String> webhookIds = extractMatchedWebhookIds(root);
+		if (webhookIds.isEmpty()) {
+			return null;
+		}
+		Map<UUID, JiraIntegration> unique = new LinkedHashMap<>();
+		for (String webhookId : webhookIds) {
+			for (JiraIntegration row :
+					jiraIntegrations.findFetchedActiveByWebhookId(IntegrationStatus.ACTIVE, webhookId)) {
+				unique.putIfAbsent(row.getId(), row);
+			}
+		}
+		if (unique.isEmpty()) {
+			return null;
+		}
+		if (unique.size() > 1) {
+			log.warn(
+					"jira webhook ingress event={} issueKey={} result=FAILED reason=JIRA_WEBHOOK_SOURCE_AMBIGUOUS routing=matchedWebhookIds",
+					webhookEvent,
+					issueKey);
+			receipts.markFailed(receipt, "JIRA_WEBHOOK_SOURCE_AMBIGUOUS");
+			return null;
+		}
+		return unique.values().iterator().next();
+	}
+
 	private void projectJiraSprint(WebhookReceipt receipt, JsonNode root, String webhookEvent) {
 		JsonNode sprint = root.path("sprint");
 		if (sprint.isMissingNode() || sprint.isNull()) {
 			receipts.markProcessed(receipt, LocalDateTime.now());
 			return;
 		}
-		String sprintId = text(sprint, "id");
-		if (sprintId == null) {
+		String resolvedSprintId = text(sprint, "id");
+		if (resolvedSprintId == null && sprint.has("id") && sprint.get("id").canConvertToLong()) {
+			resolvedSprintId = String.valueOf(sprint.get("id").asLong());
+		}
+		if (resolvedSprintId == null) {
 			receipts.markFailed(receipt, "JIRA_SPRINT_INCOMPLETE");
 			return;
 		}
+		final String sprintId = resolvedSprintId;
 		String boardId = text(sprint, "originBoardId");
 		if (boardId == null && sprint.has("originBoardId") && sprint.get("originBoardId").canConvertToLong()) {
 			boardId = String.valueOf(sprint.get("originBoardId").asLong());
@@ -315,10 +403,46 @@ public class ProviderWebhookProjectionService {
 			receipts.markProcessed(receipt, LocalDateTime.now());
 			return;
 		}
-		String cloudId = text(root, "cloudId");
-		if (cloudId == null) {
-			cloudId = text(root.path("matchedWebhookIds"), "cloudId");
+		JiraIntegration match = resolveSprintSource(receipt, root, boardId, webhookEvent, sprintId);
+		if (match == null) {
+			return;
 		}
+		boolean deleted = webhookEvent.toLowerCase(Locale.ROOT).contains("deleted");
+		LocalDateTime now = LocalDateTime.now();
+		writes.executeWithoutResult(status -> {
+			if (deleted) {
+				tasks.softDeleteSprint(match, sprintId, now);
+				realtime.publish(
+						ProjectRealtimeEventType.SPRINTS_CHANGED,
+						match.getProject().getId(),
+						sprintId);
+				realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, match.getProject().getId());
+			} else {
+				tasks.upsertSprint(
+						match,
+						sprintId,
+						text(sprint, "name"),
+						text(sprint, "state"),
+						ProjectionMappings.parseInstant(text(sprint, "startDate")),
+						ProjectionMappings.parseInstant(text(sprint, "endDate")),
+						text(sprint, "goal"),
+						ProjectionMappings.parseInstant(text(sprint, "completeDate")));
+				realtime.publish(
+						ProjectRealtimeEventType.SPRINTS_CHANGED,
+						match.getProject().getId(),
+						sprintId);
+			}
+			receipts.markProcessed(receipt, LocalDateTime.now());
+		});
+	}
+
+	private JiraIntegration resolveSprintSource(
+			WebhookReceipt receipt, JsonNode root, String boardId, String webhookEvent, String sprintId) {
+		JiraIntegration byWebhook = resolveByMatchedWebhookIds(receipt, root, webhookEvent, sprintId);
+		if (byWebhook != null || receipt.getReceiptStatus() != com.saga.be.entity.enums.WebhookReceiptStatus.RECEIVED) {
+			return byWebhook;
+		}
+		String cloudId = extractCloudId(root);
 		List<JiraIntegration> matches;
 		if (cloudId != null && !cloudId.isBlank()) {
 			matches = jiraIntegrations.findFetchedActiveByCloudAndBoard(IntegrationStatus.ACTIVE, cloudId, boardId);
@@ -327,37 +451,64 @@ public class ProviderWebhookProjectionService {
 		}
 		if (matches.isEmpty()) {
 			receipts.markProcessed(receipt, LocalDateTime.now());
-			return;
+			return null;
 		}
-		boolean deleted = webhookEvent.toLowerCase(Locale.ROOT).contains("deleted");
-		LocalDateTime now = LocalDateTime.now();
-		writes.executeWithoutResult(status -> {
-			for (JiraIntegration integration : matches) {
-				if (deleted) {
-					tasks.softDeleteSprint(integration, sprintId, now);
-					realtime.publish(
-							ProjectRealtimeEventType.SPRINTS_CHANGED,
-							integration.getProject().getId(),
-							sprintId);
-					realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, integration.getProject().getId());
-				} else {
-					tasks.upsertSprint(
-							integration,
-							sprintId,
-							text(sprint, "name"),
-							text(sprint, "state"),
-							ProjectionMappings.parseInstant(text(sprint, "startDate")),
-							ProjectionMappings.parseInstant(text(sprint, "endDate")),
-							text(sprint, "goal"),
-							ProjectionMappings.parseInstant(text(sprint, "completeDate")));
-					realtime.publish(
-							ProjectRealtimeEventType.SPRINTS_CHANGED,
-							integration.getProject().getId(),
-							sprintId);
+		if (matches.size() != 1) {
+			log.warn(
+					"jira webhook ingress event={} sprintId={} result=FAILED reason=JIRA_WEBHOOK_SOURCE_AMBIGUOUS routing=board",
+					webhookEvent,
+					sprintId);
+			receipts.markFailed(receipt, "JIRA_WEBHOOK_SOURCE_AMBIGUOUS");
+			return null;
+		}
+		return matches.getFirst();
+	}
+
+	static List<String> extractMatchedWebhookIds(JsonNode root) {
+		List<String> out = new ArrayList<>();
+		if (root == null) {
+			return out;
+		}
+		JsonNode node = root.path("matchedWebhookIds");
+		if (node == null || !node.isArray()) {
+			return out;
+		}
+		for (JsonNode item : node) {
+			if (item == null || item.isNull() || item.isMissingNode()) {
+				continue;
+			}
+			if (item.isNumber()) {
+				out.add(String.valueOf(item.asLong()));
+			} else {
+				String text = item.asText(null);
+				if (text != null && !text.isBlank()) {
+					out.add(text.trim());
 				}
 			}
-			receipts.markProcessed(receipt, LocalDateTime.now());
-		});
+		}
+		return out;
+	}
+
+	static String extractCloudId(JsonNode root) {
+		if (root == null) {
+			return null;
+		}
+		String cloudId = text(root, "cloudId");
+		if (cloudId != null) {
+			return cloudId;
+		}
+		JsonNode nested = root.path("cloud");
+		if (!nested.isMissingNode() && !nested.isNull()) {
+			cloudId = text(nested, "id");
+			if (cloudId != null) {
+				return cloudId;
+			}
+			cloudId = text(nested, "cloudId");
+			if (cloudId != null) {
+				return cloudId;
+			}
+		}
+		return null;
 	}
 
 	private static String text(JsonNode node, String field) {

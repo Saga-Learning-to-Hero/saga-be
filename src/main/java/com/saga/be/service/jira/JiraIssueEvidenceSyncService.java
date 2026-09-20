@@ -37,6 +37,7 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -115,18 +116,128 @@ public class JiraIssueEvidenceSyncService {
 			if (ref == null || ref.projectId() == null) {
 				return;
 			}
-			List<JiraIntegration> matches =
-					integrations.findByJiraProjectIdAndConnectionStatus(ref.projectId(), com.saga.be.entity.enums.IntegrationStatus.ACTIVE);
-			if (matches.isEmpty()) {
-				matches = integrations.findByJiraProjectIdAndConnectionStatus(
-						ref.projectId(), com.saga.be.entity.enums.IntegrationStatus.CONNECTED);
+			JiraIntegration match = resolveWebhookSource(root, ref.projectId(), ref.projectKey());
+			if (match == null) {
+				return;
 			}
-			for (JiraIntegration integration : matches) {
-				syncIssue(integration, ref.issueId() != null ? ref.issueId() : ref.issueKey());
-			}
+			syncIssue(match, ref.issueId() != null ? ref.issueId() : ref.issueKey());
 		} catch (Exception ex) {
 			log.warn("jira evidence webhook skipped: {}", ex.getMessage());
 		}
+	}
+
+	/**
+	 * Fail-closed unique source for evidence webhooks. Same order as projection:
+	 * matchedWebhookIds → cloudId+jiraProjectId → jiraProjectId+projectKey. Never pick first.
+	 */
+	private JiraIntegration resolveWebhookSource(JsonNode root, String jiraProjectId, String projectKey) {
+		List<String> webhookIds = extractMatchedWebhookIds(root);
+		if (!webhookIds.isEmpty()) {
+			Map<UUID, JiraIntegration> unique = new java.util.LinkedHashMap<>();
+			for (String webhookId : webhookIds) {
+				for (JiraIntegration row :
+						integrations.findFetchedActiveByWebhookId(
+								com.saga.be.entity.enums.IntegrationStatus.ACTIVE, webhookId)) {
+					unique.putIfAbsent(row.getId(), row);
+				}
+			}
+			if (unique.size() > 1) {
+				log.warn("jira evidence webhook skipped: JIRA_WEBHOOK_SOURCE_AMBIGUOUS routing=matchedWebhookIds");
+				return null;
+			}
+			if (unique.size() == 1) {
+				return unique.values().iterator().next();
+			}
+		}
+		String cloudId = extractCloudId(root);
+		if (cloudId != null && !cloudId.isBlank()) {
+			List<JiraIntegration> byCloud = integrations.findFetchedActiveByCloudAndJiraProject(
+					com.saga.be.entity.enums.IntegrationStatus.ACTIVE, cloudId, jiraProjectId);
+			if (byCloud.isEmpty()) {
+				return null;
+			}
+			if (byCloud.size() > 1) {
+				log.warn("jira evidence webhook skipped: JIRA_WEBHOOK_SOURCE_AMBIGUOUS routing=cloud+jiraProject");
+				return null;
+			}
+			return byCloud.getFirst();
+		}
+		if (projectKey == null || projectKey.isBlank()) {
+			log.warn("jira evidence webhook skipped: JIRA_WEBHOOK_SOURCE_AMBIGUOUS reason=no_cloud_or_key");
+			return null;
+		}
+		List<JiraIntegration> candidates = integrations.findFetchedActiveByJiraProject(
+				com.saga.be.entity.enums.IntegrationStatus.ACTIVE, jiraProjectId, projectKey);
+		if (candidates.isEmpty()) {
+			return null;
+		}
+		java.util.Set<String> clouds = new java.util.LinkedHashSet<>();
+		for (JiraIntegration row : candidates) {
+			if (row.getCloudId() != null && !row.getCloudId().isBlank()) {
+				clouds.add(row.getCloudId());
+			}
+		}
+		if (clouds.size() > 1 || candidates.size() > 1) {
+			log.warn("jira evidence webhook skipped: JIRA_WEBHOOK_SOURCE_AMBIGUOUS routing=jiraProject+key");
+			return null;
+		}
+		return candidates.getFirst();
+	}
+
+	private static List<String> extractMatchedWebhookIds(JsonNode root) {
+		List<String> out = new ArrayList<>();
+		if (root == null) {
+			return out;
+		}
+		JsonNode node = root.path("matchedWebhookIds");
+		if (node == null || !node.isArray()) {
+			return out;
+		}
+		for (JsonNode item : node) {
+			if (item == null || item.isNull() || item.isMissingNode()) {
+				continue;
+			}
+			if (item.isNumber()) {
+				out.add(String.valueOf(item.asLong()));
+			} else {
+				String text = item.asText(null);
+				if (text != null && !text.isBlank()) {
+					out.add(text.trim());
+				}
+			}
+		}
+		return out;
+	}
+
+	private static String extractCloudId(JsonNode root) {
+		if (root == null) {
+			return null;
+		}
+		String cloudId = textField(root, "cloudId");
+		if (cloudId != null) {
+			return cloudId;
+		}
+		JsonNode nested = root.path("cloud");
+		if (!nested.isMissingNode() && !nested.isNull()) {
+			cloudId = textField(nested, "id");
+			if (cloudId != null) {
+				return cloudId;
+			}
+			return textField(nested, "cloudId");
+		}
+		return null;
+	}
+
+	private static String textField(JsonNode node, String field) {
+		if (node == null || node.isMissingNode() || node.isNull()) {
+			return null;
+		}
+		JsonNode value = node.path(field);
+		if (value.isMissingNode() || value.isNull()) {
+			return null;
+		}
+		String text = value.asText(null);
+		return text == null || text.isBlank() ? null : text;
 	}
 
 	public int syncIntegration(JiraIntegration integration) {

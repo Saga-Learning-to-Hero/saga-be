@@ -210,7 +210,7 @@ class StudentDashboardServiceTest {
 		assertTrue(response.weeklyCommits().isEmpty());
 		assertTrue(response.actionableAlerts().isEmpty());
 		verify(members, never()).countActiveByTeam_Id(any());
-		verify(jiraIntegrations, never()).findByProject_Id(any());
+		verify(jiraIntegrations, never()).findAllByProject_Id(any());
 		verify(repos, never()).countAndMaxLastSyncedAtGroupedByStatus(any());
 		verify(sprints, never()).findActiveByProject_Id(any());
 		verify(tasks, never()).countStatusAndStoryPointsForAssignee(any(), any());
@@ -241,7 +241,7 @@ class StudentDashboardServiceTest {
 		assertTrue(response.recentCommits().isEmpty());
 		assertTrue(response.weeklyCommits().isEmpty());
 		assertTrue(response.actionableAlerts().isEmpty());
-		verify(jiraIntegrations, never()).findByProject_Id(any());
+		verify(jiraIntegrations, never()).findAllByProject_Id(any());
 		verify(tasks, never()).countStatusAndStoryPointsForAssignee(any(), any());
 		verify(commits, never()).countAndMaxCommittedAtByProjectAndAuthor(any(), any());
 		verify(commits, never()).findWeeklyCommittedAtByProjectAndAuthor(any(), any(), any(), any());
@@ -262,7 +262,7 @@ class StudentDashboardServiceTest {
 		jira.setProjectKey("SAGA");
 		jira.setLastSuccessfulSyncAt(LocalDateTime.of(2026, 9, 1, 10, 0));
 		jira.setLastSyncedAt(LocalDateTime.of(2026, 9, 2, 10, 0));
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(jira));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(jira));
 		when(repos.countAndMaxLastSyncedAtGroupedByStatus(projectId)).thenReturn(List.of());
 		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of());
 
@@ -288,7 +288,7 @@ class StudentDashboardServiceTest {
 		JiraIntegration revoked = new JiraIntegration();
 		revoked.setConnectionStatus(IntegrationStatus.REVOKED);
 		revoked.setProjectKey("OLD");
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(revoked));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(revoked));
 		var revokedRow = service.get(account.getId(), course.getId()).integrations().jira();
 		assertFalse(revokedRow.connected());
 		assertEquals("REVOKED", revokedRow.status());
@@ -297,10 +297,39 @@ class StudentDashboardServiceTest {
 		JiraIntegration legacy = new JiraIntegration();
 		legacy.setConnectionStatus(IntegrationStatus.CONNECTED);
 		legacy.setProjectKey("LEG");
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.of(legacy));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(legacy));
 		var legacyRow = service.get(account.getId(), course.getId()).integrations().jira();
 		assertFalse(legacyRow.connected());
 		assertEquals("CONNECTED", legacyRow.status());
+	}
+
+	@Test
+	void jiraMultiSourceOmitsAmbiguousProjectKeyAndUsesMaxActiveSync() {
+		Team team = team(project());
+		UUID projectId = team.getProject().getId();
+		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
+				.thenReturn(Optional.of(enrollment));
+		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
+				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
+		when(members.countActiveByTeam_Id(team.getId())).thenReturn(1L);
+		when(repos.countAndMaxLastSyncedAtGroupedByStatus(projectId)).thenReturn(List.of());
+		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of());
+
+		JiraIntegration first = new JiraIntegration();
+		first.setConnectionStatus(IntegrationStatus.ACTIVE);
+		first.setProjectKey("ONE");
+		first.setLastSuccessfulSyncAt(LocalDateTime.of(2026, 9, 1, 10, 0));
+		JiraIntegration second = new JiraIntegration();
+		second.setConnectionStatus(IntegrationStatus.ACTIVE);
+		second.setProjectKey("TWO");
+		second.setLastSuccessfulSyncAt(LocalDateTime.of(2026, 9, 5, 10, 0));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(first, second));
+
+		var row = service.get(account.getId(), course.getId()).integrations().jira();
+		assertTrue(row.connected());
+		assertNull(row.projectKey());
+		assertEquals("ACTIVE", row.status());
+		assertEquals(LocalDateTime.of(2026, 9, 5, 10, 0), row.lastSyncedAt());
 	}
 
 	@Test
@@ -312,7 +341,7 @@ class StudentDashboardServiceTest {
 		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
 				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
 		when(members.countActiveByTeam_Id(team.getId())).thenReturn(1L);
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of());
 		when(repos.countAndMaxLastSyncedAtGroupedByStatus(projectId))
 				.thenReturn(List.of(
 						new Object[] {IntegrationStatus.ACTIVE, 2L, LocalDateTime.of(2026, 9, 3, 8, 0)},
@@ -335,7 +364,7 @@ class StudentDashboardServiceTest {
 		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
 				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
 		when(members.countActiveByTeam_Id(team.getId())).thenReturn(1L);
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of());
 		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of());
 
 		when(repos.countAndMaxLastSyncedAtGroupedByStatus(projectId))
@@ -363,7 +392,7 @@ class StudentDashboardServiceTest {
 		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
 				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
 		when(members.countActiveByTeam_Id(team.getId())).thenReturn(1L);
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of());
 		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of());
 
 		when(repos.countAndMaxLastSyncedAtGroupedByStatus(projectId))
@@ -390,7 +419,7 @@ class StudentDashboardServiceTest {
 		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
 				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
 		when(members.countActiveByTeam_Id(team.getId())).thenReturn(1L);
-		when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of());
 		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of());
 		when(repos.countAndMaxLastSyncedAtGroupedByStatus(projectId))
 				.thenReturn(List.of(
@@ -980,7 +1009,7 @@ class StudentDashboardServiceTest {
 	}
 
 	private void stubEmptyIntegrations(UUID projectId) {
-		lenient().when(jiraIntegrations.findByProject_Id(projectId)).thenReturn(Optional.empty());
+		lenient().when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of());
 		lenient().when(repos.countAndMaxLastSyncedAtGroupedByStatus(projectId)).thenReturn(List.of());
 		lenient().when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of());
 		lenient().when(tasks.countStatusAndStoryPointsForAssignee(projectId, profile.getId())).thenReturn(List.of());

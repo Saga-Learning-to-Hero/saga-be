@@ -62,11 +62,15 @@ public class JiraDynamicWebhookService {
 	}
 
 	/**
-	 * Ensures exactly one dynamic webhook for the project's selected Jira source.
-	 * On failure keeps integration ACTIVE but records {@code JIRA_WEBHOOK_REGISTER_FAILED}.
+	 * Ensures exactly one dynamic webhook for the named Jira integration row.
+	 * Touches only that row — never project-scoped fan-out. On failure keeps integration ACTIVE but
+	 * records {@code JIRA_WEBHOOK_REGISTER_FAILED}.
 	 */
-	public void ensureRegistered(UUID projectId, String preferredAccessToken) {
-		JiraIntegration integration = integrations.findByProject_Id(projectId).orElse(null);
+	public void ensureRegistered(UUID jiraIntegrationId, String preferredAccessToken) {
+		if (jiraIntegrationId == null) {
+			return;
+		}
+		JiraIntegration integration = integrations.findFetchedById(jiraIntegrationId).orElse(null);
 		if (integration == null || integration.getConnectionStatus() != IntegrationStatus.ACTIVE) {
 			return;
 		}
@@ -102,8 +106,8 @@ public class JiraDynamicWebhookService {
 			persistSuccess(integration.getId(), String.valueOf(webhookId), expiration);
 		} catch (RuntimeException ex) {
 			log.warn(
-					"jira dynamic webhook register failed projectId={} type={}",
-					projectId,
+					"jira dynamic webhook register failed jiraIntegrationId={} type={}",
+					jiraIntegrationId,
 					ex.getClass().getSimpleName());
 			persistRegisterFailure(integration.getId());
 		}

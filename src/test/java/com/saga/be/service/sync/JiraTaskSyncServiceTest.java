@@ -67,6 +67,7 @@ class JiraTaskSyncServiceTest {
 	private IntegrationProperties properties;
 	private JiraTaskSyncService service;
 	private UUID projectId;
+	private UUID integrationId;
 	private Project project;
 	private JiraIntegration integration;
 	private final AtomicInteger openTx = new AtomicInteger();
@@ -99,15 +100,17 @@ class JiraTaskSyncServiceTest {
 				transactionManager,
 				new com.saga.be.realtime.ProjectRealtimePublisher(event -> {}));
 		projectId = UUID.randomUUID();
+		integrationId = UUID.randomUUID();
 		project = new Project();
 		project.setId(projectId);
 		integration = new JiraIntegration();
+		integration.setId(integrationId);
 		integration.setProject(project);
 		integration.setCloudId("cloud");
 		integration.setProjectKey("SAGA");
 		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
 		integration.setConsecutiveFailures(0);
-		when(claims.tryClaim("JIRA", projectId, SyncJobType.INITIAL))
+		when(claims.tryClaim("JIRA", integrationId, SyncJobType.INITIAL))
 				.thenAnswer(inv -> Optional.of(runningJob()));
 		org.mockito.Mockito.lenient()
 				.when(claims.markSucceeded(any(SyncJobLog.class), anyInt()))
@@ -131,9 +134,9 @@ class JiraTaskSyncServiceTest {
 		org.mockito.Mockito.lenient()
 				.when(syncJobs.save(any(SyncJobLog.class)))
 				.thenAnswer(inv -> inv.getArgument(0));
-		when(integrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(integration));
+		when(integrations.findFetchedById(integrationId)).thenReturn(Optional.of(integration));
 		org.mockito.Mockito.lenient()
-				.when(integrations.findByProject_Id(projectId))
+				.when(integrations.findById(integrationId))
 				.thenReturn(Optional.of(integration));
 		org.mockito.Mockito.lenient().when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
 		org.mockito.Mockito.lenient()
@@ -169,7 +172,7 @@ class JiraTaskSyncServiceTest {
 		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq("t10"), eq(50), isNull(), isNull(), isNull()))
 				.thenReturn(page(issues(20, 500), null, true));
 
-		SyncJobLog job = service.initialSync(projectId, "token");
+		SyncJobLog job = service.initialSync(integrationId, "token");
 
 		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
 		assertThat(job.getItemsProcessed()).isEqualTo(520);
@@ -186,7 +189,7 @@ class JiraTaskSyncServiceTest {
 		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), eq("t2"), eq(50), isNull(), isNull(), isNull()))
 				.thenReturn(page(issues(20, 100), null, true));
 
-		SyncJobLog job = service.initialSync(projectId, "token");
+		SyncJobLog job = service.initialSync(integrationId, "token");
 
 		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
 		assertThat(job.getItemsProcessed()).isEqualTo(120);
@@ -198,8 +201,8 @@ class JiraTaskSyncServiceTest {
 		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), isNull(), eq(50), isNull(), isNull(), isNull()))
 				.thenReturn(page(issues(3, 0), null, true));
 
-		assertThat(service.initialSync(projectId, "token").getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
-		assertThat(service.initialSync(projectId, "token").getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		assertThat(service.initialSync(integrationId, "token").getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		assertThat(service.initialSync(integrationId, "token").getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
 		verify(projection, times(2)).upsertBatch(eq(integration), eq("SAGA"), any());
 	}
 
@@ -211,7 +214,7 @@ class JiraTaskSyncServiceTest {
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.BAD_GATEWAY, "down"));
 
-		SyncJobLog job = service.initialSync(projectId, "token");
+		SyncJobLog job = service.initialSync(integrationId, "token");
 
 		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.FAILED);
 		assertThat(job.getErrorCategory()).isEqualTo("JIRA_PROJECT_NOT_ACCESSIBLE");
@@ -223,7 +226,7 @@ class JiraTaskSyncServiceTest {
 		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), isNull(), eq(50), isNull(), isNull(), isNull()))
 				.thenReturn(page(issues(50, 0), null, true));
 
-		service.initialSync(projectId, "token");
+		service.initialSync(integrationId, "token");
 
 		verify(projection, times(1)).upsertBatch(eq(integration), eq("SAGA"), any());
 	}
@@ -235,7 +238,7 @@ class JiraTaskSyncServiceTest {
 			return page(issues(2, 0), null, true);
 		});
 
-		assertThat(service.initialSync(projectId, "token").getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		assertThat(service.initialSync(integrationId, "token").getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
 		verify(projection, atLeastOnce()).upsertBatch(eq(integration), eq("SAGA"), any());
 	}
 
@@ -244,7 +247,7 @@ class JiraTaskSyncServiceTest {
 		when(jira.searchIssues(eq("good"), eq("cloud"), eq("SAGA"), isNull(), eq(50), isNull(), isNull(), isNull()))
 				.thenReturn(page(issues(5, 0), null, true));
 
-		SyncJobLog job = service.initialSync(projectId, "good");
+		SyncJobLog job = service.initialSync(integrationId, "good");
 
 		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
 		verify(credentials, never()).forceRefresh(any(), any());
@@ -256,15 +259,15 @@ class JiraTaskSyncServiceTest {
 		when(jira.searchIssues(eq("stale"), eq("cloud"), eq("SAGA"), isNull(), eq(50), isNull(), isNull(), isNull()))
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.JIRA_UNAUTHORIZED, HttpStatus.UNAUTHORIZED, "rejected"));
-		when(credentials.forceRefresh(projectId, "stale")).thenReturn("fresh");
+		when(credentials.forceRefresh(integrationId, "stale")).thenReturn("fresh");
 		when(jira.searchIssues(eq("fresh"), eq("cloud"), eq("SAGA"), isNull(), eq(50), isNull(), isNull(), isNull()))
 				.thenReturn(page(issues(5, 0), null, true));
 
-		SyncJobLog job = service.initialSync(projectId, "stale");
+		SyncJobLog job = service.initialSync(integrationId, "stale");
 
 		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
 		assertThat(job.getItemsProcessed()).isEqualTo(5);
-		verify(credentials, times(1)).forceRefresh(projectId, "stale");
+		verify(credentials, times(1)).forceRefresh(integrationId, "stale");
 	}
 
 	@Test
@@ -272,15 +275,15 @@ class JiraTaskSyncServiceTest {
 		when(jira.searchIssues(eq("stale"), eq("cloud"), eq("SAGA"), isNull(), eq(50), isNull(), isNull(), isNull()))
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.JIRA_UNAUTHORIZED, HttpStatus.UNAUTHORIZED, "rejected"));
-		when(credentials.forceRefresh(projectId, "stale"))
+		when(credentials.forceRefresh(integrationId, "stale"))
 				.thenThrow(new IntegrationException(
 						IntegrationErrorCode.JIRA_TOKEN_REFRESH_FAILED, HttpStatus.BAD_GATEWAY, "refresh denied"));
 
-		SyncJobLog job = service.initialSync(projectId, "stale");
+		SyncJobLog job = service.initialSync(integrationId, "stale");
 
 		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.FAILED);
 		assertThat(job.getErrorCategory()).isEqualTo("JIRA_TOKEN_REFRESH_FAILED");
-		verify(credentials, times(1)).forceRefresh(projectId, "stale");
+		verify(credentials, times(1)).forceRefresh(integrationId, "stale");
 		verify(jira, times(1)).searchIssues(anyString(), anyString(), anyString(), nullable(String.class), anyInt(), nullable(String.class), nullable(String.class), nullable(String.class));
 	}
 
@@ -302,7 +305,7 @@ class JiraTaskSyncServiceTest {
 						eq("customfield_10020"), isNull()))
 				.thenReturn(page(issues(20, 50), null, true));
 
-		SyncJobLog job = service.initialSync(projectId, "token");
+		SyncJobLog job = service.initialSync(integrationId, "token");
 
 		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
 		verify(jiraFields, times(1)).resolveStoryPointsFieldId("token", "cloud");
@@ -325,7 +328,7 @@ class JiraTaskSyncServiceTest {
 						return page(issues(50, n * 50), "t" + (n + 1), false);
 					});
 
-			SyncJobLog job = service.initialSync(projectId, "token");
+			SyncJobLog job = service.initialSync(integrationId, "token");
 
 			assertThat(job.getStatus()).isEqualTo(SyncJobStatus.FAILED);
 			assertThat(job.getErrorCategory()).isEqualTo("JIRA_SYNC_INCOMPLETE");
@@ -335,10 +338,74 @@ class JiraTaskSyncServiceTest {
 		}
 	}
 
+	@Test
+	void twoActiveSources_syncUpsertsOnlyOwnIntegration() {
+		UUID integrationBId = UUID.randomUUID();
+		JiraIntegration integrationB = new JiraIntegration();
+		integrationB.setId(integrationBId);
+		integrationB.setProject(project);
+		integrationB.setCloudId("cloud-b");
+		integrationB.setProjectKey("OTHER");
+		integrationB.setConnectionStatus(IntegrationStatus.ACTIVE);
+		integrationB.setConsecutiveFailures(0);
+		when(claims.tryClaim("JIRA", integrationBId, SyncJobType.INITIAL))
+				.thenAnswer(inv -> Optional.of(runningJobFor(integrationBId)));
+		when(integrations.findFetchedById(integrationBId)).thenReturn(Optional.of(integrationB));
+		org.mockito.Mockito.lenient().when(integrations.findById(integrationBId)).thenReturn(Optional.of(integrationB));
+		org.mockito.Mockito.lenient()
+				.when(projection.upsertBatch(eq(integrationB), eq("OTHER"), any()))
+				.thenAnswer(inv -> ((List<?>) inv.getArgument(2)).size());
+		when(jira.searchIssues(eq("token-a"), eq("cloud"), eq("SAGA"), isNull(), eq(50), isNull(), isNull(), isNull()))
+				.thenReturn(page(issues(2, 0), null, true));
+		when(jira.searchIssues(eq("token-b"), eq("cloud-b"), eq("OTHER"), isNull(), eq(50), isNull(), isNull(), isNull()))
+				.thenReturn(page(issues(2, 0), null, true));
+
+		assertThat(service.initialSync(integrationId, "token-a").getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		assertThat(service.initialSync(integrationBId, "token-b").getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+
+		verify(projection, times(1)).upsertBatch(eq(integration), eq("SAGA"), any());
+		verify(projection, times(1)).upsertBatch(eq(integrationB), eq("OTHER"), any());
+		verify(projection, never()).upsertBatch(eq(integration), eq("OTHER"), any());
+		verify(projection, never()).upsertBatch(eq(integrationB), eq("SAGA"), any());
+	}
+
+	@Test
+	void syncFailure_updatesOnlyFailedSourceHealth() {
+		UUID integrationBId = UUID.randomUUID();
+		JiraIntegration integrationB = new JiraIntegration();
+		integrationB.setId(integrationBId);
+		integrationB.setProject(project);
+		integrationB.setCloudId("cloud-b");
+		integrationB.setProjectKey("OTHER");
+		integrationB.setConnectionStatus(IntegrationStatus.ACTIVE);
+		integrationB.setConsecutiveFailures(0);
+		integrationB.setLastErrorCode(null);
+		integration.setConsecutiveFailures(0);
+		integration.setLastErrorCode(null);
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), isNull(), eq(50), isNull(), isNull(), isNull()))
+				.thenThrow(new IntegrationException(
+						IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.BAD_GATEWAY, "down"));
+
+		SyncJobLog job = service.initialSync(integrationId, "token");
+
+		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.FAILED);
+		assertThat(integration.getConsecutiveFailures()).isEqualTo(1);
+		assertThat(integration.getLastErrorCode()).isEqualTo("JIRA_PROJECT_NOT_ACCESSIBLE");
+		assertThat(integrationB.getConsecutiveFailures()).isEqualTo(0);
+		assertThat(integrationB.getLastErrorCode()).isNull();
+		verify(integrations).save(integration);
+		verify(integrations, never()).save(integrationB);
+		verify(integrations, never()).findById(integrationBId);
+	}
+
 	private SyncJobLog runningJob() {
+		return runningJobFor(integrationId);
+	}
+
+	private static SyncJobLog runningJobFor(UUID targetId) {
 		SyncJobLog job = new SyncJobLog();
 		job.setTargetSystem("JIRA");
-		job.setTargetId(projectId);
+		job.setTargetId(targetId);
 		job.setJobType(SyncJobType.INITIAL);
 		job.setStatus(SyncJobStatus.RUNNING);
 		job.setItemsProcessed(0);

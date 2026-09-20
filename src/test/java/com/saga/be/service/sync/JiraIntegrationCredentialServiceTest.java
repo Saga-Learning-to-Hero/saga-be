@@ -75,12 +75,12 @@ class JiraIntegrationCredentialServiceTest {
 		row.setEncryptedAccessToken(encryptor.encrypt("access-live", aad));
 		row.setEncryptedRefreshToken(encryptor.encrypt("refresh-live", aad));
 		row.setTokenExpiresAt(LocalDateTime.now().plusMinutes(30));
-		when(integrations.findFetchedByProject_Id(projectId)).thenReturn(Optional.of(row));
+		when(integrations.findFetchedById(integrationId)).thenReturn(Optional.of(row));
 	}
 
 	@Test
 	void validAccess_doesNotRefresh() {
-		String access = service.resolveAccessToken(projectId);
+		String access = service.resolveAccessToken(integrationId);
 		assertThat(access).isEqualTo("access-live");
 		verify(jira, never()).refresh(any());
 	}
@@ -109,7 +109,7 @@ class JiraIntegrationCredentialServiceTest {
 		});
 		when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-		String access = service.resolveAccessToken(projectId);
+		String access = service.resolveAccessToken(integrationId);
 
 		assertThat(access).isEqualTo("access-new");
 		assertThat(row.getEncryptedAccessToken()).doesNotContain("access-new");
@@ -124,7 +124,7 @@ class JiraIntegrationCredentialServiceTest {
 		when(integrations.lockById(integrationId)).thenReturn(Optional.of(row));
 		when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-		String access = service.forceRefresh(projectId, "access-live");
+		String access = service.forceRefresh(integrationId, "access-live");
 
 		assertThat(access).isEqualTo("access-rotated");
 		verify(jira, times(1)).refresh("refresh-live");
@@ -139,7 +139,7 @@ class JiraIntegrationCredentialServiceTest {
 						org.springframework.http.HttpStatus.BAD_GATEWAY,
 						"denied"));
 
-		assertThatThrownBy(() -> service.resolveAccessToken(projectId))
+		assertThatThrownBy(() -> service.resolveAccessToken(integrationId))
 				.isInstanceOf(IntegrationException.class)
 				.extracting(ex -> ((IntegrationException) ex).getCode())
 				.isEqualTo(IntegrationErrorCode.JIRA_TOKEN_REFRESH_FAILED);
@@ -149,6 +149,43 @@ class JiraIntegrationCredentialServiceTest {
 	@Test
 	void hasCredential_whenRefreshOnly() {
 		row.setEncryptedAccessToken(null);
-		assertThat(service.hasRefreshOrAccessCredential(projectId)).isTrue();
+		assertThat(service.hasRefreshOrAccessCredential(integrationId)).isTrue();
+	}
+
+	@Test
+	void forceRefresh_updatesOnlyRequestedSourceTokens() {
+		UUID integrationBId = UUID.randomUUID();
+		UUID userBId = UUID.randomUUID();
+		String aadB = TokenEncryptor.aad(integrationBId.toString(), "JIRA", userBId.toString());
+		UserAccount connectedB = new UserAccount();
+		connectedB.setId(userBId);
+		JiraIntegration rowB = new JiraIntegration();
+		rowB.setId(integrationBId);
+		rowB.setProject(row.getProject());
+		rowB.setConnectedBy(connectedB);
+		rowB.setConnectionStatus(IntegrationStatus.ACTIVE);
+		rowB.setEncryptedAccessToken(encryptor.encrypt("access-b", aadB));
+		rowB.setEncryptedRefreshToken(encryptor.encrypt("refresh-b", aadB));
+		rowB.setTokenExpiresAt(LocalDateTime.now().plusMinutes(30));
+		String accessBeforeB = rowB.getEncryptedAccessToken();
+		String refreshBeforeB = rowB.getEncryptedRefreshToken();
+		LocalDateTime expiresBeforeB = rowB.getTokenExpiresAt();
+
+		when(jira.refresh("refresh-live")).thenReturn(new TokenResponse("access-rotated-a", "refresh-rotated-a", 3600, ""));
+		when(integrations.lockById(integrationId)).thenReturn(Optional.of(row));
+		when(integrations.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		String access = service.forceRefresh(integrationId, "access-live");
+
+		assertThat(access).isEqualTo("access-rotated-a");
+		assertThat(encryptor.decrypt(row.getEncryptedAccessToken(), aad)).isEqualTo("access-rotated-a");
+		assertThat(encryptor.decrypt(row.getEncryptedRefreshToken(), aad)).isEqualTo("refresh-rotated-a");
+		assertThat(rowB.getEncryptedAccessToken()).isEqualTo(accessBeforeB);
+		assertThat(rowB.getEncryptedRefreshToken()).isEqualTo(refreshBeforeB);
+		assertThat(rowB.getTokenExpiresAt()).isEqualTo(expiresBeforeB);
+		verify(integrations).lockById(integrationId);
+		verify(integrations, never()).lockById(integrationBId);
+		verify(integrations, never()).findFetchedById(integrationBId);
+		verify(jira, never()).refresh("refresh-b");
 	}
 }

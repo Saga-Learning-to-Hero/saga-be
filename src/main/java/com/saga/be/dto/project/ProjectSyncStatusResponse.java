@@ -10,4 +10,18 @@ public record ProjectSyncStatusResponse(
 		LocalDateTime startedAt,
 		LocalDateTime completedAt,
 		Integer itemsProcessed,
-		Integer itemsFailed) {}
+		Integer itemsFailed,
+		UUID jiraIntegrationId) {
+
+	/** GitHub / legacy constructors without per-source id. */
+	public ProjectSyncStatusResponse(
+			UUID projectId,
+			String provider,
+			String status,
+			LocalDateTime startedAt,
+			LocalDateTime completedAt,
+			Integer itemsProcessed,
+			Integer itemsFailed) {
+		this(projectId, provider, status, startedAt, completedAt, itemsProcessed, itemsFailed, null);
+	}
+}

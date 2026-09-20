@@ -387,6 +387,23 @@ class ProjectJiraSprintCommandServiceTest {
 	}
 
 	@Test
+	void syncAndList_namedSource_syncsThatBoardThenReturnsAllLocal() {
+		stubReader();
+		JiraIntegration first = activeJira();
+		first.setJiraBoardId("10");
+		JiraIntegration second = activeJira();
+		second.setJiraBoardId("20");
+		when(jiraIntegrations.findByIdAndProject_Id(second.getId(), projectId)).thenReturn(Optional.of(second));
+		when(tokens.accessToken(second)).thenReturn("token");
+		when(jiraWrite.listBoardSprints("token", second.getCloudId(), "20")).thenReturn(List.of());
+		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of());
+
+		assertThat(service.syncAndList(userId, projectId, second.getId())).isEmpty();
+		verify(jiraWrite).listBoardSprints("token", second.getCloudId(), "20");
+		verify(jiraWrite, never()).listBoardSprints(any(), any(), eq("10"));
+	}
+
+	@Test
 	void syncAndList_zeroActive_returnsLocalOnly() {
 		stubReader();
 		JiraIntegration revoked = activeJira();

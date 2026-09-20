@@ -77,7 +77,7 @@ public class JiraWebhookRefreshScheduler {
 					// own failures internally (persists lastErrorCode, never rethrows: see its
 					// javadoc/contract), so success here must be verified from persisted state
 					// afterward rather than assumed from "no exception was thrown".
-					webhooks.ensureRegistered(integration.getProject().getId(), null);
+					webhooks.ensureRegistered(integration.getId(), null);
 					JiraIntegration after = integrations.findById(integration.getId()).orElse(integration);
 					if (after.getWebhookId() == null || after.getWebhookId().isBlank()) {
 						throw new IntegrationException(

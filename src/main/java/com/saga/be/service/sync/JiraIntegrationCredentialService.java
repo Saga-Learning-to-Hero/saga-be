@@ -21,7 +21,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Resolves usable Jira access tokens for background sync. Refresh HTTP stays outside JDBC TX;
- * credential persistence uses a short TX.
+ * credential persistence uses a short TX. All lookups are keyed by {@code jiraIntegrationId}.
  */
 @Service
 @Profile("!test")
@@ -47,8 +47,8 @@ public class JiraIntegrationCredentialService {
 		this.writes = new TransactionTemplate(transactionManager);
 	}
 
-	public boolean hasRefreshOrAccessCredential(UUID projectId) {
-		JiraIntegration row = integrations.findFetchedByProject_Id(projectId).orElse(null);
+	public boolean hasRefreshOrAccessCredential(UUID jiraIntegrationId) {
+		JiraIntegration row = integrations.findFetchedById(jiraIntegrationId).orElse(null);
 		return row != null
 				&& row.getConnectionStatus() == IntegrationStatus.ACTIVE
 				&& (hasText(row.getEncryptedAccessToken()) || hasText(row.getEncryptedRefreshToken()));
@@ -57,8 +57,8 @@ public class JiraIntegrationCredentialService {
 	/**
 	 * Prefer non-expired access token; otherwise refresh once via offline_access refresh token.
 	 */
-	public String resolveAccessToken(UUID projectId) {
-		JiraIntegration integration = loadActive(projectId);
+	public String resolveAccessToken(UUID jiraIntegrationId) {
+		JiraIntegration integration = loadActive(jiraIntegrationId);
 		String access = decryptAccess(integration);
 		if (hasText(access) && !isExpired(integration.getTokenExpiresAt())) {
 			return access;
@@ -72,28 +72,28 @@ public class JiraIntegrationCredentialService {
 					HttpStatus.BAD_GATEWAY,
 					"Jira credentials are unavailable.");
 		}
-		return refreshUnderLock(projectId, true, null);
+		return refreshUnderLock(jiraIntegrationId, true, null);
 	}
 
 	/** Always refresh using persisted refresh token. Provider HTTP outside JDBC TX. */
-	public String forceRefresh(UUID projectId) {
-		return refreshUnderLock(projectId, false, null);
+	public String forceRefresh(UUID jiraIntegrationId) {
+		return refreshUnderLock(jiraIntegrationId, false, null);
 	}
 
 	/**
 	 * Refresh after a rejected access token. Skips HTTP only when another thread already rotated
 	 * away from {@code rejectedAccess}.
 	 */
-	public String forceRefresh(UUID projectId, String rejectedAccess) {
-		return refreshUnderLock(projectId, false, rejectedAccess);
+	public String forceRefresh(UUID jiraIntegrationId, String rejectedAccess) {
+		return refreshUnderLock(jiraIntegrationId, false, rejectedAccess);
 	}
 
-	private String refreshUnderLock(UUID projectId, boolean skipIfFreshAccess, String rejectedAccess) {
-		JiraIntegration snapshot = loadActive(projectId);
+	private String refreshUnderLock(UUID jiraIntegrationId, boolean skipIfFreshAccess, String rejectedAccess) {
+		JiraIntegration snapshot = loadActive(jiraIntegrationId);
 		UUID integrationId = snapshot.getId();
 		Object lock = locks.computeIfAbsent(integrationId, id -> new Object());
 		synchronized (lock) {
-			JiraIntegration current = loadActive(projectId);
+			JiraIntegration current = loadActive(jiraIntegrationId);
 			String stillValid = decryptAccess(current);
 			if (skipIfFreshAccess) {
 				if (hasText(stillValid) && !isExpired(current.getTokenExpiresAt())) {
@@ -151,13 +151,13 @@ public class JiraIntegrationCredentialService {
 						HttpStatus.BAD_GATEWAY,
 						"Jira access token could not be refreshed.");
 			}
-			log.info("jira credential refreshed projectId={} integrationIdPresent=true", projectId);
+			log.info("jira credential refreshed integrationId={}", jiraIntegrationId);
 			return persisted;
 		}
 	}
 
-	private JiraIntegration loadActive(UUID projectId) {
-		JiraIntegration integration = integrations.findFetchedByProject_Id(projectId).orElse(null);
+	private JiraIntegration loadActive(UUID jiraIntegrationId) {
+		JiraIntegration integration = integrations.findFetchedById(jiraIntegrationId).orElse(null);
 		if (integration == null || integration.getConnectionStatus() != IntegrationStatus.ACTIVE) {
 			throw new IntegrationException(
 					IntegrationErrorCode.INTEGRATION_REVOKED, HttpStatus.CONFLICT, "Jira is not active.");
@@ -179,8 +179,8 @@ public class JiraIntegrationCredentialService {
 					TokenEncryptor.aad(integration.getId().toString(), "JIRA", connectedById.toString()));
 		} catch (RuntimeException ex) {
 			log.warn(
-					"jira access decrypt failed projectId={} type={}",
-					projectIdOf(integration),
+					"jira access decrypt failed integrationId={} type={}",
+					integration.getId(),
 					ex.getClass().getSimpleName());
 			return null;
 		}
@@ -192,9 +192,5 @@ public class JiraIntegrationCredentialService {
 
 	private static boolean hasText(String value) {
 		return value != null && !value.isBlank();
-	}
-
-	private static UUID projectIdOf(JiraIntegration integration) {
-		return integration.getProject() == null ? null : integration.getProject().getId();
 	}
 }

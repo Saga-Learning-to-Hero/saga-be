@@ -122,14 +122,14 @@ class JiraWebhookRefreshSchedulerTest {
 					return null;
 				})
 				.when(webhooks)
-				.ensureRegistered(projectId, null);
+				.ensureRegistered(integration.getId(), null);
 		when(integrations.findById(integration.getId())).thenReturn(Optional.of(integration));
 
 		JiraWebhookRefreshScheduler scheduler =
 				new JiraWebhookRefreshScheduler(integrations, jobs, properties, warnings, webhooks, tx);
 		scheduler.refreshExpiringWebhooks();
 
-		verify(webhooks).ensureRegistered(projectId, null);
+		verify(webhooks).ensureRegistered(integration.getId(), null);
 		verify(webhooks, never()).refreshDue(any());
 		assertThat(integration.getWebhookId()).isEqualTo("42");
 	}
