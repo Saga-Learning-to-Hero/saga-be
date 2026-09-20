@@ -50,6 +50,26 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			""")
 	List<Task> findActiveFetchedByProject_Id(@Param("projectId") UUID projectId);
 
+	/**
+	 * Current operational Task candidates. Historical project lists deliberately use
+	 * {@link #findActiveFetchedByProject_Id}; a source is excluded here only after its outbound
+	 * failover has actually succeeded and bound a target Task.
+	 */
+	@Query(
+			"""
+			select t from Task t
+			join fetch t.jiraIntegration
+			left join fetch t.sprint
+			left join fetch t.assigneeStudent ass
+			left join fetch ass.userAccount
+			left join fetch t.parentTask
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
+			order by coalesce(t.externalUpdatedAt, t.updatedAt) desc
+			""")
+	List<Task> findCurrentFetchedByProject_Id(@Param("projectId") UUID projectId);
+
 	@Query(
 			"""
 			select t from Task t
@@ -112,6 +132,7 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			where t.project.id = :projectId
 			  and t.assigneeStudent.id = :studentId
 			  and t.deletedAt is null
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
 			order by coalesce(t.externalUpdatedAt, t.updatedAt) desc
 			""")
 	List<Task> findActiveFetchedByProject_IdAndAssigneeStudent_Id(
@@ -124,6 +145,7 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			from Task t
 			where t.project.id = :projectId
 			  and t.deletedAt is null
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
 			group by t.assigneeStudent.id, t.status
 			""")
 	List<Object[]> countGroupedByAssigneeAndStatus(@Param("projectId") UUID projectId);
@@ -135,13 +157,25 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			from Task t
 			where t.project.id in :projectIds
 			  and t.deletedAt is null
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
 			group by t.project.id, t.status
 			""")
 	List<Object[]> countGroupedByStatusForProjects(@Param("projectIds") Collection<UUID> projectIds);
 
-	long countByProject_IdAndSprint_IdAndDeletedAtIsNull(UUID projectId, UUID sprintId);
+	@Query("""
+			select count(t) from Task t
+			where t.project.id = :projectId and t.sprint.id = :sprintId and t.deletedAt is null
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
+			""")
+	long countCurrentByProjectAndSprint(@Param("projectId") UUID projectId, @Param("sprintId") UUID sprintId);
 
-	long countByProject_IdAndSprint_IdAndStatusAndDeletedAtIsNull(UUID projectId, UUID sprintId, TaskStatus status);
+	@Query("""
+			select count(t) from Task t
+			where t.project.id = :projectId and t.sprint.id = :sprintId and t.status = :status and t.deletedAt is null
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
+			""")
+	long countCurrentByProjectAndSprintAndStatus(
+			@Param("projectId") UUID projectId, @Param("sprintId") UUID sprintId, @Param("status") TaskStatus status);
 
 	/**
 	 * Student dashboard sprint progress: one row per status for non-deleted tasks in one sprint —
@@ -154,6 +188,7 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			where t.project.id = :projectId
 			  and t.sprint.id = :sprintId
 			  and t.deletedAt is null
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
 			group by t.status
 			""")
 	List<Object[]> countGroupedByStatusForProjectAndSprint(
@@ -171,6 +206,7 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			where t.project.id = :projectId
 			  and t.deletedAt is null
 			  and t.sprint is not null
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
 			group by t.sprint.id, t.status
 			""")
 	List<Object[]> countGroupedBySprintAndStatus(@Param("projectId") UUID projectId);
@@ -187,6 +223,7 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			  and t.deletedAt is null
 			  and t.sprint is not null
 			  and t.assigneeStudent.id = :studentId
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
 			group by t.sprint.id, t.status
 			""")
 	List<Object[]> countGroupedBySprintAndStatusForAssignee(
@@ -339,6 +376,7 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			where t.project.id = :projectId
 			  and t.assigneeStudent.id = :studentId
 			  and t.deletedAt is null
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
 			group by t.status
 			""")
 	List<Object[]> countStatusAndStoryPointsForAssignee(
@@ -356,6 +394,7 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			  and t.assigneeStudent.id = :studentId
 			  and t.deletedAt is null
 			  and t.status <> com.saga.be.entity.enums.TaskStatus.DONE
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
 			order by
 			  case when t.dueDate is null then 1 else 0 end,
 			  t.dueDate asc,
@@ -385,6 +424,7 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			  and t.assigneeStudent.id = :studentId
 			  and t.deletedAt is null
 			  and t.status = com.saga.be.entity.enums.TaskStatus.DONE
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
 			  and not exists (
 			    select 1
 			    from TaskGitCommitLink l

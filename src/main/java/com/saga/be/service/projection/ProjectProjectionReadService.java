@@ -16,6 +16,9 @@ import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.SprintRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
+import com.saga.be.repository.JiraTaskFailoverItemRepository;
+import com.saga.be.entity.jira.JiraTaskFailoverItem;
+import com.saga.be.dto.integration.failover.TaskMigrationSummary;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -42,6 +45,7 @@ public class ProjectProjectionReadService {
 	private final SprintRepository sprints;
 	private final ProjectDataAuthorization authorization;
 	private final TaskHierarchyService hierarchy;
+	private final JiraTaskFailoverItemRepository failoverItems;
 
 	public ProjectProjectionReadService(
 			TaskRepository tasks,
@@ -49,13 +53,14 @@ public class ProjectProjectionReadService {
 			TaskGitCommitLinkRepository links,
 			SprintRepository sprints,
 			ProjectDataAuthorization authorization,
-			TaskHierarchyService hierarchy) {
+			TaskHierarchyService hierarchy, JiraTaskFailoverItemRepository failoverItems) {
 		this.tasks = tasks;
 		this.commits = commits;
 		this.links = links;
 		this.sprints = sprints;
 		this.authorization = authorization;
 		this.hierarchy = hierarchy;
+		this.failoverItems = failoverItems;
 	}
 
 	@Transactional(readOnly = true)
@@ -63,7 +68,8 @@ public class ProjectProjectionReadService {
 		authorization.requireReader(userId, projectId);
 		List<Task> rows = tasks.findActiveFetchedByProject_Id(projectId);
 		Map<UUID, Long> counts = linkCounts(projectId);
-		return rows.stream().map(task -> toTask(task, counts.getOrDefault(task.getId(), 0L))).toList();
+		Map<UUID, TaskMigrationSummary> migrations = migrations(rows);
+		return rows.stream().map(task -> toTask(task, counts.getOrDefault(task.getId(), 0L), null, migrations.getOrDefault(task.getId(), TaskMigrationSummary.none()))).toList();
 	}
 
 	@Transactional(readOnly = true)
@@ -73,7 +79,7 @@ public class ProjectProjectionReadService {
 				.orElseThrow(() -> new AcademicException(
 						AcademicErrorCode.PROJECT_NOT_FOUND, HttpStatus.NOT_FOUND, "Task was not found for this project."));
 		Map<UUID, Long> counts = linkCounts(projectId);
-		return toTask(task, counts.getOrDefault(task.getId(), 0L), directSubtasks(task.getId()));
+		return toTask(task, counts.getOrDefault(task.getId(), 0L), directSubtasks(task.getId()), migrations(List.of(task)).getOrDefault(task.getId(), TaskMigrationSummary.none()));
 	}
 
 	@Transactional(readOnly = true)
@@ -173,11 +179,15 @@ public class ProjectProjectionReadService {
 	}
 
 	static ProjectTaskResponse toTask(Task task, long linkedCommitCount) {
-		return toTask(task, linkedCommitCount, null);
+		return toTask(task, linkedCommitCount, null, TaskMigrationSummary.none());
 	}
 
 	static ProjectTaskResponse toTask(
 			Task task, long linkedCommitCount, List<ProjectTaskResponse.Subtask> subtasks) {
+		return toTask(task, linkedCommitCount, subtasks, TaskMigrationSummary.none());
+	}
+
+	static ProjectTaskResponse toTask(Task task, long linkedCommitCount, List<ProjectTaskResponse.Subtask> subtasks, TaskMigrationSummary migration) {
 		String assigneeDisplay = null;
 		if (task.getAssigneeStudent() != null
 				&& task.getAssigneeStudent().getUserAccount() != null
@@ -258,9 +268,23 @@ public class ProjectProjectionReadService {
 				task.getExternalUpdatedAt(),
 				task.getCreatedAt(),
 				task.getUpdatedAt(),
-				parentTask,
-				source,
-				subtasks);
+			parentTask,
+			source,
+			migration,
+			subtasks);
+	}
+
+	private Map<UUID, TaskMigrationSummary> migrations(List<Task> rows) {
+		if (rows.isEmpty()) return Map.of();
+		Map<UUID, TaskMigrationSummary.MigrationLink> from = new HashMap<>(), to = new HashMap<>();
+		for (JiraTaskFailoverItem item : failoverItems.findSuccessfulLineageByTaskIds(rows.stream().map(Task::getId).toList())) {
+			Task source = item.getSourceTask(), target = item.getTargetTask();
+			to.put(source.getId(), new TaskMigrationSummary.MigrationLink(target.getId(), target.getExternalKey(), target.getJiraIntegration().getId(), item.getRun().getId()));
+			from.put(target.getId(), new TaskMigrationSummary.MigrationLink(source.getId(), source.getExternalKey(), source.getJiraIntegration().getId(), item.getRun().getId()));
+		}
+		Map<UUID, TaskMigrationSummary> result = new HashMap<>();
+		for (Task task : rows) result.put(task.getId(), new TaskMigrationSummary(from.get(task.getId()), to.get(task.getId()), to.containsKey(task.getId())));
+		return result;
 	}
 
 	private List<ProjectTaskResponse.Subtask> directSubtasks(UUID parentId) {

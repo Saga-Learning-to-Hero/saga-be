@@ -195,7 +195,7 @@ public class TeamContributionService {
 			mixerMembers.add(new SprintFirstContributionMixer.Member(studentId));
 			memberByStudent.put(studentId, member);
 		}
-		List<Task> projectTasks = tasks.findActiveFetchedByProject_Id(project.getId());
+		List<Task> projectTasks = tasks.findCurrentFetchedByProject_Id(project.getId());
 		Set<UUID> taskIds = projectTasks.stream().map(Task::getId).collect(Collectors.toSet());
 		Set<UUID> evidenced = new HashSet<>();
 		if (!taskIds.isEmpty()) {

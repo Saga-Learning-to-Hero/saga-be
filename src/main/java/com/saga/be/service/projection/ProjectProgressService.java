@@ -323,8 +323,8 @@ public class ProjectProgressService {
 		if (active == null) {
 			return null;
 		}
-		long totalTasks = tasks.countByProject_IdAndSprint_IdAndDeletedAtIsNull(projectId, active.getId());
-		long completedTasks = tasks.countByProject_IdAndSprint_IdAndStatusAndDeletedAtIsNull(
+		long totalTasks = tasks.countCurrentByProjectAndSprint(projectId, active.getId());
+		long completedTasks = tasks.countCurrentByProjectAndSprintAndStatus(
 				projectId, active.getId(), TaskStatus.DONE);
 		return new ProjectProgressResponse.SprintSummary(
 				active.getId(),

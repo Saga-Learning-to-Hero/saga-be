@@ -155,7 +155,8 @@ class ParentOptionsPagingQueryCountTest {
 				links,
 				org.mockito.Mockito.mock(com.saga.be.repository.SprintRepository.class),
 				authorization,
-				new TaskHierarchyService(projects, tasks, transactionManager));
+				new TaskHierarchyService(projects, tasks, transactionManager),
+				org.mockito.Mockito.mock(com.saga.be.repository.JiraTaskFailoverItemRepository.class));
 		tx.executeWithoutResult(status -> seedGraph());
 	}
 

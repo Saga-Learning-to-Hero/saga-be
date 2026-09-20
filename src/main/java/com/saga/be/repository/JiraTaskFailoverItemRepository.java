@@ -52,6 +52,16 @@ public interface JiraTaskFailoverItemRepository extends JpaRepository<JiraTaskFa
 	List<JiraTaskFailoverItem> findBySourceTask_IdInAndStatusIn(
 			Collection<UUID> sourceTaskIds, Collection<JiraFailoverItemStatus> statuses);
 
+	@Query("""
+			select i from JiraTaskFailoverItem i
+			join fetch i.sourceTask source join fetch source.jiraIntegration
+			join fetch i.targetTask target join fetch target.jiraIntegration
+			join fetch i.run
+			where i.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and i.targetTask is not null
+			and (i.sourceTask.id in :taskIds or i.targetTask.id in :taskIds)
+			""")
+	List<JiraTaskFailoverItem> findSuccessfulLineageByTaskIds(@Param("taskIds") Collection<UUID> taskIds);
+
 	@Query(
 			"""
 			select i from JiraTaskFailoverItem i

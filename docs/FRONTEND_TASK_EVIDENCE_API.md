@@ -49,6 +49,25 @@ Task sống trên SAGA dưới dạng **projection Jira**. Hai cách có `taskId
 
 Project phải đã connect Jira (`GET /api/projects/{projectId}/integrations` → `jira.status === "ACTIVE"`). Chưa có project / chưa connect → không tạo được task.
 
+### Failover migration metadata
+
+Task list and task detail retain both historical Jira source Tasks and their failover-created target
+Tasks. `ProjectTaskResponse.migration` is a one-hop, non-recursive summary:
+
+```json
+{
+  "migratedFrom": { "taskId": "...", "externalKey": "SAGA-3", "jiraIntegrationId": "...", "runId": "..." },
+  "migratedTo": null,
+  "superseded": false
+}
+```
+
+`migratedFrom` and `migratedTo` may both be present for a middle Task in a migration chain.
+When `superseded` is `true`, render the source Task as historical; it remains readable and its
+original evidence remains attached to it. It is excluded from current-work aggregates, while the
+target remains the canonical current work item. The API never redirects the source Task, transfers
+evidence, or recursively serializes the chain.
+
 CRUD đầy đủ (options, PATCH, transition, sprint, xóa): `docs/FE_API_INTEGRATION_GUIDE_VI.md` §19.
 
 ### Student — bootstrap `projectId`

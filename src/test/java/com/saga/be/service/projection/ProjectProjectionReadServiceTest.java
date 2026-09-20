@@ -20,6 +20,10 @@ import com.saga.be.entity.enums.TaskStatus;
 import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.jira.Task;
+import com.saga.be.entity.jira.JiraIntegration;
+import com.saga.be.entity.jira.JiraTaskFailoverItem;
+import com.saga.be.entity.jira.JiraTaskFailoverRun;
+import com.saga.be.entity.enums.JiraFailoverItemStatus;
 import com.saga.be.entity.project.Project;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
@@ -62,6 +66,8 @@ class ProjectProjectionReadServiceTest {
 	private TeamMemberRepository members;
 	@Mock
 	private ProjectRepository projects;
+	@Mock
+	private com.saga.be.repository.JiraTaskFailoverItemRepository failoverItems;
 
 	private ProjectDataAuthorization authorization;
 	private ProjectProjectionReadService service;
@@ -72,7 +78,7 @@ class ProjectProjectionReadServiceTest {
 	void setUp() {
 		authorization = new ProjectDataAuthorization(users, members, projects);
 		service = new ProjectProjectionReadService(
-				tasks, commits, links, sprints, authorization, new TaskHierarchyService(projects, tasks, org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class)));
+				tasks, commits, links, sprints, authorization, new TaskHierarchyService(projects, tasks, org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class)), failoverItems);
 		projectId = UUID.randomUUID();
 		userId = UUID.randomUUID();
 	}
@@ -115,6 +121,52 @@ class ProjectProjectionReadServiceTest {
 		int after100 = countQueries.get();
 		assertThat(after10).isEqualTo(1);
 		assertThat(after100 - after10).isEqualTo(1);
+	}
+
+	@Test
+	void listTasks_keepsHistoricalNodesAndReturnsOneHopMigrationMetadataForChain() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task a = migrationTask("SAGA-3");
+		Task b = migrationTask("NEW-7");
+		Task c = migrationTask("NEW-9");
+		JiraTaskFailoverItem aToB = successfulMigration(a, b);
+		JiraTaskFailoverItem bToC = successfulMigration(b, c);
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(a, b, c));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+		when(failoverItems.findSuccessfulLineageByTaskIds(List.of(a.getId(), b.getId(), c.getId())))
+				.thenReturn(List.of(aToB, bToC));
+
+		List<ProjectTaskResponse> response = service.listTasks(userId, projectId);
+
+		assertThat(response).extracting(ProjectTaskResponse::externalKey).containsExactly("SAGA-3", "NEW-7", "NEW-9");
+		assertThat(response.get(0).migration().migratedFrom()).isNull();
+		assertThat(response.get(0).migration().migratedTo().taskId()).isEqualTo(b.getId());
+		assertThat(response.get(0).migration().superseded()).isTrue();
+		assertThat(response.get(1).migration().migratedFrom().taskId()).isEqualTo(a.getId());
+		assertThat(response.get(1).migration().migratedTo().taskId()).isEqualTo(c.getId());
+		assertThat(response.get(1).migration().superseded()).isTrue();
+		assertThat(response.get(2).migration().migratedFrom().taskId()).isEqualTo(b.getId());
+		assertThat(response.get(2).migration().migratedTo()).isNull();
+		assertThat(response.get(2).migration().superseded()).isFalse();
+		verify(failoverItems).findSuccessfulLineageByTaskIds(List.of(a.getId(), b.getId(), c.getId()));
+	}
+
+	@Test
+	void listTasks_usesNoMigrationMetadataForUnknownOrUnboundAttempts() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task source = migrationTask("SAGA-3");
+		Task target = migrationTask("NEW-7");
+		JiraTaskFailoverItem unknown = successfulMigration(source, target);
+		unknown.setStatus(JiraFailoverItemStatus.REMOTE_OUTCOME_UNKNOWN);
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(source));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+		when(failoverItems.findSuccessfulLineageByTaskIds(List.of(source.getId()))).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.migration().migratedFrom()).isNull();
+		assertThat(response.migration().migratedTo()).isNull();
+		assertThat(response.migration().superseded()).isFalse();
 	}
 
 	@Test
@@ -292,6 +344,29 @@ class ProjectProjectionReadServiceTest {
 		commit.setMessage(message);
 		commit.setParentCount(parentCount);
 		return commit;
+	}
+
+	private static Task migrationTask(String key) {
+		Task task = new Task();
+		task.setId(UUID.randomUUID());
+		task.setExternalKey(key);
+		task.setTitle(key);
+		task.setStatus(TaskStatus.TODO);
+		JiraIntegration integration = new JiraIntegration();
+		integration.setId(UUID.randomUUID());
+		task.setJiraIntegration(integration);
+		return task;
+	}
+
+	private static JiraTaskFailoverItem successfulMigration(Task source, Task target) {
+		JiraTaskFailoverRun run = new JiraTaskFailoverRun();
+		run.setId(UUID.randomUUID());
+		JiraTaskFailoverItem item = new JiraTaskFailoverItem();
+		item.setSourceTask(source);
+		item.setTargetTask(target);
+		item.setRun(run);
+		item.setStatus(JiraFailoverItemStatus.SUCCEEDED);
+		return item;
 	}
 
 	@Test

@@ -215,8 +215,8 @@ class ProjectProgressServiceTest {
 		stubEmptyAggregates();
 		Sprint active = sprint("active");
 		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of(active));
-		when(tasks.countByProject_IdAndSprint_IdAndDeletedAtIsNull(projectId, active.getId())).thenReturn(5L);
-		when(tasks.countByProject_IdAndSprint_IdAndStatusAndDeletedAtIsNull(projectId, active.getId(), TaskStatus.DONE))
+		when(tasks.countCurrentByProjectAndSprint(projectId, active.getId())).thenReturn(5L);
+		when(tasks.countCurrentByProjectAndSprintAndStatus(projectId, active.getId(), TaskStatus.DONE))
 				.thenReturn(2L);
 
 		ProjectProgressResponse.SprintSummary summary = service.getProjectProgress(userId, projectId).currentSprint();

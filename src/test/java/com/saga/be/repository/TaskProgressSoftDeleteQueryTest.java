@@ -12,11 +12,15 @@ import com.saga.be.entity.enums.AccountRole;
 import com.saga.be.entity.enums.AccountStatus;
 import com.saga.be.entity.enums.GitProvider;
 import com.saga.be.entity.enums.IntegrationStatus;
+import com.saga.be.entity.enums.JiraFailoverItemStatus;
+import com.saga.be.entity.enums.JiraFailoverRunStatus;
 import com.saga.be.entity.enums.TaskStatus;
 import com.saga.be.entity.enums.TraceLinkSource;
 import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.jira.JiraIntegration;
+import com.saga.be.entity.jira.JiraTaskFailoverItem;
+import com.saga.be.entity.jira.JiraTaskFailoverRun;
 import com.saga.be.entity.jira.Sprint;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
@@ -107,6 +111,10 @@ class TaskProgressSoftDeleteQueryTest {
 	private JiraIntegrationRepository jiraIntegrations;
 	@Autowired
 	private SprintRepository sprintRows;
+	@Autowired
+	private JiraTaskFailoverItemRepository failoverItems;
+	@Autowired
+	private JiraTaskFailoverRunRepository failoverRuns;
 
 	private Project project;
 	private JiraIntegration jiraIntegration;
@@ -299,6 +307,53 @@ class TaskProgressSoftDeleteQueryTest {
 		assertThat(tasks.existsByParentTask_IdAndDeletedAtIsNull(parent.getId())).isFalse();
 	}
 
+	@Test
+	void currentWorkQueriesExcludeOnlySucceededBoundSourcesAndKeepTheTarget() {
+		Sprint sprint = persistSprint();
+		activeTask.setSprint(sprint);
+		activeTask.setStoryPoint(5);
+		activeTask = tasks.save(activeTask);
+		Task target = task(project, jiraIntegration, student, TaskStatus.TODO, null);
+		target.setSprint(sprint);
+		target.setStoryPoint(3);
+		target = tasks.save(target);
+		JiraTaskFailoverItem item = persistFailover(activeTask, target, JiraFailoverItemStatus.SUCCEEDED);
+
+		assertThat(tasks.findCurrentFetchedByProject_Id(project.getId()))
+				.extracting(Task::getId).contains(target.getId()).doesNotContain(activeTask.getId());
+		assertThat(tasks.findActiveFetchedByProject_IdAndAssigneeStudent_Id(project.getId(), student.getId()))
+				.extracting(Task::getId).contains(target.getId()).doesNotContain(activeTask.getId());
+		assertThat(tasks.countStatusAndStoryPointsForAssignee(project.getId(), student.getId()))
+				.extracting(row -> row[0]).contains(TaskStatus.TODO).doesNotContain(TaskStatus.DONE);
+		assertThat(tasks.countGroupedByStatusForProjectAndSprint(project.getId(), sprint.getId()))
+				.extracting(row -> row[0]).contains(TaskStatus.TODO).doesNotContain(TaskStatus.DONE);
+		assertThat(tasks.countCurrentByProjectAndSprint(project.getId(), sprint.getId())).isEqualTo(1);
+		assertThat(tasks.countCurrentByProjectAndSprintAndStatus(project.getId(), sprint.getId(), TaskStatus.DONE)).isZero();
+		assertThat(tasks.countGroupedBySprintAndStatusForAssignee(project.getId(), student.getId()))
+				.extracting(row -> row[1]).contains(TaskStatus.TODO).doesNotContain(TaskStatus.DONE);
+
+		item.setStatus(JiraFailoverItemStatus.REMOTE_OUTCOME_UNKNOWN);
+		failoverItems.saveAndFlush(item);
+		assertThat(tasks.findCurrentFetchedByProject_Id(project.getId()))
+				.extracting(Task::getId).contains(activeTask.getId(), target.getId());
+
+		item.setStatus(JiraFailoverItemStatus.REMOTE_BOUND);
+		failoverItems.saveAndFlush(item);
+		assertThat(tasks.findCurrentFetchedByProject_Id(project.getId()))
+				.extracting(Task::getId).contains(activeTask.getId(), target.getId());
+
+		item.setStatus(JiraFailoverItemStatus.FAILED);
+		failoverItems.saveAndFlush(item);
+		assertThat(tasks.findCurrentFetchedByProject_Id(project.getId()))
+				.extracting(Task::getId).contains(activeTask.getId(), target.getId());
+
+		item.setStatus(JiraFailoverItemStatus.SUCCEEDED);
+		item.setTargetTask(null);
+		failoverItems.saveAndFlush(item);
+		assertThat(tasks.findCurrentFetchedByProject_Id(project.getId()))
+				.extracting(Task::getId).contains(activeTask.getId(), target.getId());
+	}
+
 	private Sprint persistSprint() {
 		Sprint sprint = new Sprint();
 		sprint.setJiraIntegration(jiraIntegration);
@@ -308,6 +363,23 @@ class TaskProgressSoftDeleteQueryTest {
 		sprint.setStartDate(LocalDateTime.now().minusDays(7));
 		sprint.setEndDate(LocalDateTime.now().plusDays(7));
 		return sprintRows.save(sprint);
+	}
+
+	private JiraTaskFailoverItem persistFailover(Task source, Task target, JiraFailoverItemStatus status) {
+		JiraTaskFailoverRun run = new JiraTaskFailoverRun();
+		run.setProject(project);
+		run.setSourceJiraIntegration(jiraIntegration);
+		run.setTargetJiraIntegration(jiraIntegration);
+		run.setRequestedByUser(student.getUserAccount());
+		run.setStatus(JiraFailoverRunStatus.SUCCEEDED);
+		run = failoverRuns.save(run);
+		JiraTaskFailoverItem item = new JiraTaskFailoverItem();
+		item.setRun(run);
+		item.setSourceTask(source);
+		item.setTargetTask(target);
+		item.setSourceStatusSnapshot(source.getStatus());
+		item.setStatus(status);
+		return failoverItems.saveAndFlush(item);
 	}
 
 	private static Semester semester() {

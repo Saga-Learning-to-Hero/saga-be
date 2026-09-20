@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import com.saga.be.dto.integration.failover.TaskMigrationSummary;
 
 public record ProjectTaskResponse(
 		UUID id,
@@ -63,6 +64,8 @@ public record ProjectTaskResponse(
 		 * occur after V24). REVOKED sources remain visible — lists are not filtered by ACTIVE.
 		 */
 		TaskJiraSourceSummary source,
+		/** Direct failover lineage; source and target history remain visible in this list. */
+		TaskMigrationSummary migration,
 		/**
 		 * Direct active children only. Null on list/create/patch (omitted from JSON). Populated on
 		 * detail. Never recursive.
