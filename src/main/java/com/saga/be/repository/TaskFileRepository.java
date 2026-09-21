@@ -47,4 +47,15 @@ public interface TaskFileRepository extends JpaRepository<TaskFile, UUID> {
 			  and t.deletedAt is null
 			""")
 	List<Object[]> findAuthorAndCreatedAtByProject(@Param("projectId") UUID projectId);
+
+	/** Lecturer dashboard: {@code Object[]{UUID projectId, LocalDateTime createdAt}}. */
+	@Query(
+			"""
+			select t.project.id, f.createdAt
+			from TaskFile f
+			join f.task t
+			where t.project.id in :projectIds
+			  and t.deletedAt is null
+			""")
+	List<Object[]> findProjectIdAndCreatedAtByProjectIds(@Param("projectIds") Collection<UUID> projectIds);
 }

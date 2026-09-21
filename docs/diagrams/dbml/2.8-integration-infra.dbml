@@ -1,0 +1,139 @@
+﻿Project saga_be {
+  database_type: 'MySQL'
+  Note: 'Figure 2.8 - Database schema: Integration, audit and outbox'
+}
+
+Table webhook_receipt {
+  id char(36) [pk, not null]
+  provider varchar(32) [not null]
+  delivery_id varchar(128) [not null]
+  event_type varchar(128) [not null]
+  event_action varchar(64)
+  target_id char(36)
+  payload_json longtext
+  receipt_status varchar(32) [not null]
+  attempt_count int [not null]
+  processed_at datetime(6)
+  error_category varchar(64)
+  version bigint [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table sync_job_log {
+  id char(36) [pk, not null]
+  target_system varchar(32)
+  target_id char(36)
+  job_type varchar(64)
+  status varchar(32)
+  error_message text
+  error_category varchar(128)
+  failure_stage varchar(64)
+  started_at datetime(6)
+  completed_at datetime(6)
+  items_processed int
+  items_failed int
+  cursor_before datetime(6)
+  cursor_after datetime(6)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table audit_log {
+  id char(36) [pk, not null]
+  actor_user_id char(36)
+  actor_full_name_snapshot varchar(255)
+  actor_role_snapshot varchar(32)
+  actor_email_snapshot varchar(255)
+  actor_student_code_snapshot varchar(64)
+  context_class_id char(36)
+  context_class_code_snapshot varchar(64)
+  context_class_name_snapshot varchar(255)
+  context_course_id char(36)
+  context_team_id char(36)
+  context_team_no_snapshot int
+  context_team_name_snapshot varchar(255)
+  context_project_id char(36)
+  context_project_name_snapshot varchar(255)
+  action varchar(64) [not null]
+  entity_type varchar(64) [not null]
+  entity_id char(36)
+  before_data json
+  after_data json
+  metadata_json json
+  source varchar(32) [not null]
+  request_id varchar(64)
+  ip_address varchar(64)
+  user_agent varchar(500)
+  occurred_at datetime(6) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table business_warning {
+  id char(36) [pk, not null]
+  warning_type varchar(64) [not null]
+  category varchar(32) [not null]
+  event_key varchar(255) [not null, unique]
+  severity varchar(32)
+  course_id char(36)
+  team_id char(36)
+  project_id char(36)
+  sprint_id char(36)
+  student_profile_id char(36)
+  commit_sha varchar(64)
+  evidence_summary varchar(1000) [not null]
+  progress_mode varchar(32)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table ai_agent_delegation_context {
+  id char(36) [pk, not null]
+  token_hash varchar(64) [not null, unique]
+  conversation_id char(36) [not null]
+  actor_user_id char(36) [not null]
+  actor_application_role varchar(32) [not null]
+  capabilities varchar(128) [not null]
+  expires_at datetime(6) [not null]
+  course_id char(36)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table ai_agent_conversation_scope {
+  id char(36) [pk, not null]
+  conversation_id char(36) [not null, unique]
+  course_id char(36) [not null]
+  owner_user_id char(36) [not null]
+  owner_application_role varchar(32) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table graph_processing_run {
+  id char(36) [pk, not null]
+  graph_kind varchar(32) [not null]
+  occurred_at datetime(6) [not null]
+  course_id char(36)
+  team_id char(36)
+  student_profile_id char(36)
+  nodes_built int [not null]
+  edges_built int [not null]
+}
+
+Table outbox_event {
+  id char(36) [pk, not null]
+  aggregate_type varchar(64) [not null]
+  aggregate_id char(36) [not null]
+  event_type varchar(128) [not null]
+  payload json [not null]
+  status varchar(32) [not null]
+  attempt_count int [not null]
+  available_at datetime(6) [not null]
+  processed_at datetime(6)
+  last_error varchar(1000)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+

@@ -1,0 +1,273 @@
+﻿Project saga_be {
+  database_type: 'MySQL'
+  Note: 'Figure 2.5 - Database schema: GitHub and traceability'
+}
+
+Table github_installation {
+  id char(36) [pk, not null]
+  installation_id bigint [not null, unique]
+  app_id bigint
+  installed_by_user_id char(36)
+  project_id char(36)
+  account_login varchar(255)
+  account_type varchar(64)
+  html_url varchar(500)
+  installation_status varchar(32) [not null]
+  last_verified_at datetime(6)
+  consecutive_failures int [not null]
+  version bigint [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table github_project_installation {
+  id char(36) [pk, not null]
+  project_id char(36) [not null]
+  github_installation_id char(36) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table git_repo {
+  id char(36) [pk, not null]
+  project_id char(36) [not null]
+  installation_id char(36)
+  name varchar(255)
+  url varchar(500)
+  provider varchar(32) [not null]
+  repository_id bigint
+  owner_login varchar(255)
+  full_name varchar(255)
+  default_branch varchar(128)
+  repository_role varchar(32)
+  is_private tinyint(1)
+  connection_status varchar(32) [not null]
+  sync_cursor datetime(6)
+  consecutive_failures int [not null]
+  last_synced_at datetime(6)
+  branch_membership_synced_at datetime(6)
+  review_cutover_at datetime(6)
+  version bigint [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+  active_provider varchar(32) [note: 'generated']
+  active_repository_id bigint [note: 'generated']
+}
+
+Table git_issue {
+  id char(36) [pk, not null]
+  repo_id char(36) [not null]
+  author_student_id char(36)
+  assignee_student_id char(36)
+  author_external_id varchar(128)
+  assignee_external_id varchar(128)
+  issue_number int
+  github_issue_id bigint
+  node_id varchar(128)
+  title varchar(500)
+  state varchar(32)
+  closed_at datetime(6)
+  external_updated_at datetime(6)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table pull_request {
+  id char(36) [pk, not null]
+  repo_id char(36) [not null]
+  author_student_id char(36)
+  author_external_id varchar(128)
+  title varchar(500)
+  body mediumtext
+  github_pull_request_id bigint
+  node_id varchar(128)
+  pull_number int
+  status varchar(32)
+  merged_at datetime(6)
+  review_count int
+  comment_count int
+  head_ref varchar(255)
+  base_ref varchar(255)
+  external_updated_at datetime(6)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table git_commit {
+  id char(36) [pk, not null]
+  repo_id char(36) [not null]
+  author_student_id char(36)
+  sha_hash varchar(64) [not null]
+  github_commit_id varchar(64)
+  author_external_id varchar(128)
+  message mediumtext
+  committed_at datetime(6)
+  additions int
+  deletions int
+  files_changed int
+  signature_verified tinyint(1)
+  verification_reason varchar(64)
+  head_ref varchar(255)
+  external_updated_at datetime(6)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+  parent_count int
+}
+
+Table git_commit_branch {
+  id char(36) [pk, not null]
+  git_commit_id char(36) [not null]
+  branch_name varchar(255) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table pr_review {
+  id char(36) [pk, not null]
+  pull_request_id char(36) [not null]
+  reviewer_student_id char(36)
+  status varchar(32)
+  reviewed_at datetime(6)
+  github_review_id bigint
+  reviewer_external_id varchar(128)
+  external_updated_at datetime(6)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table comment {
+  id char(36) [pk, not null]
+  author_student_id char(36)
+  git_issue_id char(36)
+  pull_request_id char(36)
+  parent_comment_id char(36)
+  task_id char(36)
+  body text
+  source_system varchar(32)
+  external_comment_id varchar(128)
+  author_external_id varchar(128)
+  target_type varchar(32)
+  external_updated_at datetime(6)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table task_git_issue_link {
+  id char(36) [pk, not null]
+  task_id char(36) [not null]
+  git_issue_id char(36) [not null]
+  relation_type varchar(32) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table git_issue_commit_link {
+  id char(36) [pk, not null]
+  git_issue_id char(36) [not null]
+  git_commit_id char(36) [not null]
+  relation_type varchar(32) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table git_issue_pull_request_link {
+  id char(36) [pk, not null]
+  git_issue_id char(36) [not null]
+  pull_request_id char(36) [not null]
+  relation_type varchar(32) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table task_git_commit_link {
+  id char(36) [pk, not null]
+  task_id char(36) [not null]
+  git_commit_id char(36) [not null]
+  link_source varchar(32) [not null]
+  jira_key_snapshot varchar(64)
+  confidence varchar(16)
+  metadata_json json
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table task_pull_request_link {
+  id char(36) [pk, not null]
+  task_id char(36) [not null]
+  pull_request_id char(36) [not null]
+  link_source varchar(32) [not null]
+  jira_key_snapshot varchar(64)
+  confidence varchar(16)
+  metadata_json json
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table commit_review_intent {
+  id char(36) [pk, not null]
+  git_repo_id char(36) [not null]
+  git_commit_id char(36) [not null]
+  sha_hash varchar(64) [not null]
+  review_mode varchar(32) [not null]
+  priority varchar(16) [not null]
+  priority_rank int [not null]
+  intent_status varchar(32) [not null]
+  ai_job_id char(36)
+  review_policy_version varchar(64)
+  last_job_status varchar(32)
+  started_at datetime(6)
+  completed_at datetime(6)
+  safe_error_code varchar(64)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table commit_review_result {
+  id char(36) [pk, not null]
+  intent_id char(36) [not null, unique]
+  ai_job_id char(36) [not null, unique]
+  project_id char(36) [not null]
+  git_repo_id char(36) [not null]
+  git_commit_id char(36) [not null]
+  sha_hash varchar(64) [not null]
+  policy_version varchar(64) [not null]
+  review_mode varchar(32) [not null]
+  traceability_status varchar(32) [not null]
+  message_quality varchar(16) [not null]
+  code_quality varchar(32) [not null]
+  inferred_function_label varchar(32)
+  inferred_function_confidence varchar(16)
+  task_alignment varchar(32) [not null]
+  verdict_eligible tinyint(1) [not null]
+  verdict varchar(32) [not null]
+  overall_status varchar(32) [not null]
+  schema_version varchar(64) [not null]
+  findings_json mediumtext
+  evidence_refs_json mediumtext
+  completed_at datetime(6) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Ref: github_project_installation.github_installation_id > github_installation.id
+Ref: git_repo.installation_id > github_installation.id
+Ref: git_issue.repo_id > git_repo.id
+Ref: pull_request.repo_id > git_repo.id
+Ref: git_commit.repo_id > git_repo.id
+Ref: git_commit_branch.git_commit_id > git_commit.id
+Ref: pr_review.pull_request_id > pull_request.id
+Ref: comment.git_issue_id > git_issue.id
+Ref: comment.pull_request_id > pull_request.id
+Ref: comment.parent_comment_id > comment.id
+Ref: task_git_issue_link.git_issue_id > git_issue.id
+Ref: git_issue_commit_link.git_issue_id > git_issue.id
+Ref: git_issue_commit_link.git_commit_id > git_commit.id
+Ref: git_issue_pull_request_link.git_issue_id > git_issue.id
+Ref: git_issue_pull_request_link.pull_request_id > pull_request.id
+Ref: task_git_commit_link.git_commit_id > git_commit.id
+Ref: task_pull_request_link.pull_request_id > pull_request.id
+Ref: commit_review_intent.git_repo_id > git_repo.id
+Ref: commit_review_intent.git_commit_id > git_commit.id
+Ref: commit_review_result.intent_id - commit_review_intent.id
+Ref: commit_review_result.git_repo_id > git_repo.id
+Ref: commit_review_result.git_commit_id > git_commit.id

@@ -81,4 +81,17 @@ public interface PeerReviewRepository extends JpaRepository<PeerReview, UUID> {
 			@Param("teamId") UUID teamId,
 			@Param("sprintId") UUID sprintId,
 			@Param("reviewerStudentId") UUID reviewerStudentId);
+
+	/**
+	 * Lecturer dashboard submitted reviews: {@code Object[]{UUID sprintId, UUID reviewerId, UUID revieweeId,
+	 * LocalDateTime createdAt}}.
+	 */
+	@Query(
+			"""
+			select pr.sprint.id, pr.reviewerStudent.id, pr.revieweeStudent.id, pr.createdAt
+			from PeerReview pr
+			where pr.sprint.id in :sprintIds
+			  and pr.starRating is not null
+			""")
+	List<Object[]> findSubmittedRowsBySprintIds(@Param("sprintIds") Collection<UUID> sprintIds);
 }

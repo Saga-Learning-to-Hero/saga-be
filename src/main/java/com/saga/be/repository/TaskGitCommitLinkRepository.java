@@ -419,4 +419,17 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			order by t.externalKey asc, t.id asc
 			""")
 	List<Object[]> findExternalKeysByCommitIds(@Param("commitIds") Collection<UUID> commitIds);
+
+	/** Lecturer dashboard: {@code Object[]{UUID sprintId, UUID commitId, UUID taskId}}. V23 commits. */
+	@Query(
+			"""
+			select t.sprint.id, c.id, t.id
+			from TaskGitCommitLink l
+			join l.gitCommit c
+			join l.task t
+			where t.sprint.id in :sprintIds
+			  and t.deletedAt is null
+			  and (c.parentCount is null or c.parentCount <= 1)
+			""")
+	List<Object[]> findLinkedCommitAndTaskIdsBySprintIds(@Param("sprintIds") Collection<UUID> sprintIds);
 }
