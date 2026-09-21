@@ -4,6 +4,7 @@ import com.saga.be.entity.enums.GitProvider;
 import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.github.GitRepo;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -14,6 +15,8 @@ import org.springframework.data.repository.query.Param;
 public interface GitRepoRepository extends JpaRepository<GitRepo, UUID> {
 
 	List<GitRepo> findByProject_Id(UUID projectId);
+
+	List<GitRepo> findByProject_IdIn(Collection<UUID> projectIds);
 
 	@Query(
 			"""

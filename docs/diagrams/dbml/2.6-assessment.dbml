@@ -1,0 +1,109 @@
+﻿Project saga_be {
+  database_type: 'MySQL'
+  Note: 'Figure 2.6 - Database schema: Assessment and contribution'
+}
+
+Table rubric_template {
+  id char(36) [pk, not null]
+  subject_id char(36)
+  criteria_name varchar(255)
+  weight decimal(10,4)
+  description varchar(1000)
+  deleted_at datetime(6)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table peer_review {
+  id char(36) [pk, not null]
+  sprint_id char(36) [not null]
+  reviewer_student_id char(36) [not null]
+  reviewee_student_id char(36) [not null]
+  star_rating int
+  comment text
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table peer_review_detail {
+  id char(36) [pk, not null]
+  peer_review_id char(36) [not null]
+  rubric_id char(36) [not null]
+  criteria_name varchar(255) [not null]
+  criteria_order int [not null]
+  star_rating int [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table project_group_weight_config {
+  id char(36) [pk, not null]
+  project_id char(36) [not null, unique]
+  team_id char(36) [not null]
+  code_weight decimal(6,5) [not null]
+  test_weight decimal(6,5) [not null]
+  document_weight decimal(6,5) [not null]
+  research_weight decimal(6,5) [not null]
+  note varchar(1000)
+  updated_by_user_id char(36)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table contribution_override {
+  id char(36) [pk, not null]
+  course_id char(36) [not null]
+  team_id char(36)
+  student_profile_id char(36)
+  override_type varchar(64) [not null]
+  old_value decimal(10,4)
+  new_value decimal(10,4)
+  reason text
+  created_by_user_id char(36) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table contribution_confirmation {
+  id char(36) [pk, not null]
+  task_id char(36) [not null]
+  user_id char(36) [not null]
+  project_id char(36)
+  event_state varchar(32) [not null]
+  confirmation_method varchar(32) [not null]
+  evidence_hash varchar(64) [not null]
+  evidence_snapshot_json json [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table assessment_run {
+  id char(36) [pk, not null]
+  course_id char(36) [not null]
+  project_id char(36)
+  sprint_id char(36)
+  run_type varchar(32) [not null]
+  calculation_version varchar(64)
+  status varchar(32) [not null]
+  started_at datetime(6)
+  completed_at datetime(6)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table assessment_result {
+  id char(36) [pk, not null]
+  assessment_run_id char(36) [not null]
+  student_profile_id char(36) [not null]
+  contribution_score decimal(10,4)
+  peer_review_score decimal(10,4)
+  final_score decimal(10,4)
+  breakdown_json json
+  calculated_at datetime(6) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Ref: peer_review_detail.peer_review_id > peer_review.id
+Ref: peer_review_detail.rubric_id > rubric_template.id
+Ref: assessment_result.assessment_run_id > assessment_run.id

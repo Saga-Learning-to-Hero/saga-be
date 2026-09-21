@@ -6,6 +6,7 @@ import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -65,6 +66,8 @@ public interface JiraIntegrationRepository extends JpaRepository<JiraIntegration
 			@Param("status") IntegrationStatus status, @Param("webhookId") String webhookId);
 
 	List<JiraIntegration> findAllByProject_IdAndConnectionStatus(UUID projectId, IntegrationStatus status);
+
+	List<JiraIntegration> findByProject_IdIn(Collection<UUID> projectIds);
 
 	/**
 	 * Since V14, {@code (cloud_id, jira_project_id)} is unique only among ACTIVE rows
