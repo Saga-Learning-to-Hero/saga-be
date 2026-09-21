@@ -162,6 +162,55 @@ class ProjectJiraTaskCommandServiceTest {
 	}
 
 	@Test
+	void create_withSameSourceJiraParent_sendsCanonicalProviderIdWithoutChangingNativeHierarchy() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
+		Task parent = taskRow();
+		parent.setId(UUID.randomUUID());
+		parent.setJiraIntegration(integration);
+		parent.setExternalId("10049");
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(parent.getId(), projectId)).thenReturn(Optional.of(parent));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.createIssue(eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(),
+				any(), any(), any(), any(), eq("10049"))).thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		Task saved = taskRow();
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(saved);
+
+		service.create(userId, projectId, new CreateProjectTaskRequest(
+				"Login", null, null, null, null, null, null, null, null, null, null, null, parent.getId(), null));
+
+		verify(jiraWrite).createIssue(eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(),
+				any(), any(), any(), any(), eq("10049"));
+		verify(tasks).findByIdAndProject_IdAndDeletedAtIsNull(parent.getId(), projectId);
+		verify(projection).upsertOne(integration, "SAGA", canonical);
+	}
+
+	@Test
+	void create_rejectsCrossSourceJiraParentBeforeProviderHttp() {
+		stubLeader();
+		JiraIntegration target = activeJira();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(target));
+		Task sourceAParent = taskRow();
+		sourceAParent.setId(UUID.randomUUID());
+		JiraIntegration sourceA = activeJira();
+		sourceA.setId(UUID.randomUUID());
+		sourceAParent.setJiraIntegration(sourceA);
+		sourceAParent.setExternalId("10049");
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(sourceAParent.getId(), projectId)).thenReturn(Optional.of(sourceAParent));
+
+		assertThatThrownBy(() -> service.create(userId, projectId, new CreateProjectTaskRequest(
+				"Login", null, null, null, null, null, null, null, null, null, null, null, sourceAParent.getId(), null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_PARENT_SOURCE_MISMATCH);
+		verify(tokens, never()).accessToken(any());
+		verify(jiraWrite, never()).createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
 	void create_providerFailure_doesNotPersistLocalTask() {
 		stubLeader();
 		JiraIntegration integration = activeJira();

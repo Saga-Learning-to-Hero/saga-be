@@ -193,6 +193,25 @@ public class JiraIssueWriteClient {
 			List<String> labels,
 			LocalDate dueDate,
 			LocalDate startDate) {
+		return createIssue(accessToken, cloudId, projectId, summary, description, issueTypeId, assigneeAccountId,
+				priorityId, storyPoints, labels, dueDate, startDate, null);
+	}
+
+	/** Creates a Jira issue with an optional same-project provider parent issue id. */
+	public CreatedIssue createIssue(
+			String accessToken,
+			String cloudId,
+			String projectId,
+			String summary,
+			String description,
+			String issueTypeId,
+			String assigneeAccountId,
+			String priorityId,
+			Integer storyPoints,
+			List<String> labels,
+			LocalDate dueDate,
+			LocalDate startDate,
+			String parentIssueId) {
 		ObjectNode body = mapper.createObjectNode();
 		ObjectNode fields = body.putObject("fields");
 		fields.putObject("project").put("id", projectId);
@@ -237,6 +256,9 @@ public class JiraIssueWriteClient {
 		// never POSTs the issue without the date the caller asked to set.
 		if (startDate != null) {
 			fields.put(requireStartDateFieldId(accessToken, cloudId), startDate.toString());
+		}
+		if (parentIssueId != null && !parentIssueId.isBlank()) {
+			fields.putObject("parent").put("id", parentIssueId);
 		}
 		try {
 			CreatedIssueResponse created = restClient

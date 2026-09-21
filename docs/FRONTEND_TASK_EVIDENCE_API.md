@@ -47,6 +47,12 @@ Task sống trên SAGA dưới dạng **projection Jira**. Hai cách có `taskId
 1. **Tạo trên SAGA** — Team Leader `POST /api/projects/{projectId}/tasks`. Backend tạo issue trên Jira **đồng bộ**, rồi lưu projection và trả `ProjectTaskResponse` (`201`). Dùng `id` ngay, không cần refetch list.
 2. **Đọc list** — `GET /api/projects/{projectId}/tasks` (cả task tạo từ SAGA lẫn issue tạo trực tiếp trên Jira rồi webhook/sync về).
 
+When creating a Jira subtask, keep the two parent fields distinct: `parentTaskId` is the optional
+native SAGA hierarchy, while `jiraParentTaskId` selects a same-source local Task whose canonical
+Jira `externalId` is sent as `fields.parent.id`. Set both to the same UUID only when both
+hierarchies should align. A Jira subtask may use `jiraParentTaskId` without `parentTaskId`; never
+send a parent from another Jira source.
+
 Project phải đã connect Jira (`GET /api/projects/{projectId}/integrations` → `jira.status === "ACTIVE"`). Chưa có project / chưa connect → không tạo được task.
 
 ### Failover migration metadata

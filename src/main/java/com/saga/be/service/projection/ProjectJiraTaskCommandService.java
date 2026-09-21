@@ -145,9 +145,10 @@ public class ProjectJiraTaskCommandService {
 		if (nativeParentId != null) {
 			hierarchy.validateAssignable(projectId, null, nativeParentId);
 		}
+		String jiraParentIssueId = resolveJiraParentIssueId(projectId, integration, request.jiraParentTaskId());
 		String access = tokens.accessToken(integration);
 
-		CreatedIssue created = jiraWrite.createIssue(
+		CreatedIssue created = jiraParentIssueId == null ? jiraWrite.createIssue(
 				access,
 				integration.getCloudId(),
 				integration.getJiraProjectId(),
@@ -159,7 +160,10 @@ public class ProjectJiraTaskCommandService {
 				null,
 				request.labels(),
 				request.dueDate(),
-				request.startDate());
+				request.startDate()) : jiraWrite.createIssue(
+				access, integration.getCloudId(), integration.getJiraProjectId(), request.summary(), request.description(),
+				request.issueTypeId(), request.assigneeAccountId(), request.priorityId(), null, request.labels(),
+				request.dueDate(), request.startDate(), jiraParentIssueId);
 
 		boolean secondaryFailed = false;
 		if (request.storyPoints() != null) {
@@ -519,6 +523,23 @@ public class ProjectJiraTaskCommandService {
 		return tasks.findByIdAndProject_IdAndDeletedAtIsNull(taskId, projectId)
 				.orElseThrow(() -> new AcademicException(
 						AcademicErrorCode.PROJECT_NOT_FOUND, HttpStatus.NOT_FOUND, "Task was not found for this project."));
+	}
+
+	private String resolveJiraParentIssueId(UUID projectId, JiraIntegration target, UUID jiraParentTaskId) {
+		if (jiraParentTaskId == null) return null;
+		Task parent = tasks.findByIdAndProject_IdAndDeletedAtIsNull(jiraParentTaskId, projectId)
+				.orElseThrow(() -> new IntegrationException(IntegrationErrorCode.JIRA_PARENT_TASK_NOT_FOUND,
+						HttpStatus.NOT_FOUND, "Jira provider parent task was not found for this project."));
+		if (parent.getJiraIntegration() == null || parent.getJiraIntegration().getId() == null
+				|| !target.getId().equals(parent.getJiraIntegration().getId())) {
+			throw new IntegrationException(IntegrationErrorCode.JIRA_PARENT_SOURCE_MISMATCH, HttpStatus.BAD_REQUEST,
+					"Jira provider parent must belong to the selected Jira source.");
+		}
+		if (parent.getExternalId() == null || parent.getExternalId().isBlank()) {
+			throw new IntegrationException(IntegrationErrorCode.JIRA_PARENT_PROVIDER_ID_MISSING, HttpStatus.BAD_REQUEST,
+					"Jira provider parent has no canonical Jira issue id.");
+		}
+		return parent.getExternalId();
 	}
 
 	private long linkedCount(UUID projectId, UUID taskId) {

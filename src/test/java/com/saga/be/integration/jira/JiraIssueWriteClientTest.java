@@ -607,6 +607,20 @@ class JiraIssueWriteClientTest {
 	// ==================== WRITE PATH: create issue with due date ====================
 
 	@Test
+	void createIssue_withProviderParent_sendsParentId() throws Exception {
+		properties.getJira().setStoryPointsFieldId("customfield_10016");
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-parent-1/rest/api/3/issue"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("\"parent\":{\"id\":\"10049\"}")))
+				.andRespond(withSuccess("{\"id\":\"10001\",\"key\":\"SAGA-1\"}", MediaType.APPLICATION_JSON));
+
+		client.createIssue("token", "cloud-parent-1", "10067", "Child", null, "10003", null, null,
+				null, null, null, null, "10049");
+
+		server.verify();
+	}
+
+	@Test
 	void createIssue_withDueDate_sendsDuedateField() throws Exception {
 		properties.getJira().setStoryPointsFieldId("customfield_10016");
 		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-dd-1/rest/api/3/issue"))
