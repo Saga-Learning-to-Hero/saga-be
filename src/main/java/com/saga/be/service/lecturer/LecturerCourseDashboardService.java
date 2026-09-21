@@ -65,6 +65,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -97,6 +98,7 @@ public class LecturerCourseDashboardService {
 	private final ProjectGroupWeightConfigRepository groupWeights;
 	private final Clock clock;
 
+	@Autowired
 	public LecturerCourseDashboardService(
 			LecturerCourseAuthorization authorization,
 			TeamRepository teams,
