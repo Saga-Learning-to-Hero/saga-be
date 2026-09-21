@@ -1,0 +1,3 @@
+package com.saga.be.ai;
+
+public enum AiEvidenceReferenceKind { COMMIT_MESSAGE, DIFF_HUNK, CODE_RANGE, TASK_FIELD, TEST_RESULT, CI_RESULT, SYLLABUS_NODE, HUMAN_CONFIRMED_EXAMPLE }

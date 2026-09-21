@@ -25,6 +25,16 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			"""
 			select l from TaskGitCommitLink l
 			join fetch l.task t
+			join fetch t.jiraIntegration
+			join t.project p
+			where l.gitCommit.id = :commitId and p.id = :projectId
+			""")
+	List<TaskGitCommitLink> findAnalysisEvidenceByGitCommitId(@Param("commitId") UUID commitId, @Param("projectId") UUID projectId);
+
+	@Query(
+			"""
+			select l from TaskGitCommitLink l
+			join fetch l.task t
 			join fetch l.gitCommit
 			where t.project.id = :projectId
 			  and t.deletedAt is null

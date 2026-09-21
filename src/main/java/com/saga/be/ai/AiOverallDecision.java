@@ -1,0 +1,2 @@
+package com.saga.be.ai;
+public enum AiOverallDecision { INFORMATIONAL, HUMAN_REVIEW_REQUIRED, EVIDENCE_INSUFFICIENT, PROVIDER_DISAGREEMENT }

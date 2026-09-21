@@ -28,6 +28,16 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 	@Query(
 			"""
 			select c from GitCommit c
+			join fetch c.repo r
+			join fetch r.project
+			left join fetch c.authorStudent
+			where c.id = :id
+			""")
+	Optional<GitCommit> findAnalysisTargetById(@Param("id") UUID id);
+
+	@Query(
+			"""
+			select c from GitCommit c
 			join fetch c.repo
 			left join fetch c.authorStudent
 			where c.id in :ids
