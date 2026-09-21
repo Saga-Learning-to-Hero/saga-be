@@ -28,10 +28,10 @@ class AiStructuredResultValidatorTest {
 		UUID evidenceId = UUID.randomUUID();
 		AiStructuredResult result = valid(evidenceId);
 		AiStructuredResult invalidScore = new AiStructuredResult(
-				new AiStructuredResult.CommitMessageAssessment(AiCommitMessageVerdict.CLEAR, 101, result.commitMessageAssessment().findings()),
-				result.codeAssessment(), result.taskAlignment(), List.of(), result.overallDecision(), result.humanReviewRequired());
+				new AiStructuredResult.CommitMessageAssessment(AiCommitMessageVerdict.CLEAR, 101, null, null, result.commitMessageAssessment().findings()),
+				result.codeAssessment(), result.taskAlignments(), result.taskAlignmentSummary(), List.of(), result.overallDecision(), result.humanReviewRequired());
 		assertThat(validator.invalidReason(invalidScore, Set.of(evidenceId))).contains("INVALID_SCORE");
-		AiStructuredResult academic = new AiStructuredResult(result.commitMessageAssessment(), result.codeAssessment(), result.taskAlignment(), List.of(new AiStructuredResult.AcademicClassification("PHASE", "x", .9d, "PROPOSED", List.of())), result.overallDecision(), result.humanReviewRequired());
+		AiStructuredResult academic = new AiStructuredResult(result.commitMessageAssessment(), result.codeAssessment(), result.taskAlignments(), result.taskAlignmentSummary(), List.of(new AiStructuredResult.AcademicClassification("PHASE", "x", .9d, "PROPOSED", List.of())), result.overallDecision(), result.humanReviewRequired());
 		assertThat(validator.invalidReason(academic, Set.of(evidenceId))).contains("ACADEMIC_CLASSIFICATION_NOT_ALLOWED");
 	}
 
@@ -46,6 +46,6 @@ class AiStructuredResultValidatorTest {
 	private static AiStructuredResult valid(UUID evidenceId) {
 		AiEvidenceReference ref = new AiEvidenceReference(AiEvidenceReferenceKind.COMMIT_MESSAGE, evidenceId, null, null, null, null, null, null, null, null);
 		AiFinding finding = new AiFinding("test", "cited", List.of(ref));
-		return new AiStructuredResult(new AiStructuredResult.CommitMessageAssessment(AiCommitMessageVerdict.ADEQUATE, 50, List.of(finding)), new AiStructuredResult.CodeAssessment(AiCodeVerdict.NOT_ASSESSABLE, .5d, List.of(finding), List.of(ref)), new AiStructuredResult.TaskAlignment(AiTaskAlignmentVerdict.INSUFFICIENT_EVIDENCE, .5d, List.of(ref)), List.of(), AiOverallDecision.EVIDENCE_INSUFFICIENT, false);
+		return new AiStructuredResult(new AiStructuredResult.CommitMessageAssessment(AiCommitMessageVerdict.ADEQUATE, 50, "summary", null, List.of(finding)), new AiStructuredResult.CodeAssessment(AiCodeVerdict.NOT_ASSESSABLE, .5d, List.of(finding), List.of(ref)), List.of(), AiTaskAlignmentVerdict.NO_LINKED_TASK, List.of(), AiOverallDecision.EVIDENCE_INSUFFICIENT, false);
 	}
 }

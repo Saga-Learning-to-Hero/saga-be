@@ -35,7 +35,6 @@ public class AiCommitEvidenceSnapshotBuilder {
 			JiraTaskFailoverItem item = sourceLineage.get(task.getId()); taskData.put("currentOperational", item == null); taskData.put("supersededByTaskId", item == null ? null : item.getTargetTask().getId());
 			out.add(new AiEvidenceDraft(AiEvidenceType.TASK_FIELD, "task:" + task.getId(), json(taskData), null));
 		}
-		out.add(new AiEvidenceDraft(AiEvidenceType.EXCLUSION_MANIFEST, "local-commit-evidence-limitations", json(Map.of("codeDiffAvailable", false, "changedFilePathsAvailable", false, "fileContentAtRevisionAvailable", false, "providerReadsPerformed", false)), null));
 		return List.copyOf(out);
 	}
 	private String json(Object value) { try { return mapper.writeValueAsString(value); } catch (Exception ex) { throw new IllegalStateException("AI evidence serialization failed", ex); } }

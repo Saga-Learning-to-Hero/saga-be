@@ -17,6 +17,6 @@ public class FakeAiModelProvider implements AiModelProvider {
 	public AiProviderResponse analyze(AiAnalysisRequest request) {
 		AiEvidenceReference ref = new AiEvidenceReference(AiEvidenceReferenceKind.COMMIT_MESSAGE, request.evidence().getFirst().id(), null, null, null, null, null, null, null, null);
 		AiFinding finding = new AiFinding("AI1_FAKE_INFORMATIONAL", "Deterministic AI-1 provider smoke result.", List.of(ref));
-		return new AiProviderResponse(new AiStructuredResult(new AiStructuredResult.CommitMessageAssessment(AiCommitMessageVerdict.INSUFFICIENT_EVIDENCE, 0, List.of(finding)), new AiStructuredResult.CodeAssessment(AiCodeVerdict.NOT_ASSESSABLE, 0d, List.of(finding), List.of(ref)), new AiStructuredResult.TaskAlignment(AiTaskAlignmentVerdict.INSUFFICIENT_EVIDENCE, 0d, List.of(ref)), List.of(), AiOverallDecision.EVIDENCE_INSUFFICIENT, true), 0L, 0L, 0L, "fake-1", null);
+		return new AiProviderResponse(new AiStructuredResult(new AiStructuredResult.CommitMessageAssessment(AiCommitMessageVerdict.INSUFFICIENT_EVIDENCE, 0, "AI-1 fake provider has no semantic judgement.", null, List.of(finding)), new AiStructuredResult.CodeAssessment(AiCodeVerdict.NOT_ASSESSABLE, 0d, List.of(finding), List.of(ref)), List.of(), AiTaskAlignmentVerdict.NO_LINKED_TASK, List.of(), AiOverallDecision.EVIDENCE_INSUFFICIENT, true), 0L, 0L, 0L, "fake-1", null);
 	}
 }

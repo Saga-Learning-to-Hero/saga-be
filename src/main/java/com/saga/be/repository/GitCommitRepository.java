@@ -30,6 +30,7 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			select c from GitCommit c
 			join fetch c.repo r
 			join fetch r.project
+			left join fetch r.installation
 			left join fetch c.authorStudent
 			where c.id = :id
 			""")
