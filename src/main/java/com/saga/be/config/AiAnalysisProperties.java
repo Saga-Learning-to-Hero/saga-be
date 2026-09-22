@@ -14,6 +14,7 @@ public class AiAnalysisProperties {
 	private int maxChangedFiles = 40;
 	private int maxPatchBytes = 256 * 1024;
 	private final OpenAi openai = new OpenAi();
+	private final Runtime runtime = new Runtime();
 	public int getWorkers() { return workers; }
 	public void setWorkers(int workers) { this.workers = Math.max(1, workers); }
 	public int getQueueCapacity() { return queueCapacity; }
@@ -31,6 +32,8 @@ public class AiAnalysisProperties {
 	public int getMaxPatchBytes() { return maxPatchBytes; }
 	public void setMaxPatchBytes(int value) { maxPatchBytes = Math.max(1, value); }
 	public OpenAi getOpenai() { return openai; }
+	public Runtime getRuntime() { return runtime; }
+	public static class Runtime { private boolean enabled=false; private String baseUrl=""; private String internalToken=""; private Duration timeout=Duration.ofSeconds(60); public boolean isEnabled(){return enabled;} public void setEnabled(boolean v){enabled=v;} public String getBaseUrl(){return baseUrl;} public void setBaseUrl(String v){baseUrl=v;} public String getInternalToken(){return internalToken;} public void setInternalToken(String v){internalToken=v;} public Duration getTimeout(){return timeout;} public void setTimeout(Duration v){timeout=v==null?Duration.ofSeconds(60):v;} }
 	public static class OpenAi {
 		private String apiKey = "";
 		private String model = "gpt-5.6-sol";
