@@ -274,4 +274,17 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			@Param("studentId") UUID studentId,
 			@Param("windowStart") LocalDateTime windowStart,
 			@Param("windowEndExclusive") LocalDateTime windowEndExclusive);
+
+	/**
+	 * Lecturer dashboard: {@code Object[]{UUID projectId, UUID commitId, LocalDateTime committedAt}}.
+	 * V23 coding commits only.
+	 */
+	@Query(
+			"""
+			select c.repo.project.id, c.id, coalesce(c.committedAt, c.createdAt)
+			from GitCommit c
+			where c.repo.project.id in :projectIds
+			  and (c.parentCount is null or c.parentCount <= 1)
+			""")
+	List<Object[]> findProjectIdAndIdAndCommittedAtByProjectIds(@Param("projectIds") Collection<UUID> projectIds);
 }

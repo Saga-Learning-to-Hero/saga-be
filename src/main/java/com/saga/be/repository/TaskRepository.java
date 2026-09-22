@@ -435,4 +435,51 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			""")
 	List<StudentDashboardAnomalyCandidateRow> findDoneWithoutV23EvidenceCandidates(
 			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
+
+	/** Lecturer dashboard: {@code Object[]{UUID sprintId, TaskStatus status, Long count}}. */
+	@Query(
+			"""
+			select t.sprint.id, t.status, count(t)
+			from Task t
+			where t.sprint.id in :sprintIds
+			  and t.deletedAt is null
+			group by t.sprint.id, t.status
+			""")
+	List<Object[]> countGroupedBySprintIdsAndStatus(@Param("sprintIds") Collection<UUID> sprintIds);
+
+	/** Lecturer dashboard: overdue non-DONE tasks — {@code Object[]{UUID sprintId, Long count}}. */
+	@Query(
+			"""
+			select t.sprint.id, count(t)
+			from Task t
+			where t.sprint.id in :sprintIds
+			  and t.deletedAt is null
+			  and t.status <> com.saga.be.entity.enums.TaskStatus.DONE
+			  and t.dueDate is not null
+			  and t.dueDate < :now
+			group by t.sprint.id
+			""")
+	List<Object[]> countOverdueBySprintIds(
+			@Param("sprintIds") Collection<UUID> sprintIds, @Param("now") LocalDateTime now);
+
+	/** Lecturer dashboard: DONE tasks in sprints — {@code Object[]{UUID sprintId, UUID taskId}}. */
+	@Query(
+			"""
+			select t.sprint.id, t.id
+			from Task t
+			where t.sprint.id in :sprintIds
+			  and t.deletedAt is null
+			  and t.status = com.saga.be.entity.enums.TaskStatus.DONE
+			""")
+	List<Object[]> findDoneTaskIdsBySprintIds(@Param("sprintIds") Collection<UUID> sprintIds);
+
+	/** Lecturer dashboard activity: {@code Object[]{UUID projectId, LocalDateTime createdAt}}. */
+	@Query(
+			"""
+			select t.project.id, t.createdAt
+			from Task t
+			where t.project.id in :projectIds
+			  and t.deletedAt is null
+			""")
+	List<Object[]> findProjectIdAndCreatedAtByProjectIds(@Param("projectIds") Collection<UUID> projectIds);
 }

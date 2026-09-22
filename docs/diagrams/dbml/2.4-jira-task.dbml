@@ -1,0 +1,167 @@
+﻿Project saga_be {
+  database_type: 'MySQL'
+  Note: 'Figure 2.4 - Database schema: Jira and task'
+}
+
+Table jira_integration {
+  id char(36) [pk, not null]
+  project_id char(36) [not null, unique]
+  name varchar(255)
+  board_type varchar(32)
+  jira_board_id varchar(64)
+  cloud_id varchar(128)
+  site_url varchar(500)
+  site_name varchar(255)
+  jira_project_id varchar(64)
+  project_key varchar(64)
+  encrypted_access_token text
+  encrypted_refresh_token text
+  token_expires_at datetime(6)
+  granted_scopes text
+  connection_status varchar(32) [not null]
+  connected_by_user_id char(36)
+  webhook_id varchar(128)
+  webhook_expires_at datetime(6)
+  webhook_secret_hash varchar(64)
+  encrypted_webhook_secret text
+  sync_cursor datetime(6)
+  consecutive_failures int [not null]
+  last_error_code varchar(64)
+  last_synced_at datetime(6)
+  last_successful_sync_at datetime(6)
+  version bigint [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+  active_cloud_id varchar(128) [note: 'generated']
+  active_jira_project_id varchar(64) [note: 'generated']
+}
+
+Table sprint {
+  id char(36) [pk, not null]
+  jira_integration_id char(36) [not null]
+  name varchar(255)
+  external_sprint_id varchar(128)
+  start_date datetime(6)
+  end_date datetime(6)
+  goal varchar(1000)
+  state varchar(64)
+  complete_date datetime(6)
+  deleted_at datetime(6)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table task {
+  id char(36) [pk, not null]
+  project_id char(36) [not null]
+  sprint_id char(36)
+  assignee_student_id char(36)
+  reporter_student_id char(36)
+  assignee_external_id varchar(128)
+  reporter_external_id varchar(128)
+  blocks_task_id char(36)
+  external_key varchar(64)
+  external_id varchar(64)
+  parent_external_id varchar(64)
+  parent_external_key varchar(64)
+  parent_task_id char(36)
+  title varchar(500)
+  task_type varchar(32)
+  status varchar(32)
+  jira_status_id varchar(64)
+  jira_status_name varchar(128)
+  jira_status_category varchar(64)
+  issue_type_name varchar(64)
+  saga_completion_state varchar(32)
+  priority varchar(32)
+  story_point int
+  due_date datetime(6)
+  start_date datetime(6)
+  external_updated_at datetime(6)
+  resolved_at datetime(6)
+  completed_at datetime(6)
+  resolution varchar(128)
+  description text
+  labels_json text
+  components_json text
+  deleted_at datetime(6)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table task_attachment {
+  id char(36) [pk, not null]
+  task_id char(36) [not null]
+  external_id varchar(64) [not null]
+  filename varchar(512)
+  mime_type varchar(255)
+  size_bytes bigint
+  author_external_id varchar(128)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table task_web_link {
+  id char(36) [pk, not null]
+  task_id char(36) [not null]
+  url varchar(2048) [not null]
+  url_hash char(64) [not null]
+  title varchar(255)
+  source varchar(16) [not null]
+  external_id varchar(64)
+  created_by_user_id char(36)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table task_file {
+  id char(36) [pk, not null]
+  task_id char(36) [not null]
+  original_filename varchar(512) [not null]
+  mime_type varchar(255) [not null]
+  size_bytes bigint [not null]
+  content_hash char(64) [not null]
+  source varchar(16) [not null]
+  external_id varchar(64)
+  created_by_user_id char(36)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table jira_write_operation {
+  id char(36) [pk, not null]
+  project_id char(36) [not null]
+  actor_user_id char(36) [not null]
+  operation_type varchar(32) [not null]
+  idempotency_key varchar(128) [not null]
+  request_fingerprint varchar(64) [not null]
+  remote_resource_id varchar(128)
+  remote_resource_key varchar(128)
+  status varchar(32) [not null]
+  safe_error_code varchar(64)
+  completed_at datetime(6)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table task_work_session {
+  id char(36) [pk, not null]
+  task_id char(36) [not null]
+  user_id char(36) [not null]
+  project_id char(36) [not null]
+  team_id char(36)
+  started_at datetime(6) [not null]
+  ended_at datetime(6)
+  status varchar(32) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Ref: sprint.jira_integration_id > jira_integration.id
+Ref: task.sprint_id > sprint.id
+Ref: task.blocks_task_id > task.id
+Ref: task.parent_task_id > task.id
+Ref: task_attachment.task_id > task.id
+Ref: task_web_link.task_id > task.id
+Ref: task_file.task_id > task.id
+Ref: task_work_session.task_id > task.id

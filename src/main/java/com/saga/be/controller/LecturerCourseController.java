@@ -1,16 +1,19 @@
 package com.saga.be.controller;
 
 import com.saga.be.dto.academic.CourseResponse;
+import com.saga.be.dto.lecturer.LecturerCourseDashboardResponse;
 import com.saga.be.dto.team.LecturerActiveRosterResponse;
 import com.saga.be.dto.team.LecturerCourseProgressResponse;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaUserPrincipal;
+import com.saga.be.service.lecturer.LecturerCourseDashboardService;
 import com.saga.be.service.lecturer.LecturerCourseService;
 import com.saga.be.service.lecturer.LecturerProgressService;
 import com.saga.be.workload.Workload;
 import com.saga.be.workload.WorkloadClass;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
@@ -20,6 +23,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -33,12 +37,17 @@ public class LecturerCourseController {
 	private final LecturerCourseService courses;
 	private final UserAccountRepository users;
 	private final LecturerProgressService progress;
+	private final LecturerCourseDashboardService dashboard;
 
 	public LecturerCourseController(
-			LecturerCourseService courses, UserAccountRepository users, LecturerProgressService progress) {
+			LecturerCourseService courses,
+			UserAccountRepository users,
+			LecturerProgressService progress,
+			LecturerCourseDashboardService dashboard) {
 		this.courses = courses;
 		this.users = users;
 		this.progress = progress;
+		this.dashboard = dashboard;
 	}
 
 	@GetMapping
@@ -71,6 +80,25 @@ public class LecturerCourseController {
 	public LecturerCourseProgressResponse progress(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID courseId) {
 		return progress.getCourseProgress(actor(principal), courseId);
+	}
+
+	@GetMapping("/{courseId}/dashboard")
+	@Workload(WorkloadClass.HEAVY_READ)
+	@Operation(
+			summary = "One-request lecturer dashboard for an assigned course.",
+			description =
+					"Assigned lecturer only; ADMIN is denied with LECTURER_COURSE_FORBIDDEN. "
+							+ "Current sprint is the Jira projection with state=active, resolved independently per project. "
+							+ "Does not read contribution_override and does not evaluate contribution scores. "
+							+ "reminder is always null. Unsupported scope returns INVALID_DASHBOARD_SCOPE. "
+							+ "Error envelope is {code, message}.")
+	public LecturerCourseDashboardResponse dashboard(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID courseId,
+			@Parameter(description = "Only CURRENT_SPRINT is supported. Omit to use CURRENT_SPRINT.")
+			@RequestParam(name = "scope", required = false)
+			String scope) {
+		return dashboard.getDashboard(actor(principal), courseId, scope);
 	}
 
 	private UserAccount actor(SagaUserPrincipal principal) {
