@@ -22,6 +22,9 @@ public interface ProjectRepository extends JpaRepository<Project, UUID> {
 			""")
 	Optional<Project> findFetchedById(@Param("id") UUID id);
 
+	@Query("select p from Project p join fetch p.course c join fetch c.subject left join fetch c.syllabusVersion where p.id=:id")
+	Optional<Project> findWithPinnedSyllabus(@Param("id") UUID id);
+
 	/**
 	 * Serializes native hierarchy mutations for one Project (assign/change/clear parent, delete
 	 * child-check). Hold only for the short JDBC validation/write; never across Jira HTTP.

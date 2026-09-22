@@ -1,0 +1,9 @@
+package com.saga.be.service.ai;
+import com.fasterxml.jackson.databind.ObjectMapper; import com.saga.be.entity.jira.Task; import java.util.*; import org.springframework.context.annotation.Profile; import org.springframework.stereotype.Component;
+/** Canonical local Task-only snapshot. No Jira/GitHub reads occur here. */
+@Component @Profile("!test") public class AiTaskAcademicSnapshotBuilder {
+ private final ObjectMapper mapper; public AiTaskAcademicSnapshotBuilder(ObjectMapper mapper){this.mapper=mapper;}
+ public Snapshot build(Task t){ Map<String,Object> m=new TreeMap<>();m.put("taskId",t.getId());m.put("projectId",t.getProject().getId());m.put("jiraIntegrationId",t.getJiraIntegration().getId());m.put("externalId",n(t.getExternalId()));m.put("externalKey",n(t.getExternalKey()));m.put("title",n(t.getTitle()));m.put("description",n(t.getDescription()));m.put("status",t.getStatus()==null?null:t.getStatus().name());m.put("issueType",n(t.getIssueTypeName()));m.put("labels",labels(t.getLabelsJson()));m.put("storyPoint",t.getStoryPoint());m.put("startDate",t.getStartDate());m.put("dueDate",t.getDueDate());m.put("sprint",t.getSprint()==null?null:Map.of("id",t.getSprint().getId(),"name",n(t.getSprint().getName())));m.put("nativeParentId",t.getParentTask()==null?null:t.getParentTask().getId());m.put("providerParentKey",n(t.getParentExternalKey())); String json=json(m); return new Snapshot(json,AiHashes.sha256(json)); }
+ private List<String> labels(String raw){try{if(raw==null||raw.isBlank())return List.of();String[] a=mapper.readValue(raw,String[].class);return Arrays.stream(a).filter(Objects::nonNull).sorted().toList();}catch(Exception e){return List.of();}}
+ private String json(Object o){try{return mapper.writeValueAsString(o);}catch(Exception e){throw new IllegalStateException(e);}} private static String n(String v){return v==null?"":v;} public record Snapshot(String payloadJson,String hash){}
+}

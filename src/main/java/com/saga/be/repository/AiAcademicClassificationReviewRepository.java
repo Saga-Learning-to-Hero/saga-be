@@ -1,0 +1,1 @@
+package com.saga.be.repository; import com.saga.be.entity.ai.AiAcademicClassificationReview; import java.util.UUID; import org.springframework.data.jpa.repository.JpaRepository; public interface AiAcademicClassificationReviewRepository extends JpaRepository<AiAcademicClassificationReview,UUID>{ boolean existsByClassification_Id(UUID classificationId); }

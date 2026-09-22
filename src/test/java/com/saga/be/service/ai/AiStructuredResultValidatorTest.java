@@ -40,7 +40,8 @@ class AiStructuredResultValidatorTest {
 		UUID evidenceId = UUID.randomUUID();
 		FakeAiModelProvider fake = new FakeAiModelProvider();
 		AiProviderResponse response = fake.analyze(new AiAnalysisRequest(UUID.randomUUID(), com.saga.be.entity.enums.AiProviderRole.PRIMARY, AiSystemContract.UNTRUSTED_ARTIFACT_DATA, List.of(new AiAnalysisRequest.AiEvidenceInput(evidenceId, "COMMIT_MESSAGE", "commit", "{}", null))));
-		assertThat(validator.invalidReason(response.result(), Set.of(evidenceId))).isEmpty();
+		assertThat(response.result()).isInstanceOf(AiStructuredResult.class);
+		assertThat(validator.invalidReason((AiStructuredResult) response.result(), Set.of(evidenceId))).isEmpty();
 	}
 
 	private static AiStructuredResult valid(UUID evidenceId) {

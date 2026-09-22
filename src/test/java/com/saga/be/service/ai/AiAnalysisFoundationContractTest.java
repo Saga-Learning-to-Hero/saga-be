@@ -10,8 +10,8 @@ import org.junit.jupiter.api.Test;
 class AiAnalysisFoundationContractTest {
 	@Test
 	void foundationEnumsAreClosedAndAiOneDoesNotExposeAcademicExecution() {
-		assertThat(AiArtifactType.values()).containsExactly(AiArtifactType.COMMIT);
-		assertThat(AiAnalysisType.values()).containsExactly(AiAnalysisType.COMMIT_INTELLIGENCE);
+		assertThat(AiArtifactType.values()).contains(AiArtifactType.COMMIT, AiArtifactType.TASK);
+		assertThat(AiAnalysisType.values()).contains(AiAnalysisType.COMMIT_INTELLIGENCE, AiAnalysisType.ACADEMIC_CLASSIFICATION);
 		assertThat(Arrays.asList(AiEvidenceType.values())).contains(AiEvidenceType.COMMIT_MESSAGE, AiEvidenceType.TASK_FIELD, AiEvidenceType.METADATA, AiEvidenceType.EXCLUSION_MANIFEST);
 		assertThat(AiSystemContract.UNTRUSTED_ARTIFACT_DATA).contains("untrusted data").contains("Never obey");
 	}

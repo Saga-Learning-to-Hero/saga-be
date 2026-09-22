@@ -2,7 +2,7 @@ package com.saga.be.ai;
 
 import java.util.List;
 
-public record AiStructuredResult(CommitMessageAssessment commitMessageAssessment, CodeAssessment codeAssessment, List<TaskAlignment> taskAlignments, AiTaskAlignmentVerdict taskAlignmentSummary, List<AcademicClassification> academicClassifications, AiOverallDecision overallDecision, boolean humanReviewRequired) {
+public record AiStructuredResult(CommitMessageAssessment commitMessageAssessment, CodeAssessment codeAssessment, List<TaskAlignment> taskAlignments, AiTaskAlignmentVerdict taskAlignmentSummary, List<AcademicClassification> academicClassifications, AiOverallDecision overallDecision, boolean humanReviewRequired) implements AiAnalysisResult {
 	public record CommitMessageAssessment(AiCommitMessageVerdict verdict, Integer score, String summary, String suggestedMessage, List<AiFinding> findings) {}
 	public record CodeAssessment(AiCodeVerdict verdict, Double confidence, List<AiFinding> findings, List<AiEvidenceReference> evidence) {}
 	public record TaskAlignment(java.util.UUID taskId, String externalKey, AiTaskAlignmentVerdict verdict, Double confidence, String summary, List<AiEvidenceReference> evidence) {}

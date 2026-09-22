@@ -1,3 +1,3 @@
 package com.saga.be.entity.enums;
 
-public enum AiAnalysisType { COMMIT_INTELLIGENCE }
+public enum AiAnalysisType { COMMIT_INTELLIGENCE, ACADEMIC_CLASSIFICATION }

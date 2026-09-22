@@ -14,8 +14,12 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController @Profile("!test") @RequestMapping("/api/projects/{projectId}/ai") @SecurityRequirement(name = "SAGA_SESSION")
 public class ProjectAiAnalysisController {
-	private final AiAnalysisSubmissionService submissions; private final AiAnalysisReadService reads;
-	public ProjectAiAnalysisController(AiAnalysisSubmissionService submissions, AiAnalysisReadService reads) { this.submissions = submissions; this.reads = reads; }
+	private final AiAnalysisSubmissionService submissions; private final AiAcademicSubmissionService academicSubmissions; private final AiAnalysisReadService reads;
+	public ProjectAiAnalysisController(AiAnalysisSubmissionService submissions, AiAcademicSubmissionService academicSubmissions, AiAnalysisReadService reads) { this.submissions = submissions; this.academicSubmissions=academicSubmissions; this.reads = reads; }
+	@PostMapping("/tasks/{taskId}/academic-analyses")
+	public ResponseEntity<AiAnalysisResponse> submitTaskAcademic(@AuthenticationPrincipal SagaUserPrincipal principal,@PathVariable UUID projectId,@PathVariable UUID taskId){ var run=academicSubmissions.submitTask(principal.getUserId(),projectId,taskId);return ResponseEntity.status(HttpStatus.ACCEPTED).body(reads.get(principal.getUserId(),projectId,run.getId())); }
+	@PostMapping("/commits/{gitCommitId}/academic-analyses")
+	public ResponseEntity<AiAnalysisResponse> submitCommitAcademic(@AuthenticationPrincipal SagaUserPrincipal principal,@PathVariable UUID projectId,@PathVariable UUID gitCommitId){ var run=academicSubmissions.submitCommit(principal.getUserId(),projectId,gitCommitId);return ResponseEntity.status(HttpStatus.ACCEPTED).body(reads.get(principal.getUserId(),projectId,run.getId())); }
 	@PostMapping("/commits/{gitCommitId}/analyses")
 	public ResponseEntity<AiAnalysisResponse> submit(@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId, @PathVariable UUID gitCommitId) {
 		AiAnalysisSubmissionService.Submission submission = submissions.submit(principal.getUserId(), projectId, gitCommitId);
