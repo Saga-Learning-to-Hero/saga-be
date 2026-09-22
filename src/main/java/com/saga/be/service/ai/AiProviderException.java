@@ -4,5 +4,6 @@ package com.saga.be.service.ai;
 public class AiProviderException extends RuntimeException {
 	private final String safeCode;
 	public AiProviderException(String safeCode) { super(safeCode); this.safeCode = safeCode; }
+	public AiProviderException(String safeCode, Throwable cause) { super(safeCode, cause); this.safeCode = safeCode; }
 	public String safeCode() { return safeCode; }
 }
