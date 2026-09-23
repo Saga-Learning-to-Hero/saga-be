@@ -1,0 +1,192 @@
+Project saga_be {
+  database_type: 'MySQL'
+  Note: 'Figure 2.9 - Database schema: AI analysis'
+}
+
+Table ai_course_settings {
+  id char(36) [pk, not null]
+  course_id char(36) [not null, unique]
+  automation_enabled tinyint(1) [not null]
+  allow_platform_fallback tinyint(1) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table ai_course_provider_credential {
+  id char(36) [pk, not null]
+  course_id char(36) [not null]
+  provider_role varchar(32) [not null]
+  provider varchar(32) [not null]
+  encrypted_secret text [not null]
+  encryption_nonce varchar(32) [not null]
+  encryption_key_version int [not null]
+  fingerprint char(64) [not null]
+  last_four varchar(4) [not null]
+  status varchar(32) [not null]
+  created_by_user_id char(36)
+  last_successful_use_at datetime(6)
+  revoked_at datetime(6)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table ai_analysis_run {
+  id char(36) [pk, not null]
+  project_id char(36)
+  course_id char(36)
+  artifact_type varchar(32) [not null]
+  artifact_id char(36) [not null]
+  artifact_revision varchar(128) [not null]
+  analysis_type varchar(64) [not null]
+  status varchar(32) [not null]
+  evidence_hash char(64) [not null]
+  policy_version varchar(64) [not null]
+  prompt_version varchar(64) [not null]
+  schema_version varchar(64) [not null]
+  taxonomy_version varchar(64)
+  provider_config_hash char(64) [not null]
+  idempotency_key char(64) [not null, unique]
+  requested_by_user_id char(36)
+  started_at datetime(6)
+  completed_at datetime(6)
+  failure_code varchar(64)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table ai_analysis_evidence {
+  id char(36) [pk, not null]
+  analysis_run_id char(36) [not null]
+  evidence_type varchar(64) [not null]
+  source_ref varchar(512) [not null]
+  content_hash char(64) [not null]
+  payload_json mediumtext
+  metadata_json mediumtext
+  ordinal_index int [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table ai_analysis_provider_decision {
+  id char(36) [pk, not null]
+  analysis_run_id char(36) [not null]
+  provider_role varchar(32) [not null]
+  provider_key varchar(64) [not null]
+  provider_config_hash char(64) [not null]
+  credential_source varchar(16)
+  course_credential_id char(36)
+  credential_fingerprint char(64)
+  model_id varchar(128) [not null]
+  model_revision varchar(128)
+  route varchar(32) [not null]
+  started_at datetime(6)
+  status varchar(32) [not null]
+  structured_result_json mediumtext
+  schema_valid tinyint(1)
+  latency_ms bigint
+  input_units bigint
+  output_units bigint
+  cost_metadata_json mediumtext
+  safe_error_code varchar(64)
+  completed_at datetime(6)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table ai_analysis_adjudication {
+  id char(36) [pk, not null]
+  analysis_run_id char(36) [not null, unique]
+  outcome varchar(32) [not null]
+  disagreement_details_json mediumtext
+  human_review_required tinyint(1) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table ai_progress_narrative {
+  id char(36) [pk, not null]
+  analysis_run_id char(36) [not null, unique]
+  facts_json mediumtext [not null]
+  overview text [not null]
+  highlights_json mediumtext [not null]
+  concerns_json mediumtext [not null]
+  recommendations_json mediumtext [not null]
+  blockers_json mediumtext [not null]
+  due_soon_overdue_note text [not null]
+  human_review_recommended tinyint(1) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table ai_task_intelligence {
+  id char(36) [pk, not null]
+  project_id char(36) [not null]
+  analysis_run_id char(36) [not null, unique]
+  task_id char(36) [not null]
+  task_revision varchar(128) [not null]
+  evidence_strength varchar(32) [not null]
+  summary text [not null]
+  deviation_detected tinyint(1) [not null]
+  deviation_summary text
+  human_review_required tinyint(1) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table ai_risk_analysis {
+  id char(36) [pk, not null]
+  project_id char(36) [not null]
+  analysis_run_id char(36) [not null, unique]
+  risk_level varchar(16) [not null]
+  reasons_json mediumtext [not null]
+  recommended_actions_json mediumtext [not null]
+  confidence double
+  human_review_recommended tinyint(1) [not null]
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table ai_academic_classification {
+  id char(36) [pk, not null]
+  project_id char(36) [not null]
+  analysis_run_id char(36) [not null]
+  artifact_type varchar(32) [not null]
+  artifact_id char(36) [not null]
+  artifact_revision varchar(128) [not null]
+  syllabus_version_id char(36) [not null]
+  target_type varchar(32) [not null]
+  phase_id char(36)
+  deliverable_id char(36)
+  confidence double [not null]
+  ai_summary text
+  status varchar(32) [not null]
+  provenance varchar(32) [not null]
+  source_classification_id char(36)
+  reviewed_at datetime(6)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Table ai_academic_classification_review {
+  id char(36) [pk, not null]
+  classification_id char(36) [not null, unique]
+  action varchar(32) [not null]
+  reviewer_user_id char(36) [not null]
+  reason text
+  corrected_target_type varchar(32)
+  corrected_phase_id char(36)
+  corrected_deliverable_id char(36)
+  created_at datetime(6) [not null]
+  updated_at datetime(6) [not null]
+}
+
+Ref: ai_analysis_evidence.analysis_run_id > ai_analysis_run.id
+Ref: ai_analysis_provider_decision.analysis_run_id > ai_analysis_run.id
+Ref: ai_analysis_provider_decision.course_credential_id > ai_course_provider_credential.id
+Ref: ai_analysis_adjudication.analysis_run_id - ai_analysis_run.id
+Ref: ai_progress_narrative.analysis_run_id - ai_analysis_run.id
+Ref: ai_task_intelligence.analysis_run_id - ai_analysis_run.id
+Ref: ai_risk_analysis.analysis_run_id - ai_analysis_run.id
+Ref: ai_academic_classification.analysis_run_id > ai_analysis_run.id
+Ref: ai_academic_classification.source_classification_id > ai_academic_classification.id
+Ref: ai_academic_classification_review.classification_id - ai_academic_classification.id
