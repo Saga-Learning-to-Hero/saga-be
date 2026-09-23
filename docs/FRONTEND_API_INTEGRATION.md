@@ -30,7 +30,6 @@ Không cần soi các phần sau:
 
 ```text
 integration/provider internals
-RabbitMQ consumers
 Neo4j projection workers
 Redis infrastructure
 JPA entities

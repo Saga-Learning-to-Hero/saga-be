@@ -19,7 +19,6 @@ SAGA kết hợp dữ liệu học thuật/đồ án với hoạt động trên 
 | Build | Maven Wrapper |
 | Primary database | MySQL |
 | Graph database | Neo4j |
-| Async messaging | RabbitMQ |
 | In-memory / ephemeral data | Redis |
 | Incoming provider events | GitHub / Jira Webhook |
 | Backend → Browser realtime | Server-Sent Events (SSE) |
@@ -30,7 +29,7 @@ SAGA kết hợp dữ liệu học thuật/đồ án với hoạt động trên 
 
 **MySQL là Source of Truth (Nguồn dữ liệu chuẩn duy nhất).**
 
-Neo4j là **Graph Read Model / Projection có thể rebuild**. Redis là **hạ tầng ephemeral**. RabbitMQ là **event transport**, không phải database nghiệp vụ.
+Neo4j là **Graph Read Model / Projection có thể rebuild**. Redis là **hạ tầng ephemeral**, không phải database nghiệp vụ.
 
 Ứng dụng không được dựa vào dual-write trực tiếp MySQL + Neo4j làm cơ chế consistency.
 
@@ -71,9 +70,6 @@ Spring Boot Webhook Ingress
       |
       v
 Validation + Idempotency
-      |
-      v
-RabbitMQ
       |
       v
 Business Processing
@@ -140,7 +136,7 @@ Package domain/feature lồng nhau chỉ được tạo **khi feature đó đã 
 | `auth` | Logic workflow tài khoản/authentication. Chiến lược session/token **chưa chốt**. |
 | `service` | Business rule và orchestration cốt lõi của SAGA. |
 | `integration` | Giao tiếp với provider bên ngoài như Jira và GitHub. |
-| `messaging` | RabbitMQ, inbox/outbox, idempotency, hạ tầng event bất đồng bộ. |
+| `messaging` | inbox/outbox, idempotency, hạ tầng event bất đồng bộ. |
 | `realtime` | Phát SSE, vòng đời kết nối, versioning realtime, Redis fan-out khi cần. |
 | `graph` | Orchestration projection/query đồ thị và mapping đặc thù graph. |
 | `repository` | Truy cập persistence. |
@@ -153,13 +149,12 @@ Package domain/feature lồng nhau chỉ được tạo **khi feature đó đã 
 
 ---
 
-## 5. Vai trò của MySQL / Neo4j / RabbitMQ / Redis
+## 5. Vai trò của MySQL / Neo4j / Redis
 
 | Thành phần | Vai trò |
 | --- | --- |
 | MySQL | Source of Truth cho trạng thái nghiệp vụ. |
 | Neo4j | Graph Read Model / Projection, có thể rebuild từ dữ liệu authoritative. |
-| RabbitMQ | Async Message Broker: vận chuyển và đệm event. Không phải database nghiệp vụ. |
 | Redis | Cache / Rate Limiting / Realtime Fan-out. Redis **không** phải durable Source of Truth. |
 
 ---
@@ -168,18 +163,17 @@ Package domain/feature lồng nhau chỉ được tạo **khi feature đó đã 
 
 1. **Controller không chứa business logic.**
 2. **Controller không gọi trực tiếp client Jira/GitHub.**
-3. **Controller không thao tác trực tiếp Neo4j, RabbitMQ hoặc Redis.**
+3. **Controller không thao tác trực tiếp Neo4j hoặc Redis.**
 4. **MySQL là trạng thái nghiệp vụ authoritative.**
 5. **Neo4j phải rebuild được từ dữ liệu/event authoritative.**
 6. **Không dual-write trực tiếp MySQL và Neo4j như một logical transaction.**
 7. **Xử lý Webhook phải idempotent.**
-8. **RabbitMQ consumer phải chịu được redelivery.**
-9. **Khi realtime được triển khai, SSE event phải hỗ trợ version/gap recovery.**
-10. **Không coi Redis là durable event source.**
-11. **Không đưa WebFlux / R2DBC / reactive infrastructure vào trừ khi có Decision thay thế baseline Spring MVC.**
-12. **Không thêm database, broker, framework, hoặc pattern kiến trúc lớn nếu chưa cập nhật `docs/SAGA_DECISION_LOG.md`.**
-13. **Không commit secret, provider token, credential, hoặc production connection string.**
-14. **Không tạo package/class suy đoán cho feature chưa được thiết kế.**
+8. **Khi realtime được triển khai, SSE event phải hỗ trợ version/gap recovery.**
+9. **Không coi Redis là durable event source.**
+10. **Không đưa WebFlux / R2DBC / reactive infrastructure vào trừ khi có Decision thay thế baseline Spring MVC.**
+11. **Không thêm database, broker, framework, hoặc pattern kiến trúc lớn nếu chưa cập nhật `docs/SAGA_DECISION_LOG.md`.**
+12. **Không commit secret, provider token, credential, hoặc production connection string.**
+13. **Không tạo package/class suy đoán cho feature chưa được thiết kế.**
 
 ---
 
@@ -207,7 +201,7 @@ docs/FRONTEND_API_INTEGRATION.md
 controller/
 ```
 
-Provider client nội bộ, RabbitMQ consumer, projection worker, hạ tầng Redis, repository và entity là chi tiết implement của Backend.
+Provider client nội bộ, projection worker, hạ tầng Redis, repository và entity là chi tiết implement của Backend.
 
 Repository này không chứa Frontend code.
 
@@ -224,7 +218,6 @@ Các phần sau **CHƯA TRIỂN KHAI**:
 - chiến lược session/token
 - tích hợp Jira / GitHub
 - Webhook
-- RabbitMQ topology
 - Webhook Inbox processor / Transactional Outbox publisher
 - Redis Rate Limiting / Redis realtime fan-out
 - Neo4j projection / Graph API
@@ -236,7 +229,7 @@ MySQL schema / Flyway V1 (52 tables) = **đã có**. Xem `docs/SAGA_V2_ERD.md`.
 Trước khi giả định ứng dụng chạy được local, kiểm tra:
 
 1. `docs/SAGA_CURRENT_STATE.md`;
-2. trạng thái cấu hình local MySQL / Neo4j / RabbitMQ / Redis;
+2. trạng thái cấu hình local MySQL / Neo4j / Redis;
 3. profile / biến môi trường đã được giới thiệu hay chưa;
 4. Flyway migration đã tồn tại hay chưa.
 
@@ -257,7 +250,6 @@ Pull request thay đổi bất kỳ mục nào dưới đây phải cập nhật
 - ngữ nghĩa phát event;
 - hành vi tích hợp Jira/GitHub;
 - trách nhiệm Redis;
-- RabbitMQ topology;
 - contract realtime/SSE;
 - ownership của package;
 - yêu cầu deploy/runtime.

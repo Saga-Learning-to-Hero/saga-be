@@ -21,7 +21,7 @@ Architecture decisions DEC-001–DEC-023 remain. Additional locks: **DEC-016** (
 | `identity_map` tied to mixed identities / Cognito | `identity_map.user_account_id` + `provider` | JIRA and GITHUB mappings on the same user. |
 | Polymorphic notification recipients | `user_notification.recipient_user_id` | Always `user_account`. |
 | Runtime-only contribution | `assessment_run` + `assessment_result` | Historical snapshots. |
-| (none) | `outbox_event` | MySQL → RabbitMQ → projection. No MySQL+Neo4j dual-write. |
+| (none) | `outbox_event` | MySQL → scheduled worker → projection (no message broker; see DEC-037). No MySQL+Neo4j dual-write. |
 
 Useful old semantics preserved (cleaned):
 
@@ -131,7 +131,7 @@ Recipient is `user_account`. Delivery goes to `firebase_installation` (many devi
 
 ### Outbox
 
-`outbox_event` is infrastructure for reliable async propagation. Consumers (RabbitMQ, Neo4j projection) are **not** implemented in this pass.
+`outbox_event` is infrastructure for reliable async propagation. Consumer (Neo4j projection, via DB-backed scheduled worker — no message broker, see DEC-037) is **not** implemented in this pass.
 
 ### UUID
 

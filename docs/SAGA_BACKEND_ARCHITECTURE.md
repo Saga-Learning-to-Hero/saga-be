@@ -86,11 +86,6 @@ Không tạo nested package suy đoán trước khi feature tương ứng đư�
       |                        |                        |
       |                        v                        |
       |                 +-------------+                 |
-      |                 | RabbitMQ    |                 |
-      |                 +------+------+                 |
-      |                        |                        |
-      |                        v                        |
-      |                 +-------------+                 |
       |                 | Business    |                 |
       |                 | Processing  |                 |
       |                 +------+------+                 |
@@ -134,7 +129,6 @@ Không được:
 
 - chứa assessment algorithm;
 - gọi trực tiếp client Jira/GitHub;
-- gọi trực tiếp RabbitMQ để orchestration nghiệp vụ;
 - thao tác trực tiếp Redis;
 - thao tác trực tiếp Neo4j;
 - viết persistence query.
@@ -242,7 +236,6 @@ Trách nhiệm dự kiến:
 
 ```text
 messaging/
-├── rabbitmq/
 ├── inbox/
 ├── outbox/
 └── idempotency/
@@ -250,18 +243,14 @@ messaging/
 
 Cây package chính xác chỉ được tạo khi bắt đầu implement.
 
+Không có message broker (RabbitMQ hoặc tương đương) trong kiến trúc hiện tại; SAGA BE xử lý webhook đồng bộ trong request và dùng DB-backed outbox/scheduled worker cho công việc bất đồng bộ (xem `docs/SAGA_DECISION_LOG.md`).
+
 Concern của messaging gồm:
 
 - webhook deduplication;
-- durable queue topology;
-- Publisher Confirm;
-- Manual ACK phía consumer;
-- chính sách Retry;
-- xử lý Dead Letter Queue (DLQ);
-- Idempotency phía consumer;
+- chính sách Retry cho outbox worker;
+- Idempotency phía xử lý;
 - phát Transactional Outbox.
-
-RabbitMQ vận chuyển event. RabbitMQ không phải kho nghiệp vụ authoritative.
 
 ---
 
@@ -399,12 +388,6 @@ Redis dành cho concern ephemeral/tốc độ cao, ví dụ:
 
 Delivery kiểu Redis Pub/Sub không được xem là durable history.
 
-### RabbitMQ
-
-RabbitMQ cung cấp buffering và vận chuyển event bất đồng bộ.
-
-Trạng thái nghiệp vụ phải recover được mà không coi queue là primary database.
-
 ---
 
 ## 6. Pipeline xử lý Webhook (mục tiêu)
@@ -427,12 +410,6 @@ HTTP Ingress
 Inbox / Accepted Event
       |
       v
-RabbitMQ
-      |
-      v
-Consumer
-      |
-      v
 Business Service
       |
       v
@@ -449,9 +426,7 @@ ACK only after safe processing boundary
 Yêu cầu:
 
 - redelivery từ provider không được tạo side effect trùng;
-- Retry phải bounded;
-- poison message cần chiến lược Dead Letter Queue (DLQ);
-- consumer phải chịu được redelivery;
+- Retry (outbox worker) phải bounded;
 - request handler phải tránh tính toán graph nặng.
 
 ---
@@ -537,7 +512,7 @@ Java 21
 Virtual Threads where appropriate
 ```
 
-Không đưa stack reactive một phần vào bằng cách trộn blocking JPA/AMQP code với reactive event-loop code.
+Không đưa stack reactive một phần vào bằng cách trộn blocking JPA code với reactive event-loop code.
 
 Nếu project chuyển sang WebFlux / R2DBC / reactive infrastructure, đó là thay đổi kiến trúc và phải supersede Decision hiện có trong `SAGA_DECISION_LOG.md`.
 
@@ -567,8 +542,7 @@ Backend cuối cùng phải chịu được:
 - webhook trùng;
 - event lệch thứ tự;
 - timeout từ provider;
-- RabbitMQ redelivery;
-- consumer crash;
+- outbox worker crash giữa chừng;
 - Neo4j downtime;
 - Redis restart;
 - SSE disconnect/reconnect;

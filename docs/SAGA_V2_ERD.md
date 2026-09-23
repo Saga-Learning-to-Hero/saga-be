@@ -505,8 +505,7 @@ erDiagram
 ```text
 MySQL transaction
     → outbox_event
-    → RabbitMQ (later)
-    → async consumers (later)
+    → scheduled worker (DB-backed, no message broker — see DEC-037)
     → Neo4j projection / other processors (later)
 ```
 

@@ -166,7 +166,7 @@ Existing Auth/schema tests remain. New unit tests cover identity uniqueness, OAu
 
 ## Unresolved limitations
 
-- RabbitMQ outbox **relay** is still not implemented (events are written to `outbox_event` when publisher is used; webhook ingest currently acknowledges after receipt persist).
+- No message broker is part of the architecture; `outbox_event` rows are relayed by a DB-backed scheduled worker, not a queue consumer (webhook ingest currently acknowledges after receipt persist).
 - Full paginated GitHub/Jira history sync workers are scaffolded via `sync_job_log` INITIAL jobs; provider pagination loops should be completed when live credentials exist.
 - Spring Security WebAuthn filter chain is not wired until `SAGA_WEBAUTHN_ENABLED=true` and RP is configured.
 - GitHub App PKCS#1 key wrap is best-effort; prefer PKCS#8 PEM.

@@ -20,7 +20,7 @@ Giá trị trạng thái:
 | DEC-002 | MySQL là Source of Truth | ĐÃ CHỐT KIẾN TRÚC | 2026-08-19 |
 | DEC-003 | Neo4j là Graph Read Model có thể rebuild | ĐÃ CHỐT KIẾN TRÚC | 2026-08-19 |
 | DEC-004 | Không dual-write trực tiếp MySQL + Neo4j | ĐÃ CHỐT KIẾN TRÚC | 2026-08-19 |
-| DEC-005 | RabbitMQ là broker bất đồng bộ | ĐÃ CHỐT KIẾN TRÚC | 2026-08-19 |
+| DEC-005 | RabbitMQ là broker bất đồng bộ | ĐÃ BỊ THAY THẾ (xem DEC-037) | 2026-08-19 |
 | DEC-006 | GitHub/Jira inbound realtime dùng Webhook | ĐÃ CHỐT KIẾN TRÚC | 2026-08-19 |
 | DEC-007 | Backend → Browser realtime dùng SSE | ĐÃ CHỐT KIẾN TRÚC | 2026-08-19 |
 | DEC-008 | Baseline Spring MVC + Java 21; không dùng WebFlux làm baseline | ĐÃ CHỐT KIẾN TRÚC | 2026-08-19 |
@@ -52,6 +52,7 @@ Giá trị trạng thái:
 | DEC-034 | Academic runtime is Semester / Class / Course | ĐÃ CHỐT KIẾN TRÚC | 2026-08-29 |
 | DEC-035 | Email delivery is outbox then worker | ĐÃ CHỐT KIẾN TRÚC | 2026-08-29 |
 | DEC-036 | Course roster uses invitation identity without phantom accounts | ĐÃ CHỐT KIẾN TRÚC | 2026-08-29 |
+| DEC-037 | Không dùng message broker (RabbitMQ); async xử lý bằng DB-backed outbox/scheduled worker | ĐÃ CHỐT KIẾN TRÚC | 2026-09-24 |
 
 ---
 
@@ -144,7 +145,7 @@ Fail sau khi MySQL đã commit nhưng trước khi Neo4j được cập nhật s
 
 # DEC-005 — RabbitMQ là broker bất đồng bộ
 
-**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC  
+**Trạng thái:** ĐÃ BỊ THAY THẾ bởi DEC-037 (2026-09-24)
 **Ngày:** 2026-08-19
 
 ## Quyết định
@@ -781,6 +782,42 @@ V1 `student_course_invitation.student_profile_id` is NOT NULL and has no email/s
 ## Hệ quả
 
 Admin roster APIs: template, preview, confirm, read. No fake users. No Team. No Graph. No direct SMTP from the business transaction.
+
+---
+
+# DEC-037 — Không dùng message broker (RabbitMQ); async xử lý bằng DB-backed outbox/scheduled worker
+
+**Trạng thái:** ĐÃ CHỐT KIẾN TRÚC
+**Ngày:** 2026-09-24
+
+## Bối cảnh
+
+DEC-005 (2026-08-19) chốt dùng RabbitMQ làm broker bất đồng bộ, nhưng RabbitMQ chưa từng được wire vào bất kỳ luồng nghiệp vụ nào. Một audit toàn repo (source, config, dependency, test, docs, CI, Docker/Railway) được thực hiện để xác nhận trạng thái thực tế trước khi quyết định gỡ bỏ.
+
+Audit không tìm thấy bất kỳ `ACTIVE_RUNTIME_USE` nào: không có `RabbitTemplate`/`convertAndSend`, không có `@RabbitListener`/`@RabbitHandler`, không có `Queue`/`Exchange`/`Binding` bean khai báo thủ công, không có `CachingConnectionFactory`, không có consumer hay publisher nào trong `src/main` hoặc `src/test`. Dependency (`spring-boot-starter-amqp`, `spring-boot-starter-amqp-test`) và property (`spring.rabbitmq.*`, `management.health.rabbit.enabled`) tồn tại nhưng hoàn toàn inert — `application.properties` tự ghi chú RabbitMQ "on the classpath but unused by current request flow". Toàn bộ async xử lý thực tế trong codebase (email outbox, FCM delivery, AI analysis execution) đã dùng pattern DB-backed outbox + scheduled worker (`EmailOutboxService`/`EmailOutboxWorker`, `FcmDeliveryService`/`FcmDeliveryWorker`), không phụ thuộc RabbitMQ.
+
+Một tài liệu (`SAGA_CURRENT_STATE.md`) còn chứa khẳng định sai lệch rằng RabbitMQ ở trạng thái "CONFIGURED / CONNECTED", mâu thuẫn trực tiếp với ghi chú trên và với thực tế audit.
+
+## Quyết định
+
+Gỡ bỏ RabbitMQ khỏi kiến trúc SAGA. Tiếp tục dùng pattern DB-backed outbox + scheduled worker (đã chứng minh hoạt động qua Email/FCM outbox) cho mọi công việc bất đồng bộ. Không giới thiệu broker thay thế (không Kafka, không broker khác).
+
+Cụ thể đã gỡ: dependency `spring-boot-starter-amqp`/`spring-boot-starter-amqp-test` khỏi `pom.xml`; property `spring.rabbitmq.*` khỏi `application-dev.properties`/`application-local.properties`; `management.health.rabbit.enabled` khỏi `application.properties`/`application-tx-it.properties`; entry `RabbitAutoConfiguration` khỏi `spring.autoconfigure.exclude` trong `application-test.properties`; thư mục placeholder `infra/rabbitmq/`; cập nhật các tài liệu tham chiếu RabbitMQ như đang tồn tại trong kiến trúc (README.md, SAGA_BACKEND_ARCHITECTURE.md, SAGA_CURRENT_STATE.md, FRONTEND_API_INTEGRATION.md, INTEGRATION_ATTRIBUTION_V1_REPORT.md, SAGA_BACKEND_REQUIREMENTS_DEPENDENCIES_CONSTRAINTS.md, và các tài liệu liên quan khác).
+
+Các entry `excludeName`-based `RabbitAutoConfiguration` còn lại rải rác trong ~59 test file (`@EnableAutoConfiguration(excludeName = {...})`) được giữ nguyên có chủ đích: `excludeName` không yêu cầu class tồn tại trên classpath, nên các entry này vô hại về mặt chức năng sau khi gỡ dependency; sửa 59 file cho một cleanup thuần cosmetic không mang lại lợi ích chức năng bị coi là rủi ro regression không tương xứng.
+
+## Các lựa chọn khác
+
+- Giữ nguyên RabbitMQ trong dependency/config "phòng khi cần sau này": bị loại vì đây là infrastructure không dùng, làm tăng bề mặt vận hành và gây hiểu lầm (như đã thấy ở khẳng định sai "CONFIGURED / CONNECTED").
+- Thay RabbitMQ bằng broker khác (Kafka, v.v.): bị loại vì không có yêu cầu nghiệp vụ nào chứng minh cần một broker; pattern DB-backed outbox hiện tại đã đáp ứng đủ nhu cầu async hiện có.
+
+## Hệ quả
+
+Dependency graph đơn giản hơn, ít một hạ tầng phải vận hành/giám sát (không cần RabbitMQ instance ở dev/prod). Mọi async work tiếp tục dùng pattern outbox + scheduled worker đã kiểm chứng, đồng nghĩa yêu cầu Retry bounded, worker idempotent, và xử lý lại sau crash không tạo side effect trùng (§4.4 `SAGA_BACKEND_REQUIREMENTS_DEPENDENCIES_CONSTRAINTS.md`) vẫn áp dụng như cũ, chỉ khác cơ chế vận chuyển.
+
+## Migration
+
+Không cần migration DB (V1-V33 không đổi). Thay đổi hoàn toàn ở tầng dependency Maven, property file, và tài liệu.
 
 ---
 

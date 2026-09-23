@@ -32,7 +32,6 @@ Architecture skeleton đã có. Flyway V1–V6 immutable. Auth V1 complete. Inte
 | Relational persistence | Spring Data JPA + MySQL Driver |
 | Validation | Bean Validation |
 | Graph persistence | Spring Data Neo4j |
-| Messaging | Spring for RabbitMQ |
 | Redis | Spring Data Redis + Spring Session Data Redis |
 | Observability | Spring Boot Actuator |
 | Migration | Flyway |
@@ -74,7 +73,6 @@ Placeholder vận hành nằm tại:
 infra/
 ├── docker/
 ├── neo4j/
-├── rabbitmq/
 └── redis/
 
 scripts/
@@ -118,7 +116,6 @@ Profile `local` đã cấu hình kết nối tới các service DEV qua environm
 | MySQL | Source of Truth | CONFIGURED / CONNECTED |
 | Neo4j | Graph Read Model / Projection | CONFIGURED / CONNECTED |
 | Redis / Valkey | Cache / Rate Limit / Ephemeral Realtime Support | CONFIGURED / CONNECTED |
-| RabbitMQ | Async Message Broker | CONFIGURED / CONNECTED |
 
 Đây là **CONFIGURED / CONNECTED**, không phải business feature đã implement.
 
@@ -131,7 +128,7 @@ Profile `dev` (`application-dev.properties`) đã được chuẩn bị cho Rail
 
 Railway không dùng file `.env`. Credential được inject bằng Environment Variables. Railway tự inject `PORT`; ứng dụng bind `server.port=${PORT:8080}`. Healthcheck: `GET /actuator/health`.
 
-MySQL schema V1+V2+V3+V4+V5: V1/V2/V3/V4 immutable; V5 adds versioned syllabus academic tables and additive `subject` columns. Redis/Valkey is used for Spring Session (ephemeral). Neo4j/RabbitMQ topology vẫn chưa implement.
+MySQL schema V1+V2+V3+V4+V5: V1/V2/V3/V4 immutable; V5 adds versioned syllabus academic tables and additive `subject` columns. Redis/Valkey is used for Spring Session (ephemeral). Neo4j projection vẫn chưa implement. Không có message broker (RabbitMQ hoặc tương đương) trong kiến trúc.
 
 ---
 
@@ -178,7 +175,7 @@ Cụ thể, các phần sau **CHƯA TRIỂN KHAI**:
 - email ownership verification for personal registration (future enhancement);
 - MFA as a full login replacement (WebAuthn is feature-flagged step-up only);
 - JWT / refresh tokens;
-- RabbitMQ topology / outbox relay to graph;
+- DB-backed outbox relay to graph;
 - Neo4j schema / graph projection of academic structure;
 - student roster import / Excel; Team / TeamMember; graph projection of academic runtime;
 - invitation/enrollment email flows (generic outbox exists; those products do not);
@@ -198,7 +195,7 @@ Các Decision quan trọng hiện tại:
 - MySQL là Source of Truth.
 - Neo4j là Graph Read Model có thể rebuild.
 - Không dual-write trực tiếp MySQL + Neo4j.
-- RabbitMQ cho xử lý event bất đồng bộ.
+- DB-backed outbox + scheduled worker cho xử lý event bất đồng bộ (không có message broker).
 - Webhook GitHub/Jira cho inbound event.
 - SSE cho Backend → Browser realtime.
 - Baseline Spring MVC + Java 21.
@@ -274,11 +271,10 @@ Thứ tự khuyến nghị:
 ```text
 1. Configure GOOGLE_CLIENT_ID / SECRET and smoke-test Google browser login (PENDING_CONFIGURATION if unset)
 2. Implement Jira/GitHub webhook ingress + identity mapping
-4. Introduce RabbitMQ topology
-5. Implement transactional outbox publisher/consumers
-6. Design Neo4j graph model/projection
-7. Add versioned SSE delivery
-8. Implement Continuous Assessment pipeline
+3. Implement transactional outbox publisher/consumers (DB-backed, no message broker)
+4. Design Neo4j graph model/projection
+5. Add versioned SSE delivery
+6. Implement Continuous Assessment pipeline
 ```
 
 Thứ tự chỉ được đổi khi có nhu cầu dự án tường minh.
@@ -309,7 +305,6 @@ Ví dụ:
 Auth local login implemented
 Google OAuth implemented
 Flyway V1 shipped
-RabbitMQ topology shipped
 Webhook idempotency shipped
 Neo4j projection shipped
 SSE v1 contract shipped

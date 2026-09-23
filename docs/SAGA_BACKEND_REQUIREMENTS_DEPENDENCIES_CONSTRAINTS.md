@@ -73,7 +73,6 @@ Dependency ban đầu từ Spring Initializr:
 | MySQL Driver | JDBC driver |
 | Validation | Hỗ trợ validation request/domain |
 | Spring Data Neo4j | Persistence projection/query Neo4j |
-| Spring for RabbitMQ | Messaging RabbitMQ |
 | Spring Data Redis | Truy cập Redis theo kiểu imperative |
 | Spring Boot Actuator | Endpoint health/metrics/vận hành |
 | Flyway Migration | SQL schema có version |
@@ -152,22 +151,15 @@ Giả định bị cấm:
 
 ---
 
-## 4.4 RabbitMQ
+## 4.4 Messaging bất đồng bộ
 
-RabbitMQ là event transport/buffering.
+Không có message broker (RabbitMQ hoặc tương đương) trong kiến trúc hiện tại.
 
-Yêu cầu độ tin cậy khi đã cấu hình:
+Công việc bất đồng bộ dùng DB-backed outbox + scheduled worker:
 
-- durable topology khi cần;
-- persistent message khi cần;
-- Publisher Confirm;
-- Manual ACK phía consumer;
 - Retry bounded;
-- Dead Letter Queue (DLQ);
-- consumer idempotent;
-- prefetch/concurrency tinh chỉnh theo đo đạc.
-
-Redelivery của consumer không được tạo side effect nghiệp vụ trùng.
+- worker idempotent;
+- xử lý lại sau crash không được tạo side effect nghiệp vụ trùng.
 
 ---
 
@@ -305,7 +297,6 @@ Không được phép:
 
 - business algorithm;
 - gọi provider client;
-- orchestration RabbitMQ trực tiếp;
 - truy cập Redis trực tiếp;
 - thao tác Neo4j trực tiếp.
 
@@ -383,7 +374,6 @@ Nhóm kỳ vọng theo thời gian:
 - integration test controller/security;
 - integration test repository;
 - test Idempotency của webhook;
-- test RabbitMQ redelivery;
 - test reconciliation của projection;
 - test SSE reconnect/gap;
 - contract test cho provider client;

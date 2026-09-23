@@ -18,7 +18,7 @@ Backend kết hợp dữ liệu học thuật/đồ án với activity từ **Gi
 
 Graph phục vụ query/visualization, không chỉ UI decoration.
 
-Luồng mục tiêu (DECIDED, chưa implement): GitHub/Jira Webhook → validation/idempotency → RabbitMQ → business processing → MySQL (Source of Truth) → Outbox/Projection → Neo4j; realtime change → SSE → Next.js.
+Luồng mục tiêu (DECIDED, chưa implement): GitHub/Jira Webhook → validation/idempotency → xử lý đồng bộ trong request + DB-backed outbox (không có message broker, xem DEC-037) → business processing → MySQL (Source of Truth) → Outbox/Projection → Neo4j; realtime change → SSE → Next.js.
 
 ## 2. Current architecture
 
@@ -48,7 +48,6 @@ Chưa có tài liệu trong `saga-be` xác nhận: Next.js App Router, TypeScrip
 | --- | --- | --- | --- |
 | MySQL | Aiven | Source of Truth | CONFIGURED / CONNECTED (local) |
 | Neo4j | AuraDB | Graph Read Model / Projection | CONFIGURED / CONNECTED (local). Projection **NOT IMPLEMENTED** |
-| RabbitMQ | CloudAMQP | Async messaging | CONFIGURED / CONNECTED (local). Topology **NOT IMPLEMENTED** |
 | Redis/Valkey | Aiven | Ephemeral / Spring Session | CONFIGURED / CONNECTED (local). Session store **IMPLEMENTED**. Cache strategy **NOT IMPLEMENTED** |
 | Backend hosting | Railway | DEV runtime | CONFIGURED / ONLINE. Health `GET /actuator/health` = UP. Auto deploy from GitHub = enabled |
 
@@ -62,7 +61,7 @@ Tất cả **ĐÃ CHỐT KIẾN TRÚC** trong `SAGA_DECISION_LOG.md`:
 | DEC-002 | MySQL = Source of Truth |
 | DEC-003 | Neo4j = rebuildable Graph Read Model / Projection |
 | DEC-004 | Không direct dual-write MySQL + Neo4j; dùng MySQL + outbox/projection |
-| DEC-005 | RabbitMQ = async broker |
+| DEC-005 | RabbitMQ = async broker — ĐÃ BỊ THAY THẾ bởi DEC-037 (không dùng message broker; DB-backed outbox/scheduled worker) |
 | DEC-006 | GitHub/Jira inbound = Webhook |
 | DEC-007 | Backend → browser = SSE |
 | DEC-008 | Spring MVC + Java 21; không WebFlux baseline |
@@ -122,7 +121,6 @@ Profiles: `application.properties` (chung), `application-local.properties`, `app
 - MySQL: CONFIGURED / CONNECTED — PASS
 - Neo4j: CONFIGURED / CONNECTED — PASS
 - Redis/Valkey: CONFIGURED / CONNECTED — PASS
-- RabbitMQ: CONFIGURED / CONNECTED — PASS
 - Actuator: `GET /actuator/health` expose `health,info`; local `show-details=always`
 - Developer docs: `GET /` landing, Swagger UI `/swagger-ui.html`, OpenAPI `/v3/api-docs`
 - mvn test: BUILD SUCCESS (profile `test`, không nối cloud)
@@ -205,7 +203,7 @@ Firebase/FCM runtime vẫn **OPTIONAL**; table `firebase_installation` nằm tro
 
 - Spring Boot skeleton + technical-layer packages
 - Docs kiến trúc / Decision Log / FE contract placeholder
-- Local connectivity: MySQL, Neo4j, Redis/Valkey, RabbitMQ
+- Local connectivity: MySQL, Neo4j, Redis/Valkey
 - Profile `local`, `dev`, `test`
 - Actuator `health,info`
 - Native `.env` import (`optional:file:.env[.properties]`)
@@ -222,7 +220,6 @@ Firebase/FCM runtime vẫn **OPTIONAL**; table `firebase_installation` nằm tro
 - Transactional Outbox / webhook inbox / idempotency store
 - Graph projection / Neo4j schema / Graph API
 - Redis cache / rate-limit strategy
-- RabbitMQ topology
 - SSE business events
 - Notification / email provider
 - Assessment engine
@@ -268,7 +265,6 @@ Chỉ provider + vai trò. Không ghi host, URI, username, password.
 
 - Aiven: MySQL DEV, Redis/Valkey DEV
 - Neo4j Aura: Graph Read Model DEV
-- CloudAMQP: RabbitMQ DEV
 - Railway: saga-be DEV runtime ONLINE (profile `dev`, auto deploy from GitHub)
 
 Credentials sống trong environment variables / secret store của provider. **Never put them in this file.**

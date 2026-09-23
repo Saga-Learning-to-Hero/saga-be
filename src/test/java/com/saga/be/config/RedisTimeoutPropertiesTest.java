@@ -23,7 +23,6 @@ class RedisTimeoutPropertiesTest {
 		assertThat(base.getProperty("management.endpoint.health.probes.enabled")).isEqualTo("true");
 		assertThat(base.getProperty("management.endpoint.health.group.liveness.include")).isEqualTo("ping");
 		assertThat(base.getProperty("management.health.neo4j.enabled")).isEqualTo("false");
-		assertThat(base.getProperty("management.health.rabbit.enabled")).isEqualTo("false");
 		assertThat(base.getProperty("management.endpoints.web.exposure.include")).isEqualTo("health,info,metrics");
 		assertThat(base.getProperty("management.metrics.enable.lettuce")).isEqualTo("true");
 		Properties dev = load("application-dev.properties");
