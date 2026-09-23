@@ -155,6 +155,23 @@ public class StudentDashboardService {
 
 	@Transactional(readOnly = true)
 	public StudentDashboardResponse get(UUID userId, UUID courseId) {
+		return get(userId, courseId, null);
+	}
+
+	/**
+	 * {@code sprintId == null} is the exact pre-existing behavior: the {@code currentSprint} block
+	 * reflects the project's current active sprint. When {@code sprintId} is given, it must be a
+	 * local {@link Sprint#getId()} belonging to this student's own project (never resolved by
+	 * {@code externalSprintId}, name, or any Jira-source inference) and is used ONLY to select
+	 * which sprint's stats populate the {@code currentSprint} block. Actionable alerts (MSR,
+	 * ghosting, peer-review-pending) and personal task/commit metrics are current/project-wide by
+	 * contract and are computed against the project's real current sprint / all-time data exactly
+	 * as before, regardless of {@code sprintId} -- selecting an old sprint must never fabricate a
+	 * historical snapshot of state this schema does not actually persist (task's live status,
+	 * current GitHub/Jira connection, current team role, current alerts).
+	 */
+	@Transactional(readOnly = true)
+	public StudentDashboardResponse get(UUID userId, UUID courseId, UUID sprintId) {
 		CourseEnrollment enrollment =
 				enrollments.findFetchedActiveByUserAndCourse(userId, courseId).orElse(null);
 		if (enrollment == null) {
@@ -198,6 +215,7 @@ public class StudentDashboardService {
 		UUID projectId = project.getId();
 		UUID studentId = profile.getId();
 		Sprint current = selectCurrentSprint(projectId);
+		Sprint selectedSprint = sprintId == null ? current : requireOwnSprint(sprintId, projectId);
 		GithubProjection github = githubProjection(projectId);
 		StudentDashboardTaskMetricsResponse taskMetrics = taskMetrics(projectId, studentId);
 		List<AttentionRow> anomalies = classifyAnomalies(projectId, studentId);
@@ -206,7 +224,7 @@ public class StudentDashboardService {
 				courseDto,
 				teamDto,
 				new StudentDashboardIntegrationsResponse(jiraSummary(projectId), github.dto()),
-				current == null ? null : toSprintDto(current, projectId),
+				selectedSprint == null ? null : toSprintDto(selectedSprint, projectId),
 				new StudentDashboardMetricsResponse(taskMetrics, commitMetrics(projectId, studentId)),
 				activeTasks(projectId, studentId, anomalies),
 				recentCommits(projectId, studentId),
@@ -223,6 +241,20 @@ public class StudentDashboardService {
 						github,
 						taskMetrics,
 						anomalies));
+	}
+
+	/**
+	 * Local-canonical, project-scoped, state-agnostic lookup (historical/completed sprints are
+	 * allowed; only {@code deletedAt} excludes a row) -- never resolved by {@code
+	 * externalSprintId}/name, so two Jira sources sharing the same external sprint id can never be
+	 * confused. A sprint that does not exist and a sprint that belongs to a different project take
+	 * the identical not-found path, so neither leaks the other project's sprint's existence.
+	 */
+	private Sprint requireOwnSprint(UUID sprintId, UUID projectId) {
+		return sprints
+				.findActiveByIdAndProject_Id(sprintId, projectId)
+				.orElseThrow(() -> new AcademicException(
+						AcademicErrorCode.SPRINT_NOT_FOUND, HttpStatus.NOT_FOUND, "Sprint was not found."));
 	}
 
 	private static StudentDashboardCourseResponse toCourse(Course course) {

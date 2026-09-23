@@ -15,7 +15,12 @@ public record StudentDashboardResponse(
 				StudentDashboardTeamResponse team,
 		@Schema(description = "Null when there is no team project yet.")
 				StudentDashboardIntegrationsResponse integrations,
-		@Schema(description = "Null when the project has no non-deleted sprint whose Jira state is active.")
+		@Schema(
+						description =
+								"The selected sprint's stats. With no ?sprintId= query param, this is the project's "
+										+ "current active sprint (null when there is none). With ?sprintId=, this is that "
+										+ "local Sprint's stats instead (historical/completed sprints allowed) -- everything "
+										+ "else in this response stays current/project-wide regardless of the selection.")
 				StudentDashboardSprintResponse currentSprint,
 		@Schema(description = "Null when there is no team project. Empty zeros when the student has no personal work.")
 				StudentDashboardMetricsResponse myMetrics,

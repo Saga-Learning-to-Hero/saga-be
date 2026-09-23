@@ -1,6 +1,7 @@
 package com.saga.be.controller;
 
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -84,7 +85,7 @@ class StudentDashboardControllerWebTest {
 		UUID teamId = UUID.fromString("44444444-4444-4444-8444-444444444444");
 		UUID projectId = UUID.fromString("55555555-5555-4555-8555-555555555555");
 		UUID sprintId = UUID.fromString("66666666-6666-4666-8666-666666666666");
-		when(dashboard.get(eq(userId), eq(courseId)))
+		when(dashboard.get(eq(userId), eq(courseId), isNull()))
 				.thenReturn(new StudentDashboardResponse(
 						new StudentDashboardStudentResponse(
 								studentId, userId, "SE111111", "Alpha", "https://example.com/a.png", "MEMBER"),
@@ -203,7 +204,7 @@ class StudentDashboardControllerWebTest {
 
 	@Test
 	void noTeamContractKeepsTeamIntegrationsAndSprintNull() throws Exception {
-		when(dashboard.get(eq(userId), eq(courseId)))
+		when(dashboard.get(eq(userId), eq(courseId), isNull()))
 				.thenReturn(new StudentDashboardResponse(
 						new StudentDashboardStudentResponse(UUID.randomUUID(), userId, "SE111111", "Alpha", null, null),
 						new StudentDashboardCourseResponse(courseId, "SWP391-SE18", "SWP391", "Software", "FA26"),
@@ -240,7 +241,7 @@ class StudentDashboardControllerWebTest {
 
 	@Test
 	void forbiddenEnrollmentUsesCanonicalCode() throws Exception {
-		when(dashboard.get(eq(userId), eq(courseId)))
+		when(dashboard.get(eq(userId), eq(courseId), isNull()))
 				.thenThrow(new AcademicException(
 						AcademicErrorCode.STUDENT_COURSE_FORBIDDEN,
 						HttpStatus.FORBIDDEN,
@@ -248,5 +249,38 @@ class StudentDashboardControllerWebTest {
 		mockMvc.perform(get("/api/student/courses/" + courseId + "/dashboard"))
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.code").value("STUDENT_COURSE_FORBIDDEN"));
+	}
+
+	@Test
+	void explicitSprintIdQueryParamIsForwardedToTheService() throws Exception {
+		UUID sprintId = UUID.fromString("66666666-6666-4666-8666-666666666666");
+		when(dashboard.get(eq(userId), eq(courseId), eq(sprintId)))
+				.thenReturn(new StudentDashboardResponse(
+						new StudentDashboardStudentResponse(UUID.randomUUID(), userId, "SE111111", "Alpha", null, "MEMBER"),
+						new StudentDashboardCourseResponse(courseId, "SWP391-SE18", "SWP391", "Software", "FA26"),
+						null,
+						null,
+						null,
+						null,
+						List.of(),
+						List.of(),
+						List.of(),
+						List.of()));
+
+		mockMvc.perform(get("/api/student/courses/" + courseId + "/dashboard").param("sprintId", sprintId.toString()))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.student.teamRole").value("MEMBER"));
+	}
+
+	@Test
+	void unknownOrForeignSprintIdMapsToSafeNotFound() throws Exception {
+		UUID sprintId = UUID.fromString("77777777-7777-4777-8777-777777777779");
+		when(dashboard.get(eq(userId), eq(courseId), eq(sprintId)))
+				.thenThrow(new AcademicException(
+						AcademicErrorCode.SPRINT_NOT_FOUND, HttpStatus.NOT_FOUND, "Sprint was not found."));
+
+		mockMvc.perform(get("/api/student/courses/" + courseId + "/dashboard").param("sprintId", sprintId.toString()))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("SPRINT_NOT_FOUND"));
 	}
 }
