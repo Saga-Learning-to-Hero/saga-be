@@ -15,6 +15,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Slice;
@@ -43,6 +44,11 @@ public class TaskDeadlineWarningService {
 	private final NotificationService notifications;
 	private final TaskDeadlineProperties properties;
 	private final Clock clock;
+
+	@Autowired
+	public TaskDeadlineWarningService(TaskRepository tasks, BusinessWarningRepository warnings, NotificationService notifications, TaskDeadlineProperties properties) {
+		this(tasks, warnings, notifications, properties, Clock.systemUTC());
+	}
 
 	public TaskDeadlineWarningService(TaskRepository tasks, BusinessWarningRepository warnings, NotificationService notifications, TaskDeadlineProperties properties, Clock clock) {
 		this.tasks = tasks;

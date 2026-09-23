@@ -46,6 +46,23 @@ class AiProgressFactsBuilderQueryCountTest {
 	}
 
 	@Test
+	void springAutowiredConstructorDefaultsToASystemClockWithoutRequiringAClockBean() {
+		// Regression guard: production has no java.time.Clock bean registered anywhere (unlike
+		// the sibling dashboard services, which get one from DashboardProperties/AdminDashboardProperties).
+		// The 7-arg constructor below is the one Spring actually autowires; it must not require a
+		// Clock parameter, or bean creation fails at startup exactly as it did in production
+		// ("No qualifying bean of type 'java.time.Clock' available").
+		when(tasks.countStatusAndStoryPointsForAssignee(any(), any())).thenReturn(List.of());
+		when(tasks.countOverdueForProject(any(), any(), any())).thenReturn(0L);
+		when(tasks.countDueSoonForProject(any(), any(), any(), any())).thenReturn(0L);
+		when(tasks.findAttentionNonDoneByProjectAndAssignee(any(), any(), any())).thenReturn(List.of());
+		var builder = new AiProgressFactsBuilder(new ObjectMapper(), tasks, taskIntelligence, riskAnalysis, teams, teamMembers, new TaskDeadlineProperties());
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		org.assertj.core.api.Assertions.assertThatCode(() -> builder.buildStudent(project, UUID.randomUUID())).doesNotThrowAnyException();
+	}
+
+	@Test
 	void studentFactsWithManyAttentionTasksIssuesExactlyOneBulkQueryPerCollectionNotOnePerTask() {
 		UUID projectId = UUID.randomUUID();
 		Project project = new Project(); project.setId(projectId);

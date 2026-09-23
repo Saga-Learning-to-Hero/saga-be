@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
@@ -31,6 +32,11 @@ public class AiTaskIntelligenceSnapshotBuilder {
 	private final TaskWorkSessionRepository workSessions;
 	private final TaskDeadlineProperties deadlineProperties;
 	private final Clock clock;
+
+	@Autowired
+	public AiTaskIntelligenceSnapshotBuilder(ObjectMapper mapper, TaskGitCommitLinkRepository commitLinks, TaskWorkSessionRepository workSessions, TaskDeadlineProperties deadlineProperties) {
+		this(mapper, commitLinks, workSessions, deadlineProperties, Clock.systemUTC());
+	}
 
 	public AiTaskIntelligenceSnapshotBuilder(ObjectMapper mapper, TaskGitCommitLinkRepository commitLinks, TaskWorkSessionRepository workSessions, TaskDeadlineProperties deadlineProperties, Clock clock) {
 		this.mapper = mapper;

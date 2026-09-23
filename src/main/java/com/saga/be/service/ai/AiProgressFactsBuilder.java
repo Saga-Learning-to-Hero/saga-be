@@ -14,6 +14,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
@@ -37,6 +38,11 @@ public class AiProgressFactsBuilder {
 	private final TeamMemberRepository teamMembers;
 	private final TaskDeadlineProperties deadlineProperties;
 	private final Clock clock;
+
+	@Autowired
+	public AiProgressFactsBuilder(ObjectMapper mapper, TaskRepository tasks, AiTaskIntelligenceRepository taskIntelligence, AiRiskAnalysisRepository riskAnalysis, TeamRepository teams, TeamMemberRepository teamMembers, TaskDeadlineProperties deadlineProperties) {
+		this(mapper, tasks, taskIntelligence, riskAnalysis, teams, teamMembers, deadlineProperties, Clock.systemUTC());
+	}
 
 	public AiProgressFactsBuilder(ObjectMapper mapper, TaskRepository tasks, AiTaskIntelligenceRepository taskIntelligence, AiRiskAnalysisRepository riskAnalysis, TeamRepository teams, TeamMemberRepository teamMembers, TaskDeadlineProperties deadlineProperties, Clock clock) {
 		this.mapper = mapper; this.tasks = tasks; this.taskIntelligence = taskIntelligence; this.riskAnalysis = riskAnalysis; this.teams = teams; this.teamMembers = teamMembers; this.deadlineProperties = deadlineProperties; this.clock = clock;

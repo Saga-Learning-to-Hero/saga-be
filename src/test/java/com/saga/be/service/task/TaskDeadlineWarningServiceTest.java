@@ -122,4 +122,15 @@ class TaskDeadlineWarningServiceTest {
 		service().scan();
 		verifyNoInteractions(tasks, warnings, notifications);
 	}
+
+	@Test
+	void springAutowiredConstructorDefaultsToASystemClockWithoutRequiringAClockBean() {
+		// Regression guard: production has no java.time.Clock bean registered anywhere. The 4-arg
+		// constructor below is the one Spring actually autowires; it must not require a Clock
+		// parameter, or bean creation fails at startup exactly as it did in production
+		// ("No qualifying bean of type 'java.time.Clock' available").
+		properties.setDeadlineWarningsEnabled(false);
+		TaskDeadlineWarningService service = new TaskDeadlineWarningService(tasks, warnings, notifications, properties);
+		org.assertj.core.api.Assertions.assertThatCode(service::scan).doesNotThrowAnyException();
+	}
 }
