@@ -2,6 +2,7 @@ package com.saga.be.entity.ai;
 
 import com.saga.be.entity.BaseEntity;
 import com.saga.be.entity.account.UserAccount;
+import com.saga.be.entity.academic.Course;
 import com.saga.be.entity.enums.AiAnalysisStatus;
 import com.saga.be.entity.enums.AiAnalysisType;
 import com.saga.be.entity.enums.AiArtifactType;
@@ -20,7 +21,10 @@ import org.hibernate.annotations.JdbcTypeCode;
 	@Index(name = "ix_ai_analysis_run_project_artifact_created", columnList = "project_id, artifact_type, artifact_id, created_at"),
 	@Index(name = "ix_ai_analysis_run_status_started", columnList = "status, started_at")})
 public class AiAnalysisRun extends BaseEntity {
-	@ManyToOne(fetch = FetchType.LAZY, optional = false) @JoinColumn(name = "project_id", nullable = false) private Project project;
+	/** Null only for COURSE-scope progress narratives, which have no single owning project. */
+	@ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "project_id") private Project project;
+	/** Set only for COURSE-scope progress narratives; null for every other analysis type/scope. */
+	@ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "course_id") private Course course;
 	@Enumerated(EnumType.STRING) @Column(name = "artifact_type", length = 32, nullable = false) private AiArtifactType artifactType;
 	@JdbcTypeCode(Types.CHAR) @Column(name = "artifact_id", columnDefinition = "char(36)", nullable = false) private UUID artifactId;
 	@Column(name = "artifact_revision", length = 128, nullable = false) private String artifactRevision;

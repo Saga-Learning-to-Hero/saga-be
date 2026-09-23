@@ -84,7 +84,9 @@ class DatabaseFoundationLockTest {
 		assertEquals(List.of("V26__jira_task_failover_remote_issue_binding.sql"), byVersion.get(26));
 		assertEquals(List.of("V27__ai_analysis_foundation.sql"), byVersion.get(27));
 		assertEquals(List.of("V28__ai_academic_classification.sql"), byVersion.get(28));
-		assertEquals(28, byVersion.keySet().stream().mapToInt(Integer::intValue).max().orElse(0));
+		assertEquals(List.of("V29__ai_task_intelligence_and_risk_analysis.sql"), byVersion.get(29));
+		assertEquals(List.of("V30__ai_progress_narrative_secondary_and_adjudication.sql"), byVersion.get(30));
+		assertEquals(30, byVersion.keySet().stream().mapToInt(Integer::intValue).max().orElse(0));
 	}
 
 	private static String allMigrations() throws IOException {

@@ -14,6 +14,10 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 
 	boolean existsByTask_IdAndGitCommit_Id(UUID taskId, UUID gitCommitId);
 
+	/** Bounded, most-recent-first linked commits for one task (Task Intelligence evidence). */
+	@Query("select l from TaskGitCommitLink l join fetch l.gitCommit where l.task.id = :taskId order by l.gitCommit.committedAt desc, l.gitCommit.id desc")
+	List<TaskGitCommitLink> findByTask_IdOrderByGitCommit_CommittedAtDesc(@Param("taskId") UUID taskId, Pageable pageable);
+
 	@Query(
 			"""
 			select l from TaskGitCommitLink l

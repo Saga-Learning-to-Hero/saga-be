@@ -111,6 +111,54 @@ class RemoteAiModelProviderTest {
 	}
 
 	@Test
+	void taskIntelligenceGoldenFixtureMapsAndPreservesWireContract() throws Exception {
+		UUID run = UUID.randomUUID();
+		UUID evidence = UUID.fromString("33333333-3333-3333-3333-333333333301");
+		String golden = fixture("task_intelligence_response.json");
+		assertThatCode(() -> mapper.treeToValue(payload(golden), com.saga.be.ai.AiTaskIntelligenceResult.class)).doesNotThrowAnyException();
+		respond(golden, run);
+
+		AiProviderResponse mapped = provider().analyze(taskIntelligenceRequest(run, List.of(input(evidence, "TASK_FIELD", "{}", null))));
+
+		assertThat(calls).hasValue(1);
+		assertThat(request.get().path("analysisType").asText()).isEqualTo("TASK_INTELLIGENCE");
+		assertThat(mapped.result()).isInstanceOf(com.saga.be.ai.AiTaskIntelligenceResult.class);
+		assertThat(new AiTaskIntelligenceResultValidator().invalidReason((com.saga.be.ai.AiTaskIntelligenceResult) mapped.result(), java.util.Set.of(evidence))).isEmpty();
+	}
+
+	@Test
+	void riskAnalysisGoldenFixtureMapsAndPreservesWireContract() throws Exception {
+		UUID run = UUID.randomUUID();
+		UUID evidence = UUID.fromString("33333333-3333-3333-3333-333333333401");
+		String golden = fixture("risk_analysis_response.json");
+		assertThatCode(() -> mapper.treeToValue(payload(golden), com.saga.be.ai.AiRiskAnalysisResult.class)).doesNotThrowAnyException();
+		respond(golden, run);
+
+		AiProviderResponse mapped = provider().analyze(riskAnalysisRequest(run, List.of(input(evidence, "TASK_FIELD", "{}", null))));
+
+		assertThat(calls).hasValue(1);
+		assertThat(request.get().path("analysisType").asText()).isEqualTo("RISK_ANALYSIS");
+		assertThat(mapped.result()).isInstanceOf(com.saga.be.ai.AiRiskAnalysisResult.class);
+		assertThat(new AiRiskAnalysisResultValidator().invalidReason((com.saga.be.ai.AiRiskAnalysisResult) mapped.result(), java.util.Set.of(evidence))).isEmpty();
+	}
+
+	@Test
+	void progressNarrativeGoldenFixtureMapsAndPreservesWireContract() throws Exception {
+		UUID run = UUID.randomUUID();
+		UUID evidence = UUID.fromString("33333333-3333-3333-3333-333333333501");
+		String golden = fixture("progress_narrative_response.json");
+		assertThatCode(() -> mapper.treeToValue(payload(golden), com.saga.be.ai.AiProgressNarrativeResult.class)).doesNotThrowAnyException();
+		respond(golden, run);
+
+		AiProviderResponse mapped = provider().analyze(progressNarrativeRequest(run, List.of(input(evidence, "METADATA", "{}", null))));
+
+		assertThat(calls).hasValue(1);
+		assertThat(request.get().path("analysisType").asText()).isEqualTo("PROGRESS_NARRATIVE");
+		assertThat(mapped.result()).isInstanceOf(com.saga.be.ai.AiProgressNarrativeResult.class);
+		assertThat(new AiProgressNarrativeResultValidator().invalidReason((com.saga.be.ai.AiProgressNarrativeResult) mapped.result(), java.util.Set.of(evidence))).isEmpty();
+	}
+
+	@Test
 	void envelopeMismatchesMalformedPayloadAndInvalidJsonAreRejectedOnce() throws Exception {
 		UUID run = UUID.randomUUID();
 		String commit = fixture("commit_intelligence_response.json");
@@ -213,7 +261,10 @@ class RemoteAiModelProviderTest {
 		status.set(200);
 		delayMillis.set(0);
 		response.set(body.replace("00000000-0000-0000-0000-000000000001", run + ":PRIMARY")
-				.replace("00000000-0000-0000-0000-000000000002", run + ":PRIMARY"));
+				.replace("00000000-0000-0000-0000-000000000002", run + ":PRIMARY")
+				.replace("00000000-0000-0000-0000-000000000003", run + ":PRIMARY")
+				.replace("00000000-0000-0000-0000-000000000004", run + ":PRIMARY")
+				.replace("00000000-0000-0000-0000-000000000005", run + ":PRIMARY"));
 	}
 
 	private RemoteAiModelProvider provider() {
@@ -236,6 +287,18 @@ class RemoteAiModelProviderTest {
 
 	private AiAnalysisRequest academicRequest(UUID run, List<AiAnalysisRequest.AiEvidenceInput> evidence) {
 		return new AiAnalysisRequest(run, AiProviderRole.PRIMARY, AiAnalysisType.ACADEMIC_CLASSIFICATION, "academic-classification-v1", "academic-taxonomy-v1", "contract", evidence);
+	}
+
+	private AiAnalysisRequest taskIntelligenceRequest(UUID run, List<AiAnalysisRequest.AiEvidenceInput> evidence) {
+		return new AiAnalysisRequest(run, AiProviderRole.PRIMARY, AiAnalysisType.TASK_INTELLIGENCE, "task-intelligence-v1", null, "contract", evidence);
+	}
+
+	private AiAnalysisRequest riskAnalysisRequest(UUID run, List<AiAnalysisRequest.AiEvidenceInput> evidence) {
+		return new AiAnalysisRequest(run, AiProviderRole.PRIMARY, AiAnalysisType.RISK_ANALYSIS, "risk-analysis-v1", null, "contract", evidence);
+	}
+
+	private AiAnalysisRequest progressNarrativeRequest(UUID run, List<AiAnalysisRequest.AiEvidenceInput> evidence) {
+		return new AiAnalysisRequest(run, AiProviderRole.PRIMARY, AiAnalysisType.PROGRESS_NARRATIVE, "progress-narrative-v1", null, "contract", evidence);
 	}
 
 	private AiAnalysisRequest.AiEvidenceInput input(UUID id, String type, String payload, String metadata) {

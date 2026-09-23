@@ -11,6 +11,8 @@ public class AiAnalysisProperties {
 	private Duration staleRunningAfter = Duration.ofMinutes(15);
 	private boolean enabled = false;
 	private String primaryProvider = "openai";
+	/** Secondary brain feature flag. OFF by default; when off, behavior is unchanged (exactly one PRIMARY inference). */
+	private boolean secondaryEnabled = false;
 	private int maxChangedFiles = 40;
 	private int maxPatchBytes = 256 * 1024;
 	private final OpenAi openai = new OpenAi();
@@ -27,6 +29,8 @@ public class AiAnalysisProperties {
 	public void setEnabled(boolean enabled) { this.enabled = enabled; }
 	public String getPrimaryProvider() { return primaryProvider; }
 	public void setPrimaryProvider(String primaryProvider) { this.primaryProvider = primaryProvider == null ? "openai" : primaryProvider; }
+	public boolean isSecondaryEnabled() { return secondaryEnabled; }
+	public void setSecondaryEnabled(boolean secondaryEnabled) { this.secondaryEnabled = secondaryEnabled; }
 	public int getMaxChangedFiles() { return maxChangedFiles; }
 	public void setMaxChangedFiles(int value) { maxChangedFiles = Math.max(1, value); }
 	public int getMaxPatchBytes() { return maxPatchBytes; }

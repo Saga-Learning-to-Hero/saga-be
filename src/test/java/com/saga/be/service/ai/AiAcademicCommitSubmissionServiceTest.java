@@ -80,11 +80,11 @@ class AiAcademicCommitSubmissionServiceTest {
  @Test void controllerReturnsAcceptedForTheCanonicalQueuedCommitAcademicRun() {
   AiAcademicSubmissionService academic=mock(AiAcademicSubmissionService.class); AiAnalysisSubmissionService intelligence=mock(AiAnalysisSubmissionService.class); AiAnalysisReadService reads=mock(AiAnalysisReadService.class); AiAnalysisRun run=new AiAnalysisRun();run.setId(UUID.randomUUID()); AiAnalysisResponse body=mock(AiAnalysisResponse.class); SagaUserPrincipal principal=new SagaUserPrincipal(userId,"u@example.test","user","User",null,AccountRole.STUDENT,false);
   when(academic.submitCommit(userId,projectId,commitId)).thenReturn(run);when(reads.get(userId,projectId,run.getId())).thenReturn(body);
-  var response=new ProjectAiAnalysisController(intelligence,academic,reads).submitCommitAcademic(principal,projectId,commitId);
+  var response=new ProjectAiAnalysisController(intelligence,academic,reads,mock(AiTaskIntelligenceSubmissionService.class),mock(AiRiskAnalysisSubmissionService.class),mock(AiProgressNarrativeSubmissionService.class),mock(AiProgressReportExportService.class)).submitCommitAcademic(principal,projectId,commitId);
   assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);assertThat(response.getBody()).isSameAs(body);verify(academic).submitCommit(userId,projectId,commitId);
  }
 
- private AiAcademicSubmissionService service() { return new AiAcademicSubmissionService(auth,mock(TaskRepository.class),commits,links,failover,context,mock(AiTaskAcademicSnapshotBuilder.class),snapshots,new AiAcademicCandidateEvidenceBuilder(new ObjectMapper()),github,runs,evidence,decisions,executor,List.of(provider),transactions); }
+ private AiAcademicSubmissionService service() { AiConfirmedExampleEvidenceBuilder examples=mock(AiConfirmedExampleEvidenceBuilder.class); when(examples.build(any())).thenReturn(List.of()); return new AiAcademicSubmissionService(auth,mock(TaskRepository.class),commits,links,failover,context,mock(AiTaskAcademicSnapshotBuilder.class),snapshots,new AiAcademicCandidateEvidenceBuilder(new ObjectMapper()),examples,github,runs,evidence,decisions,executor,List.of(provider),transactions); }
  private static SyllabusPhase phase(UUID id,String code,int order){SyllabusPhase phase=new SyllabusPhase();phase.setId(id);phase.setCode(code);phase.setName(code);phase.setOrderIndex(order);return phase;}
  private static SyllabusExpectedDeliverable deliverable(UUID id,UUID phaseId,String code,int order){SyllabusExpectedDeliverable deliverable=new SyllabusExpectedDeliverable();deliverable.setId(id);deliverable.setPhaseId(phaseId);deliverable.setCode(code);deliverable.setName(code);deliverable.setOrderIndex(order);return deliverable;}
 }

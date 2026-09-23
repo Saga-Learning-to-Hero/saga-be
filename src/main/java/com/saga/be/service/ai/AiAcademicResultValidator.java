@@ -36,6 +36,9 @@ public class AiAcademicResultValidator {
   catch(Exception ignored) { return new Candidates(syllabus,complete,Map.of(),true); }
   return new Candidates(syllabus,complete,Map.copyOf(out),false);
  }
- private static boolean legalType(String type){return "PHASE".equals(type)||"EXPECTED_DELIVERABLE".equals(type);} private static boolean confidence(Double value){return value!=null&&value>=0d&&value<=1d;} private static Optional<UUID> uuid(String value){try{return value==null?Optional.empty():Optional.of(UUID.fromString(value));}catch(IllegalArgumentException ex){return Optional.empty();}} private static boolean forbidden(String type){return "EXCLUSION_MANIFEST".equals(type);} private static boolean artifact(String type){return type!=null&&!type.startsWith("SYLLABUS_")&&!forbidden(type);}
+ private static boolean legalType(String type){return "PHASE".equals(type)||"EXPECTED_DELIVERABLE".equals(type);} private static boolean confidence(Double value){return value!=null&&value>=0d&&value<=1d;} private static Optional<UUID> uuid(String value){try{return value==null?Optional.empty():Optional.of(UUID.fromString(value));}catch(IllegalArgumentException ex){return Optional.empty();}} private static boolean forbidden(String type){return "EXCLUSION_MANIFEST".equals(type);}
+ /** Confirmed examples are citable context, not a substitute for real artifact evidence. */
+ private static boolean contextOnly(String type){return "HUMAN_CONFIRMED_EXAMPLE".equals(type);}
+ private static boolean artifact(String type){return type!=null&&!type.startsWith("SYLLABUS_")&&!forbidden(type)&&!contextOnly(type);}
  private record Candidate(UUID evidenceId) {} private record Candidates(UUID syllabusId,boolean complete,Map<String,Candidate> rows,boolean invalid) {}
 }

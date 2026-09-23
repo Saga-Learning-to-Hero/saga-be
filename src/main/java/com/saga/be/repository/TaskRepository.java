@@ -462,6 +462,74 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 	List<Object[]> countOverdueBySprintIds(
 			@Param("sprintIds") Collection<UUID> sprintIds, @Param("now") LocalDateTime now);
 
+	/**
+	 * Deterministic deadline scan candidates: non-DONE tasks with a due date at or before the
+	 * due-soon cutoff (this covers both already-overdue and due-soon-within-window tasks in one
+	 * bounded, paged query; {@link com.saga.be.service.task.TaskDeadlinePolicy} classifies each row).
+	 */
+	@Query(
+			"""
+			select t
+			from Task t
+			where t.deletedAt is null
+			  and t.status <> com.saga.be.entity.enums.TaskStatus.DONE
+			  and t.dueDate is not null
+			  and t.dueDate <= :dueSoonCutoff
+			order by t.dueDate asc, t.id asc
+			""")
+	Page<Task> findDeadlineScanCandidates(@Param("dueSoonCutoff") LocalDateTime dueSoonCutoff, Pageable pageable);
+
+	/** Progress facts: exact overdue count for one project (optionally one assignee). */
+	@Query(
+			"""
+			select count(t) from Task t
+			where t.project.id = :projectId
+			  and (:studentId is null or t.assigneeStudent.id = :studentId)
+			  and t.deletedAt is null
+			  and t.status <> com.saga.be.entity.enums.TaskStatus.DONE
+			  and t.dueDate is not null
+			  and t.dueDate < :now
+			""")
+	long countOverdueForProject(@Param("projectId") UUID projectId, @Param("studentId") UUID studentId, @Param("now") LocalDateTime now);
+
+	/** Progress facts: exact due-soon (not yet overdue) count for one project (optionally one assignee). */
+	@Query(
+			"""
+			select count(t) from Task t
+			where t.project.id = :projectId
+			  and (:studentId is null or t.assigneeStudent.id = :studentId)
+			  and t.deletedAt is null
+			  and t.status <> com.saga.be.entity.enums.TaskStatus.DONE
+			  and t.dueDate is not null
+			  and t.dueDate >= :now
+			  and t.dueDate <= :dueSoonCutoff
+			""")
+	long countDueSoonForProject(@Param("projectId") UUID projectId, @Param("studentId") UUID studentId, @Param("now") LocalDateTime now, @Param("dueSoonCutoff") LocalDateTime dueSoonCutoff);
+
+	/** Course-wide progress facts: one bulk query across every project in the course (no N+1). */
+	@Query(
+			"""
+			select count(t) from Task t
+			where t.project.id in :projectIds
+			  and t.deletedAt is null
+			  and t.status <> com.saga.be.entity.enums.TaskStatus.DONE
+			  and t.dueDate is not null
+			  and t.dueDate < :now
+			""")
+	long countOverdueForProjects(@Param("projectIds") Collection<UUID> projectIds, @Param("now") LocalDateTime now);
+
+	@Query(
+			"""
+			select count(t) from Task t
+			where t.project.id in :projectIds
+			  and t.deletedAt is null
+			  and t.status <> com.saga.be.entity.enums.TaskStatus.DONE
+			  and t.dueDate is not null
+			  and t.dueDate >= :now
+			  and t.dueDate <= :dueSoonCutoff
+			""")
+	long countDueSoonForProjects(@Param("projectIds") Collection<UUID> projectIds, @Param("now") LocalDateTime now, @Param("dueSoonCutoff") LocalDateTime dueSoonCutoff);
+
 	/** Lecturer dashboard: DONE tasks in sprints — {@code Object[]{UUID sprintId, UUID taskId}}. */
 	@Query(
 			"""

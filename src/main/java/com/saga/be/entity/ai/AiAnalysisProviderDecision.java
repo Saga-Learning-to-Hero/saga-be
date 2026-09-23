@@ -18,6 +18,7 @@ public class AiAnalysisProviderDecision extends BaseEntity {
 	@Column(name = "model_id", length = 128, nullable = false) private String modelId;
 	@Column(name = "model_revision", length = 128) private String modelRevision;
 	@Enumerated(EnumType.STRING) @Column(name = "route", length = 32, nullable = false) private AiProviderRoute route;
+	@Column(name = "started_at") private LocalDateTime startedAt;
 	@Enumerated(EnumType.STRING) @Column(name = "status", length = 32, nullable = false) private AiProviderDecisionStatus status;
 	@Column(name = "structured_result_json", columnDefinition = "MEDIUMTEXT") private String structuredResultJson;
 	@Column(name = "schema_valid") private Boolean schemaValid;

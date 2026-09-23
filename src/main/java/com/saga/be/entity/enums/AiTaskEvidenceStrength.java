@@ -1,0 +1,3 @@
+package com.saga.be.entity.enums;
+
+public enum AiTaskEvidenceStrength { NO_EVIDENCE, EARLY_EVIDENCE, ACTIVE_PROGRESS, SUBSTANTIAL_EVIDENCE, COMPLETED_EVIDENCE, INSUFFICIENT_EVIDENCE }
