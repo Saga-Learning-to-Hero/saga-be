@@ -64,7 +64,7 @@ class GitCommitClaimCutoffProjectionTest {
 
 	@BeforeEach
 	void setUp() {
-		service = new GitCommitProjectionService(commits, gitRepos, identities, students, jiraIntegrations, autoLink);
+		service = new GitCommitProjectionService(commits, gitRepos, identities, students, jiraIntegrations, autoLink, org.mockito.Mockito.mock(com.saga.be.service.ai.AiCommitAutomationTrigger.class));
 		Project project = new Project();
 		project.setId(UUID.randomUUID());
 		repo = new GitRepo();

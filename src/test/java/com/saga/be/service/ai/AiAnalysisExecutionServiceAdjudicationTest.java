@@ -49,7 +49,7 @@ class AiAnalysisExecutionServiceAdjudicationTest {
 				new AiTaskIntelligenceResultValidator(), null,
 				new AiRiskAnalysisResultValidator(), null,
 				new AiProgressNarrativeResultValidator(), null,
-				secondaryBrain, adjudication)
+				secondaryBrain, adjudication, null)
 				.execute(runId);
 
 		verify(state).fail(eq(runId), eq("AI_ANALYSIS_PROVIDER_FAILED"), eq(false));
@@ -77,7 +77,7 @@ class AiAnalysisExecutionServiceAdjudicationTest {
 				new AiTaskIntelligenceResultValidator(), null,
 				new AiRiskAnalysisResultValidator(), null,
 				new AiProgressNarrativeResultValidator(), null,
-				secondaryBrain, adjudication)
+				secondaryBrain, adjudication, null)
 				.execute(runId);
 
 		verify(state).fail(eq(runId), eq("AI_ANALYSIS_RESULT_INVALID"), eq(false));
@@ -103,7 +103,7 @@ class AiAnalysisExecutionServiceAdjudicationTest {
 				new AiTaskIntelligenceResultValidator(), null,
 				new AiRiskAnalysisResultValidator(), null,
 				new AiProgressNarrativeResultValidator(), null,
-				secondaryBrain, adjudication)
+				secondaryBrain, adjudication, null)
 				.execute(runId);
 
 		verify(state).fail(eq(runId), eq("AI_PROVIDER_TIMEOUT"), eq(false));

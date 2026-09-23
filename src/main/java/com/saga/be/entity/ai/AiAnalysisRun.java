@@ -41,4 +41,13 @@ public class AiAnalysisRun extends BaseEntity {
 	@Column(name = "started_at") private LocalDateTime startedAt;
 	@Column(name = "completed_at") private LocalDateTime completedAt;
 	@Column(name = "failure_code", length = 64) private String failureCode;
+
+	/** Every analysis type is owned by exactly one course, either directly (COURSE-scope progress
+	 * narrative) or transitively through its project. Null only if the project itself has no
+	 * course, which should not happen for any real project. */
+	public UUID resolveCourseId() {
+		if (course != null) return course.getId();
+		if (project != null && project.getCourse() != null) return project.getCourse().getId();
+		return null;
+	}
 }

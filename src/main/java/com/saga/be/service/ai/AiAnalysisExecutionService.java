@@ -14,9 +14,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 @Profile("!test")
 public class AiAnalysisExecutionService {
 	private static final Logger log = LoggerFactory.getLogger(AiAnalysisExecutionService.class);
-	private final AiAnalysisStateService state; private final List<AiModelProvider> providers; private final AiStructuredResultValidator validator; private final ObjectMapper mapper; private final AiAcademicResultValidator academicValidator; private final AiAcademicProposalFinalizationService academicFinalizer; private final AiTaskIntelligenceResultValidator taskValidator; private final AiTaskIntelligenceFinalizationService taskFinalizer; private final AiRiskAnalysisResultValidator riskValidator; private final AiRiskAnalysisFinalizationService riskFinalizer; private final AiProgressNarrativeResultValidator progressValidator; private final AiProgressNarrativeFinalizationService progressFinalizer; private final AiSecondaryBrainService secondaryBrain; private final AiAdjudicationService adjudication;
-	@Autowired public AiAnalysisExecutionService(AiAnalysisStateService state, List<AiModelProvider> providers, AiStructuredResultValidator validator, ObjectMapper mapper, AiAcademicResultValidator academicValidator, AiAcademicProposalFinalizationService academicFinalizer, AiTaskIntelligenceResultValidator taskValidator, AiTaskIntelligenceFinalizationService taskFinalizer, AiRiskAnalysisResultValidator riskValidator, AiRiskAnalysisFinalizationService riskFinalizer, AiProgressNarrativeResultValidator progressValidator, AiProgressNarrativeFinalizationService progressFinalizer, AiSecondaryBrainService secondaryBrain, AiAdjudicationService adjudication) { this.state = state; this.providers = providers; this.validator = validator; this.mapper = mapper; this.academicValidator = academicValidator; this.academicFinalizer = academicFinalizer; this.taskValidator = taskValidator; this.taskFinalizer = taskFinalizer; this.riskValidator = riskValidator; this.riskFinalizer = riskFinalizer; this.progressValidator = progressValidator; this.progressFinalizer = progressFinalizer; this.secondaryBrain = secondaryBrain; this.adjudication = adjudication; }
-	public AiAnalysisExecutionService(AiAnalysisStateService state, List<AiModelProvider> providers, AiStructuredResultValidator validator, ObjectMapper mapper) { this(state, providers, validator, mapper, new AiAcademicResultValidator(mapper), null, new AiTaskIntelligenceResultValidator(), null, new AiRiskAnalysisResultValidator(), null, new AiProgressNarrativeResultValidator(), null, null, null); }
+	private final AiAnalysisStateService state; private final List<AiModelProvider> providers; private final AiStructuredResultValidator validator; private final ObjectMapper mapper; private final AiAcademicResultValidator academicValidator; private final AiAcademicProposalFinalizationService academicFinalizer; private final AiTaskIntelligenceResultValidator taskValidator; private final AiTaskIntelligenceFinalizationService taskFinalizer; private final AiRiskAnalysisResultValidator riskValidator; private final AiRiskAnalysisFinalizationService riskFinalizer; private final AiProgressNarrativeResultValidator progressValidator; private final AiProgressNarrativeFinalizationService progressFinalizer; private final AiSecondaryBrainService secondaryBrain; private final AiAdjudicationService adjudication; private final AiCredentialResolver credentialResolver;
+	@Autowired public AiAnalysisExecutionService(AiAnalysisStateService state, List<AiModelProvider> providers, AiStructuredResultValidator validator, ObjectMapper mapper, AiAcademicResultValidator academicValidator, AiAcademicProposalFinalizationService academicFinalizer, AiTaskIntelligenceResultValidator taskValidator, AiTaskIntelligenceFinalizationService taskFinalizer, AiRiskAnalysisResultValidator riskValidator, AiRiskAnalysisFinalizationService riskFinalizer, AiProgressNarrativeResultValidator progressValidator, AiProgressNarrativeFinalizationService progressFinalizer, AiSecondaryBrainService secondaryBrain, AiAdjudicationService adjudication, AiCredentialResolver credentialResolver) { this.state = state; this.providers = providers; this.validator = validator; this.mapper = mapper; this.academicValidator = academicValidator; this.academicFinalizer = academicFinalizer; this.taskValidator = taskValidator; this.taskFinalizer = taskFinalizer; this.riskValidator = riskValidator; this.riskFinalizer = riskFinalizer; this.progressValidator = progressValidator; this.progressFinalizer = progressFinalizer; this.secondaryBrain = secondaryBrain; this.adjudication = adjudication; this.credentialResolver = credentialResolver; }
+	public AiAnalysisExecutionService(AiAnalysisStateService state, List<AiModelProvider> providers, AiStructuredResultValidator validator, ObjectMapper mapper) { this(state, providers, validator, mapper, new AiAcademicResultValidator(mapper), null, new AiTaskIntelligenceResultValidator(), null, new AiRiskAnalysisResultValidator(), null, new AiProgressNarrativeResultValidator(), null, null, null, null); }
 
 	/**
 	 * Each state mutation is transactional in AiAnalysisStateService; provider invocation is
@@ -28,6 +28,7 @@ public class AiAnalysisExecutionService {
 	public void execute(UUID runId) {
 		if (!state.claim(runId)) return;
 		long started = System.nanoTime();
+		UUID courseCredentialIdForFailure = null;
 		try {
 			AiAnalysisStateService.ExecutionInput input = state.loadExecution(runId);
 			// Independent of whatever happens to PRIMARY below: at most once, never retried, never
@@ -44,7 +45,18 @@ public class AiAnalysisExecutionService {
 				case PROGRESS_NARRATIVE -> AiSystemContract.PROGRESS_NARRATIVE_UNTRUSTED_DATA;
 				default -> AiSystemContract.UNTRUSTED_ARTIFACT_DATA;
 			};
-			AiProviderResponse response = provider.analyze(new AiAnalysisRequest(runId, input.decision().getProviderRole(), type, input.run().getPromptVersion(), input.run().getTaxonomyVersion(), contract, evidence));
+			AiCredentialSource credentialSource = input.decision().getCredentialSource() == null ? AiCredentialSource.PLATFORM : input.decision().getCredentialSource();
+			AiCredentialEnvelope envelope = null;
+			if (credentialSource == AiCredentialSource.COURSE) {
+				if (credentialResolver == null) throw new AiProviderException("AI_CREDENTIAL_ENVELOPE_UNAVAILABLE");
+				UUID courseCredentialId = input.decision().getCourseCredentialId();
+				courseCredentialIdForFailure = courseCredentialId;
+				// Decrypt-and-reseal happens exactly here, right before dispatch -- never earlier,
+				// never cached -- so the raw key exists in memory only for this one HTTP call.
+				envelope = credentialResolver.buildEnvelope(courseCredentialId, input.decision().getProviderRole(), input.run().resolveCourseId());
+			}
+			AiProviderResponse response = provider.analyze(new AiAnalysisRequest(runId, input.decision().getProviderRole(), type, input.run().getPromptVersion(), input.run().getTaxonomyVersion(), contract, evidence, credentialSource, envelope));
+			if (credentialSource == AiCredentialSource.COURSE && credentialResolver != null) credentialResolver.markSuccessful(courseCredentialIdForFailure);
 			Set<UUID> evidenceIds = input.evidence().stream().map(e -> e.getId()).collect(java.util.stream.Collectors.toSet());
 			Set<UUID> taskIds = taskIds(input.evidence()); boolean completeCoverage = completeCoverage(input.evidence());
 			Optional<String> invalidReason = switch (type) {
@@ -78,7 +90,17 @@ public class AiAnalysisExecutionService {
 			}
 			if (finalized) log.info("ai analysis completed runId={} type={} provider={} model={} durationMs={}", runId, type, provider.providerKey(), provider.modelId(), (System.nanoTime() - started) / 1_000_000L);
 			else log.info("ai analysis late result discarded runId={} type={} provider={}", runId, type, provider.providerKey());
-		} catch (Exception ex) { String code = ex instanceof AiProviderException provider ? provider.safeCode() : "AI_ANALYSIS_PROVIDER_FAILED"; state.fail(runId, code, false); log.warn("ai analysis failed runId={} type={} code={}", runId, ex.getClass().getSimpleName(), code); }
+		} catch (Exception ex) {
+			String code = ex instanceof AiProviderException provider ? provider.safeCode() : "AI_ANALYSIS_PROVIDER_FAILED";
+			// A quota/rate-limit or transient failure never proves the key itself is wrong, so it
+			// must not invalidate/revoke it (section X) -- only a genuine auth failure does.
+			if (courseCredentialIdForFailure != null && credentialResolver != null) {
+				if ("AI_PROVIDER_AUTH_FAILED".equals(code)) credentialResolver.markInvalid(courseCredentialIdForFailure);
+				else if ("AI_PROVIDER_RATE_LIMITED".equals(code)) credentialResolver.markDegraded(courseCredentialIdForFailure);
+			}
+			state.fail(runId, code, false);
+			log.warn("ai analysis failed runId={} type={} code={}", runId, ex.getClass().getSimpleName(), code);
+		}
 		finally { if (adjudication != null) adjudication.adjudicate(runId); }
 	}
 	private Set<UUID> taskIds(List<com.saga.be.entity.ai.AiAnalysisEvidence> rows) { Set<UUID> ids = new HashSet<>(); for (var row : rows) if (row.getEvidenceType() == AiEvidenceType.TASK_FIELD) try { String id = mapper.readTree(row.getPayloadJson()).path("taskId").asText(null); if (id != null) ids.add(UUID.fromString(id)); } catch (Exception ignored) {} return ids; }

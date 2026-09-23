@@ -94,6 +94,34 @@ class LecturerCourseAuthorizationTest {
 		assertEquals(HttpStatus.NOT_FOUND, ex.getStatus());
 	}
 
+	@Test
+	void requireAssignedLecturerStrictAllowsTheAssignedLecturer() {
+		when(lecturers.findByUserAccount_Id(lecturerUser.getId())).thenReturn(Optional.of(lecturerProfile));
+		assertEquals(course.getId(), authorization.requireAssignedLecturerStrict(lecturerUser, course.getId()).getId());
+	}
+
+	@Test
+	void requireAssignedLecturerStrictForbidsAnotherLecturer() {
+		UserAccount other = user(AccountRole.LECTURER);
+		LecturerProfile otherProfile = new LecturerProfile();
+		otherProfile.setId(UUID.randomUUID());
+		otherProfile.setUserAccount(other);
+		when(lecturers.findByUserAccount_Id(other.getId())).thenReturn(Optional.of(otherProfile));
+		AcademicException ex =
+				assertThrows(AcademicException.class, () -> authorization.requireAssignedLecturerStrict(other, course.getId()));
+		assertEquals(AcademicErrorCode.LECTURER_COURSE_FORBIDDEN, ex.getCode());
+	}
+
+	@Test
+	void requireAssignedLecturerStrictForbidsAdminUnlikeRequireCourse() {
+		// The whole point of this method (section XI): unlike requireCourse, ADMIN is not a
+		// generic course AI credential manager.
+		UserAccount admin = user(AccountRole.ADMIN);
+		AcademicException ex =
+				assertThrows(AcademicException.class, () -> authorization.requireAssignedLecturerStrict(admin, course.getId()));
+		assertEquals(AcademicErrorCode.LECTURER_COURSE_FORBIDDEN, ex.getCode());
+	}
+
 	private static UserAccount user(AccountRole role) {
 		UserAccount account = new UserAccount();
 		account.setId(UUID.randomUUID());

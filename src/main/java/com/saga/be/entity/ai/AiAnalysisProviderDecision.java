@@ -15,6 +15,9 @@ public class AiAnalysisProviderDecision extends BaseEntity {
 	@Enumerated(EnumType.STRING) @Column(name = "provider_role", length = 32, nullable = false) private AiProviderRole providerRole;
 	@Column(name = "provider_key", length = 64, nullable = false) private String providerKey;
 	@Column(name = "provider_config_hash", length = 64, nullable = false) private String providerConfigHash;
+	@Enumerated(EnumType.STRING) @Column(name = "credential_source", length = 16) private AiCredentialSource credentialSource;
+	@org.hibernate.annotations.JdbcTypeCode(java.sql.Types.CHAR) @Column(name = "course_credential_id", columnDefinition = "char(36)") private java.util.UUID courseCredentialId;
+	@Column(name = "credential_fingerprint", length = 64) private String credentialFingerprint;
 	@Column(name = "model_id", length = 128, nullable = false) private String modelId;
 	@Column(name = "model_revision", length = 128) private String modelRevision;
 	@Enumerated(EnumType.STRING) @Column(name = "route", length = 32, nullable = false) private AiProviderRoute route;

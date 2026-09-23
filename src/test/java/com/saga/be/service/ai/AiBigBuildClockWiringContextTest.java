@@ -186,6 +186,16 @@ class AiBigBuildClockWiringContextTest {
 		}
 
 		@Bean
+		AiCredentialResolver aiCredentialResolver() {
+			return mock(AiCredentialResolver.class);
+		}
+
+		@Bean
+		CourseAiSettingsService courseAiSettingsService() {
+			return mock(CourseAiSettingsService.class);
+		}
+
+		@Bean
 		UserAccountRepository userAccountRepository() {
 			return mock(UserAccountRepository.class);
 		}

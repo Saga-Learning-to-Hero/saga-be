@@ -60,6 +60,7 @@ public class GitCommitProjectionService {
 	private final StudentProfileRepository students;
 	private final JiraIntegrationRepository jiraIntegrations;
 	private final CommitTaskAutoLinkService autoLink;
+	private final com.saga.be.service.ai.AiCommitAutomationTrigger aiAutomation;
 
 	public GitCommitProjectionService(
 			GitCommitRepository commits,
@@ -67,13 +68,15 @@ public class GitCommitProjectionService {
 			IdentityMapRepository identities,
 			StudentProfileRepository students,
 			JiraIntegrationRepository jiraIntegrations,
-			CommitTaskAutoLinkService autoLink) {
+			CommitTaskAutoLinkService autoLink,
+			com.saga.be.service.ai.AiCommitAutomationTrigger aiAutomation) {
 		this.commits = commits;
 		this.gitRepos = gitRepos;
 		this.identities = identities;
 		this.students = students;
 		this.jiraIntegrations = jiraIntegrations;
 		this.autoLink = autoLink;
+		this.aiAutomation = aiAutomation;
 	}
 
 	@Transactional
@@ -160,6 +163,7 @@ public class GitCommitProjectionService {
 				.map(row -> row.getProjectKey())
 				.orElse(null);
 		int links = autoLink.linkCommits(repo.getProject().getId(), projectKey, persisted);
+		aiAutomation.afterCommitsPersisted(repo.getProject().getId(), persisted.stream().map(GitCommit::getId).toList());
 		return new UpsertOutcome(persisted.size(), links);
 	}
 

@@ -19,18 +19,28 @@ class AiSecondaryBrainServiceTest {
 	private AiAnalysisProperties properties;
 	private AiAnalysisProviderDecisionRepository decisions;
 	private AiResultValidation validation;
+	private AiCredentialResolver credentialResolver;
 	private final ObjectMapper mapper = new ObjectMapper();
 	private final UUID runId = UUID.randomUUID();
+	private final UUID courseCredentialId = UUID.randomUUID();
 
 	@BeforeEach
 	void setUp() {
 		properties = new AiAnalysisProperties();
 		decisions = mock(AiAnalysisProviderDecisionRepository.class);
 		validation = mock(AiResultValidation.class);
+		credentialResolver = mock(AiCredentialResolver.class);
+		// Default: a course SECONDARY credential is available, matching the pre-BYOK test
+		// expectations below (which only exercise the "secondary flag on" gate). The dedicated
+		// no-credential tests further down override this per-test.
+		when(credentialResolver.resolve(any(), any(), eq(AiProviderRole.SECONDARY), any()))
+				.thenReturn(new AiCredentialResolver.Resolution(AiCredentialResolver.Outcome.COURSE, courseCredentialId, "secondary-fingerprint"));
+		when(credentialResolver.buildEnvelope(eq(courseCredentialId), eq(AiProviderRole.SECONDARY), any()))
+				.thenReturn(new AiCredentialEnvelope(1, "AES-256-GCM", "nonce", "ciphertext"));
 	}
 
 	private AiSecondaryBrainService service(List<AiModelProvider> providers) {
-		return new AiSecondaryBrainService(properties, providers, decisions, validation, mapper);
+		return new AiSecondaryBrainService(properties, providers, decisions, validation, mapper, credentialResolver);
 	}
 
 	private AiAnalysisStateService.ExecutionInput input(AiAnalysisType type) {
@@ -113,6 +123,21 @@ class AiSecondaryBrainServiceTest {
 
 		verify(decisions).failSecondaryActive(eq(runId), eq("AI_ANALYSIS_RESULT_INVALID"), eq(false), any());
 		verify(decisions, never()).completeSecondaryRunning(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void enabledButNoCourseSecondaryCredentialIsASafeNoOpAndNeverPlatformFallback() {
+		properties.setSecondaryEnabled(true);
+		AiModelProvider secondary = secondaryProvider();
+		when(credentialResolver.resolve(any(), any(), eq(AiProviderRole.SECONDARY), any())).thenReturn(AiCredentialResolver.Resolution.UNAVAILABLE);
+
+		service(List.of(secondary)).maybeRun(input(AiAnalysisType.TASK_INTELLIGENCE));
+
+		verify(secondary, never()).analyze(any());
+		verifyNoInteractions(decisions);
+		// Confirms the resolver, not the secondary brain itself, is what is asked -- and that
+		// PLATFORM is never a valid outcome for SECONDARY regardless of what the resolver decides.
+		verify(credentialResolver, never()).buildEnvelope(any(), any(), any());
 	}
 
 	@Test

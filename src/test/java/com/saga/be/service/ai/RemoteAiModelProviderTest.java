@@ -11,6 +11,7 @@ import com.saga.be.ai.AiProviderResponse;
 import com.saga.be.ai.AiStructuredResult;
 import com.saga.be.config.AiAnalysisProperties;
 import com.saga.be.entity.enums.AiAnalysisType;
+import com.saga.be.entity.enums.AiCredentialSource;
 import com.saga.be.entity.enums.AiProviderRole;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -86,6 +87,67 @@ class RemoteAiModelProviderTest {
 		assertThat(request.get().path("provider").path("role").asText()).isEqualTo("PRIMARY");
 		assertThat(mapped.result()).isInstanceOf(AiStructuredResult.class);
 		assertThat(new AiStructuredResultValidator().invalidReason((AiStructuredResult) mapped.result(), java.util.Set.of(evidence))).isEmpty();
+	}
+
+	@Test
+	void courseCredentialEnvelopeIsSerializedOnTheActualHttpRequestWithoutPlaintext() throws Exception {
+		UUID run = UUID.randomUUID();
+		String plaintext = "course-api-key-must-never-cross-the-wire";
+		AiCredentialEnvelope envelope = new AiCredentialEnvelope(1, "AES-256-GCM", "fresh-transport-nonce", "transport-ciphertext");
+		respond(fixture("commit_intelligence_response.json"), run, AiProviderRole.PRIMARY);
+
+		provider().analyze(new AiAnalysisRequest(run, AiProviderRole.PRIMARY, AiAnalysisType.COMMIT_INTELLIGENCE,
+				"commit-intelligence-v1", null, "contract", List.of(), AiCredentialSource.COURSE, envelope));
+
+		assertThat(request.get().path("credentialSource").asText()).isEqualTo("COURSE");
+		assertThat(request.get().path("credentialEnvelope").path("version").asInt()).isEqualTo(1);
+		assertThat(request.get().path("credentialEnvelope").path("algorithm").asText()).isEqualTo("AES-256-GCM");
+		assertThat(request.get().path("credentialEnvelope").path("nonce").asText()).isEqualTo("fresh-transport-nonce");
+		assertThat(request.get().path("credentialEnvelope").path("ciphertext").asText()).isEqualTo("transport-ciphertext");
+		assertThat(mapper.writeValueAsString(request.get())).doesNotContain(plaintext);
+	}
+
+	@Test
+	void platformCredentialRequestHasNoEnvelopeAndKeepsThePlatformPath() throws Exception {
+		UUID run = UUID.randomUUID();
+		respond(fixture("commit_intelligence_response.json"), run, AiProviderRole.PRIMARY);
+
+		provider().analyze(commitRequest(run, List.of()));
+
+		assertThat(request.get().path("credentialSource").asText()).isEqualTo("PLATFORM");
+		assertThat(request.get().has("credentialEnvelope")).isFalse();
+	}
+
+	@Test
+	void courseSourceWithoutEnvelopeIsNotSilentlyDowngradedToPlatform() throws Exception {
+		UUID run = UUID.randomUUID();
+		status.set(400);
+		response.set("{\"error\":{\"code\":\"AI_CREDENTIAL_ENVELOPE_INVALID\"}}");
+		AiAnalysisRequest malformedCourseRequest = new AiAnalysisRequest(run, AiProviderRole.PRIMARY,
+				AiAnalysisType.COMMIT_INTELLIGENCE, "commit-intelligence-v1", null, "contract", List.of(),
+				AiCredentialSource.COURSE, null);
+
+		assertSafeFailureOnce(malformedCourseRequest, "AI_CREDENTIAL_ENVELOPE_INVALID");
+
+		assertThat(request.get().path("credentialSource").asText()).isEqualTo("COURSE");
+		assertThat(request.get().has("credentialEnvelope")).isFalse();
+	}
+
+	@Test
+	void secondaryProviderSendsSecondaryRoleAndItsOwnCourseEnvelope() throws Exception {
+		UUID run = UUID.randomUUID();
+		AiCredentialEnvelope envelope = new AiCredentialEnvelope(1, "AES-256-GCM", "secondary-nonce", "secondary-ciphertext");
+		respond(fixture("commit_intelligence_response.json"), run, AiProviderRole.SECONDARY);
+		AiAnalysisRequest secondaryRequest = new AiAnalysisRequest(run, AiProviderRole.SECONDARY,
+				AiAnalysisType.COMMIT_INTELLIGENCE, "commit-intelligence-v1", null, "contract", List.of(),
+				AiCredentialSource.COURSE, envelope);
+
+		new RemoteAiSecondaryModelProvider(properties(), mapper).analyze(secondaryRequest);
+
+		assertThat(request.get().path("requestId").asText()).isEqualTo(run + ":SECONDARY");
+		assertThat(request.get().path("provider").path("role").asText()).isEqualTo("SECONDARY");
+		assertThat(request.get().path("credentialSource").asText()).isEqualTo("COURSE");
+		assertThat(request.get().path("credentialEnvelope").path("ciphertext").asText()).isEqualTo("secondary-ciphertext");
 	}
 
 	@Test
@@ -258,13 +320,17 @@ class RemoteAiModelProviderTest {
 	}
 
 	private void respond(String body, UUID run) {
+		respond(body, run, AiProviderRole.PRIMARY);
+	}
+
+	private void respond(String body, UUID run, AiProviderRole role) {
 		status.set(200);
 		delayMillis.set(0);
-		response.set(body.replace("00000000-0000-0000-0000-000000000001", run + ":PRIMARY")
-				.replace("00000000-0000-0000-0000-000000000002", run + ":PRIMARY")
-				.replace("00000000-0000-0000-0000-000000000003", run + ":PRIMARY")
-				.replace("00000000-0000-0000-0000-000000000004", run + ":PRIMARY")
-				.replace("00000000-0000-0000-0000-000000000005", run + ":PRIMARY"));
+		response.set(body.replace("00000000-0000-0000-0000-000000000001", run + ":" + role)
+				.replace("00000000-0000-0000-0000-000000000002", run + ":" + role)
+				.replace("00000000-0000-0000-0000-000000000003", run + ":" + role)
+				.replace("00000000-0000-0000-0000-000000000004", run + ":" + role)
+				.replace("00000000-0000-0000-0000-000000000005", run + ":" + role));
 	}
 
 	private RemoteAiModelProvider provider() {

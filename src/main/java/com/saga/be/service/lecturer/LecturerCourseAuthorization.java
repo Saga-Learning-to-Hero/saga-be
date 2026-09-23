@@ -25,6 +25,31 @@ public class LecturerCourseAuthorization {
 		this.lecturers = lecturers;
 	}
 
+	/** Strictly the assigned lecturer -- unlike {@link #requireCourse}, ADMIN is NOT granted
+	 * access. Used for course AI credential management, which is deliberately not a generic
+	 * admin capability (section XI): an admin who is not the assigned lecturer must never be able
+	 * to configure, read the metadata of, or revoke another lecturer's course AI credentials. */
+	public Course requireAssignedLecturerStrict(UserAccount actor, UUID courseId) {
+		Course course = courses.findActiveFetchedById(courseId)
+				.or(() -> courses.findById(courseId).filter(row -> row.getDeletedAt() == null))
+				.orElseThrow(() -> new AcademicException(
+						AcademicErrorCode.COURSE_NOT_FOUND, HttpStatus.NOT_FOUND, "Course was not found."));
+		LecturerProfile profile = actor == null
+				? null
+				: lecturers.findByUserAccount_Id(actor.getId()).orElse(null);
+		if (profile == null
+				|| course.getInstructor() == null
+				|| course.getInstructor().getUserAccount() == null
+				|| !actor.getId().equals(course.getInstructor().getUserAccount().getId())
+				|| !profile.getId().equals(course.getInstructor().getId())) {
+			throw new AcademicException(
+					AcademicErrorCode.LECTURER_COURSE_FORBIDDEN,
+					HttpStatus.FORBIDDEN,
+					"Only the assigned lecturer can manage this course's AI credentials.");
+		}
+		return course;
+	}
+
 	public Course requireCourse(UserAccount actor, UUID courseId) {
 		Course course = courses.findActiveFetchedById(courseId)
 				.or(() -> courses.findById(courseId).filter(row -> row.getDeletedAt() == null))

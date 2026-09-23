@@ -47,6 +47,7 @@ public class JiraTaskProjectionService {
 	private final CommitTaskAutoLinkService autoLink;
 	private final SprintRepository sprints;
 	private final ObjectMapper mapper;
+	private final com.saga.be.service.ai.AiTaskAutomationTrigger aiAutomation;
 
 	public JiraTaskProjectionService(
 			TaskRepository tasks,
@@ -54,13 +55,15 @@ public class JiraTaskProjectionService {
 			StudentProfileRepository students,
 			CommitTaskAutoLinkService autoLink,
 			SprintRepository sprints,
-			ObjectMapper mapper) {
+			ObjectMapper mapper,
+			com.saga.be.service.ai.AiTaskAutomationTrigger aiAutomation) {
 		this.tasks = tasks;
 		this.identities = identities;
 		this.students = students;
 		this.autoLink = autoLink;
 		this.sprints = sprints;
 		this.mapper = mapper;
+		this.aiAutomation = aiAutomation;
 	}
 
 	/**
@@ -69,13 +72,18 @@ public class JiraTaskProjectionService {
 	 */
 	@Transactional
 	public int upsertBatch(JiraIntegration integration, String jiraProjectKey, List<IssueSummary> issues) {
+		return upsertBatchDetailed(integration, jiraProjectKey, issues).size();
+	}
+
+	@Transactional
+	public List<Task> upsertBatchDetailed(JiraIntegration integration, String jiraProjectKey, List<IssueSummary> issues) {
 		if (integration == null
 				|| integration.getId() == null
 				|| integration.getProject() == null
 				|| integration.getProject().getId() == null
 				|| issues == null
 				|| issues.isEmpty()) {
-			return 0;
+			return List.of();
 		}
 		assertIntegrationBelongsToItsProject(integration);
 		Project project = integration.getProject();
@@ -83,7 +91,7 @@ public class JiraTaskProjectionService {
 				.filter(item -> item != null && item.id() != null && !item.id().isBlank())
 				.toList();
 		if (valid.isEmpty()) {
-			return 0;
+			return List.of();
 		}
 		Set<String> externalIds = valid.stream().map(IssueSummary::id).collect(Collectors.toCollection(HashSet::new));
 		Map<String, Task> existing = tasks
@@ -115,7 +123,7 @@ public class JiraTaskProjectionService {
 			}
 		}
 		if (toSave.isEmpty()) {
-			return 0;
+			return List.of();
 		}
 		List<Task> persisted = saveAllConflictSafe(integration.getId(), toSave);
 		List<Task> forReverseLink = persisted.stream()
@@ -124,7 +132,8 @@ public class JiraTaskProjectionService {
 		if (!forReverseLink.isEmpty()) {
 			autoLink.linkTasks(project.getId(), jiraProjectKey, forReverseLink);
 		}
-		return persisted.size();
+		aiAutomation.afterTasksPersisted(project.getId(), persisted.stream().map(Task::getId).toList());
+		return persisted;
 	}
 
 	@Transactional

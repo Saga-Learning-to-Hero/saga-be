@@ -63,7 +63,7 @@ class GitCommitProjectionAndLinkTest {
 	void setUp() {
 		autoLink = new CommitTaskAutoLinkService(tasks, links, candidates);
 		commitsService =
-				new GitCommitProjectionService(commits, gitRepos, identities, students, jiraIntegrations, autoLink);
+				new GitCommitProjectionService(commits, gitRepos, identities, students, jiraIntegrations, autoLink, org.mockito.Mockito.mock(com.saga.be.service.ai.AiCommitAutomationTrigger.class));
 		project = new Project();
 		project.setId(UUID.randomUUID());
 		repo = new GitRepo();

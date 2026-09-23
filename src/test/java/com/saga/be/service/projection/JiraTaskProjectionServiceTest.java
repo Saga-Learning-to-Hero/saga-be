@@ -52,7 +52,7 @@ class JiraTaskProjectionServiceTest {
 	@BeforeEach
 	void setUp() {
 		service = new JiraTaskProjectionService(
-				tasks, identities, students, autoLink, sprints, new com.fasterxml.jackson.databind.ObjectMapper());
+				tasks, identities, students, autoLink, sprints, new com.fasterxml.jackson.databind.ObjectMapper(), org.mockito.Mockito.mock(com.saga.be.service.ai.AiTaskAutomationTrigger.class));
 		project = new Project();
 		project.setId(UUID.randomUUID());
 		integration = new JiraIntegration();
