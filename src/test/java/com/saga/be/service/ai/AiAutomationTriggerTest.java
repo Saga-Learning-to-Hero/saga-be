@@ -80,7 +80,7 @@ class AiAutomationTriggerTest {
 		AiRiskAnalysisSubmissionService submissions = mock(AiRiskAnalysisSubmissionService.class);
 		UUID projectId = UUID.randomUUID(), taskId = UUID.randomUUID();
 
-		new AiRiskAutomationTrigger(submissions).afterTaskIntelligenceCompleted(projectId, taskId);
+		new AiRiskAutomationTrigger(submissions).afterTaskIntelligenceCompleted(new TaskIntelligenceCompletedEvent(projectId, taskId));
 
 		verify(submissions, times(1)).submitTaskAutomatic(projectId, taskId);
 	}
@@ -91,7 +91,7 @@ class AiAutomationTriggerTest {
 		UUID projectId = UUID.randomUUID(), taskId = UUID.randomUUID();
 		when(submissions.submitTaskAutomatic(projectId, taskId)).thenThrow(new RuntimeException("boom"));
 
-		new AiRiskAutomationTrigger(submissions).afterTaskIntelligenceCompleted(projectId, taskId); // must not throw
+		new AiRiskAutomationTrigger(submissions).afterTaskIntelligenceCompleted(new TaskIntelligenceCompletedEvent(projectId, taskId)); // must not throw
 
 		verify(submissions).submitTaskAutomatic(projectId, taskId);
 	}
@@ -100,8 +100,8 @@ class AiAutomationTriggerTest {
 	void riskTriggerIsANoOpWhenProjectOrTaskIsMissing() {
 		AiRiskAnalysisSubmissionService submissions = mock(AiRiskAnalysisSubmissionService.class);
 		AiRiskAutomationTrigger trigger = new AiRiskAutomationTrigger(submissions);
-		trigger.afterTaskIntelligenceCompleted(null, UUID.randomUUID());
-		trigger.afterTaskIntelligenceCompleted(UUID.randomUUID(), null);
+		trigger.afterTaskIntelligenceCompleted(null);
+		trigger.afterTaskIntelligenceCompleted(new TaskIntelligenceCompletedEvent(UUID.randomUUID(), null));
 		verifyNoInteractions(submissions);
 	}
 }
