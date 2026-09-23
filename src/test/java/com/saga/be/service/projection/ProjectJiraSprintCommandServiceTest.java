@@ -387,7 +387,7 @@ class ProjectJiraSprintCommandServiceTest {
 	}
 
 	@Test
-	void syncAndList_namedSource_syncsThatBoardThenReturnsAllLocal() {
+	void syncAndList_namedSource_syncsThatBoardThenReturnsOnlyThatSourceLocalSprints() {
 		stubReader();
 		JiraIntegration first = activeJira();
 		first.setJiraBoardId("10");
@@ -396,7 +396,7 @@ class ProjectJiraSprintCommandServiceTest {
 		when(jiraIntegrations.findByIdAndProject_Id(second.getId(), projectId)).thenReturn(Optional.of(second));
 		when(tokens.accessToken(second)).thenReturn("token");
 		when(jiraWrite.listBoardSprints("token", second.getCloudId(), "20")).thenReturn(List.of());
-		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of());
+		when(sprints.findActiveFetchedByJiraIntegration_IdAndProject_Id(second.getId(), projectId)).thenReturn(List.of());
 
 		assertThat(service.syncAndList(userId, projectId, second.getId())).isEmpty();
 		verify(jiraWrite).listBoardSprints("token", second.getCloudId(), "20");
@@ -409,10 +409,47 @@ class ProjectJiraSprintCommandServiceTest {
 		JiraIntegration revoked = activeJira();
 		revoked.setConnectionStatus(IntegrationStatus.REVOKED);
 		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(revoked));
-		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of());
+		when(sprints.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of());
 
 		assertThat(service.syncAndList(userId, projectId)).isEmpty();
 		verify(jiraWrite, never()).listBoardSprints(any(), any(), any());
+	}
+
+	@Test
+	void syncAndList_namedSource_filtersByIntegrationEvenWhenExternalSprintIdsOverlap() {
+		stubReader();
+		JiraIntegration sourceA = activeJira();
+		JiraIntegration sourceB = activeJira();
+		sourceA.setJiraBoardId(null);
+		sourceB.setJiraBoardId(null);
+		Sprint sprintA = sprintRow(sourceA);
+		Sprint sprintB = sprintRow(sourceB);
+		sprintB.setExternalSprintId(sprintA.getExternalSprintId());
+		when(jiraIntegrations.findByIdAndProject_Id(sourceB.getId(), projectId)).thenReturn(Optional.of(sourceB));
+		when(sprints.findActiveFetchedByJiraIntegration_IdAndProject_Id(sourceB.getId(), projectId))
+				.thenReturn(List.of(sprintB));
+
+		List<ProjectSprintResponse> result = service.syncAndList(userId, projectId, sourceB.getId());
+
+		assertThat(result).hasSize(1);
+		assertThat(result.getFirst().id()).isEqualTo(sprintB.getId());
+		assertThat(result.getFirst().externalSprintId()).isEqualTo(sprintA.getExternalSprintId());
+		assertThat(result.getFirst().source().jiraIntegrationId()).isEqualTo(sourceB.getId());
+		verify(sprints, never()).findActiveByProject_Id(projectId);
+		verify(jiraWrite, never()).listBoardSprints(any(), any(), any());
+	}
+
+	@Test
+	void syncAndList_sourceFromAnotherProjectIsNotFoundBeforeProviderAccess() {
+		stubReader();
+		UUID foreignSourceId = UUID.randomUUID();
+		when(jiraIntegrations.findByIdAndProject_Id(foreignSourceId, projectId)).thenReturn(Optional.empty());
+
+		assertThatThrownBy(() -> service.syncAndList(userId, projectId, foreignSourceId))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND);
+		verifyZeroProviderInteraction();
 	}
 
 	private void verifyZeroProviderInteraction() {

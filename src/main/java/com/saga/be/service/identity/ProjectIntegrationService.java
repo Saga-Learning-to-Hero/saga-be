@@ -56,6 +56,7 @@ import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.service.audit.AuditService;
 import com.saga.be.service.jira.JiraDynamicWebhookService;
+import com.saga.be.service.projection.ProjectDataAuthorization;
 import com.saga.be.service.sync.IntegrationInitialSyncLauncher;
 import java.time.Duration;
 import java.time.Instant;
@@ -105,6 +106,7 @@ public class ProjectIntegrationService {
 	private final OutboxPublisher outbox;
 	private final IntegrationInitialSyncLauncher initialSyncLauncher;
 	private final JiraDynamicWebhookService jiraWebhooks;
+	private final ProjectDataAuthorization readerAuthorization;
 	private final TransactionTemplate writes;
 
 	public ProjectIntegrationService(
@@ -130,6 +132,7 @@ public class ProjectIntegrationService {
 			OutboxPublisher outbox,
 			IntegrationInitialSyncLauncher initialSyncLauncher,
 			JiraDynamicWebhookService jiraWebhooks,
+			ProjectDataAuthorization readerAuthorization,
 			PlatformTransactionManager transactionManager) {
 		this.users = users;
 		this.projects = projects;
@@ -153,12 +156,13 @@ public class ProjectIntegrationService {
 		this.outbox = outbox;
 		this.initialSyncLauncher = initialSyncLauncher;
 		this.jiraWebhooks = jiraWebhooks;
+		this.readerAuthorization = readerAuthorization;
 		this.writes = new TransactionTemplate(Objects.requireNonNull(transactionManager, "transactionManager"));
 	}
 
 	@Transactional(readOnly = true)
 	public ProjectIntegrationsResponse summary(UUID userId, UUID projectId) {
-		requireMember(userId, projectId);
+		readerAuthorization.requireReader(userId, projectId);
 		GithubInstallation installation = requireCurrentGithubInstallation(projectId).orElse(null);
 		List<ConnectedRepo> connected = repos.findByProject_Id(projectId).stream()
 				.map(repo -> new ConnectedRepo(
@@ -192,7 +196,7 @@ public class ProjectIntegrationService {
 
 	@Transactional(readOnly = true)
 	public List<JiraSourceSummary> listJiraSources(UUID userId, UUID projectId) {
-		requireMember(userId, projectId);
+		readerAuthorization.requireReader(userId, projectId);
 		return toOrderedJiraSourceSummaries(jiraIntegrations.findAllFetchedByProject_Id(projectId));
 	}
 

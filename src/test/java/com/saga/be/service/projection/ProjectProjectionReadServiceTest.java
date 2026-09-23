@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.saga.be.dto.project.ProjectCommitPageResponse;
 import com.saga.be.dto.project.ProjectCommitResponse;
+import com.saga.be.dto.project.ProjectSprintResponse;
 import com.saga.be.dto.project.ProjectTaskResponse;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.enums.AccountRole;
@@ -23,6 +24,7 @@ import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.JiraTaskFailoverItem;
 import com.saga.be.entity.jira.JiraTaskFailoverRun;
+import com.saga.be.entity.jira.Sprint;
 import com.saga.be.entity.enums.JiraFailoverItemStatus;
 import com.saga.be.entity.project.Project;
 import com.saga.be.exception.AcademicErrorCode;
@@ -121,6 +123,29 @@ class ProjectProjectionReadServiceTest {
 		int after100 = countQueries.get();
 		assertThat(after10).isEqualTo(1);
 		assertThat(after100 - after10).isEqualTo(1);
+	}
+
+	@Test
+	void listSprints_returnsFetchedSourceProvenanceWithoutPerSprintLookups() {
+		stubStudent(RoleInTeam.MEMBER);
+		JiraIntegration integration = new JiraIntegration();
+		integration.setId(UUID.randomUUID());
+		integration.setSiteName("Acme Jira");
+		integration.setProjectKey("ACME");
+		integration.setJiraBoardId("42");
+		integration.setConnectionStatus(com.saga.be.entity.enums.IntegrationStatus.ACTIVE);
+		Sprint sprint = new Sprint();
+		sprint.setId(UUID.randomUUID());
+		sprint.setExternalSprintId("same-external-id");
+		sprint.setJiraIntegration(integration);
+		when(sprints.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(sprint));
+
+		List<ProjectSprintResponse> result = service.listSprints(userId, projectId);
+
+		assertThat(result).hasSize(1);
+		assertThat(result.getFirst().source().jiraIntegrationId()).isEqualTo(integration.getId());
+		verify(sprints).findActiveFetchedByProject_Id(projectId);
+		verify(sprints, never()).findActiveByProject_Id(projectId);
 	}
 
 	@Test

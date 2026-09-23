@@ -89,14 +89,14 @@ public class ProjectJiraSprintCommandService {
 					"jiraIntegrationId is required when the project has multiple active Jira sources.");
 		}
 		if (active.isEmpty()) {
-			return sprints.findActiveByProject_Id(projectId).stream().map(this::toResponse).toList();
+			return sprints.findActiveFetchedByProject_Id(projectId).stream().map(this::toResponse).toList();
 		}
 		return syncNamedSourceThenListLocal(active.get(0), projectId);
 	}
 
 	private List<ProjectSprintResponse> syncNamedSourceThenListLocal(JiraIntegration integration, UUID projectId) {
 		if (integration.getJiraBoardId() == null || integration.getJiraBoardId().isBlank()) {
-			return sprints.findActiveByProject_Id(projectId).stream().map(this::toResponse).toList();
+			return listLocalSource(integration.getId(), projectId);
 		}
 		String access = tokens.accessToken(integration);
 		List<SprintDetail> remote = jiraWrite.listBoardSprints(access, integration.getCloudId(), integration.getJiraBoardId());
@@ -114,7 +114,13 @@ public class ProjectJiraSprintCommandService {
 					detail.goal(),
 					ProjectionMappings.parseInstant(detail.completeDate())));
 		}
-		return sprints.findActiveByProject_Id(projectId).stream().map(this::toResponse).toList();
+		return listLocalSource(integration.getId(), projectId);
+	}
+
+	private List<ProjectSprintResponse> listLocalSource(UUID jiraIntegrationId, UUID projectId) {
+		return sprints.findActiveFetchedByJiraIntegration_IdAndProject_Id(jiraIntegrationId, projectId).stream()
+				.map(this::toResponse)
+				.toList();
 	}
 
 	public ProjectSprintResponse create(UUID userId, UUID projectId, CreateProjectSprintRequest request) {
@@ -275,6 +281,19 @@ public class ProjectJiraSprintCommandService {
 				sprint.getGoal(),
 				sprint.getStartDate(),
 				sprint.getEndDate(),
-				sprint.getCompleteDate());
+				sprint.getCompleteDate(),
+				toSource(sprint.getJiraIntegration()));
+	}
+
+	private ProjectSprintResponse.Source toSource(JiraIntegration integration) {
+		if (integration == null) {
+			return null;
+		}
+		return new ProjectSprintResponse.Source(
+				integration.getId(),
+				integration.getSiteName(),
+				integration.getProjectKey(),
+				integration.getJiraBoardId(),
+				integration.getConnectionStatus() == null ? null : integration.getConnectionStatus().name());
 	}
 }

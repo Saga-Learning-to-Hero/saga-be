@@ -196,7 +196,7 @@ public class ProjectIntegrationController {
 	}
 
 	@GetMapping("/jira-sources")
-	@Operation(summary = "List Jira sources for the project (no secrets). Member or admin.")
+	@Operation(summary = "List Jira sources for the project (no secrets). Active team members or the assigned course lecturer.")
 	public List<JiraSourceSummary> listJiraSources(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
 		return integrations.listJiraSources(principal.getUserId(), projectId);

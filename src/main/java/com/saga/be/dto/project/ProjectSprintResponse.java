@@ -11,4 +11,20 @@ public record ProjectSprintResponse(
 		String goal,
 		LocalDateTime startDate,
 		LocalDateTime endDate,
-		LocalDateTime completeDate) {}
+		LocalDateTime completeDate,
+		Source source) {
+
+	public ProjectSprintResponse(
+			UUID id,
+			String externalSprintId,
+			String name,
+			String state,
+			String goal,
+			LocalDateTime startDate,
+			LocalDateTime endDate,
+			LocalDateTime completeDate) {
+		this(id, externalSprintId, name, state, goal, startDate, endDate, completeDate, null);
+	}
+
+	public record Source(UUID jiraIntegrationId, String siteName, String projectKey, String boardId, String connectionStatus) {}
+}

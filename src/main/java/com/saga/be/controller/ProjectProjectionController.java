@@ -278,8 +278,8 @@ public class ProjectProjectionController {
 	@Operation(
 			summary = "List/reconcile Jira Software sprints for the project's board.",
 			description =
-					"Optional jiraIntegrationId live-syncs that named ACTIVE source's board, then returns all local "
-							+ "project sprints. When omitted and multiple ACTIVE sources exist, fails with JIRA_SOURCE_REQUIRED.")
+					"Optional jiraIntegrationId live-syncs that named ACTIVE source's board, then returns only that "
+							+ "source's local sprints. When omitted and multiple ACTIVE sources exist, fails with JIRA_SOURCE_REQUIRED.")
 	public List<ProjectSprintResponse> sprints(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,

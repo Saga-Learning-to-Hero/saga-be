@@ -92,7 +92,7 @@ public class ProjectProjectionReadService {
 	@Transactional(readOnly = true)
 	public List<ProjectSprintResponse> listSprints(UUID userId, UUID projectId) {
 		authorization.requireReader(userId, projectId);
-		return sprints.findActiveByProject_Id(projectId).stream().map(this::toSprint).toList();
+		return sprints.findActiveFetchedByProject_Id(projectId).stream().map(this::toSprint).toList();
 	}
 
 	@Transactional(readOnly = true)
@@ -306,7 +306,20 @@ public class ProjectProjectionReadService {
 				sprint.getGoal(),
 				sprint.getStartDate(),
 				sprint.getEndDate(),
-				sprint.getCompleteDate());
+				sprint.getCompleteDate(),
+				toSource(sprint.getJiraIntegration()));
+	}
+
+	private ProjectSprintResponse.Source toSource(com.saga.be.entity.jira.JiraIntegration integration) {
+		if (integration == null) {
+			return null;
+		}
+		return new ProjectSprintResponse.Source(
+				integration.getId(),
+				integration.getSiteName(),
+				integration.getProjectKey(),
+				integration.getJiraBoardId(),
+				integration.getConnectionStatus() == null ? null : integration.getConnectionStatus().name());
 	}
 
 	private ProjectCommitResponse toCommit(GitCommit commit) {

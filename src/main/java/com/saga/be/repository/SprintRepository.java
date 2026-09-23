@@ -31,6 +31,28 @@ public interface SprintRepository extends JpaRepository<Sprint, UUID> {
 			"""
 			select s from Sprint s
 			join fetch s.jiraIntegration ji
+			where ji.project.id = :projectId
+			  and s.deletedAt is null
+			order by coalesce(s.startDate, s.createdAt) desc
+			""")
+	List<Sprint> findActiveFetchedByProject_Id(@Param("projectId") UUID projectId);
+
+	@Query(
+			"""
+			select s from Sprint s
+			join fetch s.jiraIntegration ji
+			where ji.id = :jiraIntegrationId
+			  and ji.project.id = :projectId
+			  and s.deletedAt is null
+			order by coalesce(s.startDate, s.createdAt) desc
+			""")
+	List<Sprint> findActiveFetchedByJiraIntegration_IdAndProject_Id(
+			@Param("jiraIntegrationId") UUID jiraIntegrationId, @Param("projectId") UUID projectId);
+
+	@Query(
+			"""
+			select s from Sprint s
+			join fetch s.jiraIntegration ji
 			join fetch ji.project
 			where s.id = :sprintId
 			  and ji.project.id = :projectId

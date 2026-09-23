@@ -66,6 +66,7 @@ import com.saga.be.repository.TeamByProjectRepository;
 import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.service.audit.AuditService;
+import com.saga.be.service.projection.ProjectDataAuthorization;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -135,6 +136,8 @@ class ProjectIntegrationServiceTest {
 	private com.saga.be.service.sync.IntegrationInitialSyncLauncher initialSyncLauncher;
 	@Mock
 	private com.saga.be.service.jira.JiraDynamicWebhookService jiraWebhooks;
+	@Mock
+	private ProjectDataAuthorization readerAuthorization;
 
 	@InjectMocks
 	private ProjectIntegrationService service;
@@ -258,6 +261,7 @@ class ProjectIntegrationServiceTest {
 		when(users.findById(student.getId())).thenReturn(Optional.of(student));
 		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
 		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(leaderMember));
+		denyReaderForStudent();
 		assertDenied(service::summary);
 		assertDenied(() -> service.startGithub(student.getId(), projectId, null));
 		assertDenied(() -> service.startJira(student.getId(), projectId, null));
@@ -266,19 +270,20 @@ class ProjectIntegrationServiceTest {
 	@Test
 	void completedMemberIsDeniedSummary() {
 		enrollment.setEnrollmentStatus(EnrollmentStatus.COMPLETED);
-		when(users.findById(student.getId())).thenReturn(Optional.of(student));
-		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
-		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(memberRow));
+		denyReaderForStudent();
 		assertDenied(service::summary);
 	}
 
 	@Test
-	void adminBypassRemainsWithoutMembership() {
+	void summaryUsesCanonicalReaderAndDoesNotCreateAnAdminBypass() {
 		when(users.findById(admin.getId())).thenReturn(Optional.of(admin));
-		when(projectInstallations.findByProject_IdWithInstallation(projectId)).thenReturn(List.of());
-		when(repos.findByProject_Id(projectId)).thenReturn(List.of());
-		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of());
-		assertDoesNotThrow(() -> service.summary(admin.getId(), projectId));
+		org.mockito.Mockito.doThrow(new IntegrationException(
+				IntegrationErrorCode.ACCESS_DENIED, org.springframework.http.HttpStatus.FORBIDDEN, "Admin is not a project reader."))
+				.when(readerAuthorization)
+				.requireReader(admin.getId(), projectId);
+		IntegrationException denied = assertThrows(IntegrationException.class, () -> service.summary(admin.getId(), projectId));
+		assertEquals(IntegrationErrorCode.ACCESS_DENIED, denied.getCode());
+		verify(readerAuthorization).requireReader(admin.getId(), projectId);
 		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
 		when(oauthStates.start(
 						eq(admin.getId()),
@@ -782,9 +787,6 @@ class ProjectIntegrationServiceTest {
 
 	@Test
 	void summaryPopulatesLegacyJiraWhenExactlyOneSource() {
-		when(users.findById(student.getId())).thenReturn(Optional.of(student));
-		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
-		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(memberRow));
 		when(projectInstallations.findByProject_IdWithInstallation(projectId)).thenReturn(List.of());
 		when(repos.findByProject_Id(projectId)).thenReturn(List.of());
 		JiraIntegration only = revokedReadyIntegration("cloud-a", "10067", "SAGA", "68");
@@ -802,9 +804,6 @@ class ProjectIntegrationServiceTest {
 
 	@Test
 	void summaryNullsLegacyJiraWhenTwoSources() {
-		when(users.findById(student.getId())).thenReturn(Optional.of(student));
-		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
-		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(memberRow));
 		when(projectInstallations.findByProject_IdWithInstallation(projectId)).thenReturn(List.of());
 		when(repos.findByProject_Id(projectId)).thenReturn(List.of());
 		JiraIntegration older = revokedReadyIntegration("cloud-a", "10067", "SAGA", "68");
@@ -825,9 +824,6 @@ class ProjectIntegrationServiceTest {
 
 	@Test
 	void listJiraSourcesOrdersByCreatedAtThenId() {
-		when(users.findById(student.getId())).thenReturn(Optional.of(student));
-		when(teams.findByProject_Id(projectId)).thenReturn(Optional.of(team));
-		when(members.findFetchedByTeam_Id(team.getId())).thenReturn(List.of(memberRow));
 		JiraIntegration first = revokedReadyIntegration("cloud-a", "1", "A", null);
 		first.setCreatedAt(java.time.LocalDateTime.of(2026, 1, 1, 0, 0));
 		JiraIntegration second = revokedReadyIntegration("cloud-b", "2", "B", null);
@@ -841,6 +837,22 @@ class ProjectIntegrationServiceTest {
 		assertEquals(first.getId(), sources.get(0).integrationId());
 		assertEquals(second.getId(), sources.get(1).integrationId());
 		assertNull(sources.get(0).boardId());
+		verify(readerAuthorization).requireReader(student.getId(), projectId);
+	}
+
+	@Test
+	void listJiraSources_includesAnActiveSourceWithNoProjectedTasks() {
+		JiraIntegration source = revokedReadyIntegration("cloud-active", "100", "ACTIVE", "42");
+		source.setConnectionStatus(IntegrationStatus.ACTIVE);
+		when(jiraIntegrations.findAllFetchedByProject_Id(projectId)).thenReturn(List.of(source));
+
+		List<com.saga.be.dto.integration.JiraSourceSummary> sources =
+				service.listJiraSources(student.getId(), projectId);
+
+		assertEquals(1, sources.size());
+		assertEquals(source.getId(), sources.getFirst().integrationId());
+		assertEquals("ACTIVE", sources.getFirst().connectionStatus());
+		verify(readerAuthorization).requireReader(student.getId(), projectId);
 	}
 
 	@Test
@@ -2016,6 +2028,15 @@ class ProjectIntegrationServiceTest {
 	private void assertDenied(Runnable call) {
 		IntegrationException ex = assertThrows(IntegrationException.class, call::run);
 		assertEquals(IntegrationErrorCode.INTEGRATION_FORBIDDEN, ex.getCode());
+	}
+
+	private void denyReaderForStudent() {
+		org.mockito.Mockito.doThrow(new IntegrationException(
+				IntegrationErrorCode.INTEGRATION_FORBIDDEN,
+				org.springframework.http.HttpStatus.FORBIDDEN,
+				"Not an active project reader."))
+				.when(readerAuthorization)
+				.requireReader(student.getId(), projectId);
 	}
 
 	private TeamMember membership(RoleInTeam role) {

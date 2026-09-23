@@ -15,6 +15,7 @@ import com.saga.be.repository.TeamByProjectRepository;
 import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.service.identity.TeamAuthorization;
+import com.saga.be.service.projection.ProjectDataAuthorization;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
@@ -32,24 +33,27 @@ public class TaskWebLinkService {
 	private final TeamByProjectRepository teams;
 	private final TeamMemberRepository members;
 	private final UserAccountRepository users;
+	private final ProjectDataAuthorization readerAuthorization;
 
 	public TaskWebLinkService(
 			TaskRepository tasks,
 			TaskWebLinkRepository links,
 			TeamByProjectRepository teams,
 			TeamMemberRepository members,
-			UserAccountRepository users) {
+			UserAccountRepository users,
+			ProjectDataAuthorization readerAuthorization) {
 		this.tasks = tasks;
 		this.links = links;
 		this.teams = teams;
 		this.members = members;
 		this.users = users;
+		this.readerAuthorization = readerAuthorization;
 	}
 
 	@Transactional(readOnly = true)
 	public List<TaskWebLinkResponse> list(UUID userId, UUID taskId) {
 		Task task = requireTask(taskId);
-		requireMember(userId, task.getProject().getId());
+		readerAuthorization.requireReader(userId, task.getProject().getId());
 		return links.findByTask_IdOrderByCreatedAtAsc(taskId).stream().map(TaskWebLinkService::toResponse).toList();
 	}
 
