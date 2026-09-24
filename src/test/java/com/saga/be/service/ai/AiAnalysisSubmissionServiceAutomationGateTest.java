@@ -60,7 +60,7 @@ class AiAnalysisSubmissionServiceAutomationGateTest {
 		commit.setRepo(repo);
 		commit.setShaHash("abc123");
 		when(commits.findAnalysisTargetById(commitId)).thenReturn(Optional.of(commit));
-		when(runs.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
+		when(runs.findTopByCanonicalIdentityKeyOrderByRetryAttemptDesc(anyString())).thenReturn(Optional.empty());
 		when(runs.saveAndFlush(any(AiAnalysisRun.class))).thenAnswer(inv -> { AiAnalysisRun run = inv.getArgument(0); run.setId(UUID.randomUUID()); return run; });
 	}
 
@@ -117,12 +117,38 @@ class AiAnalysisSubmissionServiceAutomationGateTest {
 				.thenReturn(new AiCredentialResolver.Resolution(AiCredentialResolver.Outcome.COURSE, UUID.randomUUID(), "fp"));
 		AiAnalysisSubmissionService service = service();
 		var canonical = new java.util.HashMap<String, AiAnalysisRun>();
-		when(runs.findByIdempotencyKey(anyString())).thenAnswer(inv -> Optional.ofNullable(canonical.get(inv.getArgument(0))));
-		when(runs.saveAndFlush(any(AiAnalysisRun.class))).thenAnswer(inv -> { AiAnalysisRun run = inv.getArgument(0); run.setId(UUID.randomUUID()); canonical.put(run.getIdempotencyKey(), run); return run; });
+		when(runs.findTopByCanonicalIdentityKeyOrderByRetryAttemptDesc(anyString())).thenAnswer(inv -> Optional.ofNullable(canonical.get(inv.getArgument(0))));
+		when(runs.saveAndFlush(any(AiAnalysisRun.class))).thenAnswer(inv -> { AiAnalysisRun run = inv.getArgument(0); run.setId(UUID.randomUUID()); canonical.put(run.getCanonicalIdentityKey(), run); return run; });
 
 		service.submitAutomatic(projectId, commitId);
 		service.submitAutomatic(projectId, commitId); // simulates a duplicate webhook/sync delivery
 
+		verify(runs, times(1)).saveAndFlush(any());
+	}
+
+	@Test
+	void automatedResubmissionOfAFailedRunDoesNotCreateARetryAttempt() {
+		when(courseSettings.get(courseId)).thenReturn(new CourseAiSettingsService.Settings(true, false));
+		when(credentialResolver.resolve(any(), any(), any(), any()))
+				.thenReturn(new AiCredentialResolver.Resolution(AiCredentialResolver.Outcome.COURSE, UUID.randomUUID(), "fp"));
+		var canonical = new java.util.HashMap<String, AiAnalysisRun>();
+		when(runs.findTopByCanonicalIdentityKeyOrderByRetryAttemptDesc(anyString()))
+				.thenAnswer(inv -> Optional.ofNullable(canonical.get(inv.getArgument(0))));
+		when(runs.saveAndFlush(any(AiAnalysisRun.class))).thenAnswer(inv -> {
+			AiAnalysisRun run = inv.getArgument(0);
+			run.setId(UUID.randomUUID());
+			canonical.put(run.getCanonicalIdentityKey(), run);
+			return run;
+		});
+
+		AiAnalysisSubmissionService service = service();
+		AiAnalysisRun first = service.submitAutomatic(projectId, commitId).orElseThrow().run();
+		first.setStatus(AiAnalysisStatus.FAILED);
+		var repeat = service.submitAutomatic(projectId, commitId).orElseThrow();
+
+		assertThat(repeat.created()).isFalse();
+		assertThat(repeat.run()).isSameAs(first);
+		assertThat(first.getRetryAttempt()).isZero();
 		verify(runs, times(1)).saveAndFlush(any());
 	}
 }

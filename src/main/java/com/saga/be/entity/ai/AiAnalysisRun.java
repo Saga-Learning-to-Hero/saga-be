@@ -17,7 +17,9 @@ import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
 
 @Getter @Setter @NoArgsConstructor @Entity
-@Table(name = "ai_analysis_run", uniqueConstraints = @UniqueConstraint(name = "uk_ai_analysis_run_idempotency", columnNames = "idempotency_key"), indexes = {
+@Table(name = "ai_analysis_run", uniqueConstraints = {
+	@UniqueConstraint(name = "uk_ai_analysis_run_idempotency", columnNames = "idempotency_key"),
+	@UniqueConstraint(name = "uk_ai_analysis_run_canonical_retry", columnNames = {"canonical_identity_key", "retry_attempt"})}, indexes = {
 	@Index(name = "ix_ai_analysis_run_project_artifact_created", columnList = "project_id, artifact_type, artifact_id, created_at"),
 	@Index(name = "ix_ai_analysis_run_status_started", columnList = "status, started_at")})
 public class AiAnalysisRun extends BaseEntity {
@@ -37,10 +39,20 @@ public class AiAnalysisRun extends BaseEntity {
 	@Column(name = "taxonomy_version", length = 64) private String taxonomyVersion;
 	@Column(name = "provider_config_hash", length = 64, nullable = false) private String providerConfigHash;
 	@Column(name = "idempotency_key", length = 64, nullable = false) private String idempotencyKey;
+	@Column(name = "canonical_identity_key", length = 64, nullable = false) private String canonicalIdentityKey;
+	@Column(name = "retry_attempt", nullable = false) private Integer retryAttempt;
 	@ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "requested_by_user_id") private UserAccount requestedBy;
 	@Column(name = "started_at") private LocalDateTime startedAt;
 	@Column(name = "completed_at") private LocalDateTime completedAt;
 	@Column(name = "failure_code", length = 64) private String failureCode;
+
+	/** Direct repository callers still create a truthful first physical execution. Submission
+	 * services explicitly set lineage before persistence for both initial and retry attempts. */
+	@PrePersist
+	void initializeRetryLineage() {
+		if (canonicalIdentityKey == null) canonicalIdentityKey = idempotencyKey;
+		if (retryAttempt == null) retryAttempt = 0;
+	}
 
 	/** Every analysis type is owned by exactly one course, either directly (COURSE-scope progress
 	 * narrative) or transitively through its project. Null only if the project itself has no

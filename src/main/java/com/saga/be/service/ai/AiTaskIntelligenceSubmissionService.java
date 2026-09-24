@@ -56,21 +56,23 @@ public class AiTaskIntelligenceSubmissionService {
 		List<AiEvidenceDraft> draft = snapshots.build(task);
 		String evidenceHash = hashEvidence(draft);
 		String key = idempotency(projectId, taskId, evidenceHash, provider, resolution);
-		return Objects.requireNonNull(tx.execute(status -> persist(task.getProject(), taskId, evidenceHash, draft, evidenceHash, key, provider, resolution)));
+		try { return Objects.requireNonNull(tx.execute(status -> persist(task.getProject(), taskId, evidenceHash, draft, evidenceHash, key, provider, resolution, origin))); }
+		catch (AiRetryLineage.RetryAttemptConflict ex) { AiAnalysisRun concurrent = ex.winner(runs); if (AiRetryLineage.shouldEnqueueExisting(concurrent)) after(concurrent.getId()); return new Submission(concurrent, false); }
 	}
 
 	private AiModelProvider primaryProvider() { return providers.stream().filter(p -> p.role() == AiProviderRole.PRIMARY).findFirst().orElseThrow(() -> new IntegrationException(IntegrationErrorCode.AI_ANALYSIS_PROVIDER_FAILED, HttpStatus.SERVICE_UNAVAILABLE, "AI provider is not configured.")); }
 	private IntegrationException notFound(String message) { return new IntegrationException(IntegrationErrorCode.AI_ANALYSIS_TARGET_NOT_FOUND, HttpStatus.NOT_FOUND, message); }
 	private String idempotency(UUID projectId, UUID taskId, String evidenceHash, AiModelProvider provider, AiCredentialResolver.Resolution resolution) { return AiHashes.sha256(String.join("|", projectId.toString(), AiArtifactType.TASK.name(), taskId.toString(), evidenceHash, AiAnalysisType.TASK_INTELLIGENCE.name(), evidenceHash, POLICY_VERSION, PROMPT_VERSION, SCHEMA_VERSION, provider.providerConfigHash(), resolution.outcome().name(), String.valueOf(resolution.identityFingerprint()))); }
 
-	private Submission persist(com.saga.be.entity.project.Project project, UUID taskId, String revision, List<AiEvidenceDraft> draft, String evidenceHash, String key, AiModelProvider provider, AiCredentialResolver.Resolution resolution) {
-		AiAnalysisRun existing = runs.findByIdempotencyKey(key).orElse(null);
-		if (existing != null) { after(existing.getId()); return new Submission(existing, false); }
+	private Submission persist(com.saga.be.entity.project.Project project, UUID taskId, String revision, List<AiEvidenceDraft> draft, String evidenceHash, String key, AiModelProvider provider, AiCredentialResolver.Resolution resolution, AiInvocationOrigin origin) {
+		AiAnalysisRun existing = AiRetryLineage.effective(runs, key);
+		if (existing != null && !AiRetryLineage.createsRetry(existing, origin)) { if (AiRetryLineage.shouldEnqueueExisting(existing)) after(existing.getId()); return new Submission(existing, false); }
+		int retryAttempt = AiRetryLineage.nextAttempt(existing);
 		AiAnalysisRun run = new AiAnalysisRun();
 		run.setProject(project); run.setArtifactType(AiArtifactType.TASK); run.setArtifactId(taskId); run.setArtifactRevision(revision);
 		run.setAnalysisType(AiAnalysisType.TASK_INTELLIGENCE); run.setStatus(AiAnalysisStatus.QUEUED); run.setEvidenceHash(evidenceHash);
-		run.setPolicyVersion(POLICY_VERSION); run.setPromptVersion(PROMPT_VERSION); run.setSchemaVersion(SCHEMA_VERSION); run.setProviderConfigHash(provider.providerConfigHash()); run.setIdempotencyKey(key);
-		try { run = runs.saveAndFlush(run); } catch (DataIntegrityViolationException ex) { AiAnalysisRun concurrent = runs.findByIdempotencyKey(key).orElseThrow(() -> ex); after(concurrent.getId()); return new Submission(concurrent, false); }
+		run.setPolicyVersion(POLICY_VERSION); run.setPromptVersion(PROMPT_VERSION); run.setSchemaVersion(SCHEMA_VERSION); run.setProviderConfigHash(provider.providerConfigHash()); AiRetryLineage.initialize(run, key, retryAttempt);
+		try { run = runs.saveAndFlush(run); } catch (DataIntegrityViolationException ex) { throw AiRetryLineage.conflict(key, retryAttempt, ex); }
 		int ordinal = 0; List<AiAnalysisEvidence> rows = new ArrayList<>();
 		for (AiEvidenceDraft item : draft) { AiAnalysisEvidence row = new AiAnalysisEvidence(); row.setAnalysisRun(run); row.setEvidenceType(item.type()); row.setSourceRef(item.sourceRef()); row.setContentHash(item.contentHash()); row.setPayloadJson(item.payloadJson()); row.setMetadataJson(item.metadataJson()); row.setOrdinalIndex(ordinal++); rows.add(row); }
 		evidence.saveAll(rows);

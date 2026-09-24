@@ -55,9 +55,9 @@ public class ProjectAiAnalysisController {
 		return ResponseEntity.status(submission.created() ? HttpStatus.ACCEPTED : HttpStatus.OK).body(reads.get(principal.getUserId(), projectId, submission.run().getId()));
 	}
 	@PostMapping("/tasks/{taskId}/academic-analyses")
-	public ResponseEntity<AiAnalysisResponse> submitTaskAcademic(@AuthenticationPrincipal SagaUserPrincipal principal,@PathVariable UUID projectId,@PathVariable UUID taskId){ var run=academicSubmissions.submitTask(principal.getUserId(),projectId,taskId);return ResponseEntity.status(HttpStatus.ACCEPTED).body(reads.get(principal.getUserId(),projectId,run.getId())); }
+	public ResponseEntity<AiAnalysisResponse> submitTaskAcademic(@AuthenticationPrincipal SagaUserPrincipal principal,@PathVariable UUID projectId,@PathVariable UUID taskId){ var submission=academicSubmissions.submitTask(principal.getUserId(),projectId,taskId);return ResponseEntity.status(submission.created()?HttpStatus.ACCEPTED:HttpStatus.OK).body(reads.get(principal.getUserId(),projectId,submission.run().getId())); }
 	@PostMapping("/commits/{gitCommitId}/academic-analyses")
-	public ResponseEntity<AiAnalysisResponse> submitCommitAcademic(@AuthenticationPrincipal SagaUserPrincipal principal,@PathVariable UUID projectId,@PathVariable UUID gitCommitId){ var run=academicSubmissions.submitCommit(principal.getUserId(),projectId,gitCommitId);return ResponseEntity.status(HttpStatus.ACCEPTED).body(reads.get(principal.getUserId(),projectId,run.getId())); }
+	public ResponseEntity<AiAnalysisResponse> submitCommitAcademic(@AuthenticationPrincipal SagaUserPrincipal principal,@PathVariable UUID projectId,@PathVariable UUID gitCommitId){ var submission=academicSubmissions.submitCommit(principal.getUserId(),projectId,gitCommitId);return ResponseEntity.status(submission.created()?HttpStatus.ACCEPTED:HttpStatus.OK).body(reads.get(principal.getUserId(),projectId,submission.run().getId())); }
 	@PostMapping("/commits/{gitCommitId}/analyses")
 	public ResponseEntity<AiAnalysisResponse> submit(@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId, @PathVariable UUID gitCommitId) {
 		AiAnalysisSubmissionService.Submission submission = submissions.submit(principal.getUserId(), projectId, gitCommitId);

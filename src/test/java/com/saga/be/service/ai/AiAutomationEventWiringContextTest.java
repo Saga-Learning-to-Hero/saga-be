@@ -119,12 +119,12 @@ class AiAutomationEventWiringContextTest {
 		when(provider.providerKey()).thenReturn("primary");
 		when(provider.modelId()).thenReturn("test-model");
 		java.util.Map<String, AiAnalysisRun> saved = new java.util.HashMap<>();
-		when(runs.findByIdempotencyKey(org.mockito.ArgumentMatchers.anyString()))
+		when(runs.findTopByCanonicalIdentityKeyOrderByRetryAttemptDesc(org.mockito.ArgumentMatchers.anyString()))
 				.thenAnswer(invocation -> Optional.ofNullable(saved.get(invocation.getArgument(0))));
 		when(runs.saveAndFlush(org.mockito.ArgumentMatchers.any(AiAnalysisRun.class))).thenAnswer(invocation -> {
 			AiAnalysisRun run = invocation.getArgument(0);
 			run.setId(UUID.randomUUID());
-			saved.put(run.getIdempotencyKey(), run);
+			saved.put(run.getCanonicalIdentityKey(), run);
 			return run;
 		});
 

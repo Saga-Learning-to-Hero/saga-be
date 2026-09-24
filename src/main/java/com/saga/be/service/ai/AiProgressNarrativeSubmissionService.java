@@ -43,7 +43,7 @@ public class AiProgressNarrativeSubmissionService {
 		AiModelProvider provider = primaryProvider();
 		AiProgressFactsBuilder.Facts data = facts.buildStudent(project, studentId);
 		List<AiEvidenceDraft> draft = List.of(factsRow("student:" + studentId, data));
-		return submitCommon(project, null, AiArtifactType.STUDENT, studentId, draft, provider, resolution);
+		return submitCommon(project, null, AiArtifactType.STUDENT, studentId, draft, provider, resolution, AiInvocationOrigin.USER_REQUEST);
 	}
 
 	public Submission submitTeam(UUID userId, UUID projectId) {
@@ -53,7 +53,7 @@ public class AiProgressNarrativeSubmissionService {
 		AiModelProvider provider = primaryProvider();
 		AiProgressFactsBuilder.Facts data = facts.buildTeam(project);
 		List<AiEvidenceDraft> draft = List.of(factsRow("team:" + projectId, data));
-		return submitCommon(project, null, AiArtifactType.TEAM, projectId, draft, provider, resolution);
+		return submitCommon(project, null, AiArtifactType.TEAM, projectId, draft, provider, resolution, AiInvocationOrigin.USER_REQUEST);
 	}
 
 	public Submission submitCourse(UserAccount actor, UUID courseId) {
@@ -63,7 +63,7 @@ public class AiProgressNarrativeSubmissionService {
 		List<Project> courseProjects = teams.findByCourse_IdOrderByTeamNoAsc(courseId).stream().map(com.saga.be.entity.project.Team::getProject).filter(Objects::nonNull).toList();
 		AiProgressFactsBuilder.Facts data = facts.buildCourse(course, courseProjects);
 		List<AiEvidenceDraft> draft = List.of(factsRow("course:" + courseId, data));
-		return submitCommon(null, course, AiArtifactType.COURSE, courseId, draft, provider, resolution);
+		return submitCommon(null, course, AiArtifactType.COURSE, courseId, draft, provider, resolution, AiInvocationOrigin.USER_REQUEST);
 	}
 
 	/** PROGRESS_NARRATIVE prefers a COURSE credential and only falls back to PLATFORM for a
@@ -79,24 +79,26 @@ public class AiProgressNarrativeSubmissionService {
 		return new AiEvidenceDraft(AiEvidenceType.METADATA, "progress-facts:" + subjectRef, json, null);
 	}
 
-	private Submission submitCommon(Project project, Course course, AiArtifactType artifactType, UUID artifactId, List<AiEvidenceDraft> draft, AiModelProvider provider, AiCredentialResolver.Resolution resolution) {
+	private Submission submitCommon(Project project, Course course, AiArtifactType artifactType, UUID artifactId, List<AiEvidenceDraft> draft, AiModelProvider provider, AiCredentialResolver.Resolution resolution, AiInvocationOrigin origin) {
 		String evidenceHash = hashEvidence(draft);
 		String ownerKey = project != null ? project.getId().toString() : "course:" + course.getId();
 		String key = AiHashes.sha256(String.join("|", ownerKey, artifactType.name(), artifactId.toString(), evidenceHash, AiAnalysisType.PROGRESS_NARRATIVE.name(), evidenceHash, POLICY_VERSION, PROMPT_VERSION, SCHEMA_VERSION, provider.providerConfigHash(), resolution.outcome().name(), String.valueOf(resolution.identityFingerprint())));
-		return Objects.requireNonNull(tx.execute(status -> persist(project, course, artifactType, artifactId, evidenceHash, draft, evidenceHash, key, provider, resolution)));
+		try { return Objects.requireNonNull(tx.execute(status -> persist(project, course, artifactType, artifactId, evidenceHash, draft, evidenceHash, key, provider, resolution, origin))); }
+		catch (AiRetryLineage.RetryAttemptConflict ex) { AiAnalysisRun concurrent = ex.winner(runs); if (AiRetryLineage.shouldEnqueueExisting(concurrent)) after(concurrent.getId()); return new Submission(concurrent, false); }
 	}
 
 	private AiModelProvider primaryProvider() { return providers.stream().filter(p -> p.role() == AiProviderRole.PRIMARY).findFirst().orElseThrow(() -> new IntegrationException(IntegrationErrorCode.AI_ANALYSIS_PROVIDER_FAILED, HttpStatus.SERVICE_UNAVAILABLE, "AI provider is not configured.")); }
 	private IntegrationException notFound(String message) { return new IntegrationException(IntegrationErrorCode.AI_ANALYSIS_TARGET_NOT_FOUND, HttpStatus.NOT_FOUND, message); }
 
-	private Submission persist(Project project, Course course, AiArtifactType artifactType, UUID artifactId, String revision, List<AiEvidenceDraft> draft, String evidenceHash, String key, AiModelProvider provider, AiCredentialResolver.Resolution resolution) {
-		AiAnalysisRun existing = runs.findByIdempotencyKey(key).orElse(null);
-		if (existing != null) { after(existing.getId()); return new Submission(existing, false); }
+	private Submission persist(Project project, Course course, AiArtifactType artifactType, UUID artifactId, String revision, List<AiEvidenceDraft> draft, String evidenceHash, String key, AiModelProvider provider, AiCredentialResolver.Resolution resolution, AiInvocationOrigin origin) {
+		AiAnalysisRun existing = AiRetryLineage.effective(runs, key);
+		if (existing != null && !AiRetryLineage.createsRetry(existing, origin)) { if (AiRetryLineage.shouldEnqueueExisting(existing)) after(existing.getId()); return new Submission(existing, false); }
+		int retryAttempt = AiRetryLineage.nextAttempt(existing);
 		AiAnalysisRun run = new AiAnalysisRun();
 		run.setProject(project); run.setCourse(course); run.setArtifactType(artifactType); run.setArtifactId(artifactId); run.setArtifactRevision(revision);
 		run.setAnalysisType(AiAnalysisType.PROGRESS_NARRATIVE); run.setStatus(AiAnalysisStatus.QUEUED); run.setEvidenceHash(evidenceHash);
-		run.setPolicyVersion(POLICY_VERSION); run.setPromptVersion(PROMPT_VERSION); run.setSchemaVersion(SCHEMA_VERSION); run.setProviderConfigHash(provider.providerConfigHash()); run.setIdempotencyKey(key);
-		try { run = runs.saveAndFlush(run); } catch (DataIntegrityViolationException ex) { AiAnalysisRun concurrent = runs.findByIdempotencyKey(key).orElseThrow(() -> ex); after(concurrent.getId()); return new Submission(concurrent, false); }
+		run.setPolicyVersion(POLICY_VERSION); run.setPromptVersion(PROMPT_VERSION); run.setSchemaVersion(SCHEMA_VERSION); run.setProviderConfigHash(provider.providerConfigHash()); AiRetryLineage.initialize(run, key, retryAttempt);
+		try { run = runs.saveAndFlush(run); } catch (DataIntegrityViolationException ex) { throw AiRetryLineage.conflict(key, retryAttempt, ex); }
 		int ordinal = 0; List<AiAnalysisEvidence> rows = new ArrayList<>();
 		for (AiEvidenceDraft item : draft) { AiAnalysisEvidence row = new AiAnalysisEvidence(); row.setAnalysisRun(run); row.setEvidenceType(item.type()); row.setSourceRef(item.sourceRef()); row.setContentHash(item.contentHash()); row.setPayloadJson(item.payloadJson()); row.setMetadataJson(item.metadataJson()); row.setOrdinalIndex(ordinal++); rows.add(row); }
 		evidence.saveAll(rows);

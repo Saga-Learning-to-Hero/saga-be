@@ -17,6 +17,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface AiAnalysisRunRepository extends JpaRepository<AiAnalysisRun, UUID> {
 	Optional<AiAnalysisRun> findByIdempotencyKey(String idempotencyKey);
+	Optional<AiAnalysisRun> findByCanonicalIdentityKeyAndRetryAttempt(String canonicalIdentityKey, Integer retryAttempt);
+	Optional<AiAnalysisRun> findTopByCanonicalIdentityKeyOrderByRetryAttemptDesc(String canonicalIdentityKey);
 
 	/** Left-joined: COURSE-scope progress narratives have project = null (course set instead). */
 	@Query("select r from AiAnalysisRun r left join fetch r.project left join fetch r.course where r.id = :id")

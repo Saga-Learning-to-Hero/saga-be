@@ -44,13 +44,13 @@ class AiAcademicCommitSubmissionServiceTest {
   when(snapshots.build(eq(commit), anyList(), anyList())).thenReturn(List.of(new AiEvidenceDraft(AiEvidenceType.COMMIT_MESSAGE,"commit:"+commitId,"{\"message\":\"persisted\"}",null)));
   SubjectSyllabusVersion syllabus=new SubjectSyllabusVersion();syllabus.setId(syllabusId);syllabus.setVersionLabel("PINNED-2026"); SyllabusPhase first=phase(phaseOneId,"P1",1), second=phase(phaseTwoId,"P2",2); SyllabusExpectedDeliverable firstDeliverable=deliverable(deliverableOneId,phaseOneId,"D1",1), secondDeliverable=deliverable(deliverableTwoId,phaseTwoId,"D2",2);
   when(context.resolve(projectId)).thenReturn(new AiAcademicContextService.Context(project,syllabus,List.of(first,second),List.of(firstDeliverable,secondDeliverable)));
-  when(runs.findByIdempotencyKey(anyString())).thenReturn(Optional.empty()); when(runs.saveAndFlush(any(AiAnalysisRun.class))).thenAnswer(invocation->{AiAnalysisRun run=invocation.getArgument(0);run.setId(UUID.randomUUID());return run;});
+  when(runs.findTopByCanonicalIdentityKeyOrderByRetryAttemptDesc(anyString())).thenReturn(Optional.empty()); when(runs.saveAndFlush(any(AiAnalysisRun.class))).thenAnswer(invocation->{AiAnalysisRun run=invocation.getArgument(0);run.setId(UUID.randomUUID());return run;});
  }
 
  @Test void createsQueuedCanonicalAcademicCommitWithPersistedShaAndAllPinnedCandidatesBeforeHash() {
   List<AiEvidenceDraft> remote=List.of(new AiEvidenceDraft(AiEvidenceType.PROVIDER_EVIDENCE_STATUS,"github:commit:"+persistedSha,"{\"state\":\"AVAILABLE\"}",null)); when(github.acquire(any())).thenAnswer(invocation->{assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();return remote;});
   AtomicReference<List<AiAnalysisEvidence>> savedEvidence=new AtomicReference<>(); doAnswer(invocation->{Iterable<AiAnalysisEvidence> rows=invocation.getArgument(0);savedEvidence.set(StreamSupport.stream(rows.spliterator(),false).toList());return rows;}).when(evidence).saveAll(any());
-  AiAnalysisRun run=service().submitCommit(userId,projectId,commitId);
+  AiAnalysisRun run=service().submitCommit(userId,projectId,commitId).run();
   ArgumentCaptor<AiGitHubCommitEvidenceAcquirer.Target> target=ArgumentCaptor.forClass(AiGitHubCommitEvidenceAcquirer.Target.class);verify(github).acquire(target.capture()); assertThat(target.getValue().sha()).isEqualTo(persistedSha);assertThat(target.getValue().sha()).isNotEqualTo(commit.getHeadRef()).isNotEqualTo(commit.getRepo().getDefaultBranch());
   assertThat(run.getArtifactType()).isEqualTo(AiArtifactType.COMMIT);assertThat(run.getArtifactId()).isEqualTo(commitId);assertThat(run.getArtifactRevision()).isEqualTo(persistedSha);assertThat(run.getAnalysisType()).isEqualTo(AiAnalysisType.ACADEMIC_CLASSIFICATION);assertThat(run.getStatus()).isEqualTo(AiAnalysisStatus.QUEUED);assertThat(run.getPromptVersion()).isEqualTo("academic-classification-v1");assertThat(run.getTaxonomyVersion()).isEqualTo("academic-taxonomy-v1");
   assertThat(savedEvidence.get()).extracting(AiAnalysisEvidence::getSourceRef).contains("syllabus:"+syllabusId,"phase:"+phaseOneId,"phase:"+phaseTwoId,"deliverable:"+deliverableOneId,"deliverable:"+deliverableTwoId);
@@ -66,21 +66,33 @@ class AiAcademicCommitSubmissionServiceTest {
 
  @Test void identicalExactEvidenceReturnsTheCanonicalRun() {
   when(github.acquire(any())).thenReturn(List.of(new AiEvidenceDraft(AiEvidenceType.PROVIDER_EVIDENCE_STATUS,"github:commit:"+persistedSha,"{\"state\":\"AVAILABLE\"}",null)));
-  Map<String,AiAnalysisRun> canonical=new HashMap<>(); when(runs.findByIdempotencyKey(anyString())).thenAnswer(invocation->Optional.ofNullable(canonical.get(invocation.getArgument(0)))); when(runs.saveAndFlush(any(AiAnalysisRun.class))).thenAnswer(invocation->{AiAnalysisRun run=invocation.getArgument(0);run.setId(UUID.randomUUID());canonical.put(run.getIdempotencyKey(),run);return run;});
-  AiAnalysisRun first=service().submitCommit(userId,projectId,commitId);AiAnalysisRun second=service().submitCommit(userId,projectId,commitId);
+  Map<String,AiAnalysisRun> canonical=new HashMap<>(); when(runs.findTopByCanonicalIdentityKeyOrderByRetryAttemptDesc(anyString())).thenAnswer(invocation->Optional.ofNullable(canonical.get(invocation.getArgument(0)))); when(runs.saveAndFlush(any(AiAnalysisRun.class))).thenAnswer(invocation->{AiAnalysisRun run=invocation.getArgument(0);run.setId(UUID.randomUUID());canonical.put(run.getCanonicalIdentityKey(),run);return run;});
+  AiAnalysisRun first=service().submitCommit(userId,projectId,commitId).run();AiAnalysisRun second=service().submitCommit(userId,projectId,commitId).run();
   assertThat(second.getId()).isEqualTo(first.getId());verify(runs,times(1)).saveAndFlush(any());verify(evidence,times(1)).saveAll(any());verify(provider,never()).analyze(any());
+ }
+
+ @Test void manualAcademicFailureCreatesAnImmutableRetryAttempt() {
+  when(github.acquire(any())).thenReturn(List.of());
+  Map<String,AiAnalysisRun> effective=new HashMap<>();
+  when(runs.findTopByCanonicalIdentityKeyOrderByRetryAttemptDesc(anyString())).thenAnswer(invocation->Optional.ofNullable(effective.get(invocation.getArgument(0))));
+  when(runs.saveAndFlush(any(AiAnalysisRun.class))).thenAnswer(invocation->{AiAnalysisRun run=invocation.getArgument(0);run.setId(UUID.randomUUID());effective.put(run.getCanonicalIdentityKey(),run);return run;});
+
+  var attempt0=service().submitCommit(userId,projectId,commitId);attempt0.run().setStatus(AiAnalysisStatus.FAILED);
+  var attempt1=service().submitCommit(userId,projectId,commitId);
+
+  assertThat(attempt0.created()).isTrue();assertThat(attempt1.created()).isTrue();assertThat(attempt0.run().getRetryAttempt()).isZero();assertThat(attempt1.run().getRetryAttempt()).isEqualTo(1);assertThat(attempt1.run().getCanonicalIdentityKey()).isEqualTo(attempt0.run().getCanonicalIdentityKey());assertThat(attempt1.run().getIdempotencyKey()).isNotEqualTo(attempt0.run().getIdempotencyKey());assertThat(attempt0.run().getStatus()).isEqualTo(AiAnalysisStatus.FAILED);verify(runs,times(2)).saveAndFlush(any());
  }
 
  @Test void changedGitHubEvidenceCreatesDifferentCanonicalIdentity() {
   when(github.acquire(any())).thenReturn(List.of(new AiEvidenceDraft(AiEvidenceType.PROVIDER_EVIDENCE_STATUS,"github:commit:"+persistedSha,"{\"state\":\"UNAVAILABLE\",\"codeDiffAvailable\":false}",null)),List.of(new AiEvidenceDraft(AiEvidenceType.DIFF_HUNK,"github:commit:"+persistedSha+":src/A.java:0","@@ -1 +1 @@\n-old\n+new",null)));
-  Map<String,AiAnalysisRun> canonical=new HashMap<>();when(runs.findByIdempotencyKey(anyString())).thenAnswer(invocation->Optional.ofNullable(canonical.get(invocation.getArgument(0))));when(runs.saveAndFlush(any(AiAnalysisRun.class))).thenAnswer(invocation->{AiAnalysisRun run=invocation.getArgument(0);run.setId(UUID.randomUUID());canonical.put(run.getIdempotencyKey(),run);return run;});
-  AiAnalysisRun unavailable=service().submitCommit(userId,projectId,commitId);AiAnalysisRun available=service().submitCommit(userId,projectId,commitId);
+  Map<String,AiAnalysisRun> canonical=new HashMap<>();when(runs.findTopByCanonicalIdentityKeyOrderByRetryAttemptDesc(anyString())).thenAnswer(invocation->Optional.ofNullable(canonical.get(invocation.getArgument(0))));when(runs.saveAndFlush(any(AiAnalysisRun.class))).thenAnswer(invocation->{AiAnalysisRun run=invocation.getArgument(0);run.setId(UUID.randomUUID());canonical.put(run.getCanonicalIdentityKey(),run);return run;});
+  AiAnalysisRun unavailable=service().submitCommit(userId,projectId,commitId).run();AiAnalysisRun available=service().submitCommit(userId,projectId,commitId).run();
   assertThat(available.getId()).isNotEqualTo(unavailable.getId());assertThat(available.getEvidenceHash()).isNotEqualTo(unavailable.getEvidenceHash());assertThat(available.getIdempotencyKey()).isNotEqualTo(unavailable.getIdempotencyKey());verify(runs,times(2)).saveAndFlush(any());
  }
 
  @Test void controllerReturnsAcceptedForTheCanonicalQueuedCommitAcademicRun() {
   AiAcademicSubmissionService academic=mock(AiAcademicSubmissionService.class); AiAnalysisSubmissionService intelligence=mock(AiAnalysisSubmissionService.class); AiAnalysisReadService reads=mock(AiAnalysisReadService.class); AiAnalysisRun run=new AiAnalysisRun();run.setId(UUID.randomUUID()); AiAnalysisResponse body=mock(AiAnalysisResponse.class); SagaUserPrincipal principal=new SagaUserPrincipal(userId,"u@example.test","user","User",null,AccountRole.STUDENT,false);
-  when(academic.submitCommit(userId,projectId,commitId)).thenReturn(run);when(reads.get(userId,projectId,run.getId())).thenReturn(body);
+  when(academic.submitCommit(userId,projectId,commitId)).thenReturn(new AiAcademicSubmissionService.Submission(run,true));when(reads.get(userId,projectId,run.getId())).thenReturn(body);
   var response=new ProjectAiAnalysisController(intelligence,academic,reads,mock(AiTaskIntelligenceSubmissionService.class),mock(AiRiskAnalysisSubmissionService.class),mock(AiProgressNarrativeSubmissionService.class),mock(AiProgressReportExportService.class)).submitCommitAcademic(principal,projectId,commitId);
   assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);assertThat(response.getBody()).isSameAs(body);verify(academic).submitCommit(userId,projectId,commitId);
  }
