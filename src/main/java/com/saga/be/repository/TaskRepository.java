@@ -34,6 +34,13 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 
 	List<Task> findByProject_IdAndExternalKeyIgnoreCaseIn(UUID projectId, Collection<String> externalKeys);
 
+	/**
+	 * Source-scoped key lookup for commit auto-linking: an issue key is only unique within one Jira
+	 * source, so the same key under two sources of one project must never be conflated.
+	 */
+	List<Task> findByProject_IdAndJiraIntegration_IdInAndExternalKeyIgnoreCaseIn(
+			UUID projectId, Collection<UUID> jiraIntegrationIds, Collection<String> externalKeys);
+
 	Optional<Task> findByIdAndProject_Id(UUID id, UUID projectId);
 
 	@Query(

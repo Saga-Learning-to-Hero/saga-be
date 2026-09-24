@@ -14,11 +14,9 @@ import com.saga.be.entity.project.Project;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.GitRepoRepository;
 import com.saga.be.repository.IdentityMapRepository;
-import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.StudentProfileRepository;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,8 +53,6 @@ class GitCommitClaimCutoffProjectionTest {
 	@Mock
 	private StudentProfileRepository students;
 	@Mock
-	private JiraIntegrationRepository jiraIntegrations;
-	@Mock
 	private CommitTaskAutoLinkService autoLink;
 
 	private GitCommitProjectionService service;
@@ -64,7 +60,7 @@ class GitCommitClaimCutoffProjectionTest {
 
 	@BeforeEach
 	void setUp() {
-		service = new GitCommitProjectionService(commits, gitRepos, identities, students, jiraIntegrations, autoLink, org.mockito.Mockito.mock(com.saga.be.service.ai.AiCommitAutomationTrigger.class));
+		service = new GitCommitProjectionService(commits, gitRepos, identities, students, autoLink, org.mockito.Mockito.mock(com.saga.be.service.ai.AiCommitAutomationTrigger.class));
 		Project project = new Project();
 		project.setId(UUID.randomUUID());
 		repo = new GitRepo();
@@ -80,8 +76,7 @@ class GitCommitClaimCutoffProjectionTest {
 		stubCutoffApplies(true);
 		when(commits.findByRepo_IdAndShaHashIn(any(), any())).thenReturn(List.of());
 		when(commits.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
-		when(jiraIntegrations.findByProject_Id(repo.getProject().getId())).thenReturn(Optional.empty());
-		when(autoLink.linkCommits(any(), any(), any())).thenReturn(0);
+		when(autoLink.linkCommits(any(), any())).thenReturn(0);
 
 		List<GitCommitProjectionService.CommitDraft> drafts = List.of(
 				draft("pre", "SAGA-123", LocalDateTime.of(2026, 8, 15, 0, 0)),
@@ -96,7 +91,7 @@ class GitCommitClaimCutoffProjectionTest {
 		ArgumentCaptor<List<GitCommit>> saved = ArgumentCaptor.forClass(List.class);
 		verify(commits).saveAll(saved.capture());
 		assertThat(saved.getValue()).extracting(GitCommit::getShaHash).containsExactly("edge", "post");
-		verify(autoLink).linkCommits(eq(repo.getProject().getId()), any(), saved.capture());
+		verify(autoLink).linkCommits(eq(repo.getProject().getId()), saved.capture());
 		assertThat(saved.getAllValues().getLast())
 				.extracting(GitCommit::getShaHash)
 				.containsExactly("edge", "post")
@@ -113,7 +108,7 @@ class GitCommitClaimCutoffProjectionTest {
 
 		assertThat(outcome).isEqualTo(GitCommitProjectionService.UpsertOutcome.EMPTY);
 		verify(commits, never()).saveAll(any());
-		verify(autoLink, never()).linkCommits(any(), any(), any());
+		verify(autoLink, never()).linkCommits(any(), any());
 	}
 
 	@Test
@@ -124,8 +119,7 @@ class GitCommitClaimCutoffProjectionTest {
 		stubCutoffApplies(false);
 		when(commits.findByRepo_IdAndShaHashIn(any(), any())).thenReturn(List.of());
 		when(commits.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
-		when(jiraIntegrations.findByProject_Id(repo.getProject().getId())).thenReturn(Optional.empty());
-		when(autoLink.linkCommits(any(), any(), any())).thenReturn(0);
+		when(autoLink.linkCommits(any(), any())).thenReturn(0);
 
 		List<GitCommitProjectionService.CommitDraft> drafts = List.of(
 				draft("ancient", "old", LocalDateTime.of(2020, 1, 1, 0, 0)),
@@ -151,8 +145,7 @@ class GitCommitClaimCutoffProjectionTest {
 		stubCutoffApplies(false);
 		when(commits.findByRepo_IdAndShaHashIn(any(), any())).thenReturn(List.of());
 		when(commits.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
-		when(jiraIntegrations.findByProject_Id(repo.getProject().getId())).thenReturn(Optional.empty());
-		when(autoLink.linkCommits(any(), any(), any())).thenReturn(0);
+		when(autoLink.linkCommits(any(), any())).thenReturn(0);
 
 		List<GitCommitProjectionService.CommitDraft> drafts =
 				List.of(draft("before-disconnect", "ok", LocalDateTime.of(2026, 8, 1, 0, 0)));
@@ -181,8 +174,7 @@ class GitCommitClaimCutoffProjectionTest {
 				.thenReturn(false); // B's T2 is not before A's T1
 		when(commits.findByRepo_IdAndShaHashIn(any(), any())).thenReturn(List.of());
 		when(commits.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
-		when(jiraIntegrations.findByProject_Id(projectA.getId())).thenReturn(Optional.empty());
-		when(autoLink.linkCommits(any(), any(), any())).thenReturn(0);
+		when(autoLink.linkCommits(any(), any())).thenReturn(0);
 
 		List<GitCommitProjectionService.CommitDraft> drafts =
 				List.of(draft("predates-A-claim", "old", LocalDateTime.of(2025, 1, 1, 0, 0)));
@@ -210,8 +202,7 @@ class GitCommitClaimCutoffProjectionTest {
 				.thenReturn(true); // A's T1 is before B's T2
 		when(commits.findByRepo_IdAndShaHashIn(any(), any())).thenReturn(List.of());
 		when(commits.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
-		when(jiraIntegrations.findByProject_Id(projectB.getId())).thenReturn(Optional.empty());
-		when(autoLink.linkCommits(any(), any(), any())).thenReturn(0);
+		when(autoLink.linkCommits(any(), any())).thenReturn(0);
 
 		List<GitCommitProjectionService.CommitDraft> drafts = List.of(
 				draft("b-pre-claim", "A's old commit", T2.minusDays(1)),

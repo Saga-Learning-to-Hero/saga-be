@@ -19,7 +19,6 @@ import com.saga.be.repository.WebhookReceiptRepository;
 import com.saga.be.service.projection.GitCommitProjectionService.CommitDraft;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -32,7 +31,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -98,8 +96,47 @@ public class ProviderWebhookProjectionService {
 		});
 	}
 
-	@Transactional
+	/**
+	 * Non-transactional coordinator. The receipt is already committed by ingest -- the documented
+	 * durability point after which the webhook is acknowledged -- so projection runs in its own
+	 * all-or-nothing transaction and a failure is recorded as FAILED in a separate one. A nested
+	 * {@code @Transactional} failure therefore can never mark a shared transaction rollback-only
+	 * and turn a handled projection error into UnexpectedRollbackException.
+	 */
 	public void projectGithub(WebhookReceipt receipt, String eventType, String payloadJson) {
+		Set<UUID> commitChanged = new LinkedHashSet<>();
+		Set<UUID> linkChanged = new LinkedHashSet<>();
+		Set<UUID> matchedProjects = new LinkedHashSet<>();
+		try {
+			writes.executeWithoutResult(status ->
+					projectGithubInTransaction(receipt, eventType, payloadJson, commitChanged, linkChanged, matchedProjects));
+		} catch (RuntimeException ex) {
+			log.warn(
+					"github webhook projection failed deliveryId={} eventType={} repositoryId={} projectIds={} type={} code={}",
+					receipt == null ? null : receipt.getDeliveryId(),
+					eventType,
+					githubRepositoryId(payloadJson),
+					matchedProjects,
+					ex.getClass().getSimpleName(),
+					ex instanceof com.saga.be.exception.IntegrationException integration ? integration.getCode() : null);
+			recordFailure(receipt, "GITHUB_PROJECTION_FAILED");
+			return;
+		}
+		for (UUID projectId : commitChanged) {
+			realtime.publish(ProjectRealtimeEventType.COMMITS_CHANGED, projectId);
+		}
+		for (UUID projectId : linkChanged) {
+			realtime.publish(ProjectRealtimeEventType.TASK_LINKS_CHANGED, projectId);
+		}
+	}
+
+	private void projectGithubInTransaction(
+			WebhookReceipt receipt,
+			String eventType,
+			String payloadJson,
+			Set<UUID> commitChanged,
+			Set<UUID> linkChanged,
+			Set<UUID> matchedProjects) {
 		try {
 			if (receipt == null || "push".equalsIgnoreCase(eventType) == false) {
 				if (receipt != null) {
@@ -118,6 +155,9 @@ public class ProviderWebhookProjectionService {
 			if (matches.isEmpty()) {
 				receipts.markProcessed(receipt, LocalDateTime.now());
 				return;
+			}
+			for (GitRepo repo : matches) {
+				matchedProjects.add(repo.getProject().getId());
 			}
 			String ref = root.path("ref").asText(null);
 			String headRef = ref != null && ref.startsWith("refs/heads/") ? ref.substring("refs/heads/".length()) : ref;
@@ -138,8 +178,6 @@ public class ProviderWebhookProjectionService {
 						headRef,
 						null));
 			}
-			Set<UUID> commitChanged = new HashSet<>();
-			Set<UUID> linkChanged = new HashSet<>();
 			for (GitRepo repo : matches) {
 				GitCommitProjectionService.UpsertOutcome outcome = commits.upsertBatchDetailed(repo, drafts);
 				if (outcome.commitsTouched() > 0) {
@@ -149,18 +187,33 @@ public class ProviderWebhookProjectionService {
 					linkChanged.add(repo.getProject().getId());
 				}
 			}
-			for (UUID projectId : commitChanged) {
-				realtime.publish(ProjectRealtimeEventType.COMMITS_CHANGED, projectId);
-			}
-			for (UUID projectId : linkChanged) {
-				realtime.publish(ProjectRealtimeEventType.TASK_LINKS_CHANGED, projectId);
-			}
 			receipts.markProcessed(receipt, LocalDateTime.now());
+		} catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+			throw new IllegalArgumentException("Malformed GitHub webhook payload", ex);
+		}
+	}
+
+	/** Separate transaction on a freshly loaded row: the projection transaction has already rolled
+	 * back, and the in-memory receipt may carry state from it. Left to propagate if it cannot be
+	 * persisted, so an unrecorded failure is never reported as accepted-and-handled. */
+	private void recordFailure(WebhookReceipt receipt, String errorCategory) {
+		if (receipt == null) {
+			return;
+		}
+		writes.executeWithoutResult(status -> {
+			WebhookReceipt current = receipt.getId() == null
+					? receipt
+					: receiptRepository.findById(receipt.getId()).orElse(receipt);
+			receipts.markFailed(current, errorCategory);
+		});
+	}
+
+	private Long githubRepositoryId(String payloadJson) {
+		try {
+			long id = mapper.readTree(payloadJson).path("repository").path("id").asLong(0L);
+			return id > 0L ? id : null;
 		} catch (Exception ex) {
-			log.warn("github webhook projection failed type={}", ex.getClass().getSimpleName());
-			if (receipt != null) {
-				receipts.markFailed(receipt, "GITHUB_PROJECTION_FAILED");
-			}
+			return null;
 		}
 	}
 

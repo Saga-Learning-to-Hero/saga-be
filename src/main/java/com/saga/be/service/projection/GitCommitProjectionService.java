@@ -9,7 +9,6 @@ import com.saga.be.entity.integration.IdentityMap;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.GitRepoRepository;
 import com.saga.be.repository.IdentityMapRepository;
-import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.StudentProfileRepository;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -58,7 +57,6 @@ public class GitCommitProjectionService {
 	private final GitRepoRepository gitRepos;
 	private final IdentityMapRepository identities;
 	private final StudentProfileRepository students;
-	private final JiraIntegrationRepository jiraIntegrations;
 	private final CommitTaskAutoLinkService autoLink;
 	private final com.saga.be.service.ai.AiCommitAutomationTrigger aiAutomation;
 
@@ -67,14 +65,12 @@ public class GitCommitProjectionService {
 			GitRepoRepository gitRepos,
 			IdentityMapRepository identities,
 			StudentProfileRepository students,
-			JiraIntegrationRepository jiraIntegrations,
 			CommitTaskAutoLinkService autoLink,
 			com.saga.be.service.ai.AiCommitAutomationTrigger aiAutomation) {
 		this.commits = commits;
 		this.gitRepos = gitRepos;
 		this.identities = identities;
 		this.students = students;
-		this.jiraIntegrations = jiraIntegrations;
 		this.autoLink = autoLink;
 		this.aiAutomation = aiAutomation;
 	}
@@ -158,11 +154,9 @@ public class GitCommitProjectionService {
 			}
 			persisted = merged.isEmpty() ? List.of() : commits.saveAll(merged);
 		}
-		String projectKey = jiraIntegrations
-				.findByProject_Id(repo.getProject().getId())
-				.map(row -> row.getProjectKey())
-				.orElse(null);
-		int links = autoLink.linkCommits(repo.getProject().getId(), projectKey, persisted);
+		// Optional task attribution against the project's ACTIVE Jira sources (any number of them);
+		// an unresolvable or ambiguous key is skipped, never a reason to reject the commits.
+		int links = autoLink.linkCommits(repo.getProject().getId(), persisted);
 		aiAutomation.afterCommitsPersisted(repo.getProject().getId(), persisted.stream().map(GitCommit::getId).toList());
 		return new UpsertOutcome(persisted.size(), links);
 	}
