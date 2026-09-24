@@ -47,6 +47,7 @@ class AiCourseMultiProviderFallbackTest {
 	private static final AiProviderBinding GEMINI = new AiProviderBinding(AiProvider.GEMINI, "gemini-3.8-flash");
 	private static final AiProviderBinding OPENROUTER = new AiProviderBinding(AiProvider.OPENROUTER, "openrouter/free");
 	private static final AiProviderBinding OPENAI = new AiProviderBinding(AiProvider.OPENAI, "gpt-5.6-terra");
+	private static final AiProviderBinding COHERE = new AiProviderBinding(AiProvider.COHERE, "command-a-plus-05-2026");
 
 	private final ObjectMapper mapper = new ObjectMapper();
 	private final UUID runId = UUID.randomUUID();
@@ -101,7 +102,7 @@ class AiCourseMultiProviderFallbackTest {
 	// ---- dispatch per binding ----
 
 	@ParameterizedTest(name = "{0} binding is dispatched to the {0} adapter with its model")
-	@CsvSource({"OPENAI, gpt-5.6-luna", "GEMINI, gemini-3.5-flash-lite", "OPENROUTER, openrouter/free"})
+	@CsvSource({"OPENAI, gpt-5.6-luna", "GEMINI, gemini-3.5-flash-lite", "OPENROUTER, openrouter/free", "COHERE, command-a-plus-05-2026"})
 	void boundPrimaryIsDispatchedWithItsProviderNameModelAndCourseEnvelope(AiProvider provider, String model) {
 		RemoteAiModelProvider remote = realRemote();
 		loadBoundRun(remote, new AiProviderBinding(provider, model));
@@ -140,7 +141,7 @@ class AiCourseMultiProviderFallbackTest {
 	// ---- credential status policy, per provider ----
 
 	@ParameterizedTest(name = "invalid {0} key -> only the {0} credential is INVALID, no fallback")
-	@ValueSource(strings = {"OPENAI", "GEMINI", "OPENROUTER"})
+	@ValueSource(strings = {"OPENAI", "GEMINI", "OPENROUTER", "COHERE"})
 	void invalidKeyInvalidatesOnlyThatProvidersCredentialAndNeverFallsBack(AiProvider provider) {
 		RemoteAiModelProvider remote = realRemote();
 		AiProviderBinding primary = new AiProviderBinding(provider, catalogModel(provider));
@@ -413,7 +414,7 @@ class AiCourseMultiProviderFallbackTest {
 	}
 
 	private List<AiProviderBinding> fallbacksExcluding(AiProvider provider) {
-		return List.of(GEMINI, OPENROUTER, OPENAI).stream().filter(b -> b.provider() != provider).toList();
+		return List.of(GEMINI, OPENROUTER, OPENAI, COHERE).stream().filter(b -> b.provider() != provider).toList();
 	}
 
 	private UUID otherThan(AiProvider provider) {
@@ -421,7 +422,7 @@ class AiCourseMultiProviderFallbackTest {
 	}
 
 	private static String catalogModel(AiProvider provider) {
-		return switch (provider) { case OPENAI -> "gpt-5.6-sol"; case GEMINI -> "gemini-3.8-flash"; case OPENROUTER -> "openrouter/free"; };
+		return switch (provider) { case OPENAI -> "gpt-5.6-sol"; case GEMINI -> "gemini-3.8-flash"; case OPENROUTER -> "openrouter/free"; case COHERE -> "command-a-plus-05-2026"; };
 	}
 
 	private RemoteAiModelProvider realRemote() { return new RemoteAiModelProvider(properties(), mapper); }

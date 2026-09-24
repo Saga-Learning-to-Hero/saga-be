@@ -1,7 +1,7 @@
 # Course AI multi-provider: API contract for the frontend
 
 Backend contract for the lecturer "Course AI" settings screen: provider credentials (OpenAI,
-Gemini, OpenRouter) and the provider/model bindings for PRIMARY, the fallback chain, and SECONDARY.
+Gemini, OpenRouter, Cohere) and the provider/model bindings for PRIMARY, the fallback chain, and SECONDARY.
 None of these endpoints contacts an AI provider. Saving a key never checks it with the provider:
 the status shows `UNVERIFIED` until the first real analysis runs.
 
@@ -11,7 +11,7 @@ get `403 ACCESS_DENIED`; admins and other lecturers get `403 LECTURER_COURSE_FOR
 
 Canonical values:
 
-- `provider`: `OPENAI` | `GEMINI` | `OPENROUTER`. Requests are case-insensitive; responses are
+- `provider`: `OPENAI` | `GEMINI` | `OPENROUTER` | `COHERE`. Requests are case-insensitive; responses are
   always upper case.
 - `role`: `PRIMARY` | `SECONDARY`.
 - `status`: `UNVERIFIED` | `ACTIVE` | `DEGRADED` | `INVALID` | `REVOKED`.
@@ -39,7 +39,10 @@ deliberate subset of what each provider's API offers:
       { "provider": "GEMINI", "modelId": "gemini-3.5-flash-lite",  "displayName": "Gemini 3.5 Flash-Lite", "freeTierEligible": true,  "supportsStructuredOutput": true, "recommendedForAutomation": true },
       { "provider": "GEMINI", "modelId": "gemini-3.1-pro-preview", "displayName": "Gemini 3.1 Pro",        "freeTierEligible": false, "supportsStructuredOutput": true, "recommendedForAutomation": false } ] },
     { "provider": "OPENROUTER", "displayName": "OpenRouter", "models": [
-      { "provider": "OPENROUTER", "modelId": "openrouter/free", "displayName": "OpenRouter Free Models Router", "freeTierEligible": true, "supportsStructuredOutput": true, "recommendedForAutomation": false } ] }
+      { "provider": "OPENROUTER", "modelId": "openrouter/free", "displayName": "OpenRouter Free Models Router", "freeTierEligible": true, "supportsStructuredOutput": true, "recommendedForAutomation": false } ] },
+    { "provider": "COHERE", "displayName": "Cohere", "models": [
+      { "provider": "COHERE", "modelId": "command-a-plus-05-2026", "displayName": "Command A+", "freeTierEligible": true, "supportsStructuredOutput": true, "recommendedForAutomation": true },
+      { "provider": "COHERE", "modelId": "command-a-03-2025", "displayName": "Command A", "freeTierEligible": true, "supportsStructuredOutput": true, "recommendedForAutomation": false } ] }
   ],
   "freeTierNotice": "Free-tier eligibility is informational only. External providers set and may change free-tier availability, limits and data-use terms at any time; free tiers may use submitted content to improve their models and are not suitable for sensitive production data."
 }
@@ -137,6 +140,13 @@ Validation (all `400`, nothing is saved):
 A binding does not require the credential to exist yet. Warn when a bound provider has no usable
 credential for that role (none, `INVALID` or `REVOKED`). Runs for that role are then unavailable,
 and SAGA never substitutes another provider's key.
+
+`COHERE` uses the same write-only credential route (`/ai-credentials/{role}/COHERE`), binding,
+fallback, and SECONDARY semantics as every other course provider. For example, a PRIMARY binding
+is `{ "provider": "COHERE", "modelId": "command-a-plus-05-2026" }`. Credential is not binding:
+the first stores the key for a role, while the second selects provider/model. Provider decisions
+for Cohere inference report `aiProvider: "COHERE"`. Load this catalog dynamically; do not hardcode
+Cohere model ids in the frontend.
 
 ## 4. Runtime semantics to explain in the UI
 

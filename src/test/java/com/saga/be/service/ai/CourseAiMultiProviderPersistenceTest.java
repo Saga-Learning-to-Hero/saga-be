@@ -78,6 +78,7 @@ class CourseAiMultiProviderPersistenceTest {
 	private static final String OPENAI_KEY = "sk-openai-raw-secret-000111";
 	private static final String GEMINI_KEY = "AIza-gemini-raw-secret-222333";
 	private static final String OPENROUTER_KEY = "sk-or-openrouter-raw-secret-444555";
+	private static final String COHERE_KEY = "cohere-raw-secret-666777";
 
 	@Autowired private SemesterRepository semesters;
 	@Autowired private AcademicClassRepository academicClasses;
@@ -112,25 +113,26 @@ class CourseAiMultiProviderPersistenceTest {
 	// ---- credentials ----
 
 	@Test
-	void openAiGeminiAndOpenRouterCredentialsCoexistForTheSameCourseAndRole() {
+	void openAiGeminiOpenRouterAndCohereCredentialsCoexistForTheSameCourseAndRole() {
 		var openai = credentials.save(course, AiProviderRole.PRIMARY, AiProvider.OPENAI, OPENAI_KEY, null);
 		var gemini = credentials.save(course, AiProviderRole.PRIMARY, AiProvider.GEMINI, GEMINI_KEY, null);
 		var openrouter = credentials.save(course, AiProviderRole.PRIMARY, AiProvider.OPENROUTER, OPENROUTER_KEY, null);
+		var cohere = credentials.save(course, AiProviderRole.PRIMARY, AiProvider.COHERE, COHERE_KEY, null);
 		entityManager.flush();
 
-		assertThat(List.of(openai, gemini, openrouter)).allSatisfy(meta -> {
+		assertThat(List.of(openai, gemini, openrouter, cohere)).allSatisfy(meta -> {
 			assertThat(meta.configured()).isTrue();
 			assertThat(meta.status()).isEqualTo(AiCredentialStatus.UNVERIFIED); // saving never calls a provider
 			assertThat(meta.createdAt()).isNotNull();
 		});
 		assertThat(credentials.list(course)).extracting(CourseAiCredentialService.SafeMetadata::provider)
-				.containsExactlyInAnyOrder(AiProvider.OPENAI, AiProvider.GEMINI, AiProvider.OPENROUTER);
+				.containsExactlyInAnyOrder(AiProvider.OPENAI, AiProvider.GEMINI, AiProvider.OPENROUTER, AiProvider.COHERE);
 		assertThat(gemini.lastFour()).isEqualTo("2333");
 
 		// Replacing the Gemini key rewrites the Gemini row only.
 		credentials.save(course, AiProviderRole.PRIMARY, AiProvider.GEMINI, "AIza-rotated-gemini-9999", null);
 		entityManager.flush();
-		assertThat(credentialRows.findByCourse_IdOrderByProviderRoleAscProviderAsc(course.getId())).hasSize(3);
+		assertThat(credentialRows.findByCourse_IdOrderByProviderRoleAscProviderAsc(course.getId())).hasSize(4);
 		assertThat(credentials.safeMetadata(course, AiProviderRole.PRIMARY, AiProvider.OPENAI).lastFour()).isEqualTo("0111");
 	}
 
@@ -139,15 +141,16 @@ class CourseAiMultiProviderPersistenceTest {
 		credentials.save(course, AiProviderRole.PRIMARY, AiProvider.OPENAI, OPENAI_KEY, null);
 		credentials.save(course, AiProviderRole.PRIMARY, AiProvider.GEMINI, GEMINI_KEY, null);
 		credentials.save(course, AiProviderRole.SECONDARY, AiProvider.OPENROUTER, OPENROUTER_KEY, null);
+		credentials.save(course, AiProviderRole.SECONDARY, AiProvider.COHERE, COHERE_KEY, null);
 		entityManager.flush();
 
 		@SuppressWarnings("unchecked")
 		List<Object[]> rows = entityManager.createNativeQuery("select * from ai_course_provider_credential").getResultList();
 		String stored = rows.stream().map(java.util.Arrays::deepToString).reduce("", String::concat);
-		assertThat(rows).hasSize(3);
-		assertThat(stored).doesNotContain(OPENAI_KEY, GEMINI_KEY, OPENROUTER_KEY, "raw-secret");
+		assertThat(rows).hasSize(4);
+		assertThat(stored).doesNotContain(OPENAI_KEY, GEMINI_KEY, OPENROUTER_KEY, COHERE_KEY, "raw-secret");
 		String metadata = credentials.list(course).toString();
-		assertThat(metadata).doesNotContain(OPENAI_KEY, GEMINI_KEY, OPENROUTER_KEY, "raw-secret");
+		assertThat(metadata).doesNotContain(OPENAI_KEY, GEMINI_KEY, OPENROUTER_KEY, COHERE_KEY, "raw-secret");
 		credentialRows.findAll().forEach(row -> assertThat(metadata).doesNotContain(row.getEncryptedSecret(), row.getEncryptionNonce(), row.getFingerprint()));
 	}
 
@@ -222,24 +225,26 @@ class CourseAiMultiProviderPersistenceTest {
 		assertThat(byId.keySet()).containsExactlyInAnyOrder(
 				"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol",
 				"gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview",
-				"openrouter/free");
+				"openrouter/free", "command-a-plus-05-2026", "command-a-03-2025");
 		assertThat(byId.values()).allSatisfy(m -> assertThat(m.supportsEveryAnalysisType()).isTrue());
 		// Informational only, per each provider's current pricing page: the OpenAI API has no free
 		// tier; Gemini 3.1 Pro Preview is paid-tier only; the OpenRouter router is free by design.
 		assertThat(List.of("gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gemini-3.1-pro-preview")).allSatisfy(id -> assertThat(byId.get(id).freeTierEligible()).isFalse());
-		assertThat(List.of("gemini-3.8-flash", "gemini-3.5-flash-lite", "openrouter/free")).allSatisfy(id -> assertThat(byId.get(id).freeTierEligible()).isTrue());
+		assertThat(List.of("gemini-3.8-flash", "gemini-3.5-flash-lite", "openrouter/free", "command-a-plus-05-2026", "command-a-03-2025")).allSatisfy(id -> assertThat(byId.get(id).freeTierEligible()).isTrue());
 		assertThat(byId.get("openrouter/free").recommendedForAutomation()).isFalse();
 		assertThat(byId.get("gemini-3.1-pro-preview").recommendedForAutomation()).isFalse();
 		assertThat(byId.get("gemini-3.8-flash").displayName()).isEqualTo("Gemini 3.8 Flash");
 		assertThat(byId.get("gemini-3.5-flash-lite").displayName()).isEqualTo("Gemini 3.5 Flash-Lite");
 		assertThat(byId.get("gemini-3.1-pro-preview").displayName()).isEqualTo("Gemini 3.1 Pro");
+		assertThat(byId.get("command-a-plus-05-2026").recommendedForAutomation()).isTrue();
+		assertThat(byId.get("command-a-03-2025").recommendedForAutomation()).isFalse();
 	}
 
 	@org.junit.jupiter.params.ParameterizedTest(name = "{0} {1} is bindable")
 	@org.junit.jupiter.params.provider.CsvSource({
 		"OPENAI, gpt-5.6-sol", "OPENAI, gpt-5.6-terra", "OPENAI, gpt-5.6-luna",
 		"GEMINI, gemini-3.8-flash", "GEMINI, gemini-3.5-flash-lite", "GEMINI, gemini-3.1-pro-preview",
-		"OPENROUTER, openrouter/free"
+		"OPENROUTER, openrouter/free", "COHERE, command-a-plus-05-2026", "COHERE, command-a-03-2025"
 	})
 	void everyProductCatalogModelIsBindableUnderItsOwnProvider(String provider, String modelId) {
 		var saved = settings.updateBindings(course, input(provider, modelId), false, List.of(), input(provider, modelId));
@@ -254,7 +259,7 @@ class CourseAiMultiProviderPersistenceTest {
 		// Invented / alias ids that SAGA does not expose.
 		"GEMINI, gemini-3.1-pro", "GEMINI, gemini-3.8", "OPENAI, gpt-5.6", "OPENAI, gpt-6-sol",
 		// A real catalog model bound under the wrong provider.
-		"OPENAI, gemini-3.8-flash", "GEMINI, gpt-5.6-terra", "OPENROUTER, gemini-3.5-flash-lite", "GEMINI, openrouter/free"
+		"OPENAI, gemini-3.8-flash", "GEMINI, gpt-5.6-terra", "OPENROUTER, gemini-3.5-flash-lite", "GEMINI, openrouter/free", "COHERE, command-a-plus-05-2026-alias", "OPENAI, command-a-plus-05-2026"
 	})
 	void modelsOutsideTheProductCatalogOrUnderTheWrongProviderAreRejected(String provider, String modelId) {
 		assertRejected(() -> settings.updateBindings(course, input(provider, modelId), false, List.of(), null), IntegrationErrorCode.AI_MODEL_NOT_SUPPORTED);

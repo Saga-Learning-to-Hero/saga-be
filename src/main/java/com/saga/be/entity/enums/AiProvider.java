@@ -5,7 +5,7 @@ import java.util.Optional;
 
 /** Canonical external AI provider behind a course credential or binding. Never free text. */
 public enum AiProvider {
-	OPENAI, GEMINI, OPENROUTER;
+	OPENAI, GEMINI, OPENROUTER, COHERE;
 
 	/** Case-insensitive parse so legacy clients that sent {@code "openai"} keep working; anything
 	 * outside the enum is empty, never a new provider. */

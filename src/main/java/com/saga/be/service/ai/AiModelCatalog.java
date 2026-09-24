@@ -42,7 +42,11 @@ public class AiModelCatalog {
 			new Model(AiProvider.GEMINI, "gemini-3.1-pro-preview", "Gemini 3.1 Pro", false, true, false, ALL_TYPES),
 			// Routes each request to some currently-free upstream model: output quality, limits
 			// and data terms vary per request, so it is never recommended for unattended automation.
-			new Model(AiProvider.OPENROUTER, "openrouter/free", "OpenRouter Free Models Router", true, true, false, ALL_TYPES));
+			new Model(AiProvider.OPENROUTER, "openrouter/free", "OpenRouter Free Models Router", true, true, false, ALL_TYPES),
+			// Cohere documents native Chat V2 JSON-schema structured output for these Command models.
+			// Its free/trial availability is provider-controlled, therefore the badge is informational only.
+			new Model(AiProvider.COHERE, "command-a-plus-05-2026", "Command A+", true, true, true, ALL_TYPES),
+			new Model(AiProvider.COHERE, "command-a-03-2025", "Command A", true, true, false, ALL_TYPES));
 
 	/**
 	 * Provider/model pairs accepted only while executing an already-persisted binding. They are

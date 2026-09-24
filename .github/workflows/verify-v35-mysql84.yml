@@ -1,23 +1,23 @@
-name: Verify V35 MySQL 8.4
+name: Verify V35-V36 MySQL 8.4
 
 on:
   workflow_dispatch:
 
 jobs:
-  verify-v35-mysql84:
+  verify-v35-v36-mysql84:
     runs-on: ubuntu-latest
     services:
       mysql:
         image: mysql:8.4
         env:
-          MYSQL_DATABASE: saga_v35_test
+          MYSQL_DATABASE: saga_v36_test
           MYSQL_USER: saga
-          MYSQL_PASSWORD: saga-v35-disposable-password
-          MYSQL_ROOT_PASSWORD: saga-v35-disposable-root-password
+          MYSQL_PASSWORD: saga-v36-disposable-password
+          MYSQL_ROOT_PASSWORD: saga-v36-disposable-root-password
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -psaga-v35-disposable-root-password"
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -psaga-v36-disposable-root-password"
           --health-interval=5s
           --health-timeout=5s
           --health-retries=30
@@ -33,22 +33,22 @@ jobs:
 
       - name: Verify MySQL 8.4 service version
         run: |
-          version="$(docker exec '${{ job.services.mysql.id }}' mysql -N -uroot -psaga-v35-disposable-root-password -e 'SELECT VERSION();')"
+          version="$(docker exec '${{ job.services.mysql.id }}' mysql -N -uroot -psaga-v36-disposable-root-password -e 'SELECT VERSION();')"
           echo "MySQL version: $version"
           [[ "$version" =~ ^8\.4\. ]]
 
       - name: Migrate V1 through V34 and seed a pre-V35 run
         env:
-          FLYWAY_URL: jdbc:mysql://127.0.0.1:3306/saga_v35_test
+          FLYWAY_URL: jdbc:mysql://127.0.0.1:3306/saga_v36_test
           FLYWAY_USER: saga
-          FLYWAY_PASSWORD: saga-v35-disposable-password
+          FLYWAY_PASSWORD: saga-v36-disposable-password
           MYSQL_CONTAINER: ${{ job.services.mysql.id }}
         run: |
           chmod +x ./mvnw
           ./mvnw -q org.flywaydb:flyway-maven-plugin:12.4.0:migrate \
             -Dflyway.url="$FLYWAY_URL" -Dflyway.user="$FLYWAY_USER" -Dflyway.password="$FLYWAY_PASSWORD" \
             -Dflyway.locations=filesystem:src/main/resources/db/migration -Dflyway.target=34
-          docker exec "$MYSQL_CONTAINER" mysql -uroot -psaga-v35-disposable-root-password saga_v35_test -e "
+          docker exec "$MYSQL_CONTAINER" mysql -uroot -psaga-v36-disposable-root-password saga_v36_test -e "
             SET FOREIGN_KEY_CHECKS=0;
             INSERT INTO ai_analysis_run
               (id, artifact_type, artifact_id, artifact_revision, analysis_type, status, evidence_hash,
@@ -56,13 +56,24 @@ jobs:
             VALUES
               ('11111111-1111-1111-1111-111111111111', 'COMMIT', '11111111-1111-1111-1111-111111111111',
                'revision', 'COMMIT_INTELLIGENCE', 'FAILED', REPEAT('a', 64), 'policy', 'prompt', 'schema',
-               REPEAT('b', 64), REPEAT('c', 64));"
+               REPEAT('b', 64), REPEAT('c', 64));
+            INSERT INTO ai_course_provider_credential
+              (id, course_id, provider_role, provider, encrypted_secret, encryption_nonce, encryption_key_version, fingerprint, last_four, status)
+            VALUES ('pre36-credential', 'pre36-course', 'PRIMARY', 'OPENAI', 'cipher', 'nonce', 1, REPEAT('p',64), '1234', 'ACTIVE');
+            INSERT INTO ai_course_settings
+              (id, course_id, primary_provider, primary_model_id, secondary_provider, secondary_model_id)
+            VALUES ('pre36-settings', 'pre36-settings-course', 'GEMINI', 'gemini-3.8-flash', 'OPENROUTER', 'openrouter/free');
+            INSERT INTO ai_course_fallback_binding (id, course_id, attempt_order, provider, model_id)
+            VALUES ('pre36-fallback', 'pre36-fallback-course', 1, 'OPENROUTER', 'openrouter/free');
+            INSERT INTO ai_analysis_provider_decision
+              (id, analysis_run_id, provider_role, provider_key, provider_config_hash, model_id, route, status, ai_provider)
+            VALUES ('pre36-decision', '11111111-1111-1111-1111-111111111111', 'PRIMARY', 'openai', REPEAT('q',64), 'gpt-5.6-sol', 'NORMAL', 'COMPLETED', 'OPENAI');"
 
-      - name: Migrate V35, validate Flyway, and prove V35 constraints
+      - name: Migrate V35-V36, validate Flyway, and prove provider and retry constraints
         env:
-          FLYWAY_URL: jdbc:mysql://127.0.0.1:3306/saga_v35_test
+          FLYWAY_URL: jdbc:mysql://127.0.0.1:3306/saga_v36_test
           FLYWAY_USER: saga
-          FLYWAY_PASSWORD: saga-v35-disposable-password
+          FLYWAY_PASSWORD: saga-v36-disposable-password
           MYSQL_CONTAINER: ${{ job.services.mysql.id }}
         run: |
           set -euo pipefail
@@ -72,11 +83,12 @@ jobs:
           ./mvnw -q org.flywaydb:flyway-maven-plugin:12.4.0:validate \
             -Dflyway.url="$FLYWAY_URL" -Dflyway.user="$FLYWAY_USER" -Dflyway.password="$FLYWAY_PASSWORD" \
             -Dflyway.locations=filesystem:src/main/resources/db/migration
-          mysql() { docker exec "$MYSQL_CONTAINER" mysql -N -uroot -psaga-v35-disposable-root-password saga_v35_test -e "$1"; }
-          test "$(mysql "SELECT MAX(CAST(version AS UNSIGNED)) FROM flyway_schema_history WHERE success = 1 AND version IS NOT NULL;")" = "35"
-          test "$(mysql "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 1 AND version IS NOT NULL;")" = "35"
-          test "$(mysql "SELECT GROUP_CONCAT(CONCAT(column_name, ':', column_type, ':', is_nullable) ORDER BY column_name SEPARATOR ' ') FROM information_schema.columns WHERE table_schema = 'saga_v35_test' AND table_name = 'ai_analysis_run' AND column_name IN ('canonical_identity_key', 'retry_attempt');")" = "canonical_identity_key:char(64):NO retry_attempt:int unsigned:NO"
+          mysql() { docker exec "$MYSQL_CONTAINER" mysql -N -uroot -psaga-v36-disposable-root-password saga_v36_test -e "$1"; }
+          test "$(mysql "SELECT MAX(CAST(version AS UNSIGNED)) FROM flyway_schema_history WHERE success = 1 AND version IS NOT NULL;")" = "36"
+          test "$(mysql "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 1 AND version IS NOT NULL;")" = "36"
+          test "$(mysql "SELECT GROUP_CONCAT(CONCAT(column_name, ':', column_type, ':', is_nullable) ORDER BY column_name SEPARATOR ' ') FROM information_schema.columns WHERE table_schema = 'saga_v36_test' AND table_name = 'ai_analysis_run' AND column_name IN ('canonical_identity_key', 'retry_attempt');")" = "canonical_identity_key:char(64):NO retry_attempt:int unsigned:NO"
           test "$(mysql "SELECT canonical_identity_key = idempotency_key AND retry_attempt = 0 FROM ai_analysis_run WHERE id = '11111111-1111-1111-1111-111111111111';")" = "1"
+          test "$(mysql "SELECT CONCAT((SELECT provider FROM ai_course_provider_credential WHERE id='pre36-credential'),'|',(SELECT CONCAT(primary_provider,':',secondary_provider) FROM ai_course_settings WHERE id='pre36-settings'),'|',(SELECT provider FROM ai_course_fallback_binding WHERE id='pre36-fallback'),'|',(SELECT ai_provider FROM ai_analysis_provider_decision WHERE id='pre36-decision'));")" = "OPENAI|GEMINI:OPENROUTER|OPENROUTER|OPENAI"
           mysql "INSERT INTO ai_analysis_run
             (id, artifact_type, artifact_id, artifact_revision, analysis_type, status, evidence_hash, policy_version,
              prompt_version, schema_version, provider_config_hash, idempotency_key, canonical_identity_key, retry_attempt)
@@ -103,12 +115,35 @@ jobs:
             echo 'duplicate physical idempotency key was accepted'; exit 1
           fi
 
-      - name: Validate Hibernate mappings against V35
+          # V36 replaces only the five V34 provider checks. Verify every replacement contains
+          # COHERE, and the live MySQL constraints accept each canonical provider but reject an
+          # invented value. Foreign keys are irrelevant to these isolated CHECK assertions.
+          test "$(mysql "SELECT COUNT(DISTINCT tc.constraint_name) FROM information_schema.table_constraints tc JOIN information_schema.check_constraints cc ON cc.constraint_schema = tc.constraint_schema AND cc.constraint_name = tc.constraint_name WHERE tc.table_schema = 'saga_v36_test' AND tc.constraint_name IN ('ck_ai_course_provider_credential_provider','ck_ai_course_settings_primary_provider','ck_ai_course_settings_secondary_provider','ck_ai_course_fallback_binding_provider','ck_ai_provider_decision_ai_provider') AND cc.check_clause LIKE '%COHERE%';")" = "5"
+          for provider in OPENAI GEMINI OPENROUTER COHERE; do
+            mysql "SET FOREIGN_KEY_CHECKS=0; INSERT INTO ai_course_provider_credential (id,course_id,provider_role,provider,encrypted_secret,encryption_nonce,encryption_key_version,fingerprint,last_four,status) VALUES (CONCAT('cred-', '$provider'), CONCAT('course-', '$provider'), 'PRIMARY', '$provider', 'cipher', 'nonce', 1, RPAD('$provider',64,'x'), '1234', 'UNVERIFIED');"
+            mysql "SET FOREIGN_KEY_CHECKS=0; INSERT INTO ai_course_settings (id,course_id,primary_provider,primary_model_id,secondary_provider,secondary_model_id) VALUES (CONCAT('settings-', '$provider'), CONCAT('settings-course-', '$provider'), '$provider', 'model', '$provider', 'model');"
+            mysql "SET FOREIGN_KEY_CHECKS=0; INSERT INTO ai_course_fallback_binding (id,course_id,attempt_order,provider,model_id) VALUES (CONCAT('fallback-', '$provider'), CONCAT('fallback-course-', '$provider'), 1, '$provider', 'model');"
+          done
+          mysql "SET FOREIGN_KEY_CHECKS=0; INSERT INTO ai_analysis_provider_decision (id,analysis_run_id,provider_role,provider_key,provider_config_hash,model_id,route,status,ai_provider) VALUES ('decision-cohere','11111111-1111-1111-1111-111111111111','SECONDARY','cohere',REPEAT('z',64),'command-a-plus-05-2026','NORMAL','PENDING','COHERE');"
+          if mysql "SET FOREIGN_KEY_CHECKS=0; INSERT INTO ai_course_provider_credential (id,course_id,provider_role,provider,encrypted_secret,encryption_nonce,encryption_key_version,fingerprint,last_four,status) VALUES ('cred-invalid','course-invalid','SECONDARY','INVALID_PROVIDER','cipher','nonce',1,REPEAT('i',64),'1234','UNVERIFIED');"; then
+            echo 'invalid provider was accepted'; exit 1
+          fi
+          if mysql "SET FOREIGN_KEY_CHECKS=0; INSERT INTO ai_course_settings (id,course_id,primary_provider,primary_model_id,secondary_provider,secondary_model_id) VALUES ('settings-invalid','settings-course-invalid','INVALID_PROVIDER','model','INVALID_PROVIDER','model');"; then
+            echo 'invalid settings provider was accepted'; exit 1
+          fi
+          if mysql "SET FOREIGN_KEY_CHECKS=0; INSERT INTO ai_course_fallback_binding (id,course_id,attempt_order,provider,model_id) VALUES ('fallback-invalid','fallback-course-invalid',1,'INVALID_PROVIDER','model');"; then
+            echo 'invalid fallback provider was accepted'; exit 1
+          fi
+          if mysql "SET FOREIGN_KEY_CHECKS=0; INSERT INTO ai_analysis_provider_decision (id,analysis_run_id,provider_role,provider_key,provider_config_hash,model_id,route,status,ai_provider) VALUES ('decision-invalid','11111111-1111-1111-1111-111111111111','SECONDARY','invalid',REPEAT('k',64),'model','NORMAL','PENDING','INVALID_PROVIDER');"; then
+            echo 'invalid decision provider was accepted'; exit 1
+          fi
+
+      - name: Validate Hibernate mappings against V36
         env:
           SAGA_VERIFY_MYSQL_USERNAME: saga
-          SAGA_VERIFY_MYSQL_PASSWORD: saga-v35-disposable-password
+          SAGA_VERIFY_MYSQL_PASSWORD: saga-v36-disposable-password
         run: |
           ./mvnw test \
-            -Dtest=com.saga.be.repository.V35MysqlHibernateValidateIT \
+            -Dtest=com.saga.be.repository.V36MysqlHibernateValidateIT \
             -Dsaga.verify.mysql=true \
-            -Dsaga.verify.mysql.url=jdbc:mysql://127.0.0.1:3306/saga_v35_test
+            -Dsaga.verify.mysql.url=jdbc:mysql://127.0.0.1:3306/saga_v36_test

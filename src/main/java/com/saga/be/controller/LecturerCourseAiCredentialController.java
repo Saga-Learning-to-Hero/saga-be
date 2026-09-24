@@ -193,7 +193,7 @@ public class LecturerCourseAiCredentialController {
 	}
 
 	private static String displayName(AiProvider provider) {
-		return switch (provider) { case OPENAI -> "OpenAI"; case GEMINI -> "Google Gemini"; case OPENROUTER -> "OpenRouter"; };
+		return switch (provider) { case OPENAI -> "OpenAI"; case GEMINI -> "Google Gemini"; case OPENROUTER -> "OpenRouter"; case COHERE -> "Cohere"; };
 	}
 
 	private UserAccount actor(SagaUserPrincipal principal) { return users.findById(principal.getUserId()).orElseThrow(); }
