@@ -43,7 +43,7 @@ public class AiSecondaryBrainService {
 		if (resolution.outcome() != AiCredentialResolver.Outcome.COURSE) return;
 		if (decisions.findByAnalysisRun_IdAndProviderRole(runId, AiProviderRole.SECONDARY).isPresent()) return;
 		AiAnalysisProviderDecision row = new AiAnalysisProviderDecision();
-		row.setAnalysisRun(input.run()); row.setProviderRole(AiProviderRole.SECONDARY); row.setProviderKey(secondary.providerKey()); row.setProviderConfigHash(secondary.providerConfigHash()); row.setCredentialSource(AiCredentialSource.COURSE); row.setCourseCredentialId(resolution.courseCredentialId()); row.setCredentialFingerprint(resolution.credentialFingerprint()); row.setModelId(secondary.modelId()); row.setRoute(AiProviderRoute.NORMAL); row.setStatus(AiProviderDecisionStatus.PENDING);
+		row.setAnalysisRun(input.run()); row.setProviderRole(AiProviderRole.SECONDARY); row.setProviderKey(secondary.providerKey()); row.setProviderConfigHash(secondary.providerConfigHash()); row.setCredentialSource(AiCredentialSource.COURSE); row.setCourseCredentialId(resolution.courseCredentialId()); row.setCredentialFingerprint(resolution.credentialFingerprint()); row.setModelId(secondary.modelId()); AiCredentialResolver.applyBinding(row, resolution); row.setRoute(AiProviderRoute.NORMAL); row.setStatus(AiProviderDecisionStatus.PENDING);
 		try { decisions.saveAndFlush(row); } catch (Exception ex) { log.info("secondary decision already exists runId={}", runId); return; }
 		if (decisions.claimSecondaryPending(runId, LocalDateTime.now()) != 1) return;
 		try {
@@ -51,7 +51,7 @@ public class AiSecondaryBrainService {
 			AiAnalysisType type = input.run().getAnalysisType();
 			if (!secondary.supportsCourseCredential()) throw new AiProviderException(AiCredentialResolver.COURSE_CREDENTIAL_REQUIRES_REMOTE_PROVIDER);
 			AiCredentialEnvelope envelope = credentialResolver.buildEnvelope(resolution.courseCredentialId(), AiProviderRole.SECONDARY, courseId);
-			AiProviderResponse response = secondary.analyze(new AiAnalysisRequest(runId, AiProviderRole.SECONDARY, type, input.run().getPromptVersion(), input.run().getTaxonomyVersion(), contractFor(type), evidence, AiCredentialSource.COURSE, envelope));
+			AiProviderResponse response = secondary.analyze(new AiAnalysisRequest(runId, AiProviderRole.SECONDARY, type, input.run().getPromptVersion(), input.run().getTaxonomyVersion(), contractFor(type), evidence, AiCredentialSource.COURSE, envelope, resolution.binding()));
 			if (response == null || response.result() == null || validation.invalidReason(type, response.result(), evidence).isPresent()) {
 				decisions.failSecondaryActive(runId, "AI_ANALYSIS_RESULT_INVALID", false, LocalDateTime.now());
 				log.warn("secondary brain invalid result runId={}", runId);
@@ -65,7 +65,7 @@ public class AiSecondaryBrainService {
 					: ex instanceof AiCredentialCryptoException crypto ? crypto.safeCode()
 					: "AI_ANALYSIS_PROVIDER_FAILED";
 			if ("AI_PROVIDER_AUTH_FAILED".equals(code)) credentialResolver.markInvalid(resolution.courseCredentialId());
-			else if ("AI_PROVIDER_RATE_LIMITED".equals(code)) credentialResolver.markDegraded(resolution.courseCredentialId());
+			else if (AiAnalysisExecutionService.CREDENTIAL_DEGRADED_CODES.contains(code)) credentialResolver.markDegraded(resolution.courseCredentialId());
 			decisions.failSecondaryActive(runId, code, false, LocalDateTime.now());
 			log.warn("secondary brain failed runId={} code={}", runId, code);
 		}

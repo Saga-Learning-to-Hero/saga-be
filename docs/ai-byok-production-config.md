@@ -2,7 +2,8 @@
 
 Course AI credentials ("bring your own key") are saved by the assigned lecturer, encrypted at rest
 in saga-be, and forwarded to saga-ai inside a request-scoped encrypted envelope. saga-be never calls
-OpenAI with a course key itself.
+an AI provider with a course key itself. A course can hold one credential per provider (OpenAI,
+Gemini, OpenRouter) for each role (PRIMARY, SECONDARY) at the same time.
 
 All values below are **server-side secrets**. Never put them in the frontend, Vercel, or any
 `NEXT_PUBLIC_*` variable. Never commit them.
@@ -31,7 +32,10 @@ All values below are **server-side secrets**. Never put them in the frontend, Ve
 | `SAGA_AI_PROVIDER` | `openai` |
 
 `OPENAI_API_KEY` on saga-ai is only needed for platform-sourced requests (for example manual
-platform fallback). Course-sourced requests use the decrypted course key.
+platform fallback). Course-sourced requests use the decrypted course key. There is no platform
+Gemini or OpenRouter key: those providers are only ever called with a course credential.
+`SAGA_AI_PROVIDER=openai` enables the Gemini and OpenRouter course adapters as well; their optional
+timeouts are `SAGA_AI_GEMINI_TIMEOUT_SECONDS` and `SAGA_AI_OPENROUTER_TIMEOUT_SECONDS` (default 60).
 
 ## Key format
 
@@ -76,11 +80,44 @@ its own course credential.
 
 ## Credential status
 
-Saving a key never calls OpenAI; it starts as `UNVERIFIED`. The first real inference updates it:
+Saving a key never calls the provider; it starts as `UNVERIFIED`. The first real inference updates
+**only the credential that inference used**:
 
 | Outcome | Status |
 | --- | --- |
 | Successful inference with the course key | `ACTIVE` |
 | Provider rejects the course key (`AI_PROVIDER_AUTH_FAILED`) | `INVALID` |
-| Provider rate/quota limit (`AI_PROVIDER_RATE_LIMITED`) | `DEGRADED` |
-| Envelope, internal-token, crypto/config, timeout or transient failures | unchanged |
+| Provider quota or rate limit (`AI_PROVIDER_QUOTA_EXHAUSTED`, `AI_PROVIDER_RATE_LIMITED`) | `DEGRADED` |
+| Timeout, provider unavailable, invalid result, model/capability errors | unchanged |
+| Envelope, internal-token, crypto/config (SAGA-side) failures | unchanged |
+
+## Provider bindings and course fallback
+
+`ai_course_settings` binds PRIMARY and SECONDARY to a `(provider, modelId)` pair taken from the
+server-side catalog (`AiModelCatalog`; saga-ai re-checks the same allowlist). No binding means the
+legacy behaviour: the OpenAI course credential with the platform model.
+
+An optional, ordered, course-owned PRIMARY fallback chain (at most 3 entries, each tried at most
+once per run) continues only after `AI_PROVIDER_QUOTA_EXHAUSTED`, `AI_PROVIDER_RATE_LIMITED`,
+`AI_PROVIDER_TIMEOUT` or `AI_PROVIDER_UNAVAILABLE`. It never continues after an invalid credential,
+an unsupported model/capability, an invalid result, or a SAGA crypto/config error, and it only
+ever uses the course's own PRIMARY credential for that provider -- never a platform credential and
+never the SECONDARY credential. A fallback entry without a usable course credential is skipped.
+The provider/model/credential that actually served (or last failed) the run and the attempt list
+are stored on the PRIMARY decision (`ai_provider`, `model_id`, `fallback_attempts_json`).
+
+SECONDARY is independent: its own binding and SECONDARY credential, no fallback, no reuse of the
+PRIMARY credential. Automatic Commit/Task/Risk runs never use platform credentials; manual
+platform fallback (Academic Classification, Progress Narrative) keeps its existing opt-in rule.
+
+## Free tiers and data policy
+
+`freeTierEligible` in the catalog (Gemini 3.8/3.7 Flash, `openrouter/free`) is informational only.
+External providers set, and may change at any time, whether a free tier exists, its limits, and its
+data terms. Free tiers commonly allow the provider to retain and use submitted prompts and outputs
+(for example for model improvement or human review), and `openrouter/free` routes each request to
+whichever free upstream model is available, each with its own terms. **Do not treat a free tier as
+suitable for sensitive production data** (student personal data, grades, private repository code).
+The lecturer who configures a course key is responsible for choosing a provider tier whose data
+policy fits the course; SAGA sends only the evidence bundle of each analysis and never the key to
+anything other than the configured provider.

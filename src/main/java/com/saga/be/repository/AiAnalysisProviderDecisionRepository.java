@@ -38,6 +38,12 @@ public interface AiAnalysisProviderDecisionRepository extends JpaRepository<AiAn
 	@Query("update AiAnalysisProviderDecision d set d.status = com.saga.be.entity.enums.AiProviderDecisionStatus.FAILED, d.schemaValid = :schemaValid, d.safeErrorCode = :code, d.completedAt = :now where d.analysisRun.id = :runId and d.providerRole = com.saga.be.entity.enums.AiProviderRole.PRIMARY and d.status in (com.saga.be.entity.enums.AiProviderDecisionStatus.PENDING, com.saga.be.entity.enums.AiProviderDecisionStatus.RUNNING)")
 	int failActive(@Param("runId") UUID runId, @Param("code") String code, @Param("schemaValid") boolean schemaValid, @Param("now") LocalDateTime now);
 
+	/** Course multi-provider provenance for the PRIMARY row: which binding/credential actually
+	 * served (or last failed) the run, plus the bounded, secret-free attempt list. */
+	@Modifying(flushAutomatically = true, clearAutomatically = true)
+	@Query("update AiAnalysisProviderDecision d set d.aiProvider = :aiProvider, d.modelId = :modelId, d.courseCredentialId = :credentialId, d.credentialFingerprint = :fingerprint, d.fallbackAttemptsJson = :attempts where d.analysisRun.id = :runId and d.providerRole = com.saga.be.entity.enums.AiProviderRole.PRIMARY")
+	int recordPrimaryProvenance(@Param("runId") UUID runId, @Param("aiProvider") com.saga.be.entity.enums.AiProvider aiProvider, @Param("modelId") String modelId, @Param("credentialId") UUID credentialId, @Param("fingerprint") String fingerprint, @Param("attempts") String attempts);
+
 	// --- Secondary brain: independent lifecycle, scoped by (run, SECONDARY role). Never touches
 	// the run's own status/started_at/completed_at, and never touches the PRIMARY row above. ---
 

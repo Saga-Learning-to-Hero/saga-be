@@ -82,7 +82,7 @@ public class AiProgressNarrativeSubmissionService {
 	private Submission submitCommon(Project project, Course course, AiArtifactType artifactType, UUID artifactId, List<AiEvidenceDraft> draft, AiModelProvider provider, AiCredentialResolver.Resolution resolution) {
 		String evidenceHash = hashEvidence(draft);
 		String ownerKey = project != null ? project.getId().toString() : "course:" + course.getId();
-		String key = AiHashes.sha256(String.join("|", ownerKey, artifactType.name(), artifactId.toString(), evidenceHash, AiAnalysisType.PROGRESS_NARRATIVE.name(), evidenceHash, POLICY_VERSION, PROMPT_VERSION, SCHEMA_VERSION, provider.providerConfigHash(), resolution.outcome().name(), String.valueOf(resolution.credentialFingerprint())));
+		String key = AiHashes.sha256(String.join("|", ownerKey, artifactType.name(), artifactId.toString(), evidenceHash, AiAnalysisType.PROGRESS_NARRATIVE.name(), evidenceHash, POLICY_VERSION, PROMPT_VERSION, SCHEMA_VERSION, provider.providerConfigHash(), resolution.outcome().name(), String.valueOf(resolution.identityFingerprint())));
 		return Objects.requireNonNull(tx.execute(status -> persist(project, course, artifactType, artifactId, evidenceHash, draft, evidenceHash, key, provider, resolution)));
 	}
 
@@ -100,7 +100,7 @@ public class AiProgressNarrativeSubmissionService {
 		int ordinal = 0; List<AiAnalysisEvidence> rows = new ArrayList<>();
 		for (AiEvidenceDraft item : draft) { AiAnalysisEvidence row = new AiAnalysisEvidence(); row.setAnalysisRun(run); row.setEvidenceType(item.type()); row.setSourceRef(item.sourceRef()); row.setContentHash(item.contentHash()); row.setPayloadJson(item.payloadJson()); row.setMetadataJson(item.metadataJson()); row.setOrdinalIndex(ordinal++); rows.add(row); }
 		evidence.saveAll(rows);
-		AiAnalysisProviderDecision decision = new AiAnalysisProviderDecision(); decision.setAnalysisRun(run); decision.setProviderRole(AiProviderRole.PRIMARY); decision.setProviderKey(provider.providerKey()); decision.setProviderConfigHash(provider.providerConfigHash()); decision.setCredentialSource(resolution.outcome() == AiCredentialResolver.Outcome.COURSE ? AiCredentialSource.COURSE : AiCredentialSource.PLATFORM); decision.setCourseCredentialId(resolution.courseCredentialId()); decision.setCredentialFingerprint(resolution.credentialFingerprint()); decision.setModelId(provider.modelId()); decision.setRoute(AiProviderRoute.NORMAL); decision.setStatus(AiProviderDecisionStatus.PENDING); decisions.save(decision);
+		AiAnalysisProviderDecision decision = new AiAnalysisProviderDecision(); decision.setAnalysisRun(run); decision.setProviderRole(AiProviderRole.PRIMARY); decision.setProviderKey(provider.providerKey()); decision.setProviderConfigHash(provider.providerConfigHash()); decision.setCredentialSource(resolution.outcome() == AiCredentialResolver.Outcome.COURSE ? AiCredentialSource.COURSE : AiCredentialSource.PLATFORM); decision.setCourseCredentialId(resolution.courseCredentialId()); decision.setCredentialFingerprint(resolution.credentialFingerprint()); decision.setModelId(provider.modelId()); AiCredentialResolver.applyBinding(decision, resolution); decision.setRoute(AiProviderRoute.NORMAL); decision.setStatus(AiProviderDecisionStatus.PENDING); decisions.save(decision);
 		after(run.getId()); return new Submission(run, true);
 	}
 	private static String hashEvidence(List<AiEvidenceDraft> draft) { return AiHashes.sha256(draft.stream().map(row -> row.type() + "|" + row.sourceRef() + "|" + row.contentHash()).reduce("", (a, b) -> a + "\n" + b)); }

@@ -74,5 +74,10 @@ public class AiAnalysisStateService {
 	@Transactional(readOnly = true)
 	public List<UUID> queuedIds(int batchSize) { return runs.findIdsByStatus(AiAnalysisStatus.QUEUED, org.springframework.data.domain.PageRequest.of(0, batchSize)); }
 
+	@Transactional
+	public void recordPrimaryProvenance(UUID runId, AiProvider aiProvider, String modelId, UUID credentialId, String fingerprint, String attemptsJson) {
+		decisions.recordPrimaryProvenance(runId, aiProvider, modelId, credentialId, fingerprint, attemptsJson);
+	}
+
 	public record ExecutionInput(AiAnalysisRun run, List<AiAnalysisEvidence> evidence, AiAnalysisProviderDecision decision) {}
 }

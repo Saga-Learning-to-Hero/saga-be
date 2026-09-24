@@ -4,6 +4,7 @@ import com.saga.be.entity.BaseEntity;
 import com.saga.be.entity.academic.Course;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.enums.AiCredentialStatus;
+import com.saga.be.entity.enums.AiProvider;
 import com.saga.be.entity.enums.AiProviderRole;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
@@ -11,16 +12,16 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/** One row per (course, providerRole) -- never versioned/history-tracked. Replacing a key
- * overwrites {@code encryptedSecret}/{@code encryptionNonce} on the same row and resets status to
- * UNVERIFIED; revoking clears the secret material and sets REVOKED. This trivially satisfies "at
- * most one logical active credential per (course, role)" without a partial-unique-index scheme. */
+/** One row per (course, providerRole, provider) -- never versioned/history-tracked. Replacing a
+ * key overwrites {@code encryptedSecret}/{@code encryptionNonce} on the same row and resets status
+ * to UNVERIFIED; revoking clears the secret material and sets REVOKED. A course may hold one
+ * credential per provider for each role at the same time (V34). */
 @Getter @Setter @NoArgsConstructor @Entity
-@Table(name = "ai_course_provider_credential", uniqueConstraints = @UniqueConstraint(name = "uk_ai_course_provider_credential_role", columnNames = {"course_id", "provider_role"}))
+@Table(name = "ai_course_provider_credential", uniqueConstraints = @UniqueConstraint(name = "uk_ai_course_provider_credential_role_provider", columnNames = {"course_id", "provider_role", "provider"}))
 public class CourseAiProviderCredential extends BaseEntity {
 	@ManyToOne(fetch = FetchType.LAZY, optional = false) @JoinColumn(name = "course_id", nullable = false) private Course course;
 	@Enumerated(EnumType.STRING) @Column(name = "provider_role", length = 32, nullable = false) private AiProviderRole providerRole;
-	@Column(name = "provider", length = 32, nullable = false) private String provider;
+	@Enumerated(EnumType.STRING) @Column(name = "provider", length = 32, nullable = false) private AiProvider provider;
 	/** Base64 AES-256-GCM ciphertext of the raw provider API key. Never returned by any API. */
 	@Column(name = "encrypted_secret", columnDefinition = "TEXT", nullable = false) private String encryptedSecret;
 	@Column(name = "encryption_nonce", length = 32, nullable = false) private String encryptionNonce;

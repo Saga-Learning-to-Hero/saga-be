@@ -2,6 +2,7 @@ package com.saga.be.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
@@ -9,6 +10,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.jayway.jsonpath.JsonPath;
+import com.saga.be.ai.AiProviderBinding;
 import com.saga.be.dto.ai.CourseAiCredentialResponse;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.entity.academic.Course;
@@ -17,6 +19,7 @@ import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.repository.UserAccountRepository;
 import com.saga.be.security.SagaAuthentications;
+import com.saga.be.service.ai.AiModelCatalog;
 import com.saga.be.service.ai.CourseAiCredentialService;
 import com.saga.be.service.ai.CourseAiSettingsService;
 import com.saga.be.service.audit.AuditService;
@@ -24,6 +27,7 @@ import com.saga.be.service.lecturer.LecturerCourseAuthorization;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDateTime;
 import java.util.*;
+import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -77,10 +81,10 @@ class LecturerCourseAiCredentialControllerWebTest {
 		allow(lecturer, course);
 		when(settings.get(course.getId())).thenReturn(new CourseAiSettingsService.Settings(false, false));
 		when(settings.update(eq(course), eq(true), eq(true))).thenReturn(new CourseAiSettingsService.Settings(true, true));
-		CourseAiCredentialService.SafeMetadata absent = new CourseAiCredentialService.SafeMetadata(false, null, AiProviderRole.PRIMARY, null, null, null, null);
+		CourseAiCredentialService.SafeMetadata absent = new CourseAiCredentialService.SafeMetadata(false, AiProvider.OPENAI, AiProviderRole.PRIMARY, null, null, null, null, null);
 		CourseAiCredentialService.SafeMetadata saved = configured(AiProviderRole.PRIMARY);
-		when(credentials.safeMetadata(eq(course), eq(AiProviderRole.PRIMARY))).thenReturn(absent, saved);
-		when(credentials.save(eq(course), eq(AiProviderRole.PRIMARY), eq("openai"), eq(SECRET), eq(lecturer))).thenReturn(saved);
+		when(credentials.safeMetadata(eq(course), eq(AiProviderRole.PRIMARY), eq(AiProvider.OPENAI))).thenReturn(absent, saved);
+		when(credentials.save(eq(course), eq(AiProviderRole.PRIMARY), eq(AiProvider.OPENAI), eq(SECRET), eq(lecturer))).thenReturn(saved);
 
 		mockMvc.perform(get(path(course, "/ai-settings")).with(authentication(SagaAuthentications.authenticated(lecturer))))
 				.andExpect(status().isOk())
@@ -101,7 +105,7 @@ class LecturerCourseAiCredentialControllerWebTest {
 						.content("{\"provider\":\"openai\",\"apiKey\":\"" + SECRET + "\"}"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.configured").value(true))
-				.andExpect(jsonPath("$.provider").value("openai"))
+				.andExpect(jsonPath("$.provider").value("OPENAI"))
 				.andExpect(jsonPath("$.role").value("PRIMARY"))
 				.andExpect(jsonPath("$.lastFour").value("onse"))
 				.andExpect(jsonPath("$.id").doesNotExist())
@@ -114,8 +118,8 @@ class LecturerCourseAiCredentialControllerWebTest {
 				.andExpect(status().isNoContent());
 
 		verify(settings).update(course, true, true);
-		verify(credentials).save(course, AiProviderRole.PRIMARY, "openai", SECRET, lecturer);
-		verify(credentials).revoke(course, AiProviderRole.PRIMARY);
+		verify(credentials).save(course, AiProviderRole.PRIMARY, AiProvider.OPENAI, SECRET, lecturer);
+		verify(credentials).revoke(course, AiProviderRole.PRIMARY, AiProvider.OPENAI);
 	}
 
 	@Test
@@ -180,6 +184,136 @@ class LecturerCourseAiCredentialControllerWebTest {
 		verify(credentials, never()).save(any(), any(), any(), any(), any());
 	}
 
+	@Test
+	void assignedLecturerReadsTheServerSideCatalogButStudentAndForeignLecturerCannot() throws Exception {
+		UserAccount lecturer = account(AccountRole.LECTURER);
+		UserAccount other = account(AccountRole.LECTURER);
+		UserAccount student = account(AccountRole.STUDENT);
+		Course course = course();
+		allow(lecturer, course);
+		deny(other, course);
+
+		mockMvc.perform(get(path(course, "/ai-provider-catalog")).with(authentication(SagaAuthentications.authenticated(lecturer))))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.providers[*].provider").value(Matchers.contains("OPENAI", "GEMINI", "OPENROUTER")))
+				.andExpect(jsonPath("$.providers[0].models[*].modelId").value(Matchers.contains("gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol")))
+				.andExpect(jsonPath("$.providers[0].models[0].freeTierEligible").value(false))
+				.andExpect(jsonPath("$.providers[1].models[*].modelId").value(Matchers.contains("gemini-3.8-flash", "gemini-3.7-flash")))
+				.andExpect(jsonPath("$.providers[1].models[0].freeTierEligible").value(true))
+				.andExpect(jsonPath("$.providers[2].models[0].modelId").value("openrouter/free"))
+				.andExpect(jsonPath("$.providers[2].models[0].supportsStructuredOutput").value(true))
+				.andExpect(jsonPath("$.providers[2].models[0].recommendedForAutomation").value(false))
+				.andExpect(jsonPath("$.freeTierNotice").value(Matchers.containsString("may change")));
+		mockMvc.perform(get(path(course, "/ai-provider-catalog")).with(authentication(SagaAuthentications.authenticated(other))))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(get(path(course, "/ai-provider-catalog")).with(authentication(SagaAuthentications.authenticated(student))))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void perProviderRoutesSaveListAndRevokeEachProviderIndependentlyWithSafeMetadataOnly() throws Exception {
+		UserAccount lecturer = account(AccountRole.LECTURER);
+		Course course = course();
+		allow(lecturer, course);
+		for (AiProvider provider : AiProvider.values()) {
+			when(credentials.safeMetadata(eq(course), eq(AiProviderRole.PRIMARY), eq(provider))).thenReturn(new CourseAiCredentialService.SafeMetadata(false, provider, AiProviderRole.PRIMARY, null, null, null, null, null));
+			when(credentials.save(eq(course), eq(AiProviderRole.PRIMARY), eq(provider), eq(SECRET), eq(lecturer))).thenReturn(configured(AiProviderRole.PRIMARY, provider));
+		}
+		when(credentials.list(course)).thenReturn(List.of(configured(AiProviderRole.PRIMARY, AiProvider.OPENAI), configured(AiProviderRole.PRIMARY, AiProvider.GEMINI), configured(AiProviderRole.SECONDARY, AiProvider.OPENROUTER)));
+		Csrf csrf = csrf();
+
+		for (String provider : List.of("OPENAI", "gemini", "OpenRouter")) {
+			MvcResult put = mockMvc.perform(put(path(course, "/ai-credentials/PRIMARY/" + provider))
+							.with(authentication(SagaAuthentications.authenticated(lecturer))).session(csrf.session()).cookie(csrf.cookie())
+							.header("X-XSRF-TOKEN", csrf.token()).contentType(MediaType.APPLICATION_JSON)
+							.content("{\"apiKey\":\"" + SECRET + "\"}"))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$.provider").value(provider.toUpperCase(Locale.ROOT)))
+					.andExpect(jsonPath("$.status").value("UNVERIFIED"))
+					.andExpect(jsonPath("$.createdAt").exists())
+					.andReturn();
+			assertSafeResponse(put.getResponse().getContentAsString());
+		}
+		MvcResult list = mockMvc.perform(get(path(course, "/ai-credentials")).with(authentication(SagaAuthentications.authenticated(lecturer))))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[*].provider").value(Matchers.contains("OPENAI", "GEMINI", "OPENROUTER")))
+				.andReturn();
+		assertSafeResponse(list.getResponse().getContentAsString());
+		mockMvc.perform(delete(path(course, "/ai-credentials/PRIMARY/GEMINI"))
+						.with(authentication(SagaAuthentications.authenticated(lecturer))).session(csrf.session()).cookie(csrf.cookie())
+						.header("X-XSRF-TOKEN", csrf.token()))
+				.andExpect(status().isNoContent());
+
+		for (AiProvider provider : AiProvider.values()) verify(credentials).save(course, AiProviderRole.PRIMARY, provider, SECRET, lecturer);
+		verify(credentials).revoke(course, AiProviderRole.PRIMARY, AiProvider.GEMINI);
+		verify(credentials, never()).revoke(course, AiProviderRole.PRIMARY, AiProvider.OPENAI);
+	}
+
+	@Test
+	void unknownProviderAndPathBodyMismatchAreRejectedWithoutSaving() throws Exception {
+		UserAccount lecturer = account(AccountRole.LECTURER);
+		Course course = course();
+		allow(lecturer, course);
+		Csrf csrf = csrf();
+
+		mockMvc.perform(put(path(course, "/ai-credentials/PRIMARY/ANTHROPIC"))
+						.with(authentication(SagaAuthentications.authenticated(lecturer))).session(csrf.session()).cookie(csrf.cookie())
+						.header("X-XSRF-TOKEN", csrf.token()).contentType(MediaType.APPLICATION_JSON)
+						.content("{\"apiKey\":\"" + SECRET + "\"}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("AI_PROVIDER_NOT_SUPPORTED"));
+		mockMvc.perform(put(path(course, "/ai-credentials/PRIMARY/GEMINI"))
+						.with(authentication(SagaAuthentications.authenticated(lecturer))).session(csrf.session()).cookie(csrf.cookie())
+						.header("X-XSRF-TOKEN", csrf.token()).contentType(MediaType.APPLICATION_JSON)
+						.content("{\"provider\":\"OPENAI\",\"apiKey\":\"" + SECRET + "\"}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("AI_CREDENTIAL_INVALID_REQUEST"));
+		MvcResult legacy = mockMvc.perform(put(path(course, "/ai-credentials/PRIMARY"))
+						.with(authentication(SagaAuthentications.authenticated(lecturer))).session(csrf.session()).cookie(csrf.cookie())
+						.header("X-XSRF-TOKEN", csrf.token()).contentType(MediaType.APPLICATION_JSON)
+						.content("{\"provider\":\"mistral\",\"apiKey\":\"" + SECRET + "\"}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("AI_PROVIDER_NOT_SUPPORTED"))
+				.andReturn();
+		assertSafeResponse(legacy.getResponse().getContentAsString());
+
+		verify(credentials, never()).save(any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void bindingsAreFullyReplacedThroughTheValidatingServiceAndReturnedCanonically() throws Exception {
+		UserAccount lecturer = account(AccountRole.LECTURER);
+		Course course = course();
+		allow(lecturer, course);
+		AiProviderBinding gemini = new AiProviderBinding(AiProvider.GEMINI, "gemini-3.8-flash");
+		AiProviderBinding openrouter = new AiProviderBinding(AiProvider.OPENROUTER, "openrouter/free");
+		AiProviderBinding terra = new AiProviderBinding(AiProvider.OPENAI, "gpt-5.6-terra");
+		var updated = new CourseAiSettingsService.Settings(true, false, gemini, true, List.of(openrouter), terra);
+		when(settings.get(course.getId())).thenReturn(new CourseAiSettingsService.Settings(true, false));
+		when(settings.updateBindings(eq(course), any(), eq(true), any(), any())).thenReturn(updated);
+		when(settings.storedFallbackBindings(course.getId())).thenReturn(List.of(openrouter));
+		Csrf csrf = csrf();
+
+		mockMvc.perform(put(path(course, "/ai-settings/bindings"))
+						.with(authentication(SagaAuthentications.authenticated(lecturer))).session(csrf.session()).cookie(csrf.cookie())
+						.header("X-XSRF-TOKEN", csrf.token()).contentType(MediaType.APPLICATION_JSON)
+						.content("{\"primaryBinding\":{\"provider\":\"gemini\",\"modelId\":\"gemini-3.8-flash\"},\"fallbackEnabled\":true,"
+								+ "\"fallbackBindings\":[{\"provider\":\"OPENROUTER\",\"modelId\":\"openrouter/free\"}],"
+								+ "\"secondaryBinding\":{\"provider\":\"OPENAI\",\"modelId\":\"gpt-5.6-terra\"}}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.automationEnabled").value(true))
+				.andExpect(jsonPath("$.allowPlatformFallback").value(false))
+				.andExpect(jsonPath("$.primaryBinding.provider").value("GEMINI"))
+				.andExpect(jsonPath("$.primaryBinding.modelId").value("gemini-3.8-flash"))
+				.andExpect(jsonPath("$.fallbackEnabled").value(true))
+				.andExpect(jsonPath("$.fallbackBindings[0].provider").value("OPENROUTER"))
+				.andExpect(jsonPath("$.secondaryBinding.modelId").value("gpt-5.6-terra"));
+
+		verify(settings).updateBindings(course, new CourseAiSettingsService.BindingInput("gemini", "gemini-3.8-flash"), true,
+				List.of(new CourseAiSettingsService.BindingInput("OPENROUTER", "openrouter/free")), new CourseAiSettingsService.BindingInput("OPENAI", "gpt-5.6-terra"));
+		verify(settings, never()).update(any(), anyBoolean(), anyBoolean());
+	}
+
 	private void allow(UserAccount actor, Course course) {
 		when(authorization.requireAssignedLecturerStrict(eq(actor), eq(course.getId()))).thenReturn(course);
 	}
@@ -220,7 +354,11 @@ class LecturerCourseAiCredentialControllerWebTest {
 	}
 
 	private CourseAiCredentialService.SafeMetadata configured(AiProviderRole role) {
-		return new CourseAiCredentialService.SafeMetadata(true, "openai", role, AiCredentialStatus.UNVERIFIED, "onse", LocalDateTime.of(2026, 9, 24, 12, 0), null);
+		return configured(role, AiProvider.OPENAI);
+	}
+
+	private CourseAiCredentialService.SafeMetadata configured(AiProviderRole role, AiProvider provider) {
+		return new CourseAiCredentialService.SafeMetadata(true, provider, role, AiCredentialStatus.UNVERIFIED, "onse", LocalDateTime.of(2026, 9, 24, 11, 0), LocalDateTime.of(2026, 9, 24, 12, 0), null);
 	}
 
 	private void assertSafeResponse(String body) {
@@ -239,7 +377,7 @@ class LecturerCourseAiCredentialControllerWebTest {
 		@Bean LecturerCourseAiCredentialController lecturerCourseAiCredentialController(
 				LecturerCourseAuthorization authorization, CourseAiSettingsService settings, CourseAiCredentialService credentials,
 				UserAccountRepository users, AuditService audit) {
-			return new LecturerCourseAiCredentialController(authorization, settings, credentials, users, audit);
+			return new LecturerCourseAiCredentialController(authorization, settings, credentials, new AiModelCatalog(), users, audit);
 		}
 	}
 }
