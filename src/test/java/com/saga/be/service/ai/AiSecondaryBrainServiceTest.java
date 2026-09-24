@@ -55,7 +55,59 @@ class AiSecondaryBrainServiceTest {
 		when(provider.providerKey()).thenReturn("saga-ai-secondary");
 		when(provider.providerConfigHash()).thenReturn("secondary-cfg");
 		when(provider.modelId()).thenReturn("secondary-model");
+		// Stands in for RemoteAiSecondaryModelProvider, the only SECONDARY provider in production,
+		// which forwards the course credential envelope.
+		when(provider.supportsCourseCredential()).thenReturn(true);
 		return provider;
+	}
+
+	@Test
+	void secondaryProviderThatCannotForwardACourseCredentialFailsClosedWithoutDecrypting() {
+		properties.setSecondaryEnabled(true);
+		AiModelProvider secondary = secondaryProvider();
+		when(secondary.supportsCourseCredential()).thenReturn(false);
+		when(decisions.findByAnalysisRun_IdAndProviderRole(runId, AiProviderRole.SECONDARY)).thenReturn(Optional.empty());
+		when(decisions.claimSecondaryPending(eq(runId), any())).thenReturn(1);
+
+		service(List.of(secondary)).maybeRun(input(AiAnalysisType.TASK_INTELLIGENCE));
+
+		verify(secondary, never()).analyze(any());
+		verify(credentialResolver, never()).buildEnvelope(any(), any(), any());
+		verify(decisions).failSecondaryActive(eq(runId), eq(AiCredentialResolver.COURSE_CREDENTIAL_REQUIRES_REMOTE_PROVIDER), eq(false), any());
+		verify(credentialResolver, never()).markSuccessful(any());
+		verify(credentialResolver, never()).markInvalid(any());
+	}
+
+	@Test
+	void secondaryCryptoFailureKeepsItsSpecificCodeAndNeverInvalidatesTheKey() {
+		properties.setSecondaryEnabled(true);
+		AiModelProvider secondary = secondaryProvider();
+		when(credentialResolver.buildEnvelope(eq(courseCredentialId), eq(AiProviderRole.SECONDARY), any()))
+				.thenThrow(new AiCredentialCryptoException("AI_CREDENTIAL_DECRYPTION_FAILED"));
+		when(decisions.findByAnalysisRun_IdAndProviderRole(runId, AiProviderRole.SECONDARY)).thenReturn(Optional.empty());
+		when(decisions.claimSecondaryPending(eq(runId), any())).thenReturn(1);
+
+		service(List.of(secondary)).maybeRun(input(AiAnalysisType.TASK_INTELLIGENCE));
+
+		verify(secondary, never()).analyze(any());
+		verify(decisions).failSecondaryActive(eq(runId), eq("AI_CREDENTIAL_DECRYPTION_FAILED"), eq(false), any());
+		verify(credentialResolver, never()).markInvalid(any());
+		verify(credentialResolver, never()).markDegraded(any());
+	}
+
+	@Test
+	void secondaryWrongKeyMarksOnlyTheSecondaryCredentialInvalid() {
+		properties.setSecondaryEnabled(true);
+		AiModelProvider secondary = secondaryProvider();
+		when(secondary.analyze(any())).thenThrow(new AiProviderException("AI_PROVIDER_AUTH_FAILED"));
+		when(decisions.findByAnalysisRun_IdAndProviderRole(runId, AiProviderRole.SECONDARY)).thenReturn(Optional.empty());
+		when(decisions.claimSecondaryPending(eq(runId), any())).thenReturn(1);
+
+		service(List.of(secondary)).maybeRun(input(AiAnalysisType.TASK_INTELLIGENCE));
+
+		verify(credentialResolver).markInvalid(courseCredentialId);
+		verify(credentialResolver, never()).resolve(any(), any(), eq(AiProviderRole.PRIMARY), any());
+		verify(decisions).failSecondaryActive(eq(runId), eq("AI_PROVIDER_AUTH_FAILED"), eq(false), any());
 	}
 
 	private AiTaskIntelligenceResult validResult() {

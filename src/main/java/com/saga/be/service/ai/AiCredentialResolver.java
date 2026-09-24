@@ -21,6 +21,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service @Profile("!test")
 public class AiCredentialResolver {
 	private static final List<AiAnalysisType> MANUAL_FALLBACK_ELIGIBLE_TYPES = List.of(AiAnalysisType.ACADEMIC_CLASSIFICATION, AiAnalysisType.PROGRESS_NARRATIVE);
+	/** Safe run/decision failure code: a COURSE credential reached a provider that cannot forward it. */
+	public static final String COURSE_CREDENTIAL_REQUIRES_REMOTE_PROVIDER = "AI_COURSE_CREDENTIAL_REQUIRES_REMOTE_PROVIDER";
 
 	private final CourseAiProviderCredentialRepository credentials;
 	private final CourseAiSettingsService settings;

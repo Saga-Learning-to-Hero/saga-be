@@ -49,6 +49,9 @@ public class AiAnalysisExecutionService {
 			AiCredentialEnvelope envelope = null;
 			if (credentialSource == AiCredentialSource.COURSE) {
 				if (credentialResolver == null) throw new AiProviderException("AI_CREDENTIAL_ENVELOPE_UNAVAILABLE");
+				// Checked before any decrypt or dispatch: a provider that ignores the envelope would
+				// answer with the platform key and the course credential would be wrongly marked ACTIVE.
+				if (!provider.supportsCourseCredential()) throw new AiProviderException(AiCredentialResolver.COURSE_CREDENTIAL_REQUIRES_REMOTE_PROVIDER);
 				UUID courseCredentialId = input.decision().getCourseCredentialId();
 				courseCredentialIdForFailure = courseCredentialId;
 				// Decrypt-and-reseal happens exactly here, right before dispatch -- never earlier,
@@ -91,7 +94,9 @@ public class AiAnalysisExecutionService {
 			if (finalized) log.info("ai analysis completed runId={} type={} provider={} model={} durationMs={}", runId, type, provider.providerKey(), provider.modelId(), (System.nanoTime() - started) / 1_000_000L);
 			else log.info("ai analysis late result discarded runId={} type={} provider={}", runId, type, provider.providerKey());
 		} catch (Exception ex) {
-			String code = ex instanceof AiProviderException provider ? provider.safeCode() : "AI_ANALYSIS_PROVIDER_FAILED";
+			String code = ex instanceof AiProviderException provider ? provider.safeCode()
+					: ex instanceof AiCredentialCryptoException crypto ? crypto.safeCode()
+					: "AI_ANALYSIS_PROVIDER_FAILED";
 			// A quota/rate-limit or transient failure never proves the key itself is wrong, so it
 			// must not invalidate/revoke it (section X) -- only a genuine auth failure does.
 			if (courseCredentialIdForFailure != null && credentialResolver != null) {

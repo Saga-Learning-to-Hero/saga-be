@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -122,7 +123,7 @@ class RemoteAiModelProviderTest {
 	void courseSourceWithoutEnvelopeIsNotSilentlyDowngradedToPlatform() throws Exception {
 		UUID run = UUID.randomUUID();
 		status.set(400);
-		response.set("{\"error\":{\"code\":\"AI_CREDENTIAL_ENVELOPE_INVALID\"}}");
+		response.set("{\"code\":\"AI_CREDENTIAL_ENVELOPE_INVALID\",\"message\":\"Course credential envelope is required.\"}");
 		AiAnalysisRequest malformedCourseRequest = new AiAnalysisRequest(run, AiProviderRole.PRIMARY,
 				AiAnalysisType.COMMIT_INTELLIGENCE, "commit-intelligence-v1", null, "contract", List.of(),
 				AiCredentialSource.COURSE, null);
@@ -250,17 +251,76 @@ class RemoteAiModelProviderTest {
 	void typedRemoteErrorsAndGenericFailuresMapSafelyWithOneAttempt() throws Exception {
 		UUID run = UUID.randomUUID();
 		status.set(401);
-		respond("{\"error\":{}}", run);
+		respond("{}", run);
 		status.set(401);
 		assertSafeFailureOnce(commitRequest(run, List.of()), "AI_RUNTIME_UNAVAILABLE");
 		for (String code : List.of("AI_RUNTIME_DISABLED", "AI_RUNTIME_UNAVAILABLE", "AI_PROVIDER_AUTH_FAILED", "AI_PROVIDER_RATE_LIMITED", "AI_PROVIDER_TIMEOUT", "AI_PROVIDER_FAILED", "AI_PROVIDER_RESULT_INVALID", "AI_CONTRACT_VERSION_UNSUPPORTED")) {
-			respond("{\"error\":{\"code\":\"" + code + "\"}}", run);
+			respond(sagaAiError(code), run);
 			status.set(503);
 			assertSafeFailureOnce(commitRequest(run, List.of()), code);
 		}
-		respond("{\"error\":{}}", run);
+		respond("{}", run);
 		status.set(500);
 		assertSafeFailureOnce(commitRequest(run, List.of()), "AI_PROVIDER_FAILED");
+	}
+
+	@Test
+	void sagaAiTopLevelErrorContractKeepsEachSemanticCode() throws Exception {
+		UUID run = UUID.randomUUID();
+		// Exactly the bodies/statuses saga-ai emits (app/providers/openai.py, analysis_service.py,
+		// security/internal_auth.py): a wrong course key must stay distinguishable from runtime,
+		// transport and transient failures.
+		respondError(502, sagaAiError("AI_PROVIDER_AUTH_FAILED"), run);
+		assertSafeFailureOnce(commitRequest(run, List.of()), "AI_PROVIDER_AUTH_FAILED");
+		respondError(429, sagaAiError("AI_PROVIDER_RATE_LIMITED"), run);
+		assertSafeFailureOnce(commitRequest(run, List.of()), "AI_PROVIDER_RATE_LIMITED");
+		respondError(400, sagaAiError("AI_CREDENTIAL_ENVELOPE_INVALID"), run);
+		assertSafeFailureOnce(commitRequest(run, List.of()), "AI_CREDENTIAL_ENVELOPE_INVALID");
+		respondError(401, sagaAiError("UNAUTHORIZED"), run);
+		assertSafeFailureOnce(commitRequest(run, List.of()), "AI_RUNTIME_UNAVAILABLE");
+		respondError(503, "{\"detail\":\"upstream gateway\"}", run);
+		assertSafeFailureOnce(commitRequest(run, List.of()), "AI_PROVIDER_FAILED");
+		respondError(500, "not json", run);
+		assertSafeFailureOnce(commitRequest(run, List.of()), "AI_PROVIDER_FAILED");
+	}
+
+	@Test
+	void legacyNestedErrorShapeIsNotTrustedAsASemanticCode() throws Exception {
+		UUID run = UUID.randomUUID();
+		respondError(502, "{\"error\":{\"code\":\"AI_PROVIDER_AUTH_FAILED\"}}", run);
+		assertSafeFailureOnce(commitRequest(run, List.of()), "AI_PROVIDER_FAILED");
+	}
+
+	@Test
+	void secondaryProviderUsesTheSameTopLevelErrorContract() throws Exception {
+		UUID run = UUID.randomUUID();
+		respondError(502, sagaAiError("AI_PROVIDER_AUTH_FAILED"), run);
+		AiAnalysisRequest secondaryRequest = new AiAnalysisRequest(run, AiProviderRole.SECONDARY,
+				AiAnalysisType.COMMIT_INTELLIGENCE, "commit-intelligence-v1", null, "contract", List.of(),
+				AiCredentialSource.COURSE, new AiCredentialEnvelope(1, "AES-256-GCM", "n", "c"));
+
+		assertThatThrownBy(() -> new RemoteAiSecondaryModelProvider(properties(), mapper).analyze(secondaryRequest))
+				.isInstanceOfSatisfying(AiProviderException.class, ex -> assertThat(ex.safeCode()).isEqualTo("AI_PROVIDER_AUTH_FAILED"));
+	}
+
+	@Test
+	void onlyTheRemoteProvidersMayServeCourseCredentials() {
+		assertThat(provider().supportsCourseCredential()).isTrue();
+		assertThat(new RemoteAiSecondaryModelProvider(properties(), mapper).supportsCourseCredential()).isTrue();
+		for (Class<?> platformOnly : List.of(OpenAiModelProvider.class, FakeAiModelProvider.class)) {
+			assertThat(Arrays.stream(platformOnly.getDeclaredMethods()).map(java.lang.reflect.Method::getName))
+					.as(platformOnly.getSimpleName() + " must not claim it forwards a course credential")
+					.doesNotContain("supportsCourseCredential");
+		}
+	}
+
+	private static String sagaAiError(String code) {
+		return "{\"code\":\"" + code + "\",\"message\":\"safe message\"}";
+	}
+
+	private void respondError(int httpStatus, String body, UUID run) {
+		respond(body, run);
+		status.set(httpStatus);
 	}
 
 	@Test

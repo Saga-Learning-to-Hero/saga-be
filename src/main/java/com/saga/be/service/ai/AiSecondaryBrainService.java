@@ -49,6 +49,7 @@ public class AiSecondaryBrainService {
 		try {
 			List<AiAnalysisRequest.AiEvidenceInput> evidence = input.evidence().stream().map(e -> new AiAnalysisRequest.AiEvidenceInput(e.getId(), e.getEvidenceType().name(), e.getSourceRef(), e.getPayloadJson(), e.getMetadataJson())).toList();
 			AiAnalysisType type = input.run().getAnalysisType();
+			if (!secondary.supportsCourseCredential()) throw new AiProviderException(AiCredentialResolver.COURSE_CREDENTIAL_REQUIRES_REMOTE_PROVIDER);
 			AiCredentialEnvelope envelope = credentialResolver.buildEnvelope(resolution.courseCredentialId(), AiProviderRole.SECONDARY, courseId);
 			AiProviderResponse response = secondary.analyze(new AiAnalysisRequest(runId, AiProviderRole.SECONDARY, type, input.run().getPromptVersion(), input.run().getTaxonomyVersion(), contractFor(type), evidence, AiCredentialSource.COURSE, envelope));
 			if (response == null || response.result() == null || validation.invalidReason(type, response.result(), evidence).isPresent()) {
@@ -60,7 +61,9 @@ public class AiSecondaryBrainService {
 			String resultJson = mapper.writeValueAsString(response.result());
 			decisions.completeSecondaryRunning(runId, resultJson, true, response.latencyMs(), response.inputUnits(), response.outputUnits(), response.modelRevision(), response.costMetadataJson(), LocalDateTime.now());
 		} catch (Exception ex) {
-			String code = ex instanceof AiProviderException p ? p.safeCode() : "AI_ANALYSIS_PROVIDER_FAILED";
+			String code = ex instanceof AiProviderException p ? p.safeCode()
+					: ex instanceof AiCredentialCryptoException crypto ? crypto.safeCode()
+					: "AI_ANALYSIS_PROVIDER_FAILED";
 			if ("AI_PROVIDER_AUTH_FAILED".equals(code)) credentialResolver.markInvalid(resolution.courseCredentialId());
 			else if ("AI_PROVIDER_RATE_LIMITED".equals(code)) credentialResolver.markDegraded(resolution.courseCredentialId());
 			decisions.failSecondaryActive(runId, code, false, LocalDateTime.now());
