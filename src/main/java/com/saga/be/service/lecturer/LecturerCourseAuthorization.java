@@ -30,6 +30,12 @@ public class LecturerCourseAuthorization {
 	 * admin capability (section XI): an admin who is not the assigned lecturer must never be able
 	 * to configure, read the metadata of, or revoke another lecturer's course AI credentials. */
 	public Course requireAssignedLecturerStrict(UserAccount actor, UUID courseId) {
+		return requireAssignedLecturerStrict(
+				actor, courseId, "Only the assigned lecturer can manage this course's AI credentials.");
+	}
+
+	/** Same strict policy (ADMIN is NOT granted) with a caller-specific forbidden message. */
+	public Course requireAssignedLecturerStrict(UserAccount actor, UUID courseId, String forbiddenMessage) {
 		Course course = courses.findActiveFetchedById(courseId)
 				.or(() -> courses.findById(courseId).filter(row -> row.getDeletedAt() == null))
 				.orElseThrow(() -> new AcademicException(
@@ -45,7 +51,7 @@ public class LecturerCourseAuthorization {
 			throw new AcademicException(
 					AcademicErrorCode.LECTURER_COURSE_FORBIDDEN,
 					HttpStatus.FORBIDDEN,
-					"Only the assigned lecturer can manage this course's AI credentials.");
+					forbiddenMessage);
 		}
 		return course;
 	}
