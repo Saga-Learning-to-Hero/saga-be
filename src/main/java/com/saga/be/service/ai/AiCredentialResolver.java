@@ -31,9 +31,10 @@ public class AiCredentialResolver {
 	private final CourseAiCredentialService credentialService;
 	private final AiCredentialTransportCipher transport;
 	private final List<AiModelProvider> providers;
+	private final AiModelCatalog catalog;
 
-	public AiCredentialResolver(CourseAiProviderCredentialRepository credentials, CourseAiSettingsService settings, CourseAiCredentialService credentialService, AiCredentialTransportCipher transport, List<AiModelProvider> providers) {
-		this.credentials = credentials; this.settings = settings; this.credentialService = credentialService; this.transport = transport; this.providers = providers;
+	public AiCredentialResolver(CourseAiProviderCredentialRepository credentials, CourseAiSettingsService settings, CourseAiCredentialService credentialService, AiCredentialTransportCipher transport, List<AiModelProvider> providers, AiModelCatalog catalog) {
+		this.credentials = credentials; this.settings = settings; this.credentialService = credentialService; this.transport = transport; this.providers = providers; this.catalog = catalog;
 	}
 
 	public enum Outcome { COURSE, PLATFORM, UNAVAILABLE }
@@ -60,7 +61,8 @@ public class AiCredentialResolver {
 	@Transactional(readOnly = true)
 	public Resolution resolve(UUID courseId, AiAnalysisType analysisType, AiProviderRole providerRole, AiInvocationOrigin origin) {
 		CourseAiSettingsService.Settings courseSettings = settings.get(courseId);
-		AiProviderBinding binding = providerRole == AiProviderRole.SECONDARY ? courseSettings.secondaryBinding() : courseSettings.primaryBinding();
+		AiProviderBinding storedBinding = providerRole == AiProviderRole.SECONDARY ? courseSettings.secondaryBinding() : courseSettings.primaryBinding();
+		AiProviderBinding binding = storedBinding == null ? null : catalog.requireRuntimeCompatible(storedBinding);
 		AiProvider provider = binding == null ? AiProvider.OPENAI : binding.provider();
 		var course = usableCourseCredential(courseId, providerRole, provider).orElse(null);
 		if (course != null) return new Resolution(Outcome.COURSE, course.id(), course.fingerprint(), binding);
@@ -88,7 +90,9 @@ public class AiCredentialResolver {
 	 * execution time so a lecturer's change applies to the next run, never mid-run. */
 	public List<AiProviderBinding> primaryFallbackChain(UUID courseId) {
 		CourseAiSettingsService.Settings courseSettings = settings.get(courseId);
-		return courseSettings.fallbackEnabled() ? courseSettings.fallbackBindings() : List.of();
+		return courseSettings.fallbackEnabled()
+				? courseSettings.fallbackBindings().stream().map(catalog::requireRuntimeCompatible).toList()
+				: List.of();
 	}
 
 	/** Stamps the course binding onto a new decision row (provider + model actually requested). */

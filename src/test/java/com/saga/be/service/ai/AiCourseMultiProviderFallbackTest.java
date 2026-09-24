@@ -101,7 +101,7 @@ class AiCourseMultiProviderFallbackTest {
 	// ---- dispatch per binding ----
 
 	@ParameterizedTest(name = "{0} binding is dispatched to the {0} adapter with its model")
-	@CsvSource({"OPENAI, gpt-5.6-luna", "GEMINI, gemini-3.7-flash", "OPENROUTER, openrouter/free"})
+	@CsvSource({"OPENAI, gpt-5.6-luna", "GEMINI, gemini-3.5-flash-lite", "OPENROUTER, openrouter/free"})
 	void boundPrimaryIsDispatchedWithItsProviderNameModelAndCourseEnvelope(AiProvider provider, String model) {
 		RemoteAiModelProvider remote = realRemote();
 		loadBoundRun(remote, new AiProviderBinding(provider, model));

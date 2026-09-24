@@ -112,7 +112,8 @@ platform fallback (Academic Classification, Progress Narrative) keeps its existi
 
 ## Free tiers and data policy
 
-`freeTierEligible` in the catalog (Gemini 3.8/3.7 Flash, `openrouter/free`) is informational only.
+`freeTierEligible` in the catalog (Gemini 3.8 Flash, Gemini 3.5 Flash-Lite, and the
+`openrouter/free` Free Models Router) is informational only.
 External providers set, and may change at any time, whether a free tier exists, its limits, and its
 data terms. Free tiers commonly allow the provider to retain and use submitted prompts and outputs
 (for example for model improvement or human review), and `openrouter/free` routes each request to

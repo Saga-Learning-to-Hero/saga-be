@@ -19,7 +19,13 @@ Canonical values:
 ## 1. Model catalog
 
 `GET /ai-provider-catalog` returns the only models that can be bound. Build every provider/model
-picker from this response; never hard-code model ids.
+picker from this response; never hard-code model ids. This is SAGA's product catalog, a
+deliberate subset of what each provider's API offers:
+
+- OpenAI and Gemini entries are specific provider models.
+- `openrouter/free` is OpenRouter's Free Models Router. It is not one model: for each request it
+  picks an available free model that supports what the request needs, including structured
+  output.
 
 ```json
 {
@@ -29,8 +35,9 @@ picker from this response; never hard-code model ids.
       { "provider": "OPENAI", "modelId": "gpt-5.6-terra", "displayName": "GPT-5.6 Terra", "freeTierEligible": false, "supportsStructuredOutput": true, "recommendedForAutomation": true },
       { "provider": "OPENAI", "modelId": "gpt-5.6-sol",   "displayName": "GPT-5.6 Sol",   "freeTierEligible": false, "supportsStructuredOutput": true, "recommendedForAutomation": true } ] },
     { "provider": "GEMINI", "displayName": "Google Gemini", "models": [
-      { "provider": "GEMINI", "modelId": "gemini-3.8-flash", "displayName": "Gemini 3.8 Flash", "freeTierEligible": true, "supportsStructuredOutput": true, "recommendedForAutomation": true },
-      { "provider": "GEMINI", "modelId": "gemini-3.7-flash", "displayName": "Gemini 3.7 Flash", "freeTierEligible": true, "supportsStructuredOutput": true, "recommendedForAutomation": true } ] },
+      { "provider": "GEMINI", "modelId": "gemini-3.8-flash",       "displayName": "Gemini 3.8 Flash",      "freeTierEligible": true,  "supportsStructuredOutput": true, "recommendedForAutomation": true },
+      { "provider": "GEMINI", "modelId": "gemini-3.5-flash-lite",  "displayName": "Gemini 3.5 Flash-Lite", "freeTierEligible": true,  "supportsStructuredOutput": true, "recommendedForAutomation": true },
+      { "provider": "GEMINI", "modelId": "gemini-3.1-pro-preview", "displayName": "Gemini 3.1 Pro",        "freeTierEligible": false, "supportsStructuredOutput": true, "recommendedForAutomation": false } ] },
     { "provider": "OPENROUTER", "displayName": "OpenRouter", "models": [
       { "provider": "OPENROUTER", "modelId": "openrouter/free", "displayName": "OpenRouter Free Models Router", "freeTierEligible": true, "supportsStructuredOutput": true, "recommendedForAutomation": false } ] }
   ],
@@ -39,7 +46,14 @@ picker from this response; never hard-code model ids.
 ```
 
 Show `freeTierNotice` wherever a free-tier badge appears. `recommendedForAutomation: false` is a
-warning label only; the model can still be selected.
+warning label only; the model can still be selected. Gemini 3.1 Pro is a Google preview model and
+is paid-tier only.
+
+If `GET /ai-settings` returns a binding whose `modelId` is missing from the catalog (for example
+`gemini-3.7-flash`, which SAGA no longer offers), show it as "no longer available" and ask the
+lecturer to pick a catalog model. "No longer available" means it cannot be selected for a new or
+updated binding: an existing persisted `gemini-3.7-flash` binding may continue to run until the
+lecturer changes it. No other model is substituted, and past runs keep their recorded model.
 
 ## 2. Credentials (one per provider and role)
 

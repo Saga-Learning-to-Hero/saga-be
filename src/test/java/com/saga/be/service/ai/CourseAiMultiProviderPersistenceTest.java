@@ -10,6 +10,7 @@ import com.saga.be.entity.academic.Semester;
 import com.saga.be.entity.academic.Subject;
 import com.saga.be.entity.ai.AiAnalysisProviderDecision;
 import com.saga.be.entity.ai.AiAnalysisRun;
+import com.saga.be.entity.ai.CourseAiSettings;
 import com.saga.be.entity.enums.*;
 import com.saga.be.entity.project.Project;
 import com.saga.be.exception.IntegrationException;
@@ -100,7 +101,7 @@ class CourseAiMultiProviderPersistenceTest {
 	void setUp() {
 		credentials = new CourseAiCredentialService(credentialRows, new AiCredentialCipher(MASTER_KEY));
 		settings = new CourseAiSettingsService(settingsRows, fallbackRows, new AiModelCatalog());
-		resolver = new AiCredentialResolver(credentialRows, settings, credentials, new AiCredentialTransportCipher(TRANSPORT_KEY), List.of());
+		resolver = new AiCredentialResolver(credentialRows, settings, credentials, new AiCredentialTransportCipher(TRANSPORT_KEY), List.of(), new AiModelCatalog());
 		Semester semester = semesters.save(semester());
 		AcademicClass academicClass = academicClasses.save(academicClass(semester));
 		Subject subject = subjects.save(subject());
@@ -218,11 +219,92 @@ class CourseAiMultiProviderPersistenceTest {
 	void catalogMarksFreeTierAndAutomationMetadataExactlyAsSpecified() {
 		Map<String, AiModelCatalog.Model> byId = new java.util.HashMap<>();
 		new AiModelCatalog().models().forEach(m -> byId.put(m.modelId(), m));
-		assertThat(byId.keySet()).containsExactlyInAnyOrder("gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gemini-3.8-flash", "gemini-3.7-flash", "openrouter/free");
+		assertThat(byId.keySet()).containsExactlyInAnyOrder(
+				"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol",
+				"gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview",
+				"openrouter/free");
 		assertThat(byId.values()).allSatisfy(m -> assertThat(m.supportsEveryAnalysisType()).isTrue());
-		assertThat(List.of("gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol")).allSatisfy(id -> assertThat(byId.get(id).freeTierEligible()).isFalse());
-		assertThat(List.of("gemini-3.8-flash", "gemini-3.7-flash", "openrouter/free")).allSatisfy(id -> assertThat(byId.get(id).freeTierEligible()).isTrue());
+		// Informational only, per each provider's current pricing page: the OpenAI API has no free
+		// tier; Gemini 3.1 Pro Preview is paid-tier only; the OpenRouter router is free by design.
+		assertThat(List.of("gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gemini-3.1-pro-preview")).allSatisfy(id -> assertThat(byId.get(id).freeTierEligible()).isFalse());
+		assertThat(List.of("gemini-3.8-flash", "gemini-3.5-flash-lite", "openrouter/free")).allSatisfy(id -> assertThat(byId.get(id).freeTierEligible()).isTrue());
 		assertThat(byId.get("openrouter/free").recommendedForAutomation()).isFalse();
+		assertThat(byId.get("gemini-3.1-pro-preview").recommendedForAutomation()).isFalse();
+		assertThat(byId.get("gemini-3.8-flash").displayName()).isEqualTo("Gemini 3.8 Flash");
+		assertThat(byId.get("gemini-3.5-flash-lite").displayName()).isEqualTo("Gemini 3.5 Flash-Lite");
+		assertThat(byId.get("gemini-3.1-pro-preview").displayName()).isEqualTo("Gemini 3.1 Pro");
+	}
+
+	@org.junit.jupiter.params.ParameterizedTest(name = "{0} {1} is bindable")
+	@org.junit.jupiter.params.provider.CsvSource({
+		"OPENAI, gpt-5.6-sol", "OPENAI, gpt-5.6-terra", "OPENAI, gpt-5.6-luna",
+		"GEMINI, gemini-3.8-flash", "GEMINI, gemini-3.5-flash-lite", "GEMINI, gemini-3.1-pro-preview",
+		"OPENROUTER, openrouter/free"
+	})
+	void everyProductCatalogModelIsBindableUnderItsOwnProvider(String provider, String modelId) {
+		var saved = settings.updateBindings(course, input(provider, modelId), false, List.of(), input(provider, modelId));
+		assertThat(saved.primaryBinding()).isEqualTo(new AiProviderBinding(AiProvider.valueOf(provider), modelId));
+		assertThat(saved.secondaryBinding()).isEqualTo(new AiProviderBinding(AiProvider.valueOf(provider), modelId));
+	}
+
+	@org.junit.jupiter.params.ParameterizedTest(name = "{0} {1} is rejected")
+	@org.junit.jupiter.params.provider.CsvSource({
+		// Removed from the SAGA product catalog (it may still exist at the provider).
+		"GEMINI, gemini-3.7-flash",
+		// Invented / alias ids that SAGA does not expose.
+		"GEMINI, gemini-3.1-pro", "GEMINI, gemini-3.8", "OPENAI, gpt-5.6", "OPENAI, gpt-6-sol",
+		// A real catalog model bound under the wrong provider.
+		"OPENAI, gemini-3.8-flash", "GEMINI, gpt-5.6-terra", "OPENROUTER, gemini-3.5-flash-lite", "GEMINI, openrouter/free"
+	})
+	void modelsOutsideTheProductCatalogOrUnderTheWrongProviderAreRejected(String provider, String modelId) {
+		assertRejected(() -> settings.updateBindings(course, input(provider, modelId), false, List.of(), null), IntegrationErrorCode.AI_MODEL_NOT_SUPPORTED);
+		assertRejected(() -> settings.updateBindings(course, input("OPENAI", "gpt-5.6-sol"), true, List.of(input(provider, modelId)), null), IntegrationErrorCode.AI_MODEL_NOT_SUPPORTED);
+		assertRejected(() -> settings.updateBindings(course, null, false, List.of(), input(provider, modelId)), IntegrationErrorCode.AI_MODEL_NOT_SUPPORTED);
+	}
+
+	@Test
+	void persistedLegacyGeminiBindingRemainsRuntimeCompatibleWithoutBecomingSelectable() {
+		CourseAiSettings legacy = new CourseAiSettings();
+		legacy.setCourse(course);
+		legacy.setPrimaryProvider(AiProvider.GEMINI);
+		legacy.setPrimaryModelId("gemini-3.7-flash");
+		settingsRows.saveAndFlush(legacy);
+		credentials.save(course, AiProviderRole.PRIMARY, AiProvider.GEMINI, GEMINI_KEY, null);
+
+		assertRejected(() -> settings.updateBindings(course, input("GEMINI", "gemini-3.7-flash"), false, List.of(), null), IntegrationErrorCode.AI_MODEL_NOT_SUPPORTED);
+		var resolution = resolver.resolve(course.getId(), AiAnalysisType.PROGRESS_NARRATIVE, AiProviderRole.PRIMARY, AiInvocationOrigin.AUTOMATION);
+
+		assertThat(resolution.binding()).isEqualTo(new AiProviderBinding(AiProvider.GEMINI, "gemini-3.7-flash"));
+		assertThat(settings.get(course.getId()).primaryBinding()).isEqualTo(new AiProviderBinding(AiProvider.GEMINI, "gemini-3.7-flash"));
+		assertThat(settingsRows.findByCourse_Id(course.getId()).orElseThrow().getPrimaryModelId()).isEqualTo("gemini-3.7-flash");
+	}
+
+	@Test
+	void arbitraryPersistedModelIsRejectedBeforeRuntimeDispatch() {
+		CourseAiSettings invalid = new CourseAiSettings();
+		invalid.setCourse(course);
+		invalid.setPrimaryProvider(AiProvider.GEMINI);
+		invalid.setPrimaryModelId("gemini-made-up");
+		settingsRows.saveAndFlush(invalid);
+		credentials.save(course, AiProviderRole.PRIMARY, AiProvider.GEMINI, GEMINI_KEY, null);
+
+		assertRejected(() -> resolver.resolve(course.getId(), AiAnalysisType.PROGRESS_NARRATIVE, AiProviderRole.PRIMARY, AiInvocationOrigin.AUTOMATION), IntegrationErrorCode.AI_MODEL_NOT_SUPPORTED);
+	}
+
+	@Test
+	void historicalProvenanceNamingARemovedModelIsNeverRewritten() {
+		Project project = projects.save(project(course));
+		AiAnalysisRun run = runs.save(run(project));
+		AiAnalysisProviderDecision decision = new AiAnalysisProviderDecision();
+		decision.setAnalysisRun(run); decision.setProviderRole(AiProviderRole.PRIMARY); decision.setProviderKey("saga-ai"); decision.setProviderConfigHash("cfg");
+		decision.setModelId("gemini-3.7-flash"); decision.setAiProvider(AiProvider.GEMINI); decision.setRoute(AiProviderRoute.NORMAL); decision.setStatus(AiProviderDecisionStatus.COMPLETED);
+		decision.setFallbackAttemptsJson("[{\"provider\":\"GEMINI\",\"modelId\":\"gemini-3.7-flash\",\"outcome\":\"SUCCEEDED\"}]");
+		decisions.saveAndFlush(decision);
+		entityManager.clear();
+
+		var reloaded = decisions.findById(decision.getId()).orElseThrow();
+		assertThat(reloaded.getModelId()).isEqualTo("gemini-3.7-flash");
+		assertThat(reloaded.getFallbackAttemptsJson()).contains("gemini-3.7-flash");
 	}
 
 	// ---- resolver: a binding is only ever paired with the same provider's credential ----
