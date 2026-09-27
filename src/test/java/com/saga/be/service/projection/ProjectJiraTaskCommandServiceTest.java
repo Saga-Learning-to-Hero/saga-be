@@ -80,6 +80,10 @@ class ProjectJiraTaskCommandServiceTest {
 	@Mock
 	private TaskGitCommitLinkRepository links;
 	@Mock
+	private com.saga.be.repository.TaskFileRepository files;
+	@Mock
+	private com.saga.be.repository.TaskWebLinkRepository webLinks;
+	@Mock
 	private JiraTeamTokenService tokens;
 	@Mock
 	private JiraIssueWriteClient jiraWrite;
@@ -112,6 +116,8 @@ class ProjectJiraTaskCommandServiceTest {
 				workSessions,
 				confirmations,
 				links,
+				files,
+				webLinks,
 				tokens,
 				jiraWrite,
 				projection,

@@ -14,8 +14,10 @@ import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.SprintRepository;
+import com.saga.be.repository.TaskFileRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
+import com.saga.be.repository.TaskWebLinkRepository;
 import com.saga.be.repository.JiraTaskFailoverItemRepository;
 import com.saga.be.entity.jira.JiraTaskFailoverItem;
 import com.saga.be.dto.integration.failover.TaskMigrationSummary;
@@ -42,6 +44,8 @@ public class ProjectProjectionReadService {
 	private final TaskRepository tasks;
 	private final GitCommitRepository commits;
 	private final TaskGitCommitLinkRepository links;
+	private final TaskFileRepository files;
+	private final TaskWebLinkRepository webLinks;
 	private final SprintRepository sprints;
 	private final ProjectDataAuthorization authorization;
 	private final TaskHierarchyService hierarchy;
@@ -51,12 +55,16 @@ public class ProjectProjectionReadService {
 			TaskRepository tasks,
 			GitCommitRepository commits,
 			TaskGitCommitLinkRepository links,
+			TaskFileRepository files,
+			TaskWebLinkRepository webLinks,
 			SprintRepository sprints,
 			ProjectDataAuthorization authorization,
 			TaskHierarchyService hierarchy, JiraTaskFailoverItemRepository failoverItems) {
 		this.tasks = tasks;
 		this.commits = commits;
 		this.links = links;
+		this.files = files;
+		this.webLinks = webLinks;
 		this.sprints = sprints;
 		this.authorization = authorization;
 		this.hierarchy = hierarchy;
@@ -68,8 +76,16 @@ public class ProjectProjectionReadService {
 		authorization.requireReader(userId, projectId);
 		List<Task> rows = tasks.findActiveFetchedByProject_Id(projectId);
 		Map<UUID, Long> counts = linkCounts(projectId);
+		Map<UUID, Long> evidence = evidenceCounts(projectId);
 		Map<UUID, TaskMigrationSummary> migrations = migrations(rows);
-		return rows.stream().map(task -> toTask(task, counts.getOrDefault(task.getId(), 0L), null, migrations.getOrDefault(task.getId(), TaskMigrationSummary.none()))).toList();
+		return rows.stream()
+				.map(task -> toTask(
+						task,
+						counts.getOrDefault(task.getId(), 0L),
+						evidence.getOrDefault(task.getId(), 0L),
+						null,
+						migrations.getOrDefault(task.getId(), TaskMigrationSummary.none())))
+				.toList();
 	}
 
 	@Transactional(readOnly = true)
@@ -79,7 +95,13 @@ public class ProjectProjectionReadService {
 				.orElseThrow(() -> new AcademicException(
 						AcademicErrorCode.PROJECT_NOT_FOUND, HttpStatus.NOT_FOUND, "Task was not found for this project."));
 		Map<UUID, Long> counts = linkCounts(projectId);
-		return toTask(task, counts.getOrDefault(task.getId(), 0L), directSubtasks(task.getId()), migrations(List.of(task)).getOrDefault(task.getId(), TaskMigrationSummary.none()));
+		Map<UUID, Long> evidence = evidenceCounts(projectId);
+		return toTask(
+				task,
+				counts.getOrDefault(task.getId(), 0L),
+				evidence.getOrDefault(task.getId(), 0L),
+				directSubtasks(task.getId()),
+				migrations(List.of(task)).getOrDefault(task.getId(), TaskMigrationSummary.none()));
 	}
 
 	@Transactional(readOnly = true)
@@ -171,23 +193,54 @@ public class ProjectProjectionReadService {
 	}
 
 	private Map<UUID, Long> linkCounts(UUID projectId) {
+		return groupedCounts(links.countLinksByProjectGrouped(projectId));
+	}
+
+	private Map<UUID, Long> evidenceCounts(UUID projectId) {
+		Map<UUID, Long> counts = groupedCounts(files.countByProjectGrouped(projectId));
+		for (Map.Entry<UUID, Long> row : groupedCounts(webLinks.countByProjectGrouped(projectId)).entrySet()) {
+			counts.merge(row.getKey(), row.getValue(), Long::sum);
+		}
+		return counts;
+	}
+
+	private static Map<UUID, Long> groupedCounts(List<Object[]> rows) {
 		Map<UUID, Long> counts = new HashMap<>();
-		for (Object[] row : links.countLinksByProjectGrouped(projectId)) {
-			counts.put((UUID) row[0], (Long) row[1]);
+		if (rows == null) {
+			return counts;
+		}
+		for (Object[] row : rows) {
+			if (row == null || row.length < 2 || !(row[0] instanceof UUID taskId) || !(row[1] instanceof Number count)) {
+				continue;
+			}
+			counts.put(taskId, count.longValue());
 		}
 		return counts;
 	}
 
 	static ProjectTaskResponse toTask(Task task, long linkedCommitCount) {
-		return toTask(task, linkedCommitCount, null, TaskMigrationSummary.none());
+		return toTask(task, linkedCommitCount, 0L);
+	}
+
+	static ProjectTaskResponse toTask(Task task, long linkedCommitCount, long evidenceCount) {
+		return toTask(task, linkedCommitCount, evidenceCount, null, TaskMigrationSummary.none());
 	}
 
 	static ProjectTaskResponse toTask(
 			Task task, long linkedCommitCount, List<ProjectTaskResponse.Subtask> subtasks) {
-		return toTask(task, linkedCommitCount, subtasks, TaskMigrationSummary.none());
+		return toTask(task, linkedCommitCount, 0L, subtasks, TaskMigrationSummary.none());
 	}
 
 	static ProjectTaskResponse toTask(Task task, long linkedCommitCount, List<ProjectTaskResponse.Subtask> subtasks, TaskMigrationSummary migration) {
+		return toTask(task, linkedCommitCount, 0L, subtasks, migration);
+	}
+
+	static ProjectTaskResponse toTask(
+			Task task,
+			long linkedCommitCount,
+			long evidenceCount,
+			List<ProjectTaskResponse.Subtask> subtasks,
+			TaskMigrationSummary migration) {
 		String assigneeDisplay = null;
 		if (task.getAssigneeStudent() != null
 				&& task.getAssigneeStudent().getUserAccount() != null
@@ -265,6 +318,8 @@ public class ProjectProjectionReadService {
 				dueDate,
 				startDate,
 				linkedCommitCount,
+				evidenceCount,
+				evidenceCount > 0,
 				task.getExternalUpdatedAt(),
 				task.getCreatedAt(),
 				task.getUpdatedAt(),

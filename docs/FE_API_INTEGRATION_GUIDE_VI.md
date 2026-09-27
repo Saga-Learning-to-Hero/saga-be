@@ -1303,6 +1303,8 @@ Mọi field đều tuỳ chọn — chỉ field khác `null` mới được cậ
   "storyPoint": 5,
   "sprint": { "id": "uuid", "externalSprintId": "...", "name": "Sprint 1", "state": "active" },
   "linkedCommitCount": 3,
+  "evidenceCount": 2,
+  "hasEvidence": true,
   "externalUpdatedAt": "...", "createdAt": "...", "updatedAt": "..."
 }
 ```
@@ -1314,6 +1316,7 @@ Vài lưu ý chính xác cần nhớ:
 - `assignee` là `null` nếu task chưa gán ai.
 - `sprint` là `null` nếu task đang ở backlog.
 - `linkedCommitCount` được tính lại mỗi lần đọc (không phải cột lưu sẵn).
+- `evidenceCount` = số `task_file` + `task_web_link` (không gồm commit). `hasEvidence` = `evidenceCount > 0`. Chỉ count, không trả payload file/link. Pipeline dùng hai field này, không N+1 `GET /tasks/{id}/files` và `/web-links`.
 
 ### Xoá task — chặn nếu đã có bằng chứng
 `DELETE /tasks/{taskId}` → **409 `TASK_DELETE_BLOCKED_BY_EVIDENCE`** nếu task đã có Work Session hoặc Contribution Confirmation gắn vào (mục 28) — không cho xoá để bảo toàn dữ liệu chấm điểm.

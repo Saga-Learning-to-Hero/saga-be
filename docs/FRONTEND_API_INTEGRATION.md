@@ -538,7 +538,7 @@ Breaking change phải được nêu rõ.
 | GET | `/api/projects/{projectId}/graph/attribution` | Session | Team member or assigned lecturer | Graph V1 (Neo4j); `sprintId` optional | `ProjectGraphController` |
 | GET | `/api/projects/{projectId}/sprints/{sprintId}/graph/peer-review` | Session | Team member or assigned lecturer | Graph V1 (Neo4j) | `ProjectGraphController` |
 | GET | `/api/courses/{courseId}/teams/{teamId}/heatmap` | Session | Team member or assigned lecturer | Heatmap V1; `startDate`/`endDate` required, `studentId` optional | `TeamActivityAnalyticsController` |
-| GET | `/api/courses/{courseId}/teams/{teamId}/sprints/{sprintId}/burndown` | Session | Team member or assigned lecturer | Burndown V1 | `TeamActivityAnalyticsController` |
+| GET | `/api/courses/{courseId}/teams/{teamId}/sprints/{sprintId}/burndown` | Session | Team member or assigned lecturer | Burndown V1 + `idealRemaining` | `TeamActivityAnalyticsController` |
 | GET | `/api/tasks/{taskId}/web-links` | Session | Team member | Task evidence V1 | `TaskEvidenceController` |
 | POST | `/api/tasks/{taskId}/web-links` | Session + CSRF | Team member | Task evidence V1 | `TaskEvidenceController` |
 | DELETE | `/api/tasks/{taskId}/web-links/{linkId}` | Session + CSRF | Team member | Task evidence V1 | `TaskEvidenceController` |

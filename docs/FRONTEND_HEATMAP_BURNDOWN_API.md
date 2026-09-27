@@ -212,7 +212,8 @@ interface BurndownChartResponse {
 }
 
 interface BurndownPoint {
-  date: string;
+  date: string;            // YYYY-MM-DD, remaining tính cuối ngày
+  idealRemaining: number;  // BE tính; FE không tự tính
   actualRemaining: number;
   doneCount: number;
 }
@@ -221,9 +222,23 @@ interface BurndownPoint {
 `points` đủ ngày inclusive từ `startDate` → `endDate`.
 
 - `doneCount`: task `DONE` có mốc hoàn thành ≤ ngày đó.
-- `actualRemaining` = `totalScope - doneCount`.
+- `actualRemaining` = `totalScope - doneCount`. Ý nghĩa không đổi.
+- `idealRemaining`: số task còn lại nếu burn đều trong sprint.
 
-Không có `idealRemaining`. Không có changelog: task thêm giữa sprint vẫn nằm trong `totalScope` từ ngày đầu.
+Công thức (`i` = chỉ số ngày 0-based, `n` = số ngày inclusive):
+
+1. `totalScope == 0` → mọi điểm `idealRemaining = 0` (cùng `actualRemaining` / `doneCount`).
+2. Sprint một ngày (`n == 1`) → `idealRemaining = 0` (tránh chia 0; ngày duy nhất là ngày kết thúc).
+3. Các sprint khác:
+   `idealRemaining(i) = clamp(round(totalScope * (n - 1 - i) / (n - 1)), 0, totalScope)`
+   - Ngày đầu (`i = 0`) = `totalScope`.
+   - Ngày cuối (`i = n - 1`) = `0`.
+   - Ngày giữa giảm tuyến tính.
+   - `round` = `Math.round` Java: gần nhất, `.5` ra xa 0 (2.5 → 3).
+   - Clamp: `0 <= idealRemaining <= totalScope`.
+   - Chuỗi đơn điệu không tăng. Được phép plateau khi `totalScope < n - 1`.
+
+Không có changelog: task thêm giữa sprint vẫn nằm trong `totalScope` từ ngày đầu.
 
 ---
 
@@ -303,9 +318,10 @@ Vẽ burndown:
 ```js
 const chartData = data.points.map((p) => ({
   date: p.date,
+  ideal: p.idealRemaining,
   actual: p.actualRemaining,
-  done: p.doneCount,
 }));
+// doneCount chỉ KPI / tooltip — không vẽ đường thứ ba.
 ```
 
 ---
@@ -318,7 +334,7 @@ const chartData = data.points.map((p) => ({
 - Không pad ngày trống — BE đã trả đủ `cells`.
 - Không bịa `comments` / `totalScore` — heatmap không có hai field đó.
 - Không lấy avatar GitHub Identity — dùng `students[].avatar` / `days[].actors[].avatar` (`user_account.avatar_url`).
-- Không bịa đường `idealRemaining` — burndown chỉ có `actualRemaining` + `doneCount`.
+- Không tự tính `idealRemaining` — dùng đúng số BE trả về.
 - Không lấy `user.id` làm `studentId`.
 - Không thay heatmap bằng graph Cytoscape, hoặc ngược lại.
 - Không dùng `GET /progress` cho member thường (403) thay heatmap.

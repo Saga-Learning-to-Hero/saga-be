@@ -33,6 +33,21 @@ public interface TaskFileRepository extends JpaRepository<TaskFile, UUID> {
 	long countByTask_Project_IdAndCreatedBy_Id(UUID projectId, UUID userId);
 
 	/**
+	 * File evidence cardinality per active task in the project.
+	 * {@code Object[]{UUID taskId, Long count}}. Uses {@code ix_task_file_task}.
+	 */
+	@Query(
+			"""
+			select f.task.id, count(f)
+			from TaskFile f
+			join f.task t
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			group by f.task.id
+			""")
+	List<Object[]> countByProjectGrouped(@Param("projectId") UUID projectId);
+
+	/**
 	 * Heatmap documents: {@code Object[]{UUID studentId, LocalDateTime createdAt}}. Prefers the
 	 * uploading student; falls back to the task assignee.
 	 */

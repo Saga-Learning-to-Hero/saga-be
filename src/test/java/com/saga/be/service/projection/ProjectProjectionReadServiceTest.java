@@ -61,6 +61,10 @@ class ProjectProjectionReadServiceTest {
 	@Mock
 	private TaskGitCommitLinkRepository links;
 	@Mock
+	private com.saga.be.repository.TaskFileRepository files;
+	@Mock
+	private com.saga.be.repository.TaskWebLinkRepository webLinks;
+	@Mock
 	private com.saga.be.repository.SprintRepository sprints;
 	@Mock
 	private UserAccountRepository users;
@@ -80,7 +84,15 @@ class ProjectProjectionReadServiceTest {
 	void setUp() {
 		authorization = new ProjectDataAuthorization(users, members, projects);
 		service = new ProjectProjectionReadService(
-				tasks, commits, links, sprints, authorization, new TaskHierarchyService(projects, tasks, org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class)), failoverItems);
+				tasks,
+				commits,
+				links,
+				files,
+				webLinks,
+				sprints,
+				authorization,
+				new TaskHierarchyService(projects, tasks, org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class)),
+				failoverItems);
 		projectId = UUID.randomUUID();
 		userId = UUID.randomUUID();
 	}
@@ -123,6 +135,135 @@ class ProjectProjectionReadServiceTest {
 		int after100 = countQueries.get();
 		assertThat(after10).isEqualTo(1);
 		assertThat(after100 - after10).isEqualTo(1);
+	}
+
+	@Test
+	void listTasks_noEvidence_isZeroAndFalse() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = taskRow();
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(task));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+		when(files.countByProjectGrouped(projectId)).thenReturn(List.of());
+		when(webLinks.countByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.evidenceCount()).isZero();
+		assertThat(response.hasEvidence()).isFalse();
+		assertThat(response.linkedCommitCount()).isZero();
+	}
+
+	@Test
+	void listTasks_filesOnly_countsAsEvidence() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = taskRow();
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(task));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+		when(files.countByProjectGrouped(projectId)).thenReturn(List.<Object[]>of(new Object[] {task.getId(), 2L}));
+		when(webLinks.countByProjectGrouped(projectId)).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.evidenceCount()).isEqualTo(2);
+		assertThat(response.hasEvidence()).isTrue();
+	}
+
+	@Test
+	void listTasks_webLinksOnly_countsAsEvidence() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = taskRow();
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(task));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+		when(files.countByProjectGrouped(projectId)).thenReturn(List.of());
+		when(webLinks.countByProjectGrouped(projectId)).thenReturn(List.<Object[]>of(new Object[] {task.getId(), 1L}));
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.evidenceCount()).isEqualTo(1);
+		assertThat(response.hasEvidence()).isTrue();
+	}
+
+	@Test
+	void listTasks_filesAndWebLinks_sumWithoutCommitPayload() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = taskRow();
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(task));
+		when(links.countLinksByProjectGrouped(projectId))
+				.thenReturn(List.<Object[]>of(new Object[] {task.getId(), 4L}));
+		when(files.countByProjectGrouped(projectId)).thenReturn(List.<Object[]>of(new Object[] {task.getId(), 2L}));
+		when(webLinks.countByProjectGrouped(projectId)).thenReturn(List.<Object[]>of(new Object[] {task.getId(), 1L}));
+
+		ProjectTaskResponse response = service.listTasks(userId, projectId).getFirst();
+
+		assertThat(response.evidenceCount()).isEqualTo(3);
+		assertThat(response.hasEvidence()).isTrue();
+		assertThat(response.linkedCommitCount()).isEqualTo(4L);
+	}
+
+	@Test
+	void listTasks_multipleTasks_batchEvidenceCounts() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task withBoth = taskRow();
+		Task withNone = taskRow();
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(withBoth, withNone));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+		when(files.countByProjectGrouped(projectId)).thenReturn(List.<Object[]>of(new Object[] {withBoth.getId(), 1L}));
+		when(webLinks.countByProjectGrouped(projectId))
+				.thenReturn(List.<Object[]>of(new Object[] {withBoth.getId(), 2L}));
+
+		List<ProjectTaskResponse> result = service.listTasks(userId, projectId);
+
+		assertThat(result.getFirst().evidenceCount()).isEqualTo(3);
+		assertThat(result.getFirst().hasEvidence()).isTrue();
+		assertThat(result.get(1).evidenceCount()).isZero();
+		assertThat(result.get(1).hasEvidence()).isFalse();
+	}
+
+	@Test
+	void evidenceCount_queryCountConstant_for10Vs100Tasks() {
+		stubStudent(RoleInTeam.MEMBER);
+		AtomicInteger fileQueries = new AtomicInteger();
+		AtomicInteger linkQueries = new AtomicInteger();
+		when(files.countByProjectGrouped(projectId)).thenAnswer(inv -> {
+			fileQueries.incrementAndGet();
+			return List.of();
+		});
+		when(webLinks.countByProjectGrouped(projectId)).thenAnswer(inv -> {
+			linkQueries.incrementAndGet();
+			return List.of();
+		});
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(tasks(10));
+		service.listTasks(userId, projectId);
+		when(tasks.findActiveFetchedByProject_Id(projectId)).thenReturn(tasks(100));
+		service.listTasks(userId, projectId);
+		assertThat(fileQueries.get()).isEqualTo(2);
+		assertThat(linkQueries.get()).isEqualTo(2);
+	}
+
+	@Test
+	void getTask_includesEvidenceSummary() {
+		stubStudent(RoleInTeam.MEMBER);
+		Task task = taskRow();
+		when(tasks.findActiveFetchedByIdAndProject_Id(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+		when(files.countByProjectGrouped(projectId)).thenReturn(List.<Object[]>of(new Object[] {task.getId(), 1L}));
+		when(webLinks.countByProjectGrouped(projectId)).thenReturn(List.of());
+		when(tasks.findActiveDirectChildSummaries(task.getId())).thenReturn(List.of());
+
+		ProjectTaskResponse response = service.getTask(userId, projectId, task.getId());
+
+		assertThat(response.evidenceCount()).isEqualTo(1);
+		assertThat(response.hasEvidence()).isTrue();
+	}
+
+	private Task taskRow() {
+		Task task = new Task();
+		task.setId(UUID.randomUUID());
+		task.setExternalKey("SAGA-" + task.getId().toString().substring(0, 4));
+		task.setTitle("Task");
+		task.setStatus(TaskStatus.TODO);
+		return task;
 	}
 
 	@Test

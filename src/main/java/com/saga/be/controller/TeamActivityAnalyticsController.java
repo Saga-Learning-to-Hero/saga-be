@@ -47,7 +47,16 @@ public class TeamActivityAnalyticsController {
 	}
 
 	@GetMapping("/sprints/{sprintId}/burndown")
-	@Operation(summary = "Sprint burndown (actual remaining tasks).")
+	@Operation(
+			summary = "Sprint burndown (ideal and actual remaining tasks).",
+			description =
+					"""
+					Each point is one inclusive calendar day. actualRemaining and doneCount are
+					unchanged (current sprint tasks). idealRemaining is the even-pace guideline:
+					start = totalScope, end = 0, linear integer interpolation, Math.round then
+					clamp to [0, totalScope]. One-day sprint and totalScope=0 both yield
+					idealRemaining=0. FE must not recompute idealRemaining.
+					""")
 	public BurndownChartResponse burndown(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID courseId,

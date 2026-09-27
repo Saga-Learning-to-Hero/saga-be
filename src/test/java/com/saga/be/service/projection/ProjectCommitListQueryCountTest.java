@@ -152,7 +152,13 @@ class ProjectCommitListQueryCountTest {
 		tx = new TransactionTemplate(transactionManager);
 		ProjectDataAuthorization authorization = new ProjectDataAuthorization(users, members, projects);
 		readService = new ProjectProjectionReadService(
-				tasks, commits, links, sprintRepository(), authorization,
+				tasks,
+				commits,
+				links,
+				org.mockito.Mockito.mock(com.saga.be.repository.TaskFileRepository.class),
+				org.mockito.Mockito.mock(com.saga.be.repository.TaskWebLinkRepository.class),
+				sprintRepository(),
+				authorization,
 				new TaskHierarchyService(projects, tasks, transactionManager),
 				org.mockito.Mockito.mock(com.saga.be.repository.JiraTaskFailoverItemRepository.class));
 		tx.executeWithoutResult(status -> seedGraph());
