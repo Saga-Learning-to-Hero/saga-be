@@ -1,5 +1,6 @@
 package com.saga.be.dto.project;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -54,6 +55,18 @@ public record ProjectTaskResponse(
 		 * COMMIT total excludes only known merges ({@code parent_count > 1}).
 		 */
 		long linkedCommitCount,
+		/**
+		 * File + web-link cardinality on this task (the two student-submitted evidence lists).
+		 * Does not include commits — those stay in {@link #linkedCommitCount()}. Counts only;
+		 * never the file/link payloads.
+		 */
+		@Schema(description = "task_file + task_web_link count. Excludes commits. Not the evidence payload.")
+		long evidenceCount,
+		/**
+		 * {@code evidenceCount > 0}. Pipeline/KPI flag so FE does not N+1 list files and web links.
+		 */
+		@Schema(description = "true when evidenceCount > 0. FE must not infer this from files/web-links lists.")
+		boolean hasEvidence,
 		LocalDateTime externalUpdatedAt,
 		LocalDateTime createdAt,
 		LocalDateTime updatedAt,

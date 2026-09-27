@@ -138,6 +138,8 @@ Response `201` — lấy `id` làm `taskId` cho web-links / files:
   "storyPoint": 5,
   "sprint": null,
   "linkedCommitCount": 0,
+  "evidenceCount": 0,
+  "hasEvidence": false,
   "externalUpdatedAt": "2026-09-08T09:00:00",
   "createdAt": "2026-09-08T09:00:00",
   "updatedAt": "2026-09-08T09:00:00"
@@ -145,6 +147,8 @@ Response `201` — lấy `id` làm `taskId` cho web-links / files:
 ```
 
 `status`: `TODO` | `IN_PROGRESS` | `IN_REVIEW` | `DONE` | `BLOCKED`. Field điểm là **`storyPoint`** (số ít); request tạo dùng **`storyPoints`**.
+
+`GET /tasks` và `GET /tasks/{taskId}` trả `evidenceCount` (file + web link, không gồm commit) và `hasEvidence` (`evidenceCount > 0`). Pipeline chỉ cần hai field này; **không** N+1 `GET /api/tasks/{id}/files` và `/web-links` chỉ để biết task có minh chứng. Hai GET đó vẫn dùng khi mở chi tiết / nộp evidence. Không có batch evidence-summary.
 
 `GET /tasks` **không** trả labels. Scoring vẫn đọc nhãn `saga:code|test|document|research` từ DB (Jira). `POST /tasks` hiện **không** nhận field label — gắn `saga:document` / `saga:research` trên Jira (hoặc sync về). FE vẫn cho nộp file/link trên mọi task; backend chỉ **công nhận điểm** khi DONE + đúng một nhãn DOCUMENT/RESEARCH + ≥1 evidence.
 

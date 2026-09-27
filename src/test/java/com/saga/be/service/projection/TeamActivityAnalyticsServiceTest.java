@@ -265,6 +265,71 @@ class TeamActivityAnalyticsServiceTest {
 		assertThat(chart.points().get(1).actualRemaining()).isEqualTo(2);
 		assertThat(chart.points().get(2).doneCount()).isEqualTo(2);
 		assertThat(chart.points().getLast().actualRemaining()).isEqualTo(1);
+		assertThat(chart.points().getFirst().idealRemaining()).isEqualTo(3);
+		assertThat(chart.points().getLast().idealRemaining()).isZero();
+	}
+
+	@Test
+	void idealRemaining_startEndMiddleRoundingAndClamp() {
+		assertThat(TeamActivityAnalyticsService.idealRemaining(10, 0, 7)).isEqualTo(10);
+		assertThat(TeamActivityAnalyticsService.idealRemaining(10, 6, 7)).isZero();
+		assertThat(TeamActivityAnalyticsService.idealRemaining(10, 1, 7)).isEqualTo(8);
+		assertThat(TeamActivityAnalyticsService.idealRemaining(10, 2, 7)).isEqualTo(7);
+		assertThat(TeamActivityAnalyticsService.idealRemaining(5, 1, 3)).isEqualTo(3);
+		assertThat(TeamActivityAnalyticsService.idealRemaining(0, 0, 5)).isZero();
+		assertThat(TeamActivityAnalyticsService.idealRemaining(4, 0, 1)).isZero();
+		assertThat(TeamActivityAnalyticsService.idealRemaining(8, -2, 5)).isEqualTo(8);
+		assertThat(TeamActivityAnalyticsService.idealRemaining(8, 99, 5)).isZero();
+	}
+
+	@Test
+	void idealRemaining_isMonotoneNonIncreasingAndWithinScope() {
+		int totalScope = 10;
+		int dayCount = 7;
+		int previous = totalScope;
+		for (int i = 0; i < dayCount; i++) {
+			int ideal = TeamActivityAnalyticsService.idealRemaining(totalScope, i, dayCount);
+			assertThat(ideal).isBetween(0, totalScope);
+			assertThat(ideal).isLessThanOrEqualTo(previous);
+			previous = ideal;
+		}
+	}
+
+	@Test
+	void burndown_totalScopeZero_allPointsZero() {
+		stubActiveMember();
+		Sprint sprint = sprint(LocalDateTime.of(2026, 8, 1, 0, 0), LocalDateTime.of(2026, 8, 3, 23, 59));
+		when(sprints.findActiveByIdAndProject_Id(sprint.getId(), projectId)).thenReturn(Optional.of(sprint));
+		when(tasks.findBurndownRowsByProjectAndSprint(projectId, sprint.getId())).thenReturn(List.of());
+
+		BurndownChartResponse chart = service.burndown(userId, courseId, teamId, sprint.getId());
+
+		assertThat(chart.totalScope()).isZero();
+		assertThat(chart.points()).hasSize(3);
+		assertThat(chart.points())
+				.allSatisfy(point -> {
+					assertThat(point.idealRemaining()).isZero();
+					assertThat(point.actualRemaining()).isZero();
+					assertThat(point.doneCount()).isZero();
+				});
+	}
+
+	@Test
+	void burndown_oneDaySprint_idealIsZeroWithoutDivision() {
+		stubActiveMember();
+		Sprint sprint = sprint(LocalDateTime.of(2026, 8, 1, 0, 0), LocalDateTime.of(2026, 8, 1, 23, 59));
+		when(sprints.findActiveByIdAndProject_Id(sprint.getId(), projectId)).thenReturn(Optional.of(sprint));
+		when(tasks.findBurndownRowsByProjectAndSprint(projectId, sprint.getId()))
+				.thenReturn(List.<Object[]>of(
+						burndownRow(TaskStatus.TODO, null, null, LocalDateTime.of(2026, 8, 1, 8, 0)),
+						burndownRow(TaskStatus.TODO, null, null, LocalDateTime.of(2026, 8, 1, 9, 0))));
+
+		BurndownChartResponse chart = service.burndown(userId, courseId, teamId, sprint.getId());
+
+		assertThat(chart.points()).hasSize(1);
+		assertThat(chart.points().getFirst().idealRemaining()).isZero();
+		assertThat(chart.points().getFirst().actualRemaining()).isEqualTo(2);
+		assertThat(chart.points().getFirst().doneCount()).isZero();
 	}
 
 	@Test

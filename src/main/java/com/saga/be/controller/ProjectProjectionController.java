@@ -104,7 +104,14 @@ public class ProjectProjectionController {
 	}
 
 	@GetMapping("/tasks")
-	@Operation(summary = "List projected Jira tasks. Owning team students and assigned lecturer.")
+	@Operation(
+			summary = "List projected Jira tasks. Owning team students and assigned lecturer.",
+			description =
+					"""
+					Each task includes evidenceCount (task_file + task_web_link) and hasEvidence.
+					These are counts only — not file/link payloads. Commits stay in linkedCommitCount.
+					Pipeline should use hasEvidence instead of N+1 GET /tasks/{id}/files and /web-links.
+					""")
 	public List<ProjectTaskResponse> tasks(
 			@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID projectId) {
 		return projections.listTasks(principal.getUserId(), projectId);
@@ -139,7 +146,10 @@ public class ProjectProjectionController {
 	}
 
 	@GetMapping("/tasks/{taskId}")
-	@Operation(summary = "Get one projected Jira task.")
+	@Operation(
+			summary = "Get one projected Jira task.",
+			description =
+					"Same evidenceCount/hasEvidence contract as the task list. Counts only; not the evidence payload.")
 	public ProjectTaskResponse task(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,

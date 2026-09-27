@@ -31,6 +31,21 @@ public interface TaskWebLinkRepository extends JpaRepository<TaskWebLink, UUID> 
 
 	long countByTask_Project_IdAndCreatedBy_Id(UUID projectId, UUID userId);
 
+	/**
+	 * Web-link evidence cardinality per active task in the project.
+	 * {@code Object[]{UUID taskId, Long count}}. Uses {@code ix_task_web_link_task}.
+	 */
+	@Query(
+			"""
+			select w.task.id, count(w)
+			from TaskWebLink w
+			join w.task t
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			group by w.task.id
+			""")
+	List<Object[]> countByProjectGrouped(@Param("projectId") UUID projectId);
+
 	/** Heatmap documents: {@code Object[]{UUID studentId, LocalDateTime createdAt}}. */
 	@Query(
 			"""

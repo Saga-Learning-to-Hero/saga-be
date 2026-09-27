@@ -177,14 +177,16 @@ public class TeamActivityAnalyticsService {
 		}
 		List<LocalDate> days = enumerateDays(startDate, endDate);
 		List<BurndownPoint> points = new ArrayList<>();
-		for (LocalDate day : days) {
+		int dayCount = days.size();
+		for (int i = 0; i < dayCount; i++) {
+			LocalDate day = days.get(i);
 			int doneCount = 0;
 			for (LocalDate done : doneDates) {
 				if (!done.isAfter(day)) {
 					doneCount++;
 				}
 			}
-			points.add(new BurndownPoint(day, totalScope - doneCount, doneCount));
+			points.add(new BurndownPoint(day, idealRemaining(totalScope, i, dayCount), totalScope - doneCount, doneCount));
 		}
 		return new BurndownChartResponse(
 				courseId, teamId, sprint.getId(), sprint.getName(), startDate, endDate, totalScope, points);
@@ -311,6 +313,42 @@ public class TeamActivityAnalyticsService {
 		}
 		LocalDateTime at = completedAt != null ? completedAt : (resolvedAt != null ? resolvedAt : createdAt);
 		return at == null ? null : at.toLocalDate();
+	}
+
+	/**
+	 * Even-pace remaining tasks for burndown day {@code dayIndex} (0-based) of {@code dayCount}
+	 * inclusive calendar days.
+	 *
+	 * <p>Rounding: {@link Math#round(double)} — nearest integer, halves away from zero. Result is
+	 * then clamped to {@code [0, totalScope]}.
+	 *
+	 * <p>{@code totalScope == 0} or {@code dayCount <= 0} → {@code 0}. A one-day sprint
+	 * ({@code dayCount == 1}) is the sprint end, so {@code idealRemaining = 0} and no division
+	 * occurs. Otherwise {@code i = 0} is {@code totalScope} and {@code i = dayCount - 1} is
+	 * {@code 0}. The sequence is monotone non-increasing.
+	 */
+	static int idealRemaining(int totalScope, int dayIndex, int dayCount) {
+		if (totalScope <= 0 || dayCount <= 0) {
+			return 0;
+		}
+		if (dayCount == 1) {
+			return 0;
+		}
+		int last = dayCount - 1;
+		if (dayIndex <= 0) {
+			return totalScope;
+		}
+		if (dayIndex >= last) {
+			return 0;
+		}
+		long rounded = Math.round((double) totalScope * (last - dayIndex) / last);
+		if (rounded < 0) {
+			return 0;
+		}
+		if (rounded > totalScope) {
+			return totalScope;
+		}
+		return (int) rounded;
 	}
 
 	private static List<LocalDate> enumerateDays(LocalDate startDate, LocalDate endDate) {

@@ -153,6 +153,8 @@ class ParentOptionsPagingQueryCountTest {
 				tasks,
 				commits,
 				links,
+				org.mockito.Mockito.mock(com.saga.be.repository.TaskFileRepository.class),
+				org.mockito.Mockito.mock(com.saga.be.repository.TaskWebLinkRepository.class),
 				org.mockito.Mockito.mock(com.saga.be.repository.SprintRepository.class),
 				authorization,
 				new TaskHierarchyService(projects, tasks, transactionManager),

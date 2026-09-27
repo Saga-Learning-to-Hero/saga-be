@@ -24,8 +24,10 @@ import com.saga.be.realtime.ProjectRealtimeEventType;
 import com.saga.be.realtime.ProjectRealtimePublisher;
 import com.saga.be.repository.ContributionConfirmationRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
+import com.saga.be.repository.TaskFileRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
+import com.saga.be.repository.TaskWebLinkRepository;
 import com.saga.be.repository.TaskWorkSessionRepository;
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -49,6 +51,8 @@ public class ProjectJiraTaskCommandService {
 	private final TaskWorkSessionRepository workSessions;
 	private final ContributionConfirmationRepository confirmations;
 	private final TaskGitCommitLinkRepository links;
+	private final TaskFileRepository files;
+	private final TaskWebLinkRepository webLinks;
 	private final JiraTeamTokenService tokens;
 	private final JiraIssueWriteClient jiraWrite;
 	private final JiraTaskProjectionService projection;
@@ -63,6 +67,8 @@ public class ProjectJiraTaskCommandService {
 			TaskWorkSessionRepository workSessions,
 			ContributionConfirmationRepository confirmations,
 			TaskGitCommitLinkRepository links,
+			TaskFileRepository files,
+			TaskWebLinkRepository webLinks,
 			JiraTeamTokenService tokens,
 			JiraIssueWriteClient jiraWrite,
 			JiraTaskProjectionService projection,
@@ -75,6 +81,8 @@ public class ProjectJiraTaskCommandService {
 		this.workSessions = workSessions;
 		this.confirmations = confirmations;
 		this.links = links;
+		this.files = files;
+		this.webLinks = webLinks;
 		this.tokens = tokens;
 		this.jiraWrite = jiraWrite;
 		this.projection = projection;
@@ -212,7 +220,7 @@ public class ProjectJiraTaskCommandService {
 					HttpStatus.BAD_GATEWAY,
 					"Jira issue was created but a secondary field update failed. Local state reflects provider truth; retry the failed field.");
 		}
-		return ProjectProjectionReadService.toTask(saved, 0L);
+		return ProjectProjectionReadService.toTask(saved, 0L, 0L);
 	}
 
 	public ProjectTaskResponse patch(UUID userId, UUID projectId, UUID taskId, PatchProjectTaskRequest request) {
@@ -230,7 +238,7 @@ public class ProjectJiraTaskCommandService {
 			Task task = requireTask(projectId, taskId);
 			Task saved = hierarchy.mutateParent(projectId, task.getId(), nativeParentId);
 			realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, projectId, saved.getId().toString());
-			return ProjectProjectionReadService.toTask(saved, linkedCount(projectId, saved.getId()));
+			return toProjectedTask(projectId, saved);
 		}
 		if (nativeTouched) {
 			requireTask(projectId, taskId);
@@ -346,7 +354,7 @@ public class ProjectJiraTaskCommandService {
 		if (nativeParentFailed.get()) {
 			throw nativeParentIncomplete(false, saved);
 		}
-		return ProjectProjectionReadService.toTask(saved, linkedCount(projectId, saved.getId()));
+		return toProjectedTask(projectId, saved);
 	}
 
 	public ProjectTaskResponse moveSprint(
@@ -371,7 +379,7 @@ public class ProjectJiraTaskCommandService {
 			realtime.publish(ProjectRealtimeEventType.SPRINTS_CHANGED, projectId);
 			return row;
 		});
-		return ProjectProjectionReadService.toTask(saved, linkedCount(projectId, saved.getId()));
+		return toProjectedTask(projectId, saved);
 	}
 
 	public ProjectTaskResponse transition(
@@ -389,7 +397,7 @@ public class ProjectJiraTaskCommandService {
 			realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, projectId, row.getId().toString());
 			return row;
 		});
-		return ProjectProjectionReadService.toTask(saved, linkedCount(projectId, saved.getId()));
+		return toProjectedTask(projectId, saved);
 	}
 
 	public void delete(UUID userId, UUID projectId, UUID taskId) {
@@ -542,6 +550,10 @@ public class ProjectJiraTaskCommandService {
 		return parent.getExternalId();
 	}
 
+	private ProjectTaskResponse toProjectedTask(UUID projectId, Task saved) {
+		return ProjectProjectionReadService.toTask(saved, linkedCount(projectId, saved.getId()), evidenceCount(saved.getId()));
+	}
+
 	private long linkedCount(UUID projectId, UUID taskId) {
 		for (Object[] row : links.countLinksByProjectGrouped(projectId)) {
 			if (taskId.equals(row[0])) {
@@ -549,6 +561,10 @@ public class ProjectJiraTaskCommandService {
 			}
 		}
 		return 0L;
+	}
+
+	private long evidenceCount(UUID taskId) {
+		return files.countByTask_Id(taskId) + webLinks.countByTask_Id(taskId);
 	}
 
 	private static String issueRef(Task task) {
