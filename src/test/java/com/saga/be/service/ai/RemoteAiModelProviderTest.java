@@ -436,7 +436,16 @@ class RemoteAiModelProviderTest {
 	}
 
 	private String fixture(String name) throws Exception {
-		return Files.readString(Path.of("..", "saga-ai", "tests", "fixtures", name));
+		List<Path> candidates = List.of(
+			Path.of("..", "saga-ai-main", "tests", "fixtures", name),
+			Path.of("..", "saga-ai", "tests", "fixtures", name)
+		);
+		for (Path candidate : candidates) {
+			if (Files.isRegularFile(candidate)) {
+				return Files.readString(candidate);
+			}
+		}
+		throw new IllegalStateException("AI contract fixture not found in: " + candidates);
 	}
 
 	private String json(Object value) throws Exception {

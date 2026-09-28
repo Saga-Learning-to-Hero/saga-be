@@ -82,7 +82,7 @@ MYSQL -e "SET FOREIGN_KEY_CHECKS=0; INSERT INTO ai_course_settings (id, course_i
 expect "existing/new settings default to legacy bindings and fallback OFF" "0	NULL	NULL" "SELECT fallback_enabled, primary_provider, secondary_model_id FROM ai_course_settings WHERE course_id = '$COURSE_ID';"
 expect_error "provider without model" "UPDATE ai_course_settings SET primary_provider = 'GEMINI' WHERE course_id = '$COURSE_ID';"
 expect_error "arbitrary binding provider" "UPDATE ai_course_settings SET primary_provider = 'MISTRAL', primary_model_id = 'x' WHERE course_id = '$COURSE_ID';"
-MYSQL -e "UPDATE ai_course_settings SET primary_provider = 'GEMINI', primary_model_id = 'gemini-3.8-flash', fallback_enabled = 1 WHERE course_id = '$COURSE_ID';"
+MYSQL -e "UPDATE ai_course_settings SET primary_provider = 'GEMINI', primary_model_id = 'gemini-3.7-flash', fallback_enabled = 1 WHERE course_id = '$COURSE_ID';"
 MYSQL -e "SET FOREIGN_KEY_CHECKS=0; INSERT INTO ai_course_fallback_binding (id, course_id, attempt_order, provider, model_id) VALUES (UUID(), '$COURSE_ID', 1, 'OPENROUTER', 'openrouter/free');"
 expect_error "duplicate fallback binding" "INSERT INTO ai_course_fallback_binding (id, course_id, attempt_order, provider, model_id) VALUES (UUID(), '$COURSE_ID', 2, 'OPENROUTER', 'openrouter/free');"
 expect_error "fallback attempt order beyond 3" "INSERT INTO ai_course_fallback_binding (id, course_id, attempt_order, provider, model_id) VALUES (UUID(), '$COURSE_ID', 4, 'OPENAI', 'gpt-5.6-sol');"

@@ -20,7 +20,7 @@ class RemoteAiModelProviderContextTest {
 
 	private final ApplicationContextRunner runner =
 			new ApplicationContextRunner()
-					.withUserConfiguration(PropertiesConfig.class, RemoteAiModelProvider.class)
+					.withUserConfiguration(PropertiesConfig.class, RemoteAiModelProvider.class, FakeAiModelProvider.class)
 					.withBean(ObjectMapper.class, ObjectMapper::new);
 
 	@Test
@@ -45,6 +45,32 @@ class RemoteAiModelProviderContextTest {
 		runner.withPropertyValues("saga.ai.enabled=true", "saga.ai.primary-provider=openai")
 				.run(context -> {
 					assertThat(context).hasNotFailed();
+					assertThat(context).doesNotHaveBean(RemoteAiModelProvider.class);
+				});
+	}
+
+	@Test
+	void localProfileCanSelectRemoteRuntimeWithoutAlsoRegisteringFakeProvider() {
+		runner.withPropertyValues(
+						"spring.profiles.active=local",
+						"saga.ai.enabled=true",
+						"saga.ai.primary-provider=remote",
+						"saga.ai.runtime.enabled=true",
+						"saga.ai.runtime.base-url=http://localhost:8000",
+						"saga.ai.runtime.internal-token=test-token")
+				.run(context -> {
+					assertThat(context).hasNotFailed();
+					assertThat(context).hasSingleBean(RemoteAiModelProvider.class);
+					assertThat(context).doesNotHaveBean(FakeAiModelProvider.class);
+				});
+	}
+
+	@Test
+	void localProfileKeepsFakeProviderWhenExplicitlySelected() {
+		runner.withPropertyValues("spring.profiles.active=local", "saga.ai.primary-provider=fake")
+				.run(context -> {
+					assertThat(context).hasNotFailed();
+					assertThat(context).hasSingleBean(FakeAiModelProvider.class);
 					assertThat(context).doesNotHaveBean(RemoteAiModelProvider.class);
 				});
 	}

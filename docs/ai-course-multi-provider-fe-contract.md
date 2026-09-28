@@ -1,7 +1,7 @@
 # Course AI multi-provider: API contract for the frontend
 
 Backend contract for the lecturer "Course AI" settings screen: provider credentials (OpenAI,
-Gemini) and the provider/model bindings for PRIMARY, the fallback chain, and SECONDARY.
+Gemini, OpenRouter, Cohere) and the provider/model bindings for PRIMARY, the fallback chain, and SECONDARY.
 None of these endpoints contacts an AI provider. Saving a key never checks it with the provider:
 the status shows `UNVERIFIED` until the first real analysis runs.
 
@@ -11,9 +11,8 @@ get `403 ACCESS_DENIED`; admins and other lecturers get `403 LECTURER_COURSE_FOR
 
 Canonical values:
 
-- `provider`: `OPENAI` | `GEMINI` for anything new. Requests are case-insensitive; responses are
-  always upper case. `OPENROUTER` and `COHERE` are LEGACY values: SAGA no longer offers them, but
-  rows written while they were supported can still appear in responses (see section 5).
+- `provider`: `OPENAI` | `GEMINI` | `OPENROUTER` | `COHERE`. Requests are case-insensitive; responses are
+  always upper case.
 - `role`: `PRIMARY` | `SECONDARY`.
 - `status`: `UNVERIFIED` | `ACTIVE` | `DEGRADED` | `INVALID` | `REVOKED`.
 
@@ -23,7 +22,10 @@ Canonical values:
 picker from this response; never hard-code model ids. This is SAGA's product catalog, a
 deliberate subset of what each provider's API offers:
 
-- OpenAI and Gemini entries are specific provider models. No other provider is listed.
+- OpenAI and Gemini entries are specific provider models.
+- `openrouter/free` is OpenRouter's Free Models Router. It is not one model: for each request it
+  picks an available free model that supports what the request needs, including structured
+  output.
 
 ```json
 {
@@ -33,22 +35,25 @@ deliberate subset of what each provider's API offers:
       { "provider": "OPENAI", "modelId": "gpt-5.6-terra", "displayName": "GPT-5.6 Terra", "freeTierEligible": false, "supportsStructuredOutput": true, "recommendedForAutomation": true },
       { "provider": "OPENAI", "modelId": "gpt-5.6-sol",   "displayName": "GPT-5.6 Sol",   "freeTierEligible": false, "supportsStructuredOutput": true, "recommendedForAutomation": true } ] },
     { "provider": "GEMINI", "displayName": "Google Gemini", "models": [
-      { "provider": "GEMINI", "modelId": "gemini-3.8-flash",       "displayName": "Gemini 3.8 Flash",      "freeTierEligible": true,  "supportsStructuredOutput": true, "recommendedForAutomation": true },
-      { "provider": "GEMINI", "modelId": "gemini-3.5-flash-lite",  "displayName": "Gemini 3.5 Flash-Lite", "freeTierEligible": true,  "supportsStructuredOutput": true, "recommendedForAutomation": true },
-      { "provider": "GEMINI", "modelId": "gemini-3.1-pro-preview", "displayName": "Gemini 3.1 Pro",        "freeTierEligible": false, "supportsStructuredOutput": true, "recommendedForAutomation": false } ] }
+      { "provider": "GEMINI", "modelId": "gemini-3.7-flash", "displayName": "Gemini 3.7 Flash", "freeTierEligible": true, "supportsStructuredOutput": true, "recommendedForAutomation": true },
+      { "provider": "GEMINI", "modelId": "gemini-2.5-flash", "displayName": "Gemini 2.5 Flash", "freeTierEligible": true, "supportsStructuredOutput": true, "recommendedForAutomation": true } ] },
+    { "provider": "OPENROUTER", "displayName": "OpenRouter", "models": [
+      { "provider": "OPENROUTER", "modelId": "openrouter/free", "displayName": "OpenRouter Free Models Router", "freeTierEligible": true, "supportsStructuredOutput": true, "recommendedForAutomation": false } ] },
+    { "provider": "COHERE", "displayName": "Cohere", "models": [
+      { "provider": "COHERE", "modelId": "command-a-plus-05-2026", "displayName": "Command A+", "freeTierEligible": true, "supportsStructuredOutput": true, "recommendedForAutomation": true },
+      { "provider": "COHERE", "modelId": "command-a-03-2025", "displayName": "Command A", "freeTierEligible": true, "supportsStructuredOutput": true, "recommendedForAutomation": false } ] }
   ],
   "freeTierNotice": "Free-tier eligibility is informational only. External providers set and may change free-tier availability, limits and data-use terms at any time; free tiers may use submitted content to improve their models and are not suitable for sensitive production data."
 }
 ```
 
 Show `freeTierNotice` wherever a free-tier badge appears. `recommendedForAutomation: false` is a
-warning label only; the model can still be selected. Gemini 3.1 Pro is a Google preview model and
-is paid-tier only.
+warning label only; the model can still be selected.
 
 If `GET /ai-settings` returns a binding whose `modelId` is missing from the catalog (for example
-`gemini-3.7-flash`, which SAGA no longer offers), show it as "no longer available" and ask the
+`gemini-3.8-flash`, which SAGA no longer offers), show it as "no longer available" and ask the
 lecturer to pick a catalog model. "No longer available" means it cannot be selected for a new or
-updated binding: an existing persisted `gemini-3.7-flash` binding may continue to run until the
+updated binding: an existing persisted `gemini-3.8-flash` binding may continue to run until the
 lecturer changes it. No other model is substituted, and past runs keep their recorded model.
 
 ## 2. Credentials (one per provider and role)
@@ -95,10 +100,10 @@ and `PUT /ai-settings/bindings` all return:
 {
   "automationEnabled": true,
   "allowPlatformFallback": false,
-  "primaryBinding": { "provider": "GEMINI", "modelId": "gemini-3.8-flash" },
+  "primaryBinding": { "provider": "GEMINI", "modelId": "gemini-3.7-flash" },
   "fallbackEnabled": true,
   "fallbackBindings": [
-    { "provider": "GEMINI", "modelId": "gemini-3.5-flash-lite" },
+    { "provider": "OPENROUTER", "modelId": "openrouter/free" },
     { "provider": "OPENAI", "modelId": "gpt-5.6-luna" }
   ],
   "secondaryBinding": { "provider": "OPENAI", "modelId": "gpt-5.6-terra" }
@@ -114,9 +119,9 @@ with the platform-chosen model. `fallbackBindings` is the stored chain. It is re
 
 ```json
 {
-  "primaryBinding": { "provider": "GEMINI", "modelId": "gemini-3.8-flash" },
+  "primaryBinding": { "provider": "GEMINI", "modelId": "gemini-3.7-flash" },
   "fallbackEnabled": true,
-  "fallbackBindings": [ { "provider": "OPENAI", "modelId": "gpt-5.6-luna" } ],
+  "fallbackBindings": [ { "provider": "OPENROUTER", "modelId": "openrouter/free" } ],
   "secondaryBinding": { "provider": "OPENAI", "modelId": "gpt-5.6-terra" }
 }
 ```
@@ -125,7 +130,7 @@ Validation (all `400`, nothing is saved):
 
 | Code | Cause |
 | --- | --- |
-| `AI_PROVIDER_NOT_SUPPORTED` | Unknown provider, or a LEGACY provider (`OPENROUTER`/`COHERE`) in any role |
+| `AI_PROVIDER_NOT_SUPPORTED` | Unknown provider |
 | `AI_MODEL_NOT_SUPPORTED` | Model not in the catalog, or it belongs to a different provider |
 | `AI_MODEL_CAPABILITY_UNSUPPORTED` | Model lacks structured output for every analysis |
 | `AI_BINDING_INVALID` | Missing `modelId`, duplicate fallback, primary repeated in the chain, more than 3 fallbacks, fallback enabled without a primary or with an empty chain |
@@ -134,8 +139,12 @@ A binding does not require the credential to exist yet. Warn when a bound provid
 credential for that role (none, `INVALID` or `REVOKED`). Runs for that role are then unavailable,
 and SAGA never substitutes another provider's key.
 
-Credential is not binding: the first stores the key for a role, while the second selects
-provider/model. Load the catalog dynamically; do not hardcode model ids in the frontend.
+`COHERE` uses the same write-only credential route (`/ai-credentials/{role}/COHERE`), binding,
+fallback, and SECONDARY semantics as every other course provider. For example, a PRIMARY binding
+is `{ "provider": "COHERE", "modelId": "command-a-plus-05-2026" }`. Credential is not binding:
+the first stores the key for a role, while the second selects provider/model. Provider decisions
+for Cohere inference report `aiProvider: "COHERE"`. Load this catalog dynamically; do not hardcode
+Cohere model ids in the frontend.
 
 ## 4. Runtime semantics to explain in the UI
 
@@ -152,21 +161,5 @@ provider/model. Load the catalog dynamically; do not hardcode model ids in the f
 - The analysis decision payload (existing analysis read endpoints) now has two extra fields:
   - `aiProvider`: the provider that actually served the run, or `null` on legacy runs.
   - `fallbackAttemptsJson`: a JSON string such as
-    `[{"provider":"GEMINI","modelId":"gemini-3.8-flash","outcome":"AI_PROVIDER_QUOTA_EXHAUSTED"},{"provider":"OPENAI","modelId":"gpt-5.6-terra","outcome":"SUCCEEDED"}]`.
-    An `outcome` of `SKIPPED_NO_CREDENTIAL` marks a chain entry that had no usable key, and
-    `AI_PROVIDER_NOT_SUPPORTED` a stale LEGACY entry that was skipped without being called.
-
-## 5. Legacy OpenRouter/Cohere values
-
-OpenRouter and Cohere were offered earlier and are no longer supported. Nothing was migrated or
-rewritten, so these values can still be returned:
-
-- `aiProvider`/`fallbackAttemptsJson` of historical analysis runs: render them as they are, e.g.
-  `OpenRouter (legacy)`. They are the truthful provenance of that run.
-- `GET /ai-credentials`: credential rows stored for those providers. `GET` and `DELETE`
-  `/ai-credentials/{role}/{OPENROUTER|COHERE}` still work (revoke clears the secret); `PUT` returns
-  `400 AI_PROVIDER_NOT_SUPPORTED`.
-- `GET /ai-settings`: a binding saved before the change. It is never executed and never replaced by
-  another provider or the platform key: automatic and SECONDARY runs are unavailable, and a manual
-  PRIMARY request returns `409 AI_PROVIDER_NOT_SUPPORTED`. A stale fallback entry is skipped. Ask the
-  lecturer to choose OpenAI or Gemini and save the bindings again.
+    `[{"provider":"GEMINI","modelId":"gemini-3.7-flash","outcome":"AI_PROVIDER_QUOTA_EXHAUSTED"},{"provider":"OPENROUTER","modelId":"openrouter/free","outcome":"SUCCEEDED"}]`.
+    An `outcome` of `SKIPPED_NO_CREDENTIAL` marks a chain entry that had no usable key.

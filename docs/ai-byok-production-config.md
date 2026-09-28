@@ -3,8 +3,7 @@
 Course AI credentials ("bring your own key") are saved by the assigned lecturer, encrypted at rest
 in saga-be, and forwarded to saga-ai inside a request-scoped encrypted envelope. saga-be never calls
 an AI provider with a course key itself. A course can hold one credential per provider (OpenAI,
-Gemini) for each role (PRIMARY, SECONDARY) at the same time. OpenRouter/Cohere credentials stored
-before those providers were retired remain listed and revocable but cannot be saved or used.
+Gemini, OpenRouter) for each role (PRIMARY, SECONDARY) at the same time.
 
 All values below are **server-side secrets**. Never put them in the frontend, Vercel, or any
 `NEXT_PUBLIC_*` variable. Never commit them.
@@ -34,10 +33,9 @@ All values below are **server-side secrets**. Never put them in the frontend, Ve
 
 `OPENAI_API_KEY` on saga-ai is only needed for platform-sourced requests (for example manual
 platform fallback). Course-sourced requests use the decrypted course key. There is no platform
-Gemini key: Gemini is only ever called with a course credential. `SAGA_AI_PROVIDER=openai` enables
-the Gemini course adapter as well; its optional timeout is `SAGA_AI_GEMINI_TIMEOUT_SECONDS`
-(default 60). `SAGA_AI_OPENROUTER_TIMEOUT_SECONDS`/`SAGA_AI_COHERE_TIMEOUT_SECONDS` are no longer read
-and can be removed.
+Gemini or OpenRouter key: those providers are only ever called with a course credential.
+`SAGA_AI_PROVIDER=openai` enables the Gemini and OpenRouter course adapters as well; their optional
+timeouts are `SAGA_AI_GEMINI_TIMEOUT_SECONDS` and `SAGA_AI_OPENROUTER_TIMEOUT_SECONDS` (default 60).
 
 ## Key format
 
@@ -114,10 +112,12 @@ platform fallback (Academic Classification, Progress Narrative) keeps its existi
 
 ## Free tiers and data policy
 
-`freeTierEligible` in the catalog (Gemini 3.8 Flash, Gemini 3.5 Flash-Lite) is informational only.
+`freeTierEligible` in the catalog (Gemini 3.8 Flash, Gemini 3.5 Flash-Lite, and the
+`openrouter/free` Free Models Router) is informational only.
 External providers set, and may change at any time, whether a free tier exists, its limits, and its
 data terms. Free tiers commonly allow the provider to retain and use submitted prompts and outputs
-(for example for model improvement or human review). **Do not treat a free tier as
+(for example for model improvement or human review), and `openrouter/free` routes each request to
+whichever free upstream model is available, each with its own terms. **Do not treat a free tier as
 suitable for sensitive production data** (student personal data, grades, private repository code).
 The lecturer who configures a course key is responsible for choosing a provider tier whose data
 policy fits the course; SAGA sends only the evidence bundle of each analysis and never the key to

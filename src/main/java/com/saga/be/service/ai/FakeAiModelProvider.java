@@ -3,11 +3,14 @@ package com.saga.be.service.ai;
 import com.saga.be.ai.*;
 import com.saga.be.entity.enums.AiProviderRole;
 import java.util.List;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 /** Test/local-only deterministic smoke provider. It is never active in normal production profiles. */
-@Component @Profile({"local", "test"})
+@Component
+@Profile({"local", "test"})
+@ConditionalOnProperty(name = "saga.ai.primary-provider", havingValue = "fake", matchIfMissing = true)
 public class FakeAiModelProvider implements AiModelProvider {
 	public static final String CONFIG_HASH = AiHashes.sha256("fake-ai-1");
 	public AiProviderRole role() { return AiProviderRole.PRIMARY; }

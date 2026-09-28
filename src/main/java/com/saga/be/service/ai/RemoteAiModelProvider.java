@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.*;
 
 /** Internal saga-ai inference adapter; domain validation and state authority stay in saga-be. */
-@Component @Profile("!test & !local") @ConditionalOnExpression("'${saga.ai.enabled:false}' == 'true' and '${saga.ai.primary-provider:openai}' == 'remote'")
+@Component @Profile("!test") @ConditionalOnExpression("'${saga.ai.enabled:false}' == 'true' and '${saga.ai.primary-provider:openai}' == 'remote'")
 public class RemoteAiModelProvider implements AiModelProvider {
  static final String CONTRACT="saga-ai-inference-v1"; private final AiAnalysisProperties props;private final ObjectMapper mapper;private final RestClient client;
  @Autowired public RemoteAiModelProvider(AiAnalysisProperties p,ObjectMapper m){this(p,m,client(p));} RemoteAiModelProvider(AiAnalysisProperties p,ObjectMapper m,RestClient c){props=p;mapper=m;client=c;}

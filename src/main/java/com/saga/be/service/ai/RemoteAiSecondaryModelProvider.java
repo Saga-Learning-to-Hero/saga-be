@@ -21,7 +21,7 @@ import org.springframework.web.client.*;
  * OFF by default: only registered when both {@code saga.ai.enabled} and {@code saga.ai.secondary-enabled}
  * are true. Never falls back to the primary provider on failure.
  */
-@Component @Profile("!test & !local") @ConditionalOnExpression("'${saga.ai.enabled:false}' == 'true' and '${saga.ai.primary-provider:openai}' == 'remote' and '${saga.ai.secondary-enabled:false}' == 'true'")
+@Component @Profile("!test") @ConditionalOnExpression("'${saga.ai.enabled:false}' == 'true' and '${saga.ai.primary-provider:openai}' == 'remote' and '${saga.ai.secondary-enabled:false}' == 'true'")
 public class RemoteAiSecondaryModelProvider implements AiModelProvider {
  static final String CONTRACT="saga-ai-inference-v1"; private final AiAnalysisProperties props;private final ObjectMapper mapper;private final RestClient client;
  @Autowired public RemoteAiSecondaryModelProvider(AiAnalysisProperties p,ObjectMapper m){this(p,m,client(p));} RemoteAiSecondaryModelProvider(AiAnalysisProperties p,ObjectMapper m,RestClient c){props=p;mapper=m;client=c;}

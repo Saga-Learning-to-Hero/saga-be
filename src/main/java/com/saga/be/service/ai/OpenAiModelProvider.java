@@ -15,7 +15,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 /** Primary Responses API adapter. It receives only the immutable persisted evidence bundle. */
-@Component @Profile("!test & !local")
+@Component @Profile("!test")
 @ConditionalOnExpression("'${saga.ai.enabled:false}' == 'true' and '${saga.ai.primary-provider:openai}' == 'openai'")
 public class OpenAiModelProvider implements AiModelProvider {
  private final AiAnalysisProperties properties; private final ObjectMapper mapper; private final RestClient client;
