@@ -54,7 +54,7 @@ public class LecturerCourseAiCredentialController {
 	@GetMapping("/ai-provider-catalog")
 	public AiProviderCatalogResponse getCatalog(@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID courseId) {
 		authorization.requireAssignedLecturerStrict(actor(principal), courseId);
-		List<AiProviderCatalogResponse.Provider> providers = Arrays.stream(AiProvider.values()).map(provider -> new AiProviderCatalogResponse.Provider(provider.name(), displayName(provider),
+		List<AiProviderCatalogResponse.Provider> providers = Arrays.stream(AiProvider.values()).filter(AiProvider::isSupported).map(provider -> new AiProviderCatalogResponse.Provider(provider.name(), displayName(provider),
 				catalog.models().stream().filter(m -> m.provider() == provider)
 						.map(m -> new AiProviderCatalogResponse.Model(m.provider().name(), m.modelId(), m.displayName(), m.freeTierEligible(), m.supportsStructuredOutput(), m.recommendedForAutomation()))
 						.toList())).toList();
@@ -103,6 +103,8 @@ public class LecturerCourseAiCredentialController {
 		return credentials.list(course).stream().map(LecturerCourseAiCredentialController::response).toList();
 	}
 
+	/** Also answers for a LEGACY provider (OPENROUTER/COHERE) so a previously stored key stays
+	 * visible; only saving is restricted to supported providers. */
 	@GetMapping("/ai-credentials/{role}/{provider}")
 	public CourseAiCredentialResponse getProviderCredential(@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID courseId, @PathVariable AiProviderRole role, @PathVariable String provider) {
 		AiProvider parsed = provider(provider);
@@ -112,12 +114,14 @@ public class LecturerCourseAiCredentialController {
 
 	@PutMapping("/ai-credentials/{role}/{provider}")
 	public CourseAiCredentialResponse putProviderCredential(@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID courseId, @PathVariable AiProviderRole role, @PathVariable String provider, @RequestBody CourseAiCredentialPutRequest body, HttpServletRequest request) {
-		AiProvider parsed = provider(provider);
+		AiProvider parsed = supportedProvider(provider);
 		if (body != null && body.provider() != null && !body.provider().isBlank() && AiProvider.parse(body.provider()).orElse(null) != parsed)
 			throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_INVALID_REQUEST, HttpStatus.BAD_REQUEST, "Body provider does not match the path provider.");
 		return save(principal, courseId, role, parsed, body == null ? null : body.apiKey(), request);
 	}
 
+	/** Revoking a LEGACY provider's credential stays possible: it clears the secret material while
+	 * the row (and the provenance of decisions that used it) is kept. */
 	@DeleteMapping("/ai-credentials/{role}/{provider}")
 	public ResponseEntity<Void> revokeProviderCredential(@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID courseId, @PathVariable AiProviderRole role, @PathVariable String provider, HttpServletRequest request) {
 		return revoke(principal, courseId, role, provider(provider), request);
@@ -135,7 +139,7 @@ public class LecturerCourseAiCredentialController {
 	@PutMapping("/ai-credentials/{role}")
 	public CourseAiCredentialResponse putCredential(@AuthenticationPrincipal SagaUserPrincipal principal, @PathVariable UUID courseId, @PathVariable AiProviderRole role, @RequestBody CourseAiCredentialPutRequest body, HttpServletRequest request) {
 		if (body == null || body.provider() == null || body.provider().isBlank()) throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_INVALID_REQUEST, HttpStatus.BAD_REQUEST, "provider is required.");
-		return save(principal, courseId, role, provider(body.provider()), body.apiKey(), request);
+		return save(principal, courseId, role, supportedProvider(body.provider()), body.apiKey(), request);
 	}
 
 	/** Legacy single-provider route: revokes the OPENAI credential of the role. */
@@ -177,6 +181,11 @@ public class LecturerCourseAiCredentialController {
 		return AiProvider.parse(raw).orElseThrow(() -> new IntegrationException(IntegrationErrorCode.AI_PROVIDER_NOT_SUPPORTED, HttpStatus.BAD_REQUEST, "Unsupported AI provider."));
 	}
 
+	/** New credentials are only accepted for providers SAGA currently supports. */
+	private static AiProvider supportedProvider(String raw) {
+		return AiProvider.parseSupported(raw).orElseThrow(() -> new IntegrationException(IntegrationErrorCode.AI_PROVIDER_NOT_SUPPORTED, HttpStatus.BAD_REQUEST, "Unsupported AI provider."));
+	}
+
 	private static CourseAiSettingsService.BindingInput input(AiProviderBindingDto dto) {
 		return dto == null ? null : new CourseAiSettingsService.BindingInput(dto.provider(), dto.modelId());
 	}
@@ -193,7 +202,7 @@ public class LecturerCourseAiCredentialController {
 	}
 
 	private static String displayName(AiProvider provider) {
-		return switch (provider) { case OPENAI -> "OpenAI"; case GEMINI -> "Google Gemini"; case OPENROUTER -> "OpenRouter"; case COHERE -> "Cohere"; };
+		return switch (provider) { case OPENAI -> "OpenAI"; case GEMINI -> "Google Gemini"; case OPENROUTER -> "OpenRouter (legacy)"; case COHERE -> "Cohere (legacy)"; };
 	}
 
 	private UserAccount actor(SagaUserPrincipal principal) { return users.findById(principal.getUserId()).orElseThrow(); }

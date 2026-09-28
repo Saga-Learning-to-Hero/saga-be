@@ -40,14 +40,17 @@ import org.mockito.ArgumentCaptor;
  * Course multi-provider execution through the real {@link RemoteAiModelProvider} against a local
  * HTTP stand-in for saga-ai (scripted per provider name; no provider or paid API is contacted).
  * Proves dispatch per binding, per-credential status policy, the bounded course-owned fallback
- * chain, provenance, the legacy OpenAI-only path, and SECONDARY independence.
+ * chain, provenance, the legacy OpenAI-only path, SECONDARY independence, and that LEGACY
+ * OpenRouter/Cohere bindings are recorded but never dispatched.
  */
 class AiCourseMultiProviderFallbackTest {
 
 	private static final AiProviderBinding GEMINI = new AiProviderBinding(AiProvider.GEMINI, "gemini-3.8-flash");
-	private static final AiProviderBinding OPENROUTER = new AiProviderBinding(AiProvider.OPENROUTER, "openrouter/free");
+	private static final AiProviderBinding GEMINI_LITE = new AiProviderBinding(AiProvider.GEMINI, "gemini-3.5-flash-lite");
 	private static final AiProviderBinding OPENAI = new AiProviderBinding(AiProvider.OPENAI, "gpt-5.6-terra");
-	private static final AiProviderBinding COHERE = new AiProviderBinding(AiProvider.COHERE, "command-a-plus-05-2026");
+	// LEGACY bindings persisted while OpenRouter/Cohere were offered; never dispatched any more.
+	private static final AiProviderBinding LEGACY_OPENROUTER = new AiProviderBinding(AiProvider.OPENROUTER, "openrouter/free");
+	private static final AiProviderBinding LEGACY_COHERE = new AiProviderBinding(AiProvider.COHERE, "command-a-plus-05-2026");
 
 	private final ObjectMapper mapper = new ObjectMapper();
 	private final UUID runId = UUID.randomUUID();
@@ -102,7 +105,7 @@ class AiCourseMultiProviderFallbackTest {
 	// ---- dispatch per binding ----
 
 	@ParameterizedTest(name = "{0} binding is dispatched to the {0} adapter with its model")
-	@CsvSource({"OPENAI, gpt-5.6-luna", "GEMINI, gemini-3.5-flash-lite", "OPENROUTER, openrouter/free", "COHERE, command-a-plus-05-2026"})
+	@CsvSource({"OPENAI, gpt-5.6-luna", "OPENAI, gpt-5.6-sol", "GEMINI, gemini-3.5-flash-lite", "GEMINI, gemini-3.8-flash"})
 	void boundPrimaryIsDispatchedWithItsProviderNameModelAndCourseEnvelope(AiProvider provider, String model) {
 		RemoteAiModelProvider remote = realRemote();
 		loadBoundRun(remote, new AiProviderBinding(provider, model));
@@ -141,7 +144,7 @@ class AiCourseMultiProviderFallbackTest {
 	// ---- credential status policy, per provider ----
 
 	@ParameterizedTest(name = "invalid {0} key -> only the {0} credential is INVALID, no fallback")
-	@ValueSource(strings = {"OPENAI", "GEMINI", "OPENROUTER", "COHERE"})
+	@ValueSource(strings = {"OPENAI", "GEMINI"})
 	void invalidKeyInvalidatesOnlyThatProvidersCredentialAndNeverFallsBack(AiProvider provider) {
 		RemoteAiModelProvider remote = realRemote();
 		AiProviderBinding primary = new AiProviderBinding(provider, catalogModel(provider));
@@ -153,7 +156,7 @@ class AiCourseMultiProviderFallbackTest {
 
 		assertThat(requests).hasSize(1);
 		verify(resolver).markInvalid(credentialIds.get(provider));
-		verify(resolver, never()).markInvalid(eq(otherThan(provider)));
+		verify(resolver, never()).markInvalid(eq(credentialIds.get(provider == AiProvider.OPENAI ? AiProvider.GEMINI : AiProvider.OPENAI)));
 		verify(resolver, never()).markSuccessful(any());
 		verify(resolver, never()).markDegraded(any());
 		verify(state).fail(runId, "AI_PROVIDER_AUTH_FAILED", false);
@@ -178,8 +181,8 @@ class AiCourseMultiProviderFallbackTest {
 	@CsvSource({"504, AI_PROVIDER_TIMEOUT", "503, AI_PROVIDER_UNAVAILABLE", "400, AI_CREDENTIAL_ENVELOPE_INVALID", "401, UNAUTHORIZED"})
 	void transientAndSagaSideFailuresNeverInvalidateOrDegrade(int status, String code) {
 		RemoteAiModelProvider remote = realRemote();
-		fail("OPENROUTER", status, code);
-		loadBoundRun(remote, OPENROUTER);
+		fail("OPENAI", status, code);
+		loadBoundRun(remote, OPENAI);
 
 		service(remote).execute(runId);
 
@@ -191,39 +194,82 @@ class AiCourseMultiProviderFallbackTest {
 	// ---- course-owned fallback ----
 
 	@Test
-	void geminiQuotaFallsBackToOpenRouterWithTheOpenRouterCredential() {
+	void geminiQuotaFallsBackToOpenAiWithTheOpenAiCredential() {
 		RemoteAiModelProvider remote = realRemote();
 		fail("GEMINI", 429, "AI_PROVIDER_QUOTA_EXHAUSTED");
-		chain(List.of(OPENROUTER));
+		chain(List.of(OPENAI));
 		loadBoundRun(remote, GEMINI);
 
 		service(remote).execute(runId);
 
-		assertThat(requests).extracting(r -> r.path("provider").path("name").asText()).containsExactly("GEMINI", "OPENROUTER");
-		assertThat(requests.get(1).path("provider").path("model").asText()).isEqualTo("openrouter/free");
-		verify(resolver).buildEnvelope(eq(credentialIds.get(AiProvider.OPENROUTER)), eq(AiProviderRole.PRIMARY), any());
+		assertThat(requests).extracting(r -> r.path("provider").path("name").asText()).containsExactly("GEMINI", "OPENAI");
+		assertThat(requests.get(1).path("provider").path("model").asText()).isEqualTo("gpt-5.6-terra");
+		verify(resolver).buildEnvelope(eq(credentialIds.get(AiProvider.OPENAI)), eq(AiProviderRole.PRIMARY), any());
 		verify(resolver).markDegraded(credentialIds.get(AiProvider.GEMINI));
-		verify(resolver).markSuccessful(credentialIds.get(AiProvider.OPENROUTER));
+		verify(resolver).markSuccessful(credentialIds.get(AiProvider.OPENAI));
 		verify(taskFinalizer).finalize(any(), any(), any());
-		verifyProvenance(AiProvider.OPENROUTER, "openrouter/free", credentialIds.get(AiProvider.OPENROUTER),
-				List.of("GEMINI:gemini-3.8-flash:AI_PROVIDER_QUOTA_EXHAUSTED", "OPENROUTER:openrouter/free:SUCCEEDED"));
+		verifyProvenance(AiProvider.OPENAI, "gpt-5.6-terra", credentialIds.get(AiProvider.OPENAI),
+				List.of("GEMINI:gemini-3.8-flash:AI_PROVIDER_QUOTA_EXHAUSTED", "OPENAI:gpt-5.6-terra:SUCCEEDED"));
 	}
 
 	@Test
-	void openRouterUnavailableFallsBackToOpenAi() {
+	void openAiUnavailableFallsBackToGemini() {
 		RemoteAiModelProvider remote = realRemote();
-		fail("OPENROUTER", 503, "AI_PROVIDER_UNAVAILABLE");
-		chain(List.of(OPENAI));
-		loadBoundRun(remote, OPENROUTER);
+		fail("OPENAI", 503, "AI_PROVIDER_UNAVAILABLE");
+		chain(List.of(GEMINI));
+		loadBoundRun(remote, OPENAI);
 
 		service(remote).execute(runId);
 
-		assertThat(requests).extracting(r -> r.path("provider").path("name").asText()).containsExactly("OPENROUTER", "OPENAI");
-		verify(resolver).markSuccessful(credentialIds.get(AiProvider.OPENAI));
+		assertThat(requests).extracting(r -> r.path("provider").path("name").asText()).containsExactly("OPENAI", "GEMINI");
+		verify(resolver).markSuccessful(credentialIds.get(AiProvider.GEMINI));
 		verify(resolver, never()).markDegraded(any()); // unavailability is not the key's fault
 		verify(resolver, never()).markInvalid(any());
-		verifyProvenance(AiProvider.OPENAI, "gpt-5.6-terra", credentialIds.get(AiProvider.OPENAI),
-				List.of("OPENROUTER:openrouter/free:AI_PROVIDER_UNAVAILABLE", "OPENAI:gpt-5.6-terra:SUCCEEDED"));
+		verifyProvenance(AiProvider.GEMINI, "gemini-3.8-flash", credentialIds.get(AiProvider.GEMINI),
+				List.of("OPENAI:gpt-5.6-terra:AI_PROVIDER_UNAVAILABLE", "GEMINI:gemini-3.8-flash:SUCCEEDED"));
+	}
+
+	// ---- LEGACY providers (OpenRouter/Cohere): readable history, never executed ----
+
+	@Test
+	void staleLegacyFallbackEntriesAreRecordedAsSkippedAndNeverDispatched() {
+		RemoteAiModelProvider remote = realRemote();
+		fail("GEMINI", 429, "AI_PROVIDER_QUOTA_EXHAUSTED");
+		chain(List.of(LEGACY_OPENROUTER, LEGACY_COHERE, OPENAI));
+		loadBoundRun(remote, GEMINI);
+
+		service(remote).execute(runId);
+
+		assertThat(requests).extracting(r -> r.path("provider").path("name").asText()).containsExactly("GEMINI", "OPENAI");
+		verify(resolver, never()).buildEnvelope(eq(credentialIds.get(AiProvider.OPENROUTER)), any(), any());
+		verify(resolver, never()).buildEnvelope(eq(credentialIds.get(AiProvider.COHERE)), any(), any());
+		verify(resolver, never()).usableCourseCredential(any(), any(), eq(AiProvider.OPENROUTER));
+		verify(resolver, never()).usableCourseCredential(any(), any(), eq(AiProvider.COHERE));
+		verify(resolver).markSuccessful(credentialIds.get(AiProvider.OPENAI));
+		verifyProvenance(AiProvider.OPENAI, "gpt-5.6-terra", credentialIds.get(AiProvider.OPENAI), List.of(
+				"GEMINI:gemini-3.8-flash:AI_PROVIDER_QUOTA_EXHAUSTED",
+				"OPENROUTER:openrouter/free:AI_PROVIDER_NOT_SUPPORTED",
+				"COHERE:command-a-plus-05-2026:AI_PROVIDER_NOT_SUPPORTED",
+				"OPENAI:gpt-5.6-terra:SUCCEEDED"));
+	}
+
+	@ParameterizedTest(name = "a {0} primary queued before retirement fails closed without dispatch or fallback")
+	@ValueSource(strings = {"OPENROUTER", "COHERE"})
+	void legacyPrimaryFailsClosedWithoutDispatchOrFallback(AiProvider legacy) {
+		RemoteAiModelProvider remote = realRemote();
+		chain(List.of(OPENAI, GEMINI));
+		loadBoundRun(remote, legacy == AiProvider.OPENROUTER ? LEGACY_OPENROUTER : LEGACY_COHERE);
+
+		service(remote).execute(runId);
+
+		assertThat(requests).isEmpty();
+		verify(resolver, never()).buildEnvelope(any(), any(), any());
+		verify(resolver, never()).markInvalid(any());
+		verify(resolver, never()).markDegraded(any());
+		verify(resolver, never()).markSuccessful(any());
+		verify(platformProvider, never()).analyze(any());
+		verify(state, never()).recordPrimaryProvenance(any(), any(), any(), any(), any(), any());
+		verify(state).fail(runId, "AI_PROVIDER_NOT_SUPPORTED", false);
 	}
 
 	@ParameterizedTest(name = "{1} never triggers fallback")
@@ -238,21 +284,21 @@ class AiCourseMultiProviderFallbackTest {
 	void schemaCapabilityModelAndConfigFailuresNeverFallBack(int status, String code) {
 		RemoteAiModelProvider remote = realRemote();
 		fail("GEMINI", status, code);
-		chain(List.of(OPENROUTER, OPENAI));
+		chain(List.of(OPENAI, GEMINI_LITE));
 		loadBoundRun(remote, GEMINI);
 
 		service(remote).execute(runId);
 
 		assertThat(requests).hasSize(1);
 		verify(state).fail(runId, code, false);
-		verify(resolver, never()).buildEnvelope(eq(credentialIds.get(AiProvider.OPENROUTER)), any(), any());
+		verify(resolver, never()).buildEnvelope(eq(credentialIds.get(AiProvider.OPENAI)), any(), any());
 	}
 
 	@Test
 	void malformedResultAcceptedByTransportIsRejectedOnceWithoutFallback() {
 		RemoteAiModelProvider remote = realRemote();
 		bodyByProvider.put("GEMINI-MALFORMED", "true");
-		chain(List.of(OPENROUTER));
+		chain(List.of(OPENAI));
 		loadBoundRun(remote, GEMINI);
 
 		service(remote).execute(runId);
@@ -266,7 +312,7 @@ class AiCourseMultiProviderFallbackTest {
 	void localCryptoFailureNeverFallsBackAndNeverBlamesACredential() {
 		RemoteAiModelProvider remote = realRemote();
 		when(resolver.buildEnvelope(eq(credentialIds.get(AiProvider.GEMINI)), eq(AiProviderRole.PRIMARY), any())).thenThrow(new AiCredentialCryptoException("AI_CREDENTIAL_DECRYPTION_FAILED"));
-		chain(List.of(OPENROUTER));
+		chain(List.of(OPENAI));
 		loadBoundRun(remote, GEMINI);
 
 		service(remote).execute(runId);
@@ -281,8 +327,8 @@ class AiCourseMultiProviderFallbackTest {
 	void fallbackNeverUsesAPlatformCredentialOrPlatformProvider() {
 		RemoteAiModelProvider remote = realRemote();
 		fail("GEMINI", 429, "AI_PROVIDER_RATE_LIMITED");
-		fail("OPENROUTER", 504, "AI_PROVIDER_TIMEOUT");
-		chain(List.of(OPENROUTER));
+		fail("OPENAI", 504, "AI_PROVIDER_TIMEOUT");
+		chain(List.of(OPENAI));
 		loadBoundRun(remote, GEMINI);
 
 		service(remote).execute(runId);
@@ -302,16 +348,16 @@ class AiCourseMultiProviderFallbackTest {
 		for (AiProvider provider : AiProvider.values()) fail(provider.name(), 429, "AI_PROVIDER_RATE_LIMITED");
 		when(resolver.usableCourseCredential(any(), eq(AiProviderRole.PRIMARY), eq(AiProvider.OPENAI))).thenReturn(Optional.empty());
 		// Defensive: even a chain that (bypassing validation) repeats bindings is tried once each.
-		chain(List.of(OPENROUTER, GEMINI, OPENROUTER, OPENAI));
+		chain(List.of(GEMINI_LITE, GEMINI, GEMINI_LITE, OPENAI));
 		loadBoundRun(remote, GEMINI);
 
 		service(remote).execute(runId);
 
-		assertThat(requests).extracting(r -> r.path("provider").path("name").asText()).containsExactly("GEMINI", "OPENROUTER");
+		assertThat(requests).extracting(r -> r.path("provider").path("model").asText()).containsExactly("gemini-3.8-flash", "gemini-3.5-flash-lite");
 		verify(state).fail(runId, "AI_PROVIDER_RATE_LIMITED", false);
-		verifyProvenance(AiProvider.OPENROUTER, "openrouter/free", credentialIds.get(AiProvider.OPENROUTER), List.of(
+		verifyProvenance(AiProvider.GEMINI, "gemini-3.5-flash-lite", credentialIds.get(AiProvider.GEMINI), List.of(
 				"GEMINI:gemini-3.8-flash:AI_PROVIDER_RATE_LIMITED",
-				"OPENROUTER:openrouter/free:AI_PROVIDER_RATE_LIMITED",
+				"GEMINI:gemini-3.5-flash-lite:AI_PROVIDER_RATE_LIMITED",
 				"OPENAI:gpt-5.6-terra:SKIPPED_NO_CREDENTIAL"));
 	}
 
@@ -327,7 +373,7 @@ class AiCourseMultiProviderFallbackTest {
 		when(resolver.resolve(any(), any(), eq(AiProviderRole.SECONDARY), any()))
 				.thenReturn(new AiCredentialResolver.Resolution(AiCredentialResolver.Outcome.COURSE, secondaryCredential, "secondary-fp", secondaryBinding));
 		when(resolver.buildEnvelope(eq(secondaryCredential), eq(AiProviderRole.SECONDARY), any())).thenReturn(envelope);
-		chain(List.of(OPENROUTER));
+		chain(List.of(GEMINI));
 		fail("OPENAI", 429, "AI_PROVIDER_QUOTA_EXHAUSTED");
 		AiAnalysisProviderDecisionRepository decisions = mock(AiAnalysisProviderDecisionRepository.class);
 		when(decisions.findByAnalysisRun_IdAndProviderRole(runId, AiProviderRole.SECONDARY)).thenReturn(Optional.empty());
@@ -414,15 +460,11 @@ class AiCourseMultiProviderFallbackTest {
 	}
 
 	private List<AiProviderBinding> fallbacksExcluding(AiProvider provider) {
-		return List.of(GEMINI, OPENROUTER, OPENAI, COHERE).stream().filter(b -> b.provider() != provider).toList();
-	}
-
-	private UUID otherThan(AiProvider provider) {
-		return credentialIds.entrySet().stream().filter(e -> e.getKey() != provider).map(Map.Entry::getValue).findFirst().orElseThrow();
+		return List.of(GEMINI, OPENAI).stream().filter(b -> b.provider() != provider).toList();
 	}
 
 	private static String catalogModel(AiProvider provider) {
-		return switch (provider) { case OPENAI -> "gpt-5.6-sol"; case GEMINI -> "gemini-3.8-flash"; case OPENROUTER -> "openrouter/free"; case COHERE -> "command-a-plus-05-2026"; };
+		return switch (provider) { case OPENAI -> "gpt-5.6-sol"; case GEMINI -> "gemini-3.8-flash"; default -> throw new IllegalArgumentException("legacy provider " + provider); };
 	}
 
 	private RemoteAiModelProvider realRemote() { return new RemoteAiModelProvider(properties(), mapper); }

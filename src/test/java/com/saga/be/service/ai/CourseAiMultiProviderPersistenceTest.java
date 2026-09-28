@@ -113,35 +113,58 @@ class CourseAiMultiProviderPersistenceTest {
 	// ---- credentials ----
 
 	@Test
-	void openAiGeminiOpenRouterAndCohereCredentialsCoexistForTheSameCourseAndRole() {
+	void openAiAndGeminiCredentialsCoexistForTheSameCourseAndRole() {
 		var openai = credentials.save(course, AiProviderRole.PRIMARY, AiProvider.OPENAI, OPENAI_KEY, null);
 		var gemini = credentials.save(course, AiProviderRole.PRIMARY, AiProvider.GEMINI, GEMINI_KEY, null);
-		var openrouter = credentials.save(course, AiProviderRole.PRIMARY, AiProvider.OPENROUTER, OPENROUTER_KEY, null);
-		var cohere = credentials.save(course, AiProviderRole.PRIMARY, AiProvider.COHERE, COHERE_KEY, null);
 		entityManager.flush();
 
-		assertThat(List.of(openai, gemini, openrouter, cohere)).allSatisfy(meta -> {
+		assertThat(List.of(openai, gemini)).allSatisfy(meta -> {
 			assertThat(meta.configured()).isTrue();
 			assertThat(meta.status()).isEqualTo(AiCredentialStatus.UNVERIFIED); // saving never calls a provider
 			assertThat(meta.createdAt()).isNotNull();
 		});
 		assertThat(credentials.list(course)).extracting(CourseAiCredentialService.SafeMetadata::provider)
-				.containsExactlyInAnyOrder(AiProvider.OPENAI, AiProvider.GEMINI, AiProvider.OPENROUTER, AiProvider.COHERE);
+				.containsExactlyInAnyOrder(AiProvider.OPENAI, AiProvider.GEMINI);
 		assertThat(gemini.lastFour()).isEqualTo("2333");
 
 		// Replacing the Gemini key rewrites the Gemini row only.
 		credentials.save(course, AiProviderRole.PRIMARY, AiProvider.GEMINI, "AIza-rotated-gemini-9999", null);
 		entityManager.flush();
-		assertThat(credentialRows.findByCourse_IdOrderByProviderRoleAscProviderAsc(course.getId())).hasSize(4);
+		assertThat(credentialRows.findByCourse_IdOrderByProviderRoleAscProviderAsc(course.getId())).hasSize(2);
 		assertThat(credentials.safeMetadata(course, AiProviderRole.PRIMARY, AiProvider.OPENAI).lastFour()).isEqualTo("0111");
+	}
+
+	@Test
+	void legacyProvidersCannotBeNewlyKeyedButHistoricalRowsStayReadableAndRevocable() {
+		for (AiProviderRole role : AiProviderRole.values())
+			for (AiProvider legacy : List.of(AiProvider.OPENROUTER, AiProvider.COHERE))
+				assertRejected(() -> credentials.save(course, role, legacy, OPENROUTER_KEY, null), IntegrationErrorCode.AI_PROVIDER_NOT_SUPPORTED);
+		assertThat(credentialRows.findByCourse_IdOrderByProviderRoleAscProviderAsc(course.getId())).isEmpty();
+
+		// Rows written while OpenRouter/Cohere were offered (V34/V36) are listed truthfully.
+		credentialRows.saveAndFlush(legacyCredentialRow(AiProviderRole.PRIMARY, AiProvider.OPENROUTER, OPENROUTER_KEY));
+		credentialRows.saveAndFlush(legacyCredentialRow(AiProviderRole.SECONDARY, AiProvider.COHERE, COHERE_KEY));
+		entityManager.clear();
+		assertThat(credentials.list(course)).extracting(CourseAiCredentialService.SafeMetadata::provider)
+				.containsExactlyInAnyOrder(AiProvider.OPENROUTER, AiProvider.COHERE);
+		assertThat(credentials.safeMetadata(course, AiProviderRole.PRIMARY, AiProvider.OPENROUTER).configured()).isTrue();
+
+		// Revoking clears the secret material but keeps the row (and any provenance pointing at it).
+		credentials.revoke(course, AiProviderRole.PRIMARY, AiProvider.OPENROUTER);
+		entityManager.flush();
+		entityManager.clear();
+		var revoked = credentialRows.findByCourse_IdAndProviderRoleAndProvider(course.getId(), AiProviderRole.PRIMARY, AiProvider.OPENROUTER).orElseThrow();
+		assertThat(revoked.getStatus()).isEqualTo(AiCredentialStatus.REVOKED);
+		assertThat(revoked.getEncryptedSecret()).isEmpty();
+		assertThat(credentialRows.findByCourse_IdOrderByProviderRoleAscProviderAsc(course.getId())).hasSize(2);
 	}
 
 	@Test
 	void plaintextKeysAreAbsentFromEveryStoredColumnAndFromSafeMetadata() {
 		credentials.save(course, AiProviderRole.PRIMARY, AiProvider.OPENAI, OPENAI_KEY, null);
 		credentials.save(course, AiProviderRole.PRIMARY, AiProvider.GEMINI, GEMINI_KEY, null);
-		credentials.save(course, AiProviderRole.SECONDARY, AiProvider.OPENROUTER, OPENROUTER_KEY, null);
-		credentials.save(course, AiProviderRole.SECONDARY, AiProvider.COHERE, COHERE_KEY, null);
+		credentials.save(course, AiProviderRole.SECONDARY, AiProvider.OPENAI, OPENROUTER_KEY, null);
+		credentials.save(course, AiProviderRole.SECONDARY, AiProvider.GEMINI, COHERE_KEY, null);
 		entityManager.flush();
 
 		@SuppressWarnings("unchecked")
@@ -170,22 +193,22 @@ class CourseAiMultiProviderPersistenceTest {
 	@Test
 	void validBindingsArePersistedAndReadBackInOrder() {
 		var saved = settings.updateBindings(course, input("GEMINI", "gemini-3.8-flash"), true,
-				List.of(input("OPENROUTER", "openrouter/free"), input("OPENAI", "gpt-5.6-luna")), input("OPENAI", "gpt-5.6-terra"));
+				List.of(input("GEMINI", "gemini-3.5-flash-lite"), input("OPENAI", "gpt-5.6-luna")), input("OPENAI", "gpt-5.6-terra"));
 		entityManager.flush();
 		entityManager.clear();
 
 		var read = settings.get(course.getId());
 		assertThat(read).isEqualTo(saved);
 		assertThat(read.primaryBinding()).isEqualTo(new AiProviderBinding(AiProvider.GEMINI, "gemini-3.8-flash"));
-		assertThat(read.fallbackBindings()).containsExactly(new AiProviderBinding(AiProvider.OPENROUTER, "openrouter/free"), new AiProviderBinding(AiProvider.OPENAI, "gpt-5.6-luna"));
+		assertThat(read.fallbackBindings()).containsExactly(new AiProviderBinding(AiProvider.GEMINI, "gemini-3.5-flash-lite"), new AiProviderBinding(AiProvider.OPENAI, "gpt-5.6-luna"));
 		assertThat(read.secondaryBinding()).isEqualTo(new AiProviderBinding(AiProvider.OPENAI, "gpt-5.6-terra"));
 
 		// Disabling fallback keeps the chain stored (for re-enable) but it is no longer active.
-		settings.updateBindings(course, input("gemini", "gemini-3.8-flash"), false, List.of(input("OPENROUTER", "openrouter/free")), null);
+		settings.updateBindings(course, input("gemini", "gemini-3.8-flash"), false, List.of(input("OPENAI", "gpt-5.6-sol")), null);
 		entityManager.flush();
 		entityManager.clear();
 		assertThat(settings.get(course.getId()).fallbackBindings()).isEmpty();
-		assertThat(settings.storedFallbackBindings(course.getId())).containsExactly(new AiProviderBinding(AiProvider.OPENROUTER, "openrouter/free"));
+		assertThat(settings.storedFallbackBindings(course.getId())).containsExactly(new AiProviderBinding(AiProvider.OPENAI, "gpt-5.6-sol"));
 		assertThat(resolver.primaryFallbackChain(course.getId())).isEmpty();
 		assertThat(settings.get(course.getId()).secondaryBinding()).isNull();
 	}
@@ -195,7 +218,7 @@ class CourseAiMultiProviderPersistenceTest {
 		assertRejected(() -> settings.updateBindings(course, input("OPENAI", "gpt-4o"), false, List.of(), null), IntegrationErrorCode.AI_MODEL_NOT_SUPPORTED);
 		assertRejected(() -> settings.updateBindings(course, input("ANTHROPIC", "claude"), false, List.of(), null), IntegrationErrorCode.AI_PROVIDER_NOT_SUPPORTED);
 		assertRejected(() -> settings.updateBindings(course, input("GEMINI", "gpt-5.6-sol"), false, List.of(), null), IntegrationErrorCode.AI_MODEL_NOT_SUPPORTED);
-		assertRejected(() -> settings.updateBindings(course, input("OPENROUTER", "openai/gpt-5.6-sol"), false, List.of(), null), IntegrationErrorCode.AI_MODEL_NOT_SUPPORTED);
+		assertRejected(() -> settings.updateBindings(course, input("OPENROUTER", "openai/gpt-5.6-sol"), false, List.of(), null), IntegrationErrorCode.AI_PROVIDER_NOT_SUPPORTED);
 		assertRejected(() -> settings.updateBindings(course, input("OPENAI", "gpt-5.6-sol"), false, List.of(), input("OPENAI", "")), IntegrationErrorCode.AI_BINDING_INVALID);
 		entityManager.flush();
 		assertThat(settingsRows.findByCourse_Id(course.getId())).isEmpty();
@@ -204,7 +227,7 @@ class CourseAiMultiProviderPersistenceTest {
 	@Test
 	void duplicateFallbackPrimaryRepeatedInChainOversizedChainAndFallbackWithoutPrimaryAreRejected() {
 		var primary = input("GEMINI", "gemini-3.8-flash");
-		assertRejected(() -> settings.updateBindings(course, primary, true, List.of(input("OPENROUTER", "openrouter/free"), input("openrouter", "openrouter/free")), null), IntegrationErrorCode.AI_BINDING_INVALID);
+		assertRejected(() -> settings.updateBindings(course, primary, true, List.of(input("OPENAI", "gpt-5.6-luna"), input("openai", "gpt-5.6-luna")), null), IntegrationErrorCode.AI_BINDING_INVALID);
 		assertRejected(() -> settings.updateBindings(course, primary, true, List.of(input("GEMINI", "gemini-3.8-flash")), null), IntegrationErrorCode.AI_BINDING_INVALID);
 		assertRejected(() -> settings.updateBindings(course, primary, true, List.of(input("OPENAI", "gpt-5.6-luna"), input("OPENAI", "gpt-5.6-terra"), input("OPENAI", "gpt-5.6-sol"), input("GEMINI", "gemini-3.7-flash")), null), IntegrationErrorCode.AI_BINDING_INVALID);
 		assertRejected(() -> settings.updateBindings(course, null, true, List.of(input("OPENAI", "gpt-5.6-luna")), null), IntegrationErrorCode.AI_BINDING_INVALID);
@@ -224,27 +247,23 @@ class CourseAiMultiProviderPersistenceTest {
 		new AiModelCatalog().models().forEach(m -> byId.put(m.modelId(), m));
 		assertThat(byId.keySet()).containsExactlyInAnyOrder(
 				"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol",
-				"gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview",
-				"openrouter/free", "command-a-plus-05-2026", "command-a-03-2025");
+				"gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview");
+		assertThat(new AiModelCatalog().models()).extracting(AiModelCatalog.Model::provider).containsOnly(AiProvider.OPENAI, AiProvider.GEMINI);
 		assertThat(byId.values()).allSatisfy(m -> assertThat(m.supportsEveryAnalysisType()).isTrue());
 		// Informational only, per each provider's current pricing page: the OpenAI API has no free
-		// tier; Gemini 3.1 Pro Preview is paid-tier only; the OpenRouter router is free by design.
+		// tier; Gemini 3.1 Pro Preview is paid-tier only.
 		assertThat(List.of("gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gemini-3.1-pro-preview")).allSatisfy(id -> assertThat(byId.get(id).freeTierEligible()).isFalse());
-		assertThat(List.of("gemini-3.8-flash", "gemini-3.5-flash-lite", "openrouter/free", "command-a-plus-05-2026", "command-a-03-2025")).allSatisfy(id -> assertThat(byId.get(id).freeTierEligible()).isTrue());
-		assertThat(byId.get("openrouter/free").recommendedForAutomation()).isFalse();
+		assertThat(List.of("gemini-3.8-flash", "gemini-3.5-flash-lite")).allSatisfy(id -> assertThat(byId.get(id).freeTierEligible()).isTrue());
 		assertThat(byId.get("gemini-3.1-pro-preview").recommendedForAutomation()).isFalse();
 		assertThat(byId.get("gemini-3.8-flash").displayName()).isEqualTo("Gemini 3.8 Flash");
 		assertThat(byId.get("gemini-3.5-flash-lite").displayName()).isEqualTo("Gemini 3.5 Flash-Lite");
 		assertThat(byId.get("gemini-3.1-pro-preview").displayName()).isEqualTo("Gemini 3.1 Pro");
-		assertThat(byId.get("command-a-plus-05-2026").recommendedForAutomation()).isTrue();
-		assertThat(byId.get("command-a-03-2025").recommendedForAutomation()).isFalse();
 	}
 
 	@org.junit.jupiter.params.ParameterizedTest(name = "{0} {1} is bindable")
 	@org.junit.jupiter.params.provider.CsvSource({
 		"OPENAI, gpt-5.6-sol", "OPENAI, gpt-5.6-terra", "OPENAI, gpt-5.6-luna",
-		"GEMINI, gemini-3.8-flash", "GEMINI, gemini-3.5-flash-lite", "GEMINI, gemini-3.1-pro-preview",
-		"OPENROUTER, openrouter/free", "COHERE, command-a-plus-05-2026", "COHERE, command-a-03-2025"
+		"GEMINI, gemini-3.8-flash", "GEMINI, gemini-3.5-flash-lite", "GEMINI, gemini-3.1-pro-preview"
 	})
 	void everyProductCatalogModelIsBindableUnderItsOwnProvider(String provider, String modelId) {
 		var saved = settings.updateBindings(course, input(provider, modelId), false, List.of(), input(provider, modelId));
@@ -259,12 +278,72 @@ class CourseAiMultiProviderPersistenceTest {
 		// Invented / alias ids that SAGA does not expose.
 		"GEMINI, gemini-3.1-pro", "GEMINI, gemini-3.8", "OPENAI, gpt-5.6", "OPENAI, gpt-6-sol",
 		// A real catalog model bound under the wrong provider.
-		"OPENAI, gemini-3.8-flash", "GEMINI, gpt-5.6-terra", "OPENROUTER, gemini-3.5-flash-lite", "GEMINI, openrouter/free", "COHERE, command-a-plus-05-2026-alias", "OPENAI, command-a-plus-05-2026"
+		"OPENAI, gemini-3.8-flash", "GEMINI, gpt-5.6-terra", "GEMINI, openrouter/free", "OPENAI, command-a-plus-05-2026"
 	})
 	void modelsOutsideTheProductCatalogOrUnderTheWrongProviderAreRejected(String provider, String modelId) {
 		assertRejected(() -> settings.updateBindings(course, input(provider, modelId), false, List.of(), null), IntegrationErrorCode.AI_MODEL_NOT_SUPPORTED);
 		assertRejected(() -> settings.updateBindings(course, input("OPENAI", "gpt-5.6-sol"), true, List.of(input(provider, modelId)), null), IntegrationErrorCode.AI_MODEL_NOT_SUPPORTED);
 		assertRejected(() -> settings.updateBindings(course, null, false, List.of(), input(provider, modelId)), IntegrationErrorCode.AI_MODEL_NOT_SUPPORTED);
+	}
+
+	@org.junit.jupiter.params.ParameterizedTest(name = "legacy {0} {1} cannot be newly bound as primary, fallback or secondary")
+	@org.junit.jupiter.params.provider.CsvSource({
+		"OPENROUTER, openrouter/free", "openrouter, openrouter/free",
+		"COHERE, command-a-plus-05-2026", "Cohere, command-a-03-2025"
+	})
+	void legacyProvidersAreRejectedForEveryNewBindingRole(String provider, String modelId) {
+		assertRejected(() -> settings.updateBindings(course, input(provider, modelId), false, List.of(), null), IntegrationErrorCode.AI_PROVIDER_NOT_SUPPORTED);
+		assertRejected(() -> settings.updateBindings(course, input("GEMINI", "gemini-3.8-flash"), true, List.of(input(provider, modelId)), null), IntegrationErrorCode.AI_PROVIDER_NOT_SUPPORTED);
+		assertRejected(() -> settings.updateBindings(course, input("GEMINI", "gemini-3.8-flash"), false, List.of(), input(provider, modelId)), IntegrationErrorCode.AI_PROVIDER_NOT_SUPPORTED);
+		entityManager.flush();
+		assertThat(settingsRows.findByCourse_Id(course.getId())).isEmpty();
+		assertThat(fallbackRows.findByCourse_IdOrderByAttemptOrderAsc(course.getId())).isEmpty();
+	}
+
+	@Test
+	void persistedLegacyProviderBindingsStayReadableButAreNeverExecutedOrRerouted() {
+		CourseAiSettings legacy = new CourseAiSettings();
+		legacy.setCourse(course);
+		legacy.setAutomationEnabled(true);
+		legacy.setAllowPlatformFallback(true);
+		legacy.setPrimaryProvider(AiProvider.OPENROUTER);
+		legacy.setPrimaryModelId("openrouter/free");
+		legacy.setSecondaryProvider(AiProvider.COHERE);
+		legacy.setSecondaryModelId("command-a-03-2025");
+		legacy.setFallbackEnabled(true);
+		settingsRows.saveAndFlush(legacy);
+		com.saga.be.entity.ai.CourseAiFallbackBinding fallback = new com.saga.be.entity.ai.CourseAiFallbackBinding();
+		fallback.setCourse(course); fallback.setAttemptOrder(1); fallback.setProvider(AiProvider.COHERE); fallback.setModelId("command-a-plus-05-2026");
+		fallbackRows.saveAndFlush(fallback);
+		// Usable legacy credentials AND a usable OpenAI key exist: neither may be used for the legacy binding.
+		credentialRows.saveAndFlush(legacyCredentialRow(AiProviderRole.PRIMARY, AiProvider.OPENROUTER, OPENROUTER_KEY));
+		credentialRows.saveAndFlush(legacyCredentialRow(AiProviderRole.SECONDARY, AiProvider.COHERE, COHERE_KEY));
+		credentials.save(course, AiProviderRole.PRIMARY, AiProvider.OPENAI, OPENAI_KEY, null);
+		entityManager.flush();
+		entityManager.clear();
+
+		// Readable, truthfully.
+		var read = settings.get(course.getId());
+		assertThat(read.primaryBinding()).isEqualTo(new AiProviderBinding(AiProvider.OPENROUTER, "openrouter/free"));
+		assertThat(read.secondaryBinding()).isEqualTo(new AiProviderBinding(AiProvider.COHERE, "command-a-03-2025"));
+		assertThat(read.fallbackBindings()).containsExactly(new AiProviderBinding(AiProvider.COHERE, "command-a-plus-05-2026"));
+
+		// Automation and SECONDARY: silently unavailable -- never the legacy key, the OpenAI key or platform.
+		assertThat(resolver.resolve(course.getId(), AiAnalysisType.COMMIT_INTELLIGENCE, AiProviderRole.PRIMARY, AiInvocationOrigin.AUTOMATION)).isEqualTo(AiCredentialResolver.Resolution.UNAVAILABLE);
+		assertThat(resolver.resolve(course.getId(), AiAnalysisType.RISK_ANALYSIS, AiProviderRole.SECONDARY, AiInvocationOrigin.AUTOMATION)).isEqualTo(AiCredentialResolver.Resolution.UNAVAILABLE);
+		// A manual PRIMARY request gets an actionable error instead of the platform key.
+		assertRejected(() -> resolver.resolve(course.getId(), AiAnalysisType.PROGRESS_NARRATIVE, AiProviderRole.PRIMARY, AiInvocationOrigin.USER_REQUEST), IntegrationErrorCode.AI_PROVIDER_NOT_SUPPORTED);
+		// The stale chain entry is handed to the executor unvalidated so it is skipped, not fatal.
+		assertThat(resolver.primaryFallbackChain(course.getId())).containsExactly(new AiProviderBinding(AiProvider.COHERE, "command-a-plus-05-2026"));
+
+		// Rebinding to a supported provider restores normal resolution; the legacy rows are untouched.
+		settings.updateBindings(course, input("OPENAI", "gpt-5.6-sol"), false, List.of(), null);
+		entityManager.flush();
+		var resolved = resolver.resolve(course.getId(), AiAnalysisType.COMMIT_INTELLIGENCE, AiProviderRole.PRIMARY, AiInvocationOrigin.AUTOMATION);
+		assertThat(resolved.outcome()).isEqualTo(AiCredentialResolver.Outcome.COURSE);
+		assertThat(resolved.binding()).isEqualTo(new AiProviderBinding(AiProvider.OPENAI, "gpt-5.6-sol"));
+		assertThat(credentialRows.findByCourse_IdOrderByProviderRoleAscProviderAsc(course.getId())).extracting(r -> r.getProvider())
+				.containsExactlyInAnyOrder(AiProvider.OPENAI, AiProvider.OPENROUTER, AiProvider.COHERE);
 	}
 
 	@Test
@@ -310,6 +389,38 @@ class CourseAiMultiProviderPersistenceTest {
 		var reloaded = decisions.findById(decision.getId()).orElseThrow();
 		assertThat(reloaded.getModelId()).isEqualTo("gemini-3.7-flash");
 		assertThat(reloaded.getFallbackAttemptsJson()).contains("gemini-3.7-flash");
+	}
+
+	@org.junit.jupiter.params.ParameterizedTest(name = "historical {0} decision stays readable and truthful")
+	@org.junit.jupiter.params.provider.CsvSource({"OPENROUTER, openrouter/free", "COHERE, command-a-plus-05-2026"})
+	void historicalLegacyProviderDecisionStaysReadableAndIsNeverRewritten(AiProvider legacy, String modelId) {
+		var credential = credentialRows.saveAndFlush(legacyCredentialRow(AiProviderRole.PRIMARY, legacy, OPENROUTER_KEY));
+		Project project = projects.save(project(course));
+		AiAnalysisRun run = runs.save(run(project));
+		AiAnalysisProviderDecision decision = new AiAnalysisProviderDecision();
+		decision.setAnalysisRun(run); decision.setProviderRole(AiProviderRole.PRIMARY); decision.setProviderKey("saga-ai"); decision.setProviderConfigHash("cfg");
+		decision.setModelId(modelId); decision.setAiProvider(legacy); decision.setRoute(AiProviderRoute.NORMAL); decision.setStatus(AiProviderDecisionStatus.COMPLETED);
+		decision.setCredentialSource(AiCredentialSource.COURSE); decision.setCourseCredentialId(credential.getId());
+		String attempts = "[{\"provider\":\"" + legacy.name() + "\",\"modelId\":\"" + modelId + "\",\"outcome\":\"SUCCEEDED\"}]";
+		decision.setFallbackAttemptsJson(attempts);
+		decisions.saveAndFlush(decision);
+		// A lecturer rebinding the course to Gemini afterwards must not touch the historical decision.
+		settings.updateBindings(course, input("GEMINI", "gemini-3.8-flash"), false, List.of(), null);
+		entityManager.flush();
+		entityManager.clear();
+
+		var reloaded = decisions.findById(decision.getId()).orElseThrow();
+		assertThat(reloaded.getAiProvider()).isEqualTo(legacy);
+		assertThat(reloaded.getModelId()).isEqualTo(modelId);
+		assertThat(reloaded.getCourseCredentialId()).isEqualTo(credential.getId());
+		assertThat(reloaded.getFallbackAttemptsJson()).isEqualTo(attempts);
+		assertThat(decisions.findByAnalysisRun_IdAndProviderRole(run.getId(), AiProviderRole.PRIMARY)).get()
+				.extracting(AiAnalysisProviderDecision::getAiProvider).isEqualTo(legacy);
+		// The read API serializes the legacy provenance as-is (never as OPENAI/GEMINI).
+		var response = AiAnalysisReadService.toResponse(runs.findById(run.getId()).orElseThrow(), List.of(), reloaded);
+		assertThat(response.providerDecision().aiProvider()).isEqualTo(legacy.name());
+		assertThat(response.providerDecision().modelId()).isEqualTo(modelId);
+		assertThat(response.providerDecision().fallbackAttemptsJson()).isEqualTo(attempts);
 	}
 
 	// ---- resolver: a binding is only ever paired with the same provider's credential ----
@@ -387,9 +498,9 @@ class CourseAiMultiProviderPersistenceTest {
 
 	@Test
 	void actualProviderModelCredentialAndAttemptsArePersistedOnThePrimaryDecision() {
-		credentials.save(course, AiProviderRole.PRIMARY, AiProvider.OPENROUTER, OPENROUTER_KEY, null);
+		credentials.save(course, AiProviderRole.PRIMARY, AiProvider.OPENAI, OPENAI_KEY, null);
 		entityManager.flush();
-		var credential = resolver.usableCourseCredential(course.getId(), AiProviderRole.PRIMARY, AiProvider.OPENROUTER).orElseThrow();
+		var credential = resolver.usableCourseCredential(course.getId(), AiProviderRole.PRIMARY, AiProvider.OPENAI).orElseThrow();
 		Project project = projects.save(project(course));
 		AiAnalysisRun run = runs.save(run(project));
 		AiAnalysisProviderDecision decision = new AiAnalysisProviderDecision();
@@ -397,14 +508,24 @@ class CourseAiMultiProviderPersistenceTest {
 		decision.setModelId("gemini-3.8-flash"); decision.setAiProvider(AiProvider.GEMINI); decision.setRoute(AiProviderRoute.NORMAL); decision.setStatus(AiProviderDecisionStatus.RUNNING);
 		decisions.saveAndFlush(decision);
 
-		String attempts = "[{\"provider\":\"GEMINI\",\"modelId\":\"gemini-3.8-flash\",\"outcome\":\"AI_PROVIDER_QUOTA_EXHAUSTED\"},{\"provider\":\"OPENROUTER\",\"modelId\":\"openrouter/free\",\"outcome\":\"SUCCEEDED\"}]";
-		assertThat(decisions.recordPrimaryProvenance(run.getId(), AiProvider.OPENROUTER, "openrouter/free", credential.id(), credential.fingerprint(), attempts)).isEqualTo(1);
+		String attempts = "[{\"provider\":\"GEMINI\",\"modelId\":\"gemini-3.8-flash\",\"outcome\":\"AI_PROVIDER_QUOTA_EXHAUSTED\"},{\"provider\":\"OPENAI\",\"modelId\":\"gpt-5.6-terra\",\"outcome\":\"SUCCEEDED\"}]";
+		assertThat(decisions.recordPrimaryProvenance(run.getId(), AiProvider.OPENAI, "gpt-5.6-terra", credential.id(), credential.fingerprint(), attempts)).isEqualTo(1);
 
 		AiAnalysisProviderDecision reloaded = decisions.findById(decision.getId()).orElseThrow();
-		assertThat(reloaded.getAiProvider()).isEqualTo(AiProvider.OPENROUTER);
-		assertThat(reloaded.getModelId()).isEqualTo("openrouter/free");
+		assertThat(reloaded.getAiProvider()).isEqualTo(AiProvider.OPENAI);
+		assertThat(reloaded.getModelId()).isEqualTo("gpt-5.6-terra");
 		assertThat(reloaded.getCourseCredentialId()).isEqualTo(credential.id());
-		assertThat(reloaded.getFallbackAttemptsJson()).isEqualTo(attempts).doesNotContain(OPENROUTER_KEY);
+		assertThat(reloaded.getFallbackAttemptsJson()).isEqualTo(attempts).doesNotContain(OPENAI_KEY);
+	}
+
+	/** A credential row as V34/V36 allowed it to be written while OpenRouter/Cohere were offered. */
+	private com.saga.be.entity.ai.CourseAiProviderCredential legacyCredentialRow(AiProviderRole role, AiProvider provider, String rawKey) {
+		var encrypted = new AiCredentialCipher(MASTER_KEY).encrypt(rawKey);
+		var row = new com.saga.be.entity.ai.CourseAiProviderCredential();
+		row.setCourse(course); row.setProviderRole(role); row.setProvider(provider);
+		row.setEncryptedSecret(encrypted.ciphertextBase64()); row.setEncryptionNonce(encrypted.nonceBase64()); row.setEncryptionKeyVersion(encrypted.keyVersion());
+		row.setFingerprint("legacy-fp-" + provider + "-" + role); row.setLastFour(rawKey.substring(rawKey.length() - 4)); row.setStatus(AiCredentialStatus.ACTIVE);
+		return row;
 	}
 
 	// ---- helpers ----

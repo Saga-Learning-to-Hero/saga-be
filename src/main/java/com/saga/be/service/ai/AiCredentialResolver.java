@@ -4,10 +4,13 @@ import com.saga.be.ai.AiModelProvider;
 import com.saga.be.ai.AiProviderBinding;
 import com.saga.be.entity.ai.AiAnalysisProviderDecision;
 import com.saga.be.entity.enums.*;
+import com.saga.be.exception.IntegrationException;
+import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.repository.CourseAiProviderCredentialRepository;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +26,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service @Profile("!test")
 public class AiCredentialResolver {
 	private static final List<AiAnalysisType> MANUAL_FALLBACK_ELIGIBLE_TYPES = List.of(AiAnalysisType.ACADEMIC_CLASSIFICATION, AiAnalysisType.PROGRESS_NARRATIVE);
+	/** Safe attempt outcome / failure code: a stored binding names a LEGACY provider SAGA no longer runs. */
+	public static final String PROVIDER_NOT_SUPPORTED = "AI_PROVIDER_NOT_SUPPORTED";
 	/** Safe run/decision failure code: a COURSE credential reached a provider that cannot forward it. */
 	public static final String COURSE_CREDENTIAL_REQUIRES_REMOTE_PROVIDER = "AI_COURSE_CREDENTIAL_REQUIRES_REMOTE_PROVIDER";
 
@@ -62,6 +67,15 @@ public class AiCredentialResolver {
 	public Resolution resolve(UUID courseId, AiAnalysisType analysisType, AiProviderRole providerRole, AiInvocationOrigin origin) {
 		CourseAiSettingsService.Settings courseSettings = settings.get(courseId);
 		AiProviderBinding storedBinding = providerRole == AiProviderRole.SECONDARY ? courseSettings.secondaryBinding() : courseSettings.primaryBinding();
+		if (storedBinding != null && !storedBinding.provider().isSupported()) {
+			// A binding persisted while OPENROUTER/COHERE were offered: never executed, and never
+			// silently rerouted to another provider or the platform key. Automation and SECONDARY
+			// stay silent no-ops (SECONDARY must never disturb PRIMARY); a manual PRIMARY request
+			// gets an actionable error so the lecturer rebinds to a supported provider.
+			if (providerRole == AiProviderRole.PRIMARY && origin != AiInvocationOrigin.AUTOMATION)
+				throw new IntegrationException(IntegrationErrorCode.AI_PROVIDER_NOT_SUPPORTED, HttpStatus.CONFLICT, "The course AI binding uses a provider that is no longer supported; choose OpenAI or Gemini.");
+			return Resolution.UNAVAILABLE;
+		}
 		AiProviderBinding binding = storedBinding == null ? null : catalog.requireRuntimeCompatible(storedBinding);
 		AiProvider provider = binding == null ? AiProvider.OPENAI : binding.provider();
 		var course = usableCourseCredential(courseId, providerRole, provider).orElse(null);
@@ -87,11 +101,13 @@ public class AiCredentialResolver {
 	}
 
 	/** Course PRIMARY fallback chain as currently configured (empty unless enabled); read at
-	 * execution time so a lecturer's change applies to the next run, never mid-run. */
+	 * execution time so a lecturer's change applies to the next run, never mid-run. A LEGACY-provider
+	 * entry is returned unvalidated so the executor records it as skipped instead of failing the
+	 * whole run (including a perfectly valid primary) on a stale fallback entry. */
 	public List<AiProviderBinding> primaryFallbackChain(UUID courseId) {
 		CourseAiSettingsService.Settings courseSettings = settings.get(courseId);
 		return courseSettings.fallbackEnabled()
-				? courseSettings.fallbackBindings().stream().map(catalog::requireRuntimeCompatible).toList()
+				? courseSettings.fallbackBindings().stream().map(b -> b.provider().isSupported() ? catalog.requireRuntimeCompatible(b) : b).toList()
 				: List.of();
 	}
 

@@ -53,7 +53,8 @@ public class CourseAiCredentialService {
 	 * and never returns the key. Overwrites the same logical row for (course, role, provider). */
 	@Transactional
 	public SafeMetadata save(Course course, AiProviderRole role, AiProvider provider, String rawApiKey, UserAccount actor) {
-		if (provider == null) throw new IntegrationException(IntegrationErrorCode.AI_PROVIDER_NOT_SUPPORTED, HttpStatus.BAD_REQUEST, "Unsupported AI provider.");
+		// LEGACY providers (OPENROUTER/COHERE) keep their stored rows readable/revocable, never re-keyable.
+		if (provider == null || !provider.isSupported()) throw new IntegrationException(IntegrationErrorCode.AI_PROVIDER_NOT_SUPPORTED, HttpStatus.BAD_REQUEST, "Unsupported AI provider.");
 		if (!cipher.isConfigured()) throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_MASTER_KEY_NOT_CONFIGURED, HttpStatus.SERVICE_UNAVAILABLE, "AI credential encryption is not configured on this server.");
 		if (rawApiKey == null || rawApiKey.isBlank()) throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_INVALID_REQUEST, HttpStatus.BAD_REQUEST, "API key must not be blank.");
 		AiCredentialCipher.Encrypted encrypted = cipher.encrypt(rawApiKey);

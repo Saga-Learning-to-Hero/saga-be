@@ -125,6 +125,14 @@ public class AiAnalysisExecutionService {
 			AiProviderBinding binding = index == 0 ? primary : chain.get(index - 1);
 			if (index > 0 && !tried.add(binding)) continue;
 			if (index == 0 && primary != null) tried.add(primary);
+			if (binding != null && !binding.provider().isSupported()) {
+				// LEGACY provider (OPENROUTER/COHERE): never dispatched. A stale fallback entry is
+				// skipped; a legacy primary (a run queued before the provider was retired) fails
+				// closed without falling back, since "not supported" is not a fallback condition.
+				attempts.add(attempt(binding, AiCredentialResolver.PROVIDER_NOT_SUPPORTED));
+				if (index == 0) { lastFailure = new AiProviderException(AiCredentialResolver.PROVIDER_NOT_SUPPORTED); break; }
+				continue;
+			}
 			AiCredentialResolver.CourseCredentialRef credential = index == 0
 					? new AiCredentialResolver.CourseCredentialRef(decision.getCourseCredentialId(), decision.getCredentialFingerprint())
 					: credentialResolver.usableCourseCredential(courseId, AiProviderRole.PRIMARY, binding.provider()).orElse(null);
