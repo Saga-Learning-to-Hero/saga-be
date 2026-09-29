@@ -94,6 +94,8 @@ class StudentTeamServiceTest {
 		assertEquals("SE111111", response.members().getFirst().studentCode());
 		assertFalse(response.toString().contains("student@gmail.com") && response.members().toString().contains("email"));
 		assertEquals("Alpha Student", response.members().getFirst().fullName());
+		assertEquals(profile.getId(), response.myStudentId());
+		assertEquals("SE111111", response.myStudentCode());
 	}
 
 	@Test

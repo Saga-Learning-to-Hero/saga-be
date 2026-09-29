@@ -799,10 +799,14 @@ Mỗi phần tử:
   "teamId": "...", "teamNo": 1, "teamName": "Team 1",
   "myRole": "LEADER",   // hoặc "MEMBER" | "MENTOR" — vai trò CỦA CHÍNH sinh viên đang gọi API
   "projectId": "uuid-hoặc-null",
-  "members": [{ "studentCode": "...", "fullName": "...", "role": "LEADER" }, ...]
+  "members": [{ "studentCode": "...", "fullName": "...", "role": "LEADER" }, ...],
+  "myStudentId": "uuid",      // StudentProfile id CỦA CHÍNH người gọi
+  "myStudentCode": "SE170506" // mã SV CỦA CHÍNH người gọi (khớp 1 dòng trong members)
 }
 ```
 Dùng `myRole` để quyết định UI: hiện nút "Tạo Project"/"Cấu hình tích hợp" chỉ khi `myRole === "LEADER"`.
+
+Xác định "task của tôi" (quyền sửa / kéo trạng thái / dời sprint / xoá của MEMBER): so `task.assigneeStudentId === team.myStudentId`. **Không** dùng `authUser.studentCode` — `/api/auth/me` không trả mã SV, nên giá trị đó luôn rỗng (member sẽ bị khoá thành chỉ xem, còn task chưa map người được giao lại bị coi là "của tôi").
 
 - `403 STUDENT_COURSE_FORBIDDEN`: chưa ghi danh ACTIVE course này.
 - `404 TEAM_NOT_FOUND`: đã ghi danh nhưng Lecturer chưa gán nhóm.
@@ -1271,7 +1275,17 @@ Nếu muốn cài đặt installation **hoàn toàn mới** thay vì chọn lạ
 
 ## 19. Task API — CRUD đầy đủ
 
-Base: `/api/projects/{projectId}/tasks`. Phân quyền theo mục 15 (đọc: thành viên active + lecturer được phân công; ghi: chỉ Leader).
+Base: `/api/projects/{projectId}/tasks`. Phân quyền theo mục 15 (đọc: thành viên active + lecturer được phân công).
+
+Quyền ghi:
+
+| Thao tác | Leader | Member |
+|---|---|---|
+| Tạo task (`POST /tasks`) | Giao cho ai cũng được | Được tạo. Task **luôn tự giao cho chính mình** (bỏ trống `assigneeAccountId` → BE tự điền Jira account của member). Truyền account người khác → `403 TASK_NOT_ASSIGNED_TO_YOU`. Chưa liên kết Jira → `403 JIRA_ACCOUNT_NOT_LINKED_TO_CURRENT_USER` |
+| Sửa (`PATCH`), đổi trạng thái / kéo thả (`/transition`, `/transitions`), dời sprint (`PUT /sprint`), xoá (`DELETE`) | Mọi task | Chỉ task **đang giao cho chính mình**, nếu không → `403 TASK_NOT_ASSIGNED_TO_YOU` |
+| Gỡ người được giao / giao cho người khác (`clearAssignee`, `assigneeAccountId` khác mình) | Được | `403 NOT_TEAM_LEADER` |
+
+FE: hiện nút tạo task cho **mọi thành viên**; với member, khoá ô "Người được giao" về chính mình. Xác định "task của tôi" bằng `task.assigneeStudentId === team.myStudentId` (xem `GET /api/student/courses/{courseId}/team`).
 
 | Method | Path | Mục đích |
 |---|---|---|
@@ -2201,9 +2215,10 @@ export function subscribeProjectEvents(
 | Method | Path | Role |
 |---|---|---|
 | GET | `/api/projects/{projectId}/tasks`, `/{taskId}`, `/options`, `/{taskId}/transitions`, `/{taskId}/commits` | thành viên |
-| POST/PATCH/DELETE | `/api/projects/{projectId}/tasks`, `/{taskId}` | Leader |
-| PUT | `.../tasks/{taskId}/sprint` | Leader |
-| POST | `.../tasks/{taskId}/transition` | Leader |
+| POST | `/api/projects/{projectId}/tasks` | Leader (giao bất kỳ) / Member (tự giao cho mình) |
+| PATCH/DELETE | `.../tasks/{taskId}` | Leader: mọi task / Member: task của mình (không gỡ/đổi người được giao) |
+| PUT | `.../tasks/{taskId}/sprint` | Leader: mọi task / Member: task của mình |
+| GET/POST | `.../tasks/{taskId}/transitions`, `/transition` | Leader: mọi task / Member: task của mình |
 
 ### SPRINT
 | Method | Path | Role |

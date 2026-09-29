@@ -9,4 +9,8 @@ public record StudentTeamResponse(
 		String teamName,
 		String myRole,
 		UUID projectId,
-		List<StudentTeamMemberResponse> members) {}
+		List<StudentTeamMemberResponse> members,
+		/** Caller's own StudentProfile id — compare with a task's {@code assigneeStudentId} to know "my task". */
+		UUID myStudentId,
+		/** Caller's own student code, matching their entry in {@code members}. */
+		String myStudentCode) {}

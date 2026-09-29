@@ -64,7 +64,9 @@ public class StudentTeamService {
 						? null
 						: membership.member().getRoleInTeam().name(),
 				project == null ? null : project.getId(),
-				roster);
+				roster,
+				membership.profile().getId(),
+				membership.profile().getStudentCode());
 	}
 
 	public ActiveTeamMembership requireActiveMembership(UUID userId, UUID courseId) {
