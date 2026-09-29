@@ -51,7 +51,7 @@ class PasswordResetCsrfWebTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"email\":\"someone@fpt.edu.vn\"}"))
 				.andExpect(status().isForbidden())
-				.andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+				.andExpect(jsonPath("$.code").value("CSRF_TOKEN_INVALID"));
 		verifyNoInteractions(passwordResetService);
 	}
 
@@ -61,7 +61,7 @@ class PasswordResetCsrfWebTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"token\":\"abc\",\"newPassword\":\"brand-new-pass1\"}"))
 				.andExpect(status().isForbidden())
-				.andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+				.andExpect(jsonPath("$.code").value("CSRF_TOKEN_INVALID"));
 		verifyNoInteractions(passwordResetService);
 	}
 

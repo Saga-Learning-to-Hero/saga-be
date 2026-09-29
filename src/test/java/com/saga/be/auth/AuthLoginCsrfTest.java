@@ -70,7 +70,7 @@ class AuthLoginCsrfTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"identifier\":\"admin\",\"password\":\"admin123\"}"))
 				.andExpect(status().isForbidden())
-				.andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+				.andExpect(jsonPath("$.code").value("CSRF_TOKEN_INVALID"));
 		verifyNoInteractions(localAuthService);
 	}
 

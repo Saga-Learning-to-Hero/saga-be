@@ -153,7 +153,7 @@ public class AuthController {
 					(server-side session in Valkey/Redis). The client must not send `role`. Identifier with `@` \
 					is treated as email; otherwise username.
 
-					Call `GET /api/auth/csrf` first. Missing/invalid CSRF returns 403 ACCESS_DENIED.
+					Call `GET /api/auth/csrf` first. Missing/invalid CSRF returns 403 CSRF_TOKEN_INVALID.
 					""")
 	@ApiResponses({
 		@ApiResponse(responseCode = "200", description = "Authenticated session established"),
@@ -174,6 +174,9 @@ public class AuthController {
 						@Content(
 								schema = @Schema(implementation = ApiErrorResponse.class),
 								examples = {
+									@ExampleObject(
+											name = "CSRF_TOKEN_INVALID",
+											value = "{\"code\":\"CSRF_TOKEN_INVALID\",\"message\":\"CSRF token is missing or invalid. Fetch a fresh token from GET /api/auth/csrf and retry.\"}"),
 									@ExampleObject(
 											name = "ACCESS_DENIED",
 											value = "{\"code\":\"ACCESS_DENIED\",\"message\":\"Access denied.\"}"),
@@ -253,8 +256,8 @@ public class AuthController {
 								schema = @Schema(implementation = ApiErrorResponse.class),
 								examples =
 										@ExampleObject(
-												name = "ACCESS_DENIED",
-												value = "{\"code\":\"ACCESS_DENIED\",\"message\":\"Access denied.\"}"))),
+												name = "CSRF_TOKEN_INVALID",
+												value = "{\"code\":\"CSRF_TOKEN_INVALID\",\"message\":\"CSRF token is missing or invalid. Fetch a fresh token from GET /api/auth/csrf and retry.\"}"))),
 		@ApiResponse(
 				responseCode = "409",
 				description = "Email or student code already registered",
@@ -346,7 +349,7 @@ public class AuthController {
 												value = "{\"code\":\"INVALID_CREDENTIALS\",\"message\":\"Authentication failed.\"}"))),
 		@ApiResponse(
 				responseCode = "403",
-				description = "CSRF rejected or access denied",
+				description = "CSRF rejected (CSRF_TOKEN_INVALID) or access denied (ACCESS_DENIED)",
 				content =
 						@Content(
 								schema = @Schema(implementation = ApiErrorResponse.class),
@@ -383,7 +386,7 @@ public class AuthController {
 					@Content(
 							schema = @Schema(implementation = ApiErrorResponse.class),
 							examples =
-									@ExampleObject(value = "{\"code\":\"ACCESS_DENIED\",\"message\":\"Access denied.\"}")))
+									@ExampleObject(value = "{\"code\":\"CSRF_TOKEN_INVALID\",\"message\":\"CSRF token is missing or invalid. Fetch a fresh token from GET /api/auth/csrf and retry.\"}")))
 	public ResponseEntity<Void> logout(
 			@Parameter(hidden = true) HttpServletRequest request,
 			@Parameter(hidden = true) HttpServletResponse response,

@@ -105,7 +105,7 @@ class AuthLogoutCsrfReloginWebTest {
 						.cookie(jar.cookieArray())
 						.header("X-XSRF-TOKEN", staleToken))
 				.andExpect(status().isForbidden())
-				.andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+				.andExpect(jsonPath("$.code").value("CSRF_TOKEN_INVALID"));
 	}
 
 	@Test
@@ -162,7 +162,7 @@ class AuthLogoutCsrfReloginWebTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"identifier\":\"admin\",\"password\":\"admin123\"}"))
 				.andExpect(status().isForbidden())
-				.andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+				.andExpect(jsonPath("$.code").value("CSRF_TOKEN_INVALID"));
 	}
 
 	private Jar bootstrapLoggedIn() throws Exception {

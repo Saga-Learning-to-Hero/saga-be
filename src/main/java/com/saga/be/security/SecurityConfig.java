@@ -161,6 +161,8 @@ public class SecurityConfig {
 										request.getRequestURI(),
 										request.getMethod(),
 										denied.getClass().getSimpleName());
+								writeCsrfRejected(response);
+								return;
 							}
 							writeForbidden(response);
 						}))
@@ -288,6 +290,18 @@ public class SecurityConfig {
 		response.setCharacterEncoding(StandardCharsets.UTF_8.name());
 		response.setContentType(MediaType.APPLICATION_JSON_VALUE);
 		response.getWriter().write("{\"code\":\"ACCESS_DENIED\",\"message\":\"Access denied.\"}");
+	}
+
+	/**
+	 * Distinct from ACCESS_DENIED so the SPA can tell a stale/missing CSRF token (fetch a fresh one
+	 * from GET /api/auth/csrf and retry once) from a real permission denial.
+	 */
+	private void writeCsrfRejected(HttpServletResponse response) throws IOException {
+		response.setStatus(403);
+		response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+		response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+		response.getWriter().write(
+				"{\"code\":\"CSRF_TOKEN_INVALID\",\"message\":\"CSRF token is missing or invalid. Fetch a fresh token from GET /api/auth/csrf and retry.\"}");
 	}
 
 	private static boolean isCsrfFailure(Exception denied) {

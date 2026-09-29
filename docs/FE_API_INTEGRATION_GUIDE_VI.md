@@ -131,7 +131,7 @@ Mọi lỗi domain trả về theo format cố định:
 |---|---|---|---|
 | Chưa đăng nhập, gọi API cần `authenticated()` (vd `/api/users/me/profile`) | 401 | `{"code":"INVALID_CREDENTIALS","message":"Authentication failed."}` | Điều hướng về trang login |
 | Sai vai trò (vd STUDENT gọi `/api/admin/**`) | 403 | `{"code":"ACCESS_DENIED","message":"Access denied."}` | Hiển thị "Không có quyền truy cập" |
-| Thiếu/sai CSRF token | 403 | `{"code":"ACCESS_DENIED","message":"Access denied."}` | Gọi lại `GET /api/auth/csrf` rồi thử lại — **không tự động retry vô hạn** |
+| Thiếu/sai CSRF token (kể cả token cũ đã cache trước khi đăng nhập/đăng xuất) | 403 | `{"code":"CSRF_TOKEN_INVALID","message":"CSRF token is missing or invalid. ..."}` | Gọi lại `GET /api/auth/csrf` rồi thử lại **một lần** — **không tự động retry vô hạn**. Mã này khác `ACCESS_DENIED` (thiếu quyền thật) để FE phân biệt được |
 | Tài khoản Google/Local chưa đặt mật khẩu lần đầu | 403 | `{"code":"PASSWORD_SETUP_REQUIRED","message":"Password setup is required."}` | Điều hướng sang trang đặt mật khẩu — **lưu ý**: khi cờ này bật, backend chặn gần như MỌI API khác (xem mục 6) |
 
 **Lưu ý quan trọng**: khi tài khoản đang ở trạng thái `passwordSetupRequired=true`, một bộ lọc toàn cục (`PasswordSetupEnforcementFilter`) sẽ trả `403 PASSWORD_SETUP_REQUIRED` cho **hầu hết mọi API**, chỉ trừ: `/api/auth/me`, `/api/auth/csrf`, `POST /api/auth/login`, `/register`, `/password/setup`, `/logout`, các path OAuth/webhook, và các path tĩnh (swagger, index.html). Vì vậy sau khi đăng nhập Google lần đầu, FE **phải** hoàn tất `POST /api/auth/password/setup` trước khi gọi bất kỳ API nghiệp vụ nào khác.

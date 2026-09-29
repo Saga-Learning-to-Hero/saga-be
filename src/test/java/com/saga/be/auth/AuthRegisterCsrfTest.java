@@ -53,7 +53,7 @@ class AuthRegisterCsrfTest {
 	void registerWithoutCsrfIsDenied() throws Exception {
 		mockMvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content(BODY))
 				.andExpect(status().isForbidden())
-				.andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+				.andExpect(jsonPath("$.code").value("CSRF_TOKEN_INVALID"));
 		verifyNoInteractions(studentRegistrationService);
 	}
 
