@@ -45,6 +45,7 @@ import com.saga.be.repository.UserAccountRepository;
 import jakarta.persistence.EntityManager;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
@@ -224,6 +225,40 @@ class StudentDashboardSprintSelectorPersistTest {
 	}
 
 	@Test
+	void sprintMetricsAndTimelineFollowTheSelectedSprintWhileMyMetricsStayProjectWide() {
+		tx.executeWithoutResult(status -> {
+			StudentProfile me = students.findById(fixture.studentId).orElseThrow();
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			Sprint active = sprints.findById(fixture.activeSprintId).orElseThrow();
+			Sprint closed = sprints.findById(fixture.closedSprintId).orElseThrow();
+			tasks.save(assigned(task(project, active, TaskStatus.IN_PROGRESS), me));
+			tasks.save(assigned(task(project, closed, TaskStatus.DONE), me));
+			tasks.save(assigned(task(project, closed, TaskStatus.DONE), me));
+			entityManager.flush();
+		});
+
+		StudentDashboardResponse viaActive =
+				tx.execute(status -> service.get(fixture.memberId, fixture.courseId, fixture.activeSprintId));
+		StudentDashboardResponse viaClosed =
+				tx.execute(status -> service.get(fixture.memberId, fixture.courseId, fixture.closedSprintId));
+
+		assertThat(viaActive.sprintMetrics().sprintId()).isEqualTo(fixture.activeSprintId);
+		assertThat(viaActive.sprintMetrics().tasks().totalAssigned()).isEqualTo(1);
+		assertThat(viaActive.sprintMetrics().tasks().inProgress()).isEqualTo(1);
+		assertThat(viaClosed.sprintMetrics().sprintId()).isEqualTo(fixture.closedSprintId);
+		assertThat(viaClosed.sprintMetrics().tasks().totalAssigned()).isEqualTo(2);
+		assertThat(viaClosed.sprintMetrics().tasks().done()).isEqualTo(2);
+		assertThat(viaClosed.sprintMetrics().commits().totalCommits()).isZero();
+		assertThat(viaActive.myMetrics()).isEqualTo(viaClosed.myMetrics());
+		assertThat(viaActive.myMetrics().tasks().totalAssigned()).isEqualTo(3);
+
+		// Active sprint 2026-09-01..(no end) clipped to today 2026-09-20; closed sprint ends 2026-09-10.
+		assertThat(viaActive.weeklyCommits()).hasSize(20);
+		assertThat(viaClosed.weeklyCommits()).hasSize(10);
+		assertThat(viaClosed.weeklyCommits().getLast().endDate()).isEqualTo(LocalDate.of(2026, 9, 10));
+	}
+
+	@Test
 	void sprintFromAnotherProjectIsBlockedNonLeaking() {
 		UUID foreignSprintId = tx.execute(status -> {
 			Project otherProject = new Project();
@@ -336,14 +371,17 @@ class StudentDashboardSprintSelectorPersistTest {
 
 			JiraIntegration jiraA = jiraIntegrations.save(jira(project, "cloud-a", "10000"));
 			Sprint active = sprints.save(sprintWithExternalId(jiraA, "same-external-id", "active"));
-			Sprint closed = sprints.save(sprintWithExternalId(jiraA, "closed-ext-id", "closed"));
+			Sprint closedDraft = sprintWithExternalId(jiraA, "closed-ext-id", "closed");
+			closedDraft.setEndDate(LocalDateTime.of(2026, 9, 10, 17, 0));
+			Sprint closed = sprints.save(closedDraft);
 
 			tasks.save(task(project, active, TaskStatus.TODO));
 			Task closedDone = task(project, closed, TaskStatus.DONE);
 			tasks.save(closedDone);
 
 			entityManager.flush();
-			return new Fixture(memberAccount.getId(), course.getId(), project.getId(), active.getId(), closed.getId(), null);
+			return new Fixture(
+					memberAccount.getId(), memberProfile.getId(), course.getId(), project.getId(), active.getId(), closed.getId(), null);
 		});
 	}
 
@@ -424,15 +462,21 @@ class StudentDashboardSprintSelectorPersistTest {
 		return task;
 	}
 
+	private static Task assigned(Task task, StudentProfile assignee) {
+		task.setAssigneeStudent(assignee);
+		return task;
+	}
+
 	private record Fixture(
 			UUID memberId,
+			UUID studentId,
 			UUID courseId,
 			UUID projectId,
 			UUID activeSprintId,
 			UUID closedSprintId,
 			UUID otherSourceSprintId) {
 		Fixture withOtherSourceSprintId(UUID id) {
-			return new Fixture(memberId, courseId, projectId, activeSprintId, closedSprintId, id);
+			return new Fixture(memberId, studentId, courseId, projectId, activeSprintId, closedSprintId, id);
 		}
 	}
 }

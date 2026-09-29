@@ -392,6 +392,26 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
 
 	/**
+	 * Student dashboard personal task metrics limited to one local sprint — same row shape and
+	 * filters as {@link #countStatusAndStoryPointsForAssignee}.
+	 */
+	@Query(
+			"""
+			select t.status, count(t), coalesce(sum(coalesce(t.storyPoint, 0)), 0)
+			from Task t
+			where t.project.id = :projectId
+			  and t.assigneeStudent.id = :studentId
+			  and t.sprint.id = :sprintId
+			  and t.deletedAt is null
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
+			group by t.status
+			""")
+	List<Object[]> countStatusAndStoryPointsForAssigneeAndSprint(
+			@Param("projectId") UUID projectId,
+			@Param("studentId") UUID studentId,
+			@Param("sprintId") UUID sprintId);
+
+	/**
 	 * Needs-attention preview: personal non-DONE tasks. Sort is in JPQL; pass an unsorted pageable.
 	 * Order is exactly the final secondary keys: dueDate ASC null-last, business priority
 	 * HIGHEST→LOWEST→null, id ASC. Top 10 is enough because anomalies always rank first.

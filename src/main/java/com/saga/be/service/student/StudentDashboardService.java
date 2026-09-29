@@ -11,6 +11,7 @@ import com.saga.be.dto.student.dashboard.StudentDashboardJiraIntegrationResponse
 import com.saga.be.dto.student.dashboard.StudentDashboardMetricsResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardRecentCommitResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardResponse;
+import com.saga.be.dto.student.dashboard.StudentDashboardSprintMetricsResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardSprintResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardStudentResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardTaskMetricsResponse;
@@ -83,6 +84,7 @@ public class StudentDashboardService {
 	static final int ACTIVE_TASK_PREVIEW_LIMIT = 10;
 	static final int RECENT_COMMIT_LIMIT = 5;
 	static final int WEEKLY_COMMIT_WEEKS = 3;
+	static final int MAX_SPRINT_TIMELINE_DAYS = 62;
 	static final String MSR_ANOMALY = "MSR_ANOMALY";
 	static final String GHOSTING_WARNING = "GHOSTING_WARNING";
 	static final String PEER_REVIEW_PENDING = "PEER_REVIEW_PENDING";
@@ -162,9 +164,10 @@ public class StudentDashboardService {
 	 * {@code sprintId == null} is the exact pre-existing behavior: the {@code currentSprint} block
 	 * reflects the project's current active sprint. When {@code sprintId} is given, it must be a
 	 * local {@link Sprint#getId()} belonging to this student's own project (never resolved by
-	 * {@code externalSprintId}, name, or any Jira-source inference) and is used ONLY to select
-	 * which sprint's stats populate the {@code currentSprint} block. Actionable alerts (MSR,
-	 * ghosting, peer-review-pending) and personal task/commit metrics are current/project-wide by
+	 * {@code externalSprintId}, name, or any Jira-source inference). The selected sprint (explicit,
+	 * else current) populates {@code currentSprint}, {@code sprintMetrics} and the daily
+	 * {@code weeklyCommits} timeline. Actionable alerts (MSR, ghosting, peer-review-pending),
+	 * {@code myMetrics}, {@code myActiveTasks} and {@code recentCommits} are current/project-wide by
 	 * contract and are computed against the project's real current sprint / all-time data exactly
 	 * as before, regardless of {@code sprintId} -- selecting an old sprint must never fabricate a
 	 * historical snapshot of state this schema does not actually persist (task's live status,
@@ -196,7 +199,7 @@ public class StudentDashboardService {
 
 		if (team == null) {
 			return new StudentDashboardResponse(
-					student, courseDto, null, null, null, null, List.of(), List.of(), List.of(), List.of());
+					student, courseDto, null, null, null, null, List.of(), List.of(), List.of(), List.of(), null);
 		}
 
 		Project project = team.getProject();
@@ -209,7 +212,7 @@ public class StudentDashboardService {
 				members.countActiveByTeam_Id(team.getId()));
 		if (project == null) {
 			return new StudentDashboardResponse(
-					student, courseDto, teamDto, null, null, null, List.of(), List.of(), List.of(), List.of());
+					student, courseDto, teamDto, null, null, null, List.of(), List.of(), List.of(), List.of(), null);
 		}
 
 		UUID projectId = project.getId();
@@ -219,6 +222,11 @@ public class StudentDashboardService {
 		GithubProjection github = githubProjection(projectId);
 		StudentDashboardTaskMetricsResponse taskMetrics = taskMetrics(projectId, studentId);
 		List<AttentionRow> anomalies = classifyAnomalies(projectId, studentId);
+		SprintWindow window = selectedSprint == null ? null : sprintWindow(selectedSprint);
+		List<Object[]> windowCommits = window == null
+				? List.of()
+				: commits.findWeeklyCommittedAtByProjectAndAuthor(
+						projectId, studentId, window.start().atStartOfDay(), window.endInclusive().plusDays(1).atStartOfDay());
 		return new StudentDashboardResponse(
 				student,
 				courseDto,
@@ -228,7 +236,7 @@ public class StudentDashboardService {
 				new StudentDashboardMetricsResponse(taskMetrics, commitMetrics(projectId, studentId)),
 				activeTasks(projectId, studentId, anomalies),
 				recentCommits(projectId, studentId),
-				weeklyCommits(projectId, studentId),
+				window == null ? weeklyCommits(projectId, studentId) : dailyCommits(window, windowCommits),
 				actionableAlerts(
 						course.getId(),
 						team.getId(),
@@ -240,7 +248,8 @@ public class StudentDashboardService {
 						membership,
 						github,
 						taskMetrics,
-						anomalies));
+						anomalies),
+				selectedSprint == null ? null : sprintMetrics(selectedSprint, window, windowCommits, projectId, studentId));
 	}
 
 	/**
@@ -384,6 +393,10 @@ public class StudentDashboardService {
 	}
 
 	private StudentDashboardTaskMetricsResponse taskMetrics(UUID projectId, UUID studentId) {
+		return toTaskMetrics(tasks.countStatusAndStoryPointsForAssignee(projectId, studentId));
+	}
+
+	private static StudentDashboardTaskMetricsResponse toTaskMetrics(List<Object[]> statusRows) {
 		long todo = 0;
 		long inProgress = 0;
 		long inReview = 0;
@@ -391,7 +404,7 @@ public class StudentDashboardService {
 		long blocked = 0;
 		long totalStoryPoints = 0;
 		long completedStoryPoints = 0;
-		for (Object[] row : tasks.countStatusAndStoryPointsForAssignee(projectId, studentId)) {
+		for (Object[] row : statusRows) {
 			TaskStatus status = (TaskStatus) row[0];
 			long count = ((Number) row[1]).longValue();
 			long points = ((Number) row[2]).longValue();
@@ -432,6 +445,85 @@ public class StudentDashboardService {
 		long unlinked = total - linked;
 		Double traceability = total == 0 ? null : (linked * 100.0) / total;
 		return new StudentDashboardCommitMetricsResponse(total, linked, unlinked, traceability, lastAt);
+	}
+
+	/**
+	 * Personal metrics for the selected sprint: tasks by local sprint membership, commits by the
+	 * sprint's calendar-day window (stored {@code committedAt} only, like {@link #dailyCommits}).
+	 */
+	private StudentDashboardSprintMetricsResponse sprintMetrics(
+			Sprint sprint, SprintWindow window, List<Object[]> windowCommits, UUID projectId, UUID studentId) {
+		StudentDashboardTaskMetricsResponse sprintTasks =
+				toTaskMetrics(tasks.countStatusAndStoryPointsForAssigneeAndSprint(projectId, studentId, sprint.getId()));
+		if (window == null) {
+			return new StudentDashboardSprintMetricsResponse(sprint.getId(), null, null, sprintTasks, null);
+		}
+		long total = 0;
+		LocalDateTime lastAt = null;
+		for (Object[] row : windowCommits) {
+			LocalDateTime at = row == null || row.length < 2 ? null : (LocalDateTime) row[1];
+			if (at == null) {
+				continue;
+			}
+			total++;
+			if (lastAt == null || at.isAfter(lastAt)) {
+				lastAt = at;
+			}
+		}
+		long linked = total == 0
+				? 0L
+				: commitLinks.countDistinctLinkedAuthoredV23InRange(
+						projectId, studentId, window.start().atStartOfDay(), window.endInclusive().plusDays(1).atStartOfDay());
+		Double traceability = total == 0 ? null : (linked * 100.0) / total;
+		return new StudentDashboardSprintMetricsResponse(
+				sprint.getId(),
+				window.start(),
+				window.endInclusive(),
+				sprintTasks,
+				new StudentDashboardCommitMetricsResponse(total, linked, total - linked, traceability, lastAt));
+	}
+
+	/**
+	 * Calendar-day window of a sprint: start date through end date (else complete date, else today),
+	 * both inclusive. Null when the sprint has no start date.
+	 */
+	private SprintWindow sprintWindow(Sprint sprint) {
+		if (sprint.getStartDate() == null) {
+			return null;
+		}
+		LocalDate start = sprint.getStartDate().toLocalDate();
+		LocalDateTime rawEnd = sprint.getEndDate() != null ? sprint.getEndDate() : sprint.getCompleteDate();
+		LocalDate end = rawEnd == null ? LocalDate.now(clock) : rawEnd.toLocalDate();
+		return new SprintWindow(start, end.isBefore(start) ? start : end);
+	}
+
+	/**
+	 * One point per day of the sprint window, clipped to today so an active sprint's future days do
+	 * not dilute the average; capped to the last {@link #MAX_SPRINT_TIMELINE_DAYS} days. Empty for a
+	 * sprint that has not started yet.
+	 */
+	private List<StudentDashboardWeeklyCommitResponse> dailyCommits(SprintWindow window, List<Object[]> windowCommits) {
+		LocalDate today = LocalDate.now(clock);
+		LocalDate last = window.endInclusive().isAfter(today) ? today : window.endInclusive();
+		LocalDate first = window.start();
+		if (last.isBefore(first)) {
+			return List.of();
+		}
+		if (first.plusDays(MAX_SPRINT_TIMELINE_DAYS - 1).isBefore(last)) {
+			first = last.minusDays(MAX_SPRINT_TIMELINE_DAYS - 1);
+		}
+		Map<LocalDate, Long> counts = new HashMap<>();
+		for (Object[] row : windowCommits) {
+			LocalDateTime at = row == null || row.length < 2 ? null : (LocalDateTime) row[1];
+			if (at != null) {
+				counts.merge(at.toLocalDate(), 1L, Long::sum);
+			}
+		}
+		List<StudentDashboardWeeklyCommitResponse> points = new ArrayList<>();
+		for (LocalDate day = first; !day.isAfter(last); day = day.plusDays(1)) {
+			points.add(new StudentDashboardWeeklyCommitResponse(day, day, counts.getOrDefault(day, 0L)));
+		}
+		return points;
 	}
 
 	/**
@@ -747,6 +839,8 @@ public class StudentDashboardService {
 
 	private static final Comparator<AttentionRow> ATTENTION_ORDER =
 			Comparator.comparing((AttentionRow row) -> row.anomaly() ? 0 : 1).thenComparing(ANOMALY_ORDER);
+
+	private record SprintWindow(LocalDate start, LocalDate endInclusive) {}
 
 	private record GithubProjection(
 			StudentDashboardGithubIntegrationResponse dto, LocalDateTime maxActiveCreatedAt) {}

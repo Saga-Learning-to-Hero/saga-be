@@ -835,7 +835,9 @@ class StudentDashboardPersistTest {
 						"SAGA-A09",
 						"SAGA-A10");
 		assertThat(response.myActiveTasks()).allMatch(row -> row.hasAnomaly());
-		assertThat(stats.getPrepareStatementCount()).isEqualTo(16L);
+		// +1 over the pre-sprint-filter 16: sprintMetrics' per-sprint task count (the sprint commit window
+		// replaces the ISO-week query; the linked-in-range count is skipped with zero window commits).
+		assertThat(stats.getPrepareStatementCount()).isEqualTo(17L);
 		assertThat(response.actionableAlerts()).hasSize(13);
 		assertThat(response.actionableAlerts().subList(0, 12))
 				.allMatch(alert -> "MSR_ANOMALY".equals(alert.type()));

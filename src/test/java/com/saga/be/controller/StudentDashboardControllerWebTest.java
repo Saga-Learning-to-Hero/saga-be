@@ -18,6 +18,7 @@ import com.saga.be.dto.student.dashboard.StudentDashboardJiraIntegrationResponse
 import com.saga.be.dto.student.dashboard.StudentDashboardMetricsResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardRecentCommitResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardResponse;
+import com.saga.be.dto.student.dashboard.StudentDashboardSprintMetricsResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardSprintResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardStudentResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardTaskMetricsResponse;
@@ -165,7 +166,14 @@ class StudentDashboardControllerWebTest {
 										"You still have 2 teammate reviews to complete for Sprint 1.",
 										"PEER_REVIEW_PENDING",
 										new StudentDashboardAlertTargetIds(courseId, teamId, projectId, null, sprintId),
-										2))));
+										2)),
+						new StudentDashboardSprintMetricsResponse(
+								sprintId,
+								LocalDate.of(2026, 9, 1),
+								LocalDate.of(2026, 9, 14),
+								new StudentDashboardTaskMetricsResponse(3, 1, 1, 0, 1, 0, 33.333, 8, 3),
+								new StudentDashboardCommitMetricsResponse(
+										5, 4, 1, 80.0, LocalDateTime.of(2026, 9, 4, 8, 0)))));
 
 		mockMvc.perform(get("/api/student/courses/" + courseId + "/dashboard"))
 				.andExpect(status().isOk())
@@ -183,6 +191,10 @@ class StudentDashboardControllerWebTest {
 				.andExpect(jsonPath("$.weeklyCommits[0].startDate").value("2026-08-31"))
 				.andExpect(jsonPath("$.weeklyCommits[2].commits").value(2))
 				.andExpect(jsonPath("$.weeklyCommits[0].label").doesNotExist())
+				.andExpect(jsonPath("$.sprintMetrics.sprintId").value(sprintId.toString()))
+				.andExpect(jsonPath("$.sprintMetrics.startDate").value("2026-09-01"))
+				.andExpect(jsonPath("$.sprintMetrics.tasks.totalAssigned").value(3))
+				.andExpect(jsonPath("$.sprintMetrics.commits.totalCommits").value(5))
 				.andExpect(jsonPath("$.contribution").doesNotExist())
 				.andExpect(jsonPath("$.actionableAlerts[0].id").value("MSR:77777777-7777-4777-8777-777777777777"))
 				.andExpect(jsonPath("$.actionableAlerts[0].type").value("MSR_ANOMALY"))
@@ -215,10 +227,12 @@ class StudentDashboardControllerWebTest {
 						List.of(),
 						List.of(),
 						List.of(),
-						List.of()));
+						List.of(),
+						null));
 
 		mockMvc.perform(get("/api/student/courses/" + courseId + "/dashboard"))
 				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.sprintMetrics").value(Matchers.nullValue()))
 				.andExpect(jsonPath("$.team").value(Matchers.nullValue()))
 				.andExpect(jsonPath("$.integrations").value(Matchers.nullValue()))
 				.andExpect(jsonPath("$.currentSprint").value(Matchers.nullValue()))
@@ -265,7 +279,8 @@ class StudentDashboardControllerWebTest {
 						List.of(),
 						List.of(),
 						List.of(),
-						List.of()));
+						List.of(),
+						null));
 
 		mockMvc.perform(get("/api/student/courses/" + courseId + "/dashboard").param("sprintId", sprintId.toString()))
 				.andExpect(status().isOk())

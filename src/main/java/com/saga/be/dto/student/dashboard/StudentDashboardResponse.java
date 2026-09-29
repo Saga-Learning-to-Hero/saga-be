@@ -6,8 +6,8 @@ import java.util.List;
 @Schema(
 		description =
 				"Phase A+B1+B2+D1+D2 student personal dashboard: identity, optional team/project, integrations, "
-						+ "current sprint, personal task/commit metrics, attention preview, recent commits, "
-						+ "rolling last-3 ISO weekly commits, and MSR / ghosting / peer-review pending alerts.")
+						+ "current sprint, personal task/commit metrics (project-wide and selected-sprint), attention "
+						+ "preview, recent commits, commit timeline, and MSR / ghosting / peer-review pending alerts.")
 public record StudentDashboardResponse(
 		StudentDashboardStudentResponse student,
 		StudentDashboardCourseResponse course,
@@ -19,10 +19,14 @@ public record StudentDashboardResponse(
 						description =
 								"The selected sprint's stats. With no ?sprintId= query param, this is the project's "
 										+ "current active sprint (null when there is none). With ?sprintId=, this is that "
-										+ "local Sprint's stats instead (historical/completed sprints allowed) -- everything "
-										+ "else in this response stays current/project-wide regardless of the selection.")
+										+ "local Sprint's stats instead (historical/completed sprints allowed). The same "
+										+ "sprint also drives sprintMetrics and weeklyCommits; myMetrics, myActiveTasks, "
+										+ "recentCommits and actionableAlerts stay current/project-wide.")
 				StudentDashboardSprintResponse currentSprint,
-		@Schema(description = "Null when there is no team project. Empty zeros when the student has no personal work.")
+		@Schema(
+						description =
+								"Project-wide, never sprint-scoped. Null when there is no team project. Empty zeros "
+										+ "when the student has no personal work.")
 				StudentDashboardMetricsResponse myMetrics,
 		@Schema(description = "Needs-attention preview, cap 10. Empty when no team project or no matching tasks.")
 				List<StudentDashboardActiveTaskResponse> myActiveTasks,
@@ -30,11 +34,16 @@ public record StudentDashboardResponse(
 				List<StudentDashboardRecentCommitResponse> recentCommits,
 		@Schema(
 						description =
-								"Last 3 ISO calendar weeks (Mon–Sun), oldest first. Empty when no team project. "
-										+ "Three zero points when the project has no qualifying committedAt rows.")
+								"Personal commit timeline, oldest first. When a sprint is selected (currentSprint "
+										+ "non-null with a startDate): one point per day (startDate == endDate) from the "
+										+ "sprint start to min(sprint end, today), capped to the last 62 days; empty for a "
+										+ "sprint that has not started. Otherwise: the last 3 ISO calendar weeks (Mon–Sun). "
+										+ "Empty when no team project.")
 				List<StudentDashboardWeeklyCommitResponse> weeklyCommits,
 		@Schema(
 						description =
 								"Never null. Empty with no team / no project. Order: MSR_ANOMALY, GHOSTING_WARNING, "
 										+ "PEER_REVIEW_PENDING.")
-				List<StudentDashboardAlertResponse> actionableAlerts) {}
+				List<StudentDashboardAlertResponse> actionableAlerts,
+		@Schema(description = "Personal metrics for the currentSprint sprint. Null when currentSprint is null.")
+				StudentDashboardSprintMetricsResponse sprintMetrics) {}

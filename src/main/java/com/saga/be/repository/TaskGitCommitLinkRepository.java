@@ -1,6 +1,7 @@
 package com.saga.be.repository;
 
 import com.saga.be.entity.traceability.TaskGitCommitLink;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
@@ -390,6 +391,30 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			  and (c.parentCount is null or c.parentCount <= 1)
 			""")
 	long countDistinctLinkedAuthoredV23(@Param("projectId") UUID projectId, @Param("studentId") UUID studentId);
+
+	/**
+	 * Same as {@link #countDistinctLinkedAuthoredV23} but only commits whose raw {@code committedAt}
+	 * falls in {@code [rangeStart, rangeEndExclusive)}. No {@code createdAt} fallback.
+	 */
+	@Query(
+			"""
+			select count(distinct c.id)
+			from TaskGitCommitLink l
+			join l.gitCommit c
+			join l.task t
+			where c.repo.project.id = :projectId
+			  and c.authorStudent.id = :studentId
+			  and t.deletedAt is null
+			  and (c.parentCount is null or c.parentCount <= 1)
+			  and c.committedAt is not null
+			  and c.committedAt >= :rangeStart
+			  and c.committedAt < :rangeEndExclusive
+			""")
+	long countDistinctLinkedAuthoredV23InRange(
+			@Param("projectId") UUID projectId,
+			@Param("studentId") UUID studentId,
+			@Param("rangeStart") LocalDateTime rangeStart,
+			@Param("rangeEndExclusive") LocalDateTime rangeEndExclusive);
 
 	/**
 	 * Preview link counts for a bounded task-id set —

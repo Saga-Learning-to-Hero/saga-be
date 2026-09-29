@@ -672,6 +672,118 @@ class StudentDashboardServiceTest {
 	}
 
 	@Test
+	void selectedClosedSprintDrivesDailyTimelineAndSprintMetrics() {
+		Team team = team(project());
+		UUID projectId = team.getProject().getId();
+		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
+				.thenReturn(Optional.of(enrollment));
+		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
+				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
+		when(members.countActiveByTeam_Id(team.getId())).thenReturn(1L);
+		stubEmptyIntegrations(projectId);
+		Sprint closed = sprint("closed");
+		closed.setStartDate(LocalDateTime.of(2026, 9, 6, 9, 0));
+		closed.setEndDate(LocalDateTime.of(2026, 9, 12, 17, 0));
+		when(sprints.findActiveByIdAndProject_Id(closed.getId(), projectId)).thenReturn(Optional.of(closed));
+		when(tasks.countGroupedByStatusForProjectAndSprint(projectId, closed.getId())).thenReturn(List.of());
+		when(tasks.countStatusAndStoryPointsForAssignee(projectId, profile.getId()))
+				.thenReturn(List.<Object[]>of(new Object[] {TaskStatus.DONE, 10L, 61L}, new Object[] {TaskStatus.IN_PROGRESS, 5L, 28L}));
+		when(tasks.countStatusAndStoryPointsForAssigneeAndSprint(projectId, profile.getId(), closed.getId()))
+				.thenReturn(List.<Object[]>of(new Object[] {TaskStatus.DONE, 3L, 8L}));
+		when(commits.findWeeklyCommittedAtByProjectAndAuthor(
+						projectId, profile.getId(), LocalDateTime.of(2026, 9, 6, 0, 0), LocalDateTime.of(2026, 9, 13, 0, 0)))
+				.thenReturn(List.of(
+						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 9, 6, 0, 0)},
+						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 9, 8, 10, 0)},
+						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 9, 8, 23, 59)},
+						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 9, 12, 23, 59, 59)}));
+		when(commitLinks.countDistinctLinkedAuthoredV23InRange(
+						projectId, profile.getId(), LocalDateTime.of(2026, 9, 6, 0, 0), LocalDateTime.of(2026, 9, 13, 0, 0)))
+				.thenReturn(3L);
+
+		StudentDashboardResponse response = service.get(account.getId(), course.getId(), closed.getId());
+
+		var days = response.weeklyCommits();
+		assertEquals(7, days.size());
+		assertEquals(LocalDate.of(2026, 9, 6), days.getFirst().startDate());
+		assertEquals(LocalDate.of(2026, 9, 6), days.getFirst().endDate());
+		assertEquals(1L, days.get(0).commits());
+		assertEquals(0L, days.get(1).commits());
+		assertEquals(2L, days.get(2).commits());
+		assertEquals(LocalDate.of(2026, 9, 12), days.getLast().endDate());
+		assertEquals(1L, days.getLast().commits());
+
+		var sprintMetrics = response.sprintMetrics();
+		assertEquals(closed.getId(), sprintMetrics.sprintId());
+		assertEquals(LocalDate.of(2026, 9, 6), sprintMetrics.startDate());
+		assertEquals(LocalDate.of(2026, 9, 12), sprintMetrics.endDate());
+		assertEquals(3L, sprintMetrics.tasks().totalAssigned());
+		assertEquals(3L, sprintMetrics.tasks().done());
+		assertEquals(4L, sprintMetrics.commits().totalCommits());
+		assertEquals(3L, sprintMetrics.commits().linkedCommits());
+		assertEquals(75.0, sprintMetrics.commits().traceabilityPercent());
+		assertEquals(LocalDateTime.of(2026, 9, 12, 23, 59, 59), sprintMetrics.commits().lastCommittedAt());
+		// Project-wide cards are untouched by the sprint selection.
+		assertEquals(15L, response.myMetrics().tasks().totalAssigned());
+	}
+
+	@Test
+	void activeSprintTimelineStopsAtTodayAndFutureSprintIsEmpty() {
+		Team team = team(project());
+		UUID projectId = team.getProject().getId();
+		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
+				.thenReturn(Optional.of(enrollment));
+		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
+				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
+		when(members.countActiveByTeam_Id(team.getId())).thenReturn(1L);
+		stubEmptyIntegrations(projectId);
+		Sprint active = sprint("active");
+		active.setStartDate(LocalDateTime.of(2026, 9, 16, 0, 0));
+		active.setEndDate(LocalDateTime.of(2026, 9, 29, 0, 0));
+		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of(active));
+		Sprint future = sprint("future");
+		future.setStartDate(LocalDateTime.of(2026, 9, 30, 0, 0));
+		future.setEndDate(LocalDateTime.of(2026, 10, 13, 0, 0));
+		when(sprints.findActiveByIdAndProject_Id(future.getId(), projectId)).thenReturn(Optional.of(future));
+
+		var current = service.get(account.getId(), course.getId());
+		assertEquals(5, current.weeklyCommits().size());
+		assertEquals(LocalDate.of(2026, 9, 16), current.weeklyCommits().getFirst().startDate());
+		assertEquals(LocalDate.of(2026, 9, 20), current.weeklyCommits().getLast().endDate());
+		assertEquals(LocalDate.of(2026, 9, 28), current.sprintMetrics().endDate());
+		assertEquals(0L, current.sprintMetrics().commits().totalCommits());
+		assertNull(current.sprintMetrics().commits().traceabilityPercent());
+		verify(commitLinks, never()).countDistinctLinkedAuthoredV23InRange(any(), any(), any(), any());
+
+		var upcoming = service.get(account.getId(), course.getId(), future.getId());
+		assertTrue(upcoming.weeklyCommits().isEmpty());
+		assertEquals(future.getId(), upcoming.sprintMetrics().sprintId());
+	}
+
+	@Test
+	void sprintWithoutStartDateKeepsIsoWeeksAndHasNoSprintCommitWindow() {
+		Team team = team(project());
+		UUID projectId = team.getProject().getId();
+		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
+				.thenReturn(Optional.of(enrollment));
+		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
+				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
+		when(members.countActiveByTeam_Id(team.getId())).thenReturn(1L);
+		stubEmptyIntegrations(projectId);
+		Sprint active = sprint("active");
+		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of(active));
+
+		StudentDashboardResponse response = service.get(account.getId(), course.getId());
+
+		assertEquals(3, response.weeklyCommits().size());
+		assertEquals(LocalDate.of(2026, 8, 31), response.weeklyCommits().getFirst().startDate());
+		assertEquals(active.getId(), response.sprintMetrics().sprintId());
+		assertNull(response.sprintMetrics().startDate());
+		assertNull(response.sprintMetrics().commits());
+		assertEquals(0L, response.sprintMetrics().tasks().totalAssigned());
+	}
+
+	@Test
 	void academicZoneChangesCurrentIsoWeekIdentity() {
 		service = new StudentDashboardService(
 				enrollments,

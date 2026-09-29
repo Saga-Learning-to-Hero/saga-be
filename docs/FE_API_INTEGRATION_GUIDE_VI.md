@@ -811,7 +811,7 @@ Dùng `myRole` để quyết định UI: hiện nút "Tạo Project"/"Cấu hìn
 
 Personal cockpit của **chính** sinh viên đang gọi API. **MEMBER / LEADER / MENTOR** đều gọi được — không dùng gate của `/progress` (leader-only).
 
-Không team / không project **không** phải 404: trả **200** với `team` / `integrations` / `currentSprint` / `myMetrics` = `null`, `myActiveTasks` = `[]`, `recentCommits` = `[]`, `weeklyCommits` = `[]`, `actionableAlerts` = `[]`. Không bịa personal metrics khi chưa có Project.
+Không team / không project **không** phải 404: trả **200** với `team` / `integrations` / `currentSprint` / `myMetrics` / `sprintMetrics` = `null`, `myActiveTasks` = `[]`, `recentCommits` = `[]`, `weeklyCommits` = `[]`, `actionableAlerts` = `[]`. Không bịa personal metrics khi chưa có Project.
 
 ```json
 {
@@ -981,10 +981,35 @@ Quy tắc Phase B1:
 | `recentCommits` | Cap **5**. Cùng population V23 với commit metrics. Thứ tự dùng timestamp hoạt động `COALESCE(committedAt, createdAt) DESC, id DESC`. `committedAt` trong JSON là **raw** `GitCommit.committedAt` — **có thể `null`**, không thay bằng `createdAt`. `shortSha` = 7 ký tự đầu (hoặc cả sha nếu ngắn hơn). `repositoryName` = `GitRepo.fullName` |
 | `linkedTaskKeys` | Mảng, không phải `linkedTaskKey`. Mọi `Task.externalKey` khác null, task chưa xoá, sort ổn định, không trùng. Commit chưa gắn task → `[]`. Không bịa key từ message |
 
+Bộ lọc sprint — `?sprintId=<uuid sprint local>` (tuỳ chọn):
+
+| Trường | Ý nghĩa |
+|---|---|
+| Sprint được chọn | Không truyền → sprint `active` hiện tại. Truyền → sprint local đó (cho phép sprint đã đóng). Sprint không tồn tại / thuộc project khác → `404 SPRINT_NOT_FOUND` |
+| `currentSprint` | Thống kê nhóm của sprint được chọn |
+| `sprintMetrics` | **Mới.** Số liệu cá nhân **trong sprint được chọn**: `{ sprintId, startDate, endDate, tasks, commits }`. `tasks` = task gán cho chính SV có `sprint = sprint được chọn` (cùng shape `myMetrics.tasks`). `commits` = commit V23 của SV có ngày `committedAt` trong `[startDate, endDate]` (cùng shape `myMetrics.commits`; `lastCommittedAt` chỉ dùng `committedAt`). `null` khi không có sprint được chọn. `commits = null` và `startDate = null` khi sprint chưa có ngày bắt đầu |
+| `sprintMetrics.endDate` | `endDate` của sprint, không có thì `completeDate`, không có nữa thì hôm nay |
+| `weeklyCommits` | Theo sprint được chọn (xem Phase B2 bên dưới) |
+| **Không đổi theo sprint** | `myMetrics` (thẻ "Toàn dự án"), `myActiveTasks`, `recentCommits`, `actionableAlerts` |
+
+FE: donut "Phân bổ nhiệm vụ của tôi" nên đọc `sprintMetrics.tasks` (fallback `myMetrics.tasks` khi `sprintMetrics` null) để đổi theo sprint.
+
+```json
+"sprintMetrics": {
+  "sprintId": "...",
+  "startDate": "2026-09-20",
+  "endDate": "2026-10-03",
+  "tasks": { "totalAssigned": 5, "todo": 0, "inProgress": 2, "inReview": 0, "done": 3, "blocked": 0, "completionPercent": 60.0, "totalStoryPoints": 21, "completedStoryPoints": 13 },
+  "commits": { "totalCommits": 6, "linkedCommits": 6, "unlinkedCommits": 0, "traceabilityPercent": 100.0, "lastCommittedAt": "2026-09-29T23:43:00" }
+}
+```
+
 Quy tắc Phase B2 — `weeklyCommits`:
 
 | Trường | Ý nghĩa |
 |---|---|
+| Có sprint được chọn (có `startDate`) | **Mỗi điểm = 1 ngày** (`startDate == endDate`), từ ngày bắt đầu sprint tới `min(ngày kết thúc sprint, hôm nay)`. Sprint đang chạy không có ngày tương lai. Sprint chưa bắt đầu → `[]`. Tối đa 62 ngày gần nhất. Mọi quy tắc population / timestamp bên dưới vẫn áp dụng |
+| Không có sprint (hoặc sprint thiếu `startDate`) | Hành vi cũ: 3 tuần ISO như các dòng dưới |
 | Số điểm | **Đúng 3** tuần ISO gần nhất khi đã có Project: tuần hiện tại + 2 tuần trước. Oldest → newest. **Không** có tuần tương lai |
 | `startDate` / `endDate` | `LocalDate`. Monday → Sunday (`endDate = Monday + 6`). FE tự format label — **không** có field `label` |
 | Tuần hiện tại | `LocalDate.now(saga.dashboard.zone)` (default UTC). Monday 00:00 zone đó mở tuần mới. Tuần hiện tại **có thể đang dở** |
@@ -1023,7 +1048,7 @@ Project có Project nhưng không có task/commit cá nhân:
 - `myMetrics.tasks` = mọi count/SP = 0, `completionPercent` = `null`
 - `myMetrics.commits` = 0/0/0, `traceabilityPercent` = `null`, `lastCommittedAt` = `null`
 - `myActiveTasks` = `[]`, `recentCommits` = `[]`
-- `weeklyCommits` = 3 điểm zero
+- `weeklyCommits` = mỗi ngày của sprint được chọn với `commits = 0` (hoặc 3 điểm tuần zero khi không có sprint)
 - `actionableAlerts` = `[]` nếu không có MSR / peer pending (peer pending vẫn có thể xuất hiện khi có `currentSprint` và còn teammate chưa review)
 
 Lỗi:
