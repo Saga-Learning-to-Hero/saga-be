@@ -202,7 +202,7 @@ public class ProjectProjectionController {
 
 	@PostMapping("/tasks")
 	@Workload(WorkloadClass.INTERACTIVE_WRITE)
-	@Operation(summary = "Create a Jira issue then reconcile local Task projection. Team Leader only.")
+	@Operation(summary = "Create a Jira issue then reconcile local Task projection. Leader: any assignee. Member: always self-assigned (their linked Jira account).")
 	public ResponseEntity<ProjectTaskResponse> createTask(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
@@ -213,7 +213,7 @@ public class ProjectProjectionController {
 
 	@PatchMapping("/tasks/{taskId}")
 	@Workload(WorkloadClass.INTERACTIVE_WRITE)
-	@Operation(summary = "Update Jira issue fields then reconcile projection. Team Leader only. Status via /transition.")
+	@Operation(summary = "Update Jira issue fields then reconcile projection. Leader: any task. Member: own task only; cannot unassign or reassign it away. Status via /transition.")
 	public ProjectTaskResponse patchTask(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
@@ -224,7 +224,7 @@ public class ProjectProjectionController {
 
 	@PutMapping("/tasks/{taskId}/sprint")
 	@Workload(WorkloadClass.INTERACTIVE_WRITE)
-	@Operation(summary = "Move task to a Jira sprint or backlog (sprintId=null). Team Leader only.")
+	@Operation(summary = "Move task to a Jira sprint or backlog (sprintId=null). Leader: any task. Member: own task only.")
 	public ProjectTaskResponse putTaskSprint(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
@@ -235,7 +235,7 @@ public class ProjectProjectionController {
 
 	@PostMapping("/tasks/{taskId}/transition")
 	@Workload(WorkloadClass.INTERACTIVE_WRITE)
-	@Operation(summary = "Transition Jira issue status via available transitions. Team Leader only.")
+	@Operation(summary = "Transition Jira issue status via available transitions. Leader: any task. Member: own task only.")
 	public ProjectTaskResponse transitionTask(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
@@ -245,7 +245,7 @@ public class ProjectProjectionController {
 	}
 
 	@GetMapping("/tasks/{taskId}/transitions")
-	@Operation(summary = "List available Jira transitions for a task. Team Leader only.")
+	@Operation(summary = "List available Jira transitions for a task. Leader: any task. Member: own task only.")
 	public List<TransitionOption> taskTransitions(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
@@ -255,7 +255,7 @@ public class ProjectProjectionController {
 
 	@DeleteMapping("/tasks/{taskId}")
 	@Workload(WorkloadClass.INTERACTIVE_WRITE)
-	@Operation(summary = "Delete Jira issue then soft-delete local projection. Team Leader only.")
+	@Operation(summary = "Delete Jira issue then soft-delete local projection. Leader: any task. Member: own task only.")
 	public ResponseEntity<Void> deleteTask(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,

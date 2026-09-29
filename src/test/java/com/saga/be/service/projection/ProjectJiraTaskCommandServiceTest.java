@@ -36,6 +36,7 @@ import com.saga.be.realtime.ProjectRealtimeEvent;
 import com.saga.be.realtime.ProjectRealtimeEventType;
 import com.saga.be.realtime.ProjectRealtimePublisher;
 import com.saga.be.repository.ContributionConfirmationRepository;
+import com.saga.be.repository.IdentityMapRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.ProjectRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
@@ -93,6 +94,8 @@ class ProjectJiraTaskCommandServiceTest {
 	private PlatformTransactionManager transactionManager;
 	@Mock
 	private ApplicationEventPublisher events;
+	@Mock
+	private IdentityMapRepository identities;
 
 	private ProjectJiraTaskCommandService service;
 	private UUID userId;
@@ -123,6 +126,7 @@ class ProjectJiraTaskCommandServiceTest {
 				projection,
 				realtime,
 				new TaskHierarchyService(projects, tasks, transactionManager),
+				identities,
 				transactionManager);
 		userId = UUID.randomUUID();
 		projectId = UUID.randomUUID();
@@ -1044,75 +1048,229 @@ class ProjectJiraTaskCommandServiceTest {
 	}
 
 	@Test
-	void nonLeader_cannotCreate() {
-		UserAccount student = new UserAccount();
-		student.setId(userId);
-		student.setAccountRole(AccountRole.STUDENT);
-		when(users.findById(userId)).thenReturn(Optional.of(student));
-		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.MEMBER));
-		assertThatThrownBy(() -> service.create(
-						userId,
-						projectId,
-						new CreateProjectTaskRequest("X", null, null, null, null, null, null, null)))
-				.isInstanceOf(IntegrationException.class)
-				.extracting(ex -> ((IntegrationException) ex).getCode())
-				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
+	void member_createWithoutAssignee_assignsToOwnJiraAccount() {
+		stubMember();
+		stubMemberJiraAccount("acc-me");
+		JiraIntegration integration = activeJira();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), eq("acc-me"), any(), any(), any(),
+						any(), any()))
+				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(taskRow(integration));
+
+		service.create(userId, projectId, new CreateProjectTaskRequest("Login", null, null, null, null, null, null, null));
+
+		verify(jiraWrite)
+				.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), eq("acc-me"), any(), any(), any(),
+						any(), any());
 	}
 
-	// ==================== AUTHORIZATION MATRIX (section 1/2/3 audit) ====================
-	// requireStudentLeader is shared, identical code across every mutation method below --
-	// verified once per role here for create/patch/delete/transition/moveSprint (member, the
-	// specifically reported gap, on every category) plus representative coverage for
-	// lecturer/admin/unrelated-student (same guard, so exhaustive per-role x per-category
-	// duplication adds no additional coverage of the actual authorization code).
-
 	@Test
-	void member_cannotPatchTask() {
+	void member_cannotCreateTaskForSomeoneElse() {
 		stubMember();
-		UUID taskId = UUID.randomUUID();
+		stubMemberJiraAccount("acc-me");
 
-		assertThatThrownBy(() -> service.patch(
-						userId, projectId, taskId,
-						new PatchProjectTaskRequest("New title", null, null, null, null, null, null, null, null, null, null)))
+		assertThatThrownBy(() -> service.create(
+						userId, projectId, new CreateProjectTaskRequest("X", null, null, "acc-other", null, null, null, null)))
 				.isInstanceOf(IntegrationException.class)
 				.extracting(ex -> ((IntegrationException) ex).getCode())
-				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
+				.isEqualTo(IntegrationErrorCode.TASK_NOT_ASSIGNED_TO_YOU);
 		verifyZeroProviderInteraction();
 	}
 
 	@Test
-	void member_cannotDeleteTask() {
+	void member_withoutLinkedJira_cannotCreateTask() {
 		stubMember();
-		UUID taskId = UUID.randomUUID();
+		stubMemberJiraAccount();
 
-		assertThatThrownBy(() -> service.delete(userId, projectId, taskId))
+		assertThatThrownBy(() -> service.create(
+						userId, projectId, new CreateProjectTaskRequest("X", null, null, null, null, null, null, null)))
 				.isInstanceOf(IntegrationException.class)
 				.extracting(ex -> ((IntegrationException) ex).getCode())
-				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
+				.isEqualTo(IntegrationErrorCode.JIRA_ACCOUNT_NOT_LINKED_TO_CURRENT_USER);
+		verifyZeroProviderInteraction();
+	}
+
+	// ==================== AUTHORIZATION MATRIX ====================
+	// Leader: every task. Member: only a task assigned to their own SAGA account (create is
+	// always self-assigned; unassign/reassign-away stays Leader-only). Lecturer/admin/unrelated
+	// students keep the shared team-membership denial.
+
+	@Test
+	void member_cannotPatchTaskAssignedToSomeoneElse() {
+		stubMember();
+		Task task = taskRow();
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tasks.existsByIdAndAssigneeStudent_UserAccount_Id(task.getId(), userId)).thenReturn(false);
+
+		assertThatThrownBy(() -> service.patch(
+						userId, projectId, task.getId(),
+						new PatchProjectTaskRequest("New title", null, null, null, null, null, null, null, null, null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_NOT_ASSIGNED_TO_YOU);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void member_canPatchOwnTaskContent() {
+		stubMember();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tasks.existsByIdAndAssigneeStudent_UserAccount_Id(task.getId(), userId)).thenReturn(true);
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "New title");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest("New title", null, null, null, null, null, null, null, null, null, null));
+
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), any());
+	}
+
+	@Test
+	void member_cannotUnassignOrReassignOwnTaskAway() {
+		List<PatchProjectTaskRequest> leaderOnly = List.of(
+				new PatchProjectTaskRequest(null, null, null, "acc-other", null, null, null, null, null, null, null),
+				new PatchProjectTaskRequest(null, null, null, "", null, null, null, null, null, null, null),
+				new PatchProjectTaskRequest(null, null, null, null, true, null, null, null, null, null, null));
+		for (PatchProjectTaskRequest request : leaderOnly) {
+			stubMember();
+			org.mockito.Mockito.lenient()
+					.when(identities.findFetchedByUserAccount_IdInAndProviderAndMappingStatusIn(any(), any(), any()))
+					.thenReturn(List.of(identity("acc-me")));
+			UUID taskId = UUID.randomUUID();
+
+			assertThatThrownBy(() -> service.patch(userId, projectId, taskId, request))
+					.isInstanceOf(IntegrationException.class)
+					.extracting(ex -> ((IntegrationException) ex).getCode())
+					.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
+		}
+		verifyZeroProviderInteraction();
+		verify(tasks, never()).existsByIdAndAssigneeStudent_UserAccount_Id(any(), any());
+	}
+
+	@Test
+	void member_canMoveOwnTaskToSprintViaPatch() {
+		stubMember();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tasks.existsByIdAndAssigneeStudent_UserAccount_Id(task.getId(), userId)).thenReturn(true);
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(null, null, null, null, null, null, null, "31", null, null, null));
+
+		verify(jiraWrite).moveIssuesToSprint("token", "cloud", "31", List.of("10001"));
+	}
+
+	@Test
+	void member_cannotDeleteTaskAssignedToSomeoneElse() {
+		stubMember();
+		Task task = taskRow();
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tasks.existsByIdAndAssigneeStudent_UserAccount_Id(task.getId(), userId)).thenReturn(false);
+
+		assertThatThrownBy(() -> service.delete(userId, projectId, task.getId()))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_NOT_ASSIGNED_TO_YOU);
 		verify(jiraWrite, never()).deleteIssue(any(), any(), any());
 	}
 
 	@Test
-	void member_cannotTransitionTask() {
+	void member_canDeleteOwnTask() {
 		stubMember();
-		UUID taskId = UUID.randomUUID();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tasks.existsByIdAndAssigneeStudent_UserAccount_Id(task.getId(), userId)).thenReturn(true);
+		when(workSessions.existsByTask_Id(task.getId())).thenReturn(false);
+		when(confirmations.existsByTask_Id(task.getId())).thenReturn(false);
+		when(tokens.accessToken(integration)).thenReturn("token");
 
-		assertThatThrownBy(() -> service.transition(userId, projectId, taskId, new TransitionProjectTaskRequest(null, "3")))
-				.isInstanceOf(IntegrationException.class)
-				.extracting(ex -> ((IntegrationException) ex).getCode())
-				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
-		verifyZeroProviderInteraction();
+		service.delete(userId, projectId, task.getId());
+
+		verify(jiraWrite).deleteIssue("token", "cloud", "10001");
+		verify(projection).softDelete(eq(integration), eq("10001"), any());
 	}
 
 	@Test
-	void member_cannotMoveTaskSprint() {
+	void member_cannotTransitionTaskAssignedToSomeoneElse() {
 		stubMember();
-		UUID taskId = UUID.randomUUID();
+		Task task = taskRow();
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tasks.existsByIdAndAssigneeStudent_UserAccount_Id(task.getId(), userId)).thenReturn(false);
 
-		assertThatThrownBy(() -> service.moveSprint(userId, projectId, taskId, new PutProjectTaskSprintRequest(31L)))
+		assertThatThrownBy(() -> service.transition(
+						userId, projectId, task.getId(), new TransitionProjectTaskRequest(null, "3")))
 				.isInstanceOf(IntegrationException.class)
 				.extracting(ex -> ((IntegrationException) ex).getCode())
-				.isEqualTo(IntegrationErrorCode.NOT_TEAM_LEADER);
+				.isEqualTo(IntegrationErrorCode.TASK_NOT_ASSIGNED_TO_YOU);
+		assertThatThrownBy(() -> service.listTransitions(userId, projectId, task.getId()))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_NOT_ASSIGNED_TO_YOU);
+		verifyZeroProviderInteraction();
+		verify(jiraWrite, never()).listTransitions(any(), any(), any());
+	}
+
+	@Test
+	void member_canTransitionOwnTask() {
+		stubMember();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tasks.existsByIdAndAssigneeStudent_UserAccount_Id(task.getId(), userId)).thenReturn(true);
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.listTransitions("token", "cloud", "10001"))
+				.thenReturn(List.of(new TransitionOption("21", "Start", "3", "In Progress")));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		assertThat(service.listTransitions(userId, projectId, task.getId())).hasSize(1);
+		service.transition(userId, projectId, task.getId(), new TransitionProjectTaskRequest(null, "3"));
+
+		verify(jiraWrite).transitionIssue("token", "cloud", "10001", "21");
+	}
+
+	@Test
+	void member_cannotMoveSprintOfTaskAssignedToSomeoneElse() {
+		stubMember();
+		Task task = taskRow();
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tasks.existsByIdAndAssigneeStudent_UserAccount_Id(task.getId(), userId)).thenReturn(false);
+
+		assertThatThrownBy(() -> service.moveSprint(
+						userId, projectId, task.getId(), new PutProjectTaskSprintRequest(31L)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_NOT_ASSIGNED_TO_YOU);
 		verifyZeroProviderInteraction();
 	}
 
@@ -1698,6 +1856,18 @@ class ProjectJiraTaskCommandServiceTest {
 		student.setAccountRole(AccountRole.STUDENT);
 		when(users.findById(userId)).thenReturn(Optional.of(student));
 		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.MEMBER));
+	}
+
+	private void stubMemberJiraAccount(String... accountIds) {
+		when(identities.findFetchedByUserAccount_IdInAndProviderAndMappingStatusIn(
+						eq(List.of(userId)), eq(com.saga.be.entity.enums.IntegrationProvider.JIRA), any()))
+				.thenReturn(java.util.Arrays.stream(accountIds).map(ProjectJiraTaskCommandServiceTest::identity).toList());
+	}
+
+	private static com.saga.be.entity.integration.IdentityMap identity(String accountId) {
+		com.saga.be.entity.integration.IdentityMap map = new com.saga.be.entity.integration.IdentityMap();
+		map.setExternalAccountId(accountId);
+		return map;
 	}
 
 	private void stubUnrelatedStudent() {

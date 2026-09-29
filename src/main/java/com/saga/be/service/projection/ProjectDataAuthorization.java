@@ -105,7 +105,11 @@ public class ProjectDataAuthorization {
 		throw denied();
 	}
 
-	public RoleInTeam requireStudentLeader(UUID userId, UUID projectId) {
+	/**
+	 * ACTIVE student member of this project's team (LEADER or MEMBER). Returns the caller's team
+	 * role so task-level callers can apply "Leader: any task, Member: only own task" themselves.
+	 */
+	public RoleInTeam requireStudentTeamMember(UUID userId, UUID projectId) {
 		UserAccount account = users.findById(userId).orElseThrow();
 		if (account.getAccountRole() != AccountRole.STUDENT) {
 			throw denied();
@@ -117,6 +121,11 @@ public class ProjectDataAuthorization {
 					HttpStatus.FORBIDDEN,
 					"Not a member of this team.");
 		}
+		return role;
+	}
+
+	public RoleInTeam requireStudentLeader(UUID userId, UUID projectId) {
+		RoleInTeam role = requireStudentTeamMember(userId, projectId);
 		if (role != RoleInTeam.LEADER) {
 			throw new IntegrationException(
 					IntegrationErrorCode.NOT_TEAM_LEADER,

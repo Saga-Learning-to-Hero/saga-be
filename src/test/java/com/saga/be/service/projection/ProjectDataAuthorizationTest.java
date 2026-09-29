@@ -1,5 +1,6 @@
 package com.saga.be.service.projection;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
@@ -112,6 +113,30 @@ class ProjectDataAuthorizationTest {
 				.isInstanceOf(IntegrationException.class)
 				.extracting(ex -> ((IntegrationException) ex).getCode())
 				.isEqualTo(IntegrationErrorCode.INTEGRATION_FORBIDDEN);
+	}
+
+	@Test
+	void requireStudentTeamMember_returnsLeaderOrMemberRole() {
+		stubRole(AccountRole.STUDENT);
+		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.MEMBER));
+		assertThat(authorization.requireStudentTeamMember(userId, projectId)).isEqualTo(RoleInTeam.MEMBER);
+		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.of(RoleInTeam.LEADER));
+		assertThat(authorization.requireStudentTeamMember(userId, projectId)).isEqualTo(RoleInTeam.LEADER);
+	}
+
+	@Test
+	void requireStudentTeamMember_foreignStudentAndLecturerDenied() {
+		stubRole(AccountRole.STUDENT);
+		when(members.findActiveRoleByProjectIdAndUserId(projectId, userId)).thenReturn(Optional.empty());
+		assertThatThrownBy(() -> authorization.requireStudentTeamMember(userId, projectId))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.INTEGRATION_FORBIDDEN);
+		stubRole(AccountRole.LECTURER);
+		assertThatThrownBy(() -> authorization.requireStudentTeamMember(userId, projectId))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
 	}
 
 	private void stubRole(AccountRole role) {

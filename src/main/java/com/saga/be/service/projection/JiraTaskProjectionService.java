@@ -38,7 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Profile("!test")
 public class JiraTaskProjectionService {
 
-	private static final List<IdentityMappingStatus> ACTIVE_STATUSES =
+	static final List<IdentityMappingStatus> ACTIVE_STATUSES =
 			List.of(IdentityMappingStatus.ACTIVE, IdentityMappingStatus.VERIFIED, IdentityMappingStatus.PENDING);
 
 	private final TaskRepository tasks;

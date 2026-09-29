@@ -7,7 +7,10 @@ import com.saga.be.dto.project.ProjectTaskOptionsResponse;
 import com.saga.be.dto.project.ProjectTaskResponse;
 import com.saga.be.dto.project.PutProjectTaskSprintRequest;
 import com.saga.be.dto.project.TransitionProjectTaskRequest;
+import com.saga.be.entity.enums.IntegrationProvider;
 import com.saga.be.entity.enums.IntegrationStatus;
+import com.saga.be.entity.enums.RoleInTeam;
+import com.saga.be.entity.integration.IdentityMap;
 import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.exception.AcademicErrorCode;
@@ -23,6 +26,7 @@ import com.saga.be.integration.jira.JiraTeamTokenService;
 import com.saga.be.realtime.ProjectRealtimeEventType;
 import com.saga.be.realtime.ProjectRealtimePublisher;
 import com.saga.be.repository.ContributionConfirmationRepository;
+import com.saga.be.repository.IdentityMapRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.TaskFileRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
@@ -58,6 +62,7 @@ public class ProjectJiraTaskCommandService {
 	private final JiraTaskProjectionService projection;
 	private final ProjectRealtimePublisher realtime;
 	private final TaskHierarchyService hierarchy;
+	private final IdentityMapRepository identities;
 	private final TransactionTemplate writes;
 
 	public ProjectJiraTaskCommandService(
@@ -74,6 +79,7 @@ public class ProjectJiraTaskCommandService {
 			JiraTaskProjectionService projection,
 			ProjectRealtimePublisher realtime,
 			TaskHierarchyService hierarchy,
+			IdentityMapRepository identities,
 			PlatformTransactionManager transactionManager) {
 		this.authorization = authorization;
 		this.jiraIntegrations = jiraIntegrations;
@@ -88,6 +94,7 @@ public class ProjectJiraTaskCommandService {
 		this.projection = projection;
 		this.realtime = realtime;
 		this.hierarchy = hierarchy;
+		this.identities = identities;
 		this.writes = new TransactionTemplate(transactionManager);
 	}
 
@@ -147,7 +154,10 @@ public class ProjectJiraTaskCommandService {
 	}
 
 	public ProjectTaskResponse create(UUID userId, UUID projectId, CreateProjectTaskRequest request) {
-		authorization.requireStudentLeader(userId, projectId);
+		RoleInTeam role = authorization.requireStudentTeamMember(userId, projectId);
+		String assigneeAccountId = role == RoleInTeam.LEADER
+				? request.assigneeAccountId()
+				: memberSelfAssignee(userId, request.assigneeAccountId());
 		JiraIntegration integration = resolveJiraForCreate(projectId, request.jiraIntegrationId());
 		UUID nativeParentId = request.parentTaskId();
 		if (nativeParentId != null) {
@@ -163,14 +173,14 @@ public class ProjectJiraTaskCommandService {
 				request.summary(),
 				request.description(),
 				request.issueTypeId(),
-				request.assigneeAccountId(),
+				assigneeAccountId,
 				request.priorityId(),
 				null,
 				request.labels(),
 				request.dueDate(),
 				request.startDate()) : jiraWrite.createIssue(
 				access, integration.getCloudId(), integration.getJiraProjectId(), request.summary(), request.description(),
-				request.issueTypeId(), request.assigneeAccountId(), request.priorityId(), null, request.labels(),
+				request.issueTypeId(), assigneeAccountId, request.priorityId(), null, request.labels(),
 				request.dueDate(), request.startDate(), jiraParentIssueId);
 
 		boolean secondaryFailed = false;
@@ -224,7 +234,11 @@ public class ProjectJiraTaskCommandService {
 	}
 
 	public ProjectTaskResponse patch(UUID userId, UUID projectId, UUID taskId, PatchProjectTaskRequest request) {
-		authorization.requireStudentLeader(userId, projectId);
+		RoleInTeam role = authorization.requireStudentTeamMember(userId, projectId);
+		if (role != RoleInTeam.LEADER) {
+			requireMemberKeepsOwnership(userId, request);
+		}
+		requireLeaderOrAssignee(role, userId, projectId, taskId);
 		if (Boolean.TRUE.equals(request.clearParent()) && request.parentTaskId() != null) {
 			throw new AcademicException(
 					AcademicErrorCode.REQUEST_INVALID,
@@ -359,7 +373,7 @@ public class ProjectJiraTaskCommandService {
 
 	public ProjectTaskResponse moveSprint(
 			UUID userId, UUID projectId, UUID taskId, PutProjectTaskSprintRequest request) {
-		authorization.requireStudentLeader(userId, projectId);
+		requireLeaderOrAssignee(authorization.requireStudentTeamMember(userId, projectId), userId, projectId, taskId);
 		Task task = requireTask(projectId, taskId);
 		JiraIntegration integration = requireJiraForTask(projectId, task);
 		String access = tokens.accessToken(integration);
@@ -384,7 +398,7 @@ public class ProjectJiraTaskCommandService {
 
 	public ProjectTaskResponse transition(
 			UUID userId, UUID projectId, UUID taskId, TransitionProjectTaskRequest request) {
-		authorization.requireStudentLeader(userId, projectId);
+		requireLeaderOrAssignee(authorization.requireStudentTeamMember(userId, projectId), userId, projectId, taskId);
 		Task task = requireTask(projectId, taskId);
 		JiraIntegration integration = requireJiraForTask(projectId, task);
 		String access = tokens.accessToken(integration);
@@ -401,7 +415,7 @@ public class ProjectJiraTaskCommandService {
 	}
 
 	public void delete(UUID userId, UUID projectId, UUID taskId) {
-		authorization.requireStudentLeader(userId, projectId);
+		requireLeaderOrAssignee(authorization.requireStudentTeamMember(userId, projectId), userId, projectId, taskId);
 		Task task = requireTask(projectId, taskId);
 		JiraIntegration integration = requireJiraForTask(projectId, task);
 		if (workSessions.existsByTask_Id(taskId) || confirmations.existsByTask_Id(taskId)) {
@@ -422,7 +436,7 @@ public class ProjectJiraTaskCommandService {
 	}
 
 	public List<TransitionOption> listTransitions(UUID userId, UUID projectId, UUID taskId) {
-		authorization.requireStudentLeader(userId, projectId);
+		requireLeaderOrAssignee(authorization.requireStudentTeamMember(userId, projectId), userId, projectId, taskId);
 		Task task = requireTask(projectId, taskId);
 		JiraIntegration integration = requireJiraForTask(projectId, task);
 		String access = tokens.accessToken(integration);
@@ -525,6 +539,69 @@ public class ProjectJiraTaskCommandService {
 					HttpStatus.BAD_REQUEST,
 					"Jira board is required for backlog moves.");
 		}
+	}
+
+	/**
+	 * Leader may change any task; a Member only a task whose assignee is their own SAGA account.
+	 * Checked with a scalar query (not the lazy assignee association) since open-in-view is off.
+	 */
+	private void requireLeaderOrAssignee(RoleInTeam role, UUID userId, UUID projectId, UUID taskId) {
+		if (role == RoleInTeam.LEADER) {
+			return;
+		}
+		requireTask(projectId, taskId);
+		if (!tasks.existsByIdAndAssigneeStudent_UserAccount_Id(taskId, userId)) {
+			throw new IntegrationException(
+					IntegrationErrorCode.TASK_NOT_ASSIGNED_TO_YOU,
+					HttpStatus.FORBIDDEN,
+					"Members can only change tasks assigned to them.");
+		}
+	}
+
+	/** A Member owns their task fully, except handing it away: unassign/reassign stays with the Leader. */
+	private void requireMemberKeepsOwnership(UUID userId, PatchProjectTaskRequest request) {
+		String assignee = request.assigneeAccountId();
+		boolean handsAway = Boolean.TRUE.equals(request.clearAssignee())
+				|| (assignee != null && (assignee.isBlank() || !memberJiraAccountIds(userId).contains(assignee)));
+		if (handsAway) {
+			throw new IntegrationException(
+					IntegrationErrorCode.NOT_TEAM_LEADER,
+					HttpStatus.FORBIDDEN,
+					"Only the Team Leader can unassign a task or assign it to someone else.");
+		}
+	}
+
+	/** A Member's new task is always theirs: default to, and only allow, their own linked Jira account. */
+	private String memberSelfAssignee(UUID userId, String requestedAssignee) {
+		List<String> own = memberJiraAccountIds(userId);
+		if (own.isEmpty()) {
+			throw new IntegrationException(
+					IntegrationErrorCode.JIRA_ACCOUNT_NOT_LINKED_TO_CURRENT_USER,
+					HttpStatus.FORBIDDEN,
+					"Link your Jira account before creating tasks.");
+		}
+		if (requestedAssignee == null || requestedAssignee.isBlank()) {
+			return own.get(0);
+		}
+		if (!own.contains(requestedAssignee)) {
+			throw new IntegrationException(
+					IntegrationErrorCode.TASK_NOT_ASSIGNED_TO_YOU,
+					HttpStatus.FORBIDDEN,
+					"Members can only create tasks assigned to themselves.");
+		}
+		return requestedAssignee;
+	}
+
+	/** Same identity statuses the task projection uses to resolve a Jira assignee to a student. */
+	private List<String> memberJiraAccountIds(UUID userId) {
+		return identities
+				.findFetchedByUserAccount_IdInAndProviderAndMappingStatusIn(
+						List.of(userId), IntegrationProvider.JIRA, JiraTaskProjectionService.ACTIVE_STATUSES)
+				.stream()
+				.map(IdentityMap::getExternalAccountId)
+				.filter(id -> id != null && !id.isBlank())
+				.distinct()
+				.toList();
 	}
 
 	private Task requireTask(UUID projectId, UUID taskId) {

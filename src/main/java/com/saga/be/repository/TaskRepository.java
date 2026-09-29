@@ -293,6 +293,8 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 
 	boolean existsByParentTask_IdAndDeletedAtIsNull(UUID parentTaskId);
 
+	boolean existsByIdAndAssigneeStudent_UserAccount_Id(UUID id, UUID userId);
+
 	@Query(
 			"""
 			select t.id, t.title, t.status
