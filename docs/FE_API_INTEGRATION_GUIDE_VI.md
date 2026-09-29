@@ -990,7 +990,9 @@ Bộ lọc sprint — `?sprintId=<uuid sprint local>` (tuỳ chọn):
 | `sprintMetrics` | **Mới.** Số liệu cá nhân **trong sprint được chọn**: `{ sprintId, startDate, endDate, tasks, commits }`. `tasks` = task gán cho chính SV có `sprint = sprint được chọn` (cùng shape `myMetrics.tasks`). `commits` = commit V23 của SV có ngày `committedAt` trong `[startDate, endDate]` (cùng shape `myMetrics.commits`; `lastCommittedAt` chỉ dùng `committedAt`). `null` khi không có sprint được chọn. `commits = null` và `startDate = null` khi sprint chưa có ngày bắt đầu |
 | `sprintMetrics.endDate` | `endDate` của sprint, không có thì `completeDate`, không có nữa thì hôm nay |
 | `weeklyCommits` | Theo sprint được chọn (xem Phase B2 bên dưới) |
-| **Không đổi theo sprint** | `myMetrics` (thẻ "Toàn dự án"), `myActiveTasks`, `recentCommits`, `actionableAlerts` |
+| `myActiveTasks` | Chỉ task **thuộc sprint được chọn** (task chưa DONE + task DONE bị MSR anomaly của sprint đó). Cùng cap 10 / thứ tự như cũ |
+| `recentCommits` | Chỉ commit có ngày `committedAt` trong `[sprintMetrics.startDate, sprintMetrics.endDate]`, mới nhất trước (`committedAt DESC, id DESC`), cap 5. Sprint thiếu `startDate` → toàn project như cũ |
+| **Không đổi theo sprint** | `myMetrics` (thẻ "Toàn dự án"), `actionableAlerts` (MSR alert vẫn toàn project — mọi `hasAnomaly=true` trong preview vẫn có alert khớp) |
 
 FE: donut "Phân bổ nhiệm vụ của tôi" nên đọc `sprintMetrics.tasks` (fallback `myMetrics.tasks` khi `sprintMetrics` null) để đổi theo sprint.
 

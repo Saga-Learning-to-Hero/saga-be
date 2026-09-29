@@ -234,6 +234,30 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId, Pageable pageable);
 
 	/**
+	 * Recent personal V23 commits whose raw {@code committedAt} falls in
+	 * {@code [rangeStart, rangeEndExclusive)} (the student dashboard's selected-sprint window),
+	 * repo fetched. No {@code createdAt} fallback. Pass an unsorted pageable.
+	 */
+	@Query(
+			"""
+			select c from GitCommit c
+			join fetch c.repo
+			where c.repo.project.id = :projectId
+			  and c.authorStudent.id = :studentId
+			  and (c.parentCount is null or c.parentCount <= 1)
+			  and c.committedAt is not null
+			  and c.committedAt >= :rangeStart
+			  and c.committedAt < :rangeEndExclusive
+			order by c.committedAt desc, c.id desc
+			""")
+	List<GitCommit> findRecentAuthoredV23ByProjectInRange(
+			@Param("projectId") UUID projectId,
+			@Param("studentId") UUID studentId,
+			@Param("rangeStart") LocalDateTime rangeStart,
+			@Param("rangeEndExclusive") LocalDateTime rangeEndExclusive,
+			Pageable pageable);
+
+	/**
 	 * Student dashboard weekly commits — {@code Object[]{UUID id, LocalDateTime committedAt}}.
 	 * {@code committedAt} only (nulls excluded). V23 authored rows on the team project.
 	 */

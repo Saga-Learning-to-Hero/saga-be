@@ -14,4 +14,5 @@ public record StudentDashboardAnomalyCandidateRow(
 		Priority priority,
 		Integer storyPoint,
 		LocalDateTime dueDate,
-		String labelsJson) {}
+		String labelsJson,
+		UUID sprintId) {}

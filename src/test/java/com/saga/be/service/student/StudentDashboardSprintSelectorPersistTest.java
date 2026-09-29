@@ -249,6 +249,10 @@ class StudentDashboardSprintSelectorPersistTest {
 		assertThat(viaClosed.sprintMetrics().tasks().totalAssigned()).isEqualTo(2);
 		assertThat(viaClosed.sprintMetrics().tasks().done()).isEqualTo(2);
 		assertThat(viaClosed.sprintMetrics().commits().totalCommits()).isZero();
+		assertThat(viaActive.myActiveTasks()).hasSize(1);
+		assertThat(viaActive.myActiveTasks().getFirst().status()).isEqualTo("IN_PROGRESS");
+		assertThat(viaClosed.myActiveTasks()).isEmpty();
+		assertThat(viaActive.recentCommits()).isEmpty();
 		assertThat(viaActive.myMetrics()).isEqualTo(viaClosed.myMetrics());
 		assertThat(viaActive.myMetrics().tasks().totalAssigned()).isEqualTo(3);
 

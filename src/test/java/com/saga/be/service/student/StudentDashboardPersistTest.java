@@ -418,7 +418,8 @@ class StudentDashboardPersistTest {
 		stats.clear();
 		tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
 		long first = stats.getPrepareStatementCount();
-		assertThat(first).as("Phase A+B1+B2+D1 empty personal work stays bounded").isEqualTo(15L);
+		// Includes the selected-sprint personal task count.
+		assertThat(first).as("Phase A+B1+B2+D1 empty personal work stays bounded").isEqualTo(16L);
 
 		tx.executeWithoutResult(status -> {
 			Course course = courses.findById(fixture.courseId).orElseThrow();
@@ -695,10 +696,10 @@ class StudentDashboardPersistTest {
 			Project project = projects.findById(fixture.projectId).orElseThrow();
 			StudentProfile member = profileOf(fixture.memberId);
 			JiraIntegration jira = jiraIntegrations.save(jira(project, IntegrationStatus.ACTIVE));
-			sprints.save(sprint(jira, "active", LocalDateTime.of(2026, 9, 1, 0, 0)));
+			Sprint active = sprints.save(sprint(jira, "active", LocalDateTime.of(2026, 9, 1, 0, 0)));
 			GitRepo repo = repos.save(repo(project, 51L, "org/load", IntegrationStatus.ACTIVE));
 			for (int i = 0; i < 10; i++) {
-				tasks.save(assigned(project, null, member, TaskStatus.TODO, Priority.LOW, 1, null, null, "SAGA-T" + i));
+				tasks.save(assigned(project, active, member, TaskStatus.TODO, Priority.LOW, 1, null, null, "SAGA-T" + i));
 			}
 			for (int i = 0; i < 5; i++) {
 				persistCommit(repo, member, "load" + i + "aaaaaaa", 1, LocalDateTime.of(2026, 9, i + 1, 0, 0), "c" + i);
@@ -710,7 +711,8 @@ class StudentDashboardPersistTest {
 		stats.clear();
 		tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
 		long first = stats.getPrepareStatementCount();
-		assertThat(first).as("Phase A+B1+B2+D1 with 10 tasks / 5 commits stays bounded").isEqualTo(18L);
+		// Includes the selected-sprint task count and the sprint-window linked-commit count.
+		assertThat(first).as("Phase A+B1+B2+D1 with 10 tasks / 5 commits stays bounded").isEqualTo(20L);
 
 		tx.executeWithoutResult(status -> {
 			Project project = projects.findById(fixture.projectId).orElseThrow();
@@ -719,8 +721,9 @@ class StudentDashboardPersistTest {
 					.filter(row -> "org/load".equals(row.getFullName()))
 					.findFirst()
 					.orElseThrow();
+			Sprint active = sprints.findActiveByProject_Id(fixture.projectId).getFirst();
 			for (int i = 10; i < 100; i++) {
-				tasks.save(assigned(project, null, member, TaskStatus.TODO, Priority.LOW, 1, null, null, "SAGA-T" + i));
+				tasks.save(assigned(project, active, member, TaskStatus.TODO, Priority.LOW, 1, null, null, "SAGA-T" + i));
 			}
 			for (int i = 5; i < 100; i++) {
 				persistCommit(repo, member, "load" + i + "bbbbbbb", 1, LocalDateTime.of(2026, 8, 1, 0, 0).plusHours(i), "c" + i);
@@ -790,11 +793,11 @@ class StudentDashboardPersistTest {
 			Project project = projects.findById(fixture.projectId).orElseThrow();
 			StudentProfile member = profileOf(fixture.memberId);
 			JiraIntegration jira = jiraIntegrations.save(jira(project, IntegrationStatus.ACTIVE));
-			sprints.save(sprint(jira, "active", LocalDateTime.of(2026, 9, 1, 0, 0)));
+			Sprint active = sprints.save(sprint(jira, "active", LocalDateTime.of(2026, 9, 1, 0, 0)));
 			for (int i = 1; i <= 12; i++) {
 				tasks.save(assigned(
 						project,
-						null,
+						active,
 						member,
 						TaskStatus.DONE,
 						Priority.MEDIUM,
@@ -850,7 +853,7 @@ class StudentDashboardPersistTest {
 			Project project = projects.findById(fixture.projectId).orElseThrow();
 			StudentProfile member = profileOf(fixture.memberId);
 			JiraIntegration jira = jiraIntegrations.save(jira(project, IntegrationStatus.ACTIVE));
-			sprints.save(sprint(jira, "active", LocalDateTime.of(2026, 9, 1, 0, 0)));
+			Sprint active = sprints.save(sprint(jira, "active", LocalDateTime.of(2026, 9, 1, 0, 0)));
 			for (int i = 0; i < 10; i++) {
 				tasks.save(assigned(
 						project,
@@ -863,7 +866,7 @@ class StudentDashboardPersistTest {
 						"[\"saga:code\",\"saga:test\"]",
 						"SAGA-C" + i));
 			}
-			tasks.save(assigned(project, null, member, TaskStatus.TODO, Priority.LOW, 1, null, null, "SAGA-OPEN"));
+			tasks.save(assigned(project, active, member, TaskStatus.TODO, Priority.LOW, 1, null, null, "SAGA-OPEN"));
 			entityManager.flush();
 		});
 		Statistics stats = statistics();
@@ -871,7 +874,8 @@ class StudentDashboardPersistTest {
 		stats.clear();
 		tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
 		long first = stats.getPrepareStatementCount();
-		assertThat(first).as("Phase A+B1+B2+D1 with 10 coarse DONE candidates stays bounded").isEqualTo(16L);
+		// Includes the selected-sprint personal task count.
+		assertThat(first).as("Phase A+B1+B2+D1 with 10 coarse DONE candidates stays bounded").isEqualTo(17L);
 
 		tx.executeWithoutResult(status -> {
 			Project project = projects.findById(fixture.projectId).orElseThrow();
@@ -888,9 +892,10 @@ class StudentDashboardPersistTest {
 						"[\"saga:code\",\"saga:test\"]",
 						"SAGA-C" + i));
 			}
+			// The preview follows the current sprint, so the real anomaly lives in it.
 			tasks.save(assigned(
 					project,
-					null,
+					sprints.findActiveByProject_Id(fixture.projectId).getFirst(),
 					member,
 					TaskStatus.DONE,
 					Priority.HIGH,
@@ -1112,7 +1117,8 @@ class StudentDashboardPersistTest {
 		long firstCount = stats.getPrepareStatementCount();
 		assertThat(first.actionableAlerts()).hasSize(1);
 		assertThat(first.actionableAlerts().getFirst().remainingPeers()).isEqualTo(2);
-		assertThat(firstCount).as("D1 with current sprint and 3 candidates stays bounded").isEqualTo(15L);
+		// Includes the selected-sprint personal task count.
+		assertThat(firstCount).as("D1 with current sprint and 3 candidates stays bounded").isEqualTo(16L);
 
 		tx.executeWithoutResult(status -> {
 			Course course = courses.findById(fixture.courseId).orElseThrow();

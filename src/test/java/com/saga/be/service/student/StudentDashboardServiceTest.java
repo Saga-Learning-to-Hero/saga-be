@@ -728,6 +728,61 @@ class StudentDashboardServiceTest {
 	}
 
 	@Test
+	void selectedSprintScopesActiveTasksAndRecentCommitsButMsrAlertsStayProjectWide() {
+		Team team = team(project());
+		UUID projectId = team.getProject().getId();
+		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
+				.thenReturn(Optional.of(enrollment));
+		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
+				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
+		when(members.countActiveByTeam_Id(team.getId())).thenReturn(1L);
+		stubEmptyIntegrations(projectId);
+		Sprint sprint4 = sprint("closed");
+		sprint4.setStartDate(LocalDateTime.of(2026, 9, 6, 9, 0));
+		sprint4.setEndDate(LocalDateTime.of(2026, 9, 19, 17, 0));
+		Sprint sprint5 = sprint("active");
+		when(sprints.findActiveByIdAndProject_Id(sprint4.getId(), projectId)).thenReturn(Optional.of(sprint4));
+		Task anomalyIn4 = assignedTask(TaskStatus.DONE, Priority.HIGH, null, "[\"saga:code\"]");
+		anomalyIn4.setSprint(sprint4);
+		Task anomalyIn5 = assignedTask(TaskStatus.DONE, Priority.HIGH, null, "[\"saga:code\"]");
+		anomalyIn5.setSprint(sprint5);
+		Task anomalyInBacklog = assignedTask(TaskStatus.DONE, Priority.HIGH, null, "[\"saga:code\"]");
+		Task openIn4 = assignedTask(TaskStatus.IN_PROGRESS, Priority.MEDIUM, null, null);
+		openIn4.setSprint(sprint4);
+		when(tasks.findDoneWithoutV23EvidenceCandidates(projectId, profile.getId()))
+				.thenReturn(List.of(candidate(anomalyIn4), candidate(anomalyIn5), candidate(anomalyInBacklog)));
+		when(tasks.findAttentionNonDoneByProjectAndAssigneeAndSprint(
+						eq(projectId), eq(profile.getId()), eq(sprint4.getId()), any(Pageable.class)))
+				.thenReturn(List.of(openIn4));
+		GitRepo repo = new GitRepo();
+		repo.setFullName("org/saga");
+		GitCommit inSprint = new GitCommit();
+		inSprint.setId(UUID.randomUUID());
+		inSprint.setShaHash("abc1234567");
+		inSprint.setRepo(repo);
+		inSprint.setCommittedAt(LocalDateTime.of(2026, 9, 18, 10, 0));
+		when(commits.findRecentAuthoredV23ByProjectInRange(
+						eq(projectId),
+						eq(profile.getId()),
+						eq(LocalDateTime.of(2026, 9, 6, 0, 0)),
+						eq(LocalDateTime.of(2026, 9, 20, 0, 0)),
+						any(Pageable.class)))
+				.thenReturn(List.of(inSprint));
+
+		StudentDashboardResponse response = service.get(account.getId(), course.getId(), sprint4.getId());
+
+		assertEquals(2, response.myActiveTasks().size());
+		assertEquals(anomalyIn4.getId(), response.myActiveTasks().get(0).id());
+		assertTrue(response.myActiveTasks().get(0).hasAnomaly());
+		assertEquals(openIn4.getId(), response.myActiveTasks().get(1).id());
+		assertEquals(1, response.recentCommits().size());
+		assertEquals("abc1234", response.recentCommits().getFirst().shortSha());
+		assertEquals(3, response.actionableAlerts().size());
+		verify(tasks, never()).findAttentionNonDoneByProjectAndAssignee(any(), any(), any());
+		verify(commits, never()).findRecentAuthoredV23ByProject(any(), any(), any());
+	}
+
+	@Test
 	void activeSprintTimelineStopsAtTodayAndFutureSprintIsEmpty() {
 		Team team = team(project());
 		UUID projectId = team.getProject().getId();
@@ -750,7 +805,7 @@ class StudentDashboardServiceTest {
 		assertEquals(5, current.weeklyCommits().size());
 		assertEquals(LocalDate.of(2026, 9, 16), current.weeklyCommits().getFirst().startDate());
 		assertEquals(LocalDate.of(2026, 9, 20), current.weeklyCommits().getLast().endDate());
-		assertEquals(LocalDate.of(2026, 9, 28), current.sprintMetrics().endDate());
+		assertEquals(LocalDate.of(2026, 9, 29), current.sprintMetrics().endDate());
 		assertEquals(0L, current.sprintMetrics().commits().totalCommits());
 		assertNull(current.sprintMetrics().commits().traceabilityPercent());
 		verify(commitLinks, never()).countDistinctLinkedAuthoredV23InRange(any(), any(), any(), any());
@@ -1149,7 +1204,8 @@ class StudentDashboardServiceTest {
 				task.getPriority(),
 				task.getStoryPoint(),
 				task.getDueDate(),
-				task.getLabelsJson());
+				task.getLabelsJson(),
+				task.getSprint() == null ? null : task.getSprint().getId());
 	}
 
 	private Task assignedTask(TaskStatus status, Priority priority, LocalDateTime due, String labelsJson) {

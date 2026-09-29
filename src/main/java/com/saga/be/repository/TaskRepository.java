@@ -441,14 +441,47 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			@Param("projectId") UUID projectId, @Param("studentId") UUID studentId, Pageable pageable);
 
 	/**
+	 * Same as {@link #findAttentionNonDoneByProjectAndAssignee} limited to one local sprint (the
+	 * student dashboard's selected sprint).
+	 */
+	@Query(
+			"""
+			select t from Task t
+			where t.project.id = :projectId
+			  and t.assigneeStudent.id = :studentId
+			  and t.sprint.id = :sprintId
+			  and t.deletedAt is null
+			  and t.status <> com.saga.be.entity.enums.TaskStatus.DONE
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
+			order by
+			  case when t.dueDate is null then 1 else 0 end,
+			  t.dueDate asc,
+			  case t.priority
+			    when com.saga.be.entity.enums.Priority.HIGHEST then 5
+			    when com.saga.be.entity.enums.Priority.HIGH then 4
+			    when com.saga.be.entity.enums.Priority.MEDIUM then 3
+			    when com.saga.be.entity.enums.Priority.LOW then 2
+			    when com.saga.be.entity.enums.Priority.LOWEST then 1
+			    else 0
+			  end desc,
+			  t.id asc
+			""")
+	List<Task> findAttentionNonDoneByProjectAndAssigneeAndSprint(
+			@Param("projectId") UUID projectId,
+			@Param("studentId") UUID studentId,
+			@Param("sprintId") UUID sprintId,
+			Pageable pageable);
+
+	/**
 	 * All personal DONE tasks with zero V23 coding-evidence links. Uncapped lightweight projection
 	 * so Java can apply {@code ReservedContributionMarkerClassifier} without a hidden row cutoff.
 	 */
 	@Query(
 			"""
 			select new com.saga.be.repository.StudentDashboardAnomalyCandidateRow(
-			    t.id, t.externalKey, t.title, t.status, t.priority, t.storyPoint, t.dueDate, t.labelsJson)
+			    t.id, t.externalKey, t.title, t.status, t.priority, t.storyPoint, t.dueDate, t.labelsJson, s.id)
 			from Task t
+			left join t.sprint s
 			where t.project.id = :projectId
 			  and t.assigneeStudent.id = :studentId
 			  and t.deletedAt is null

@@ -165,9 +165,10 @@ public class StudentDashboardService {
 	 * reflects the project's current active sprint. When {@code sprintId} is given, it must be a
 	 * local {@link Sprint#getId()} belonging to this student's own project (never resolved by
 	 * {@code externalSprintId}, name, or any Jira-source inference). The selected sprint (explicit,
-	 * else current) populates {@code currentSprint}, {@code sprintMetrics} and the daily
-	 * {@code weeklyCommits} timeline. Actionable alerts (MSR, ghosting, peer-review-pending),
-	 * {@code myMetrics}, {@code myActiveTasks} and {@code recentCommits} are current/project-wide by
+	 * else current) populates {@code currentSprint}, {@code sprintMetrics}, the daily
+	 * {@code weeklyCommits} timeline, {@code myActiveTasks} (that sprint's tasks) and
+	 * {@code recentCommits} (that sprint's date window). Actionable alerts (MSR, ghosting,
+	 * peer-review-pending) and {@code myMetrics} are current/project-wide by
 	 * contract and are computed against the project's real current sprint / all-time data exactly
 	 * as before, regardless of {@code sprintId} -- selecting an old sprint must never fabricate a
 	 * historical snapshot of state this schema does not actually persist (task's live status,
@@ -234,8 +235,8 @@ public class StudentDashboardService {
 				new StudentDashboardIntegrationsResponse(jiraSummary(projectId), github.dto()),
 				selectedSprint == null ? null : toSprintDto(selectedSprint, projectId),
 				new StudentDashboardMetricsResponse(taskMetrics, commitMetrics(projectId, studentId)),
-				activeTasks(projectId, studentId, anomalies),
-				recentCommits(projectId, studentId),
+				activeTasks(projectId, studentId, anomalies, selectedSprint),
+				recentCommits(projectId, studentId, window),
 				window == null ? weeklyCommits(projectId, studentId) : dailyCommits(window, windowCommits),
 				actionableAlerts(
 						course.getId(),
@@ -538,17 +539,22 @@ public class StudentDashboardService {
 				.toList();
 	}
 
+	/**
+	 * With a selected sprint, the preview holds only that sprint's tasks (open ones plus its MSR
+	 * anomalies); MSR alerts stay project-wide, so every previewed anomaly still has its alert.
+	 */
 	private List<StudentDashboardActiveTaskResponse> activeTasks(
-			UUID projectId, UUID studentId, List<AttentionRow> anomalies) {
-		List<AttentionRow> open = tasks
-				.findAttentionNonDoneByProjectAndAssignee(
-						projectId, studentId, PageRequest.of(0, ACTIVE_TASK_PREVIEW_LIMIT))
-				.stream()
-				.map(StudentDashboardService::toOpenRow)
-				.toList();
+			UUID projectId, UUID studentId, List<AttentionRow> anomalies, Sprint selectedSprint) {
+		PageRequest top = PageRequest.of(0, ACTIVE_TASK_PREVIEW_LIMIT);
+		List<Task> openTasks = selectedSprint == null
+				? tasks.findAttentionNonDoneByProjectAndAssignee(projectId, studentId, top)
+				: tasks.findAttentionNonDoneByProjectAndAssigneeAndSprint(projectId, studentId, selectedSprint.getId(), top);
+		List<AttentionRow> open = openTasks.stream().map(StudentDashboardService::toOpenRow).toList();
 		Map<UUID, AttentionRow> unique = new LinkedHashMap<>();
 		for (AttentionRow row : anomalies) {
-			unique.put(row.id(), row);
+			if (selectedSprint == null || selectedSprint.getId().equals(row.sprintId())) {
+				unique.put(row.id(), row);
+			}
 		}
 		for (AttentionRow row : open) {
 			unique.putIfAbsent(row.id(), row);
@@ -728,9 +734,18 @@ public class StudentDashboardService {
 		return counts;
 	}
 
-	private List<StudentDashboardRecentCommitResponse> recentCommits(UUID projectId, UUID studentId) {
-		List<GitCommit> rows = commits.findRecentAuthoredV23ByProject(
-				projectId, studentId, PageRequest.of(0, RECENT_COMMIT_LIMIT));
+	/** With a sprint window, only commits whose raw {@code committedAt} falls inside it. */
+	private List<StudentDashboardRecentCommitResponse> recentCommits(
+			UUID projectId, UUID studentId, SprintWindow window) {
+		PageRequest top = PageRequest.of(0, RECENT_COMMIT_LIMIT);
+		List<GitCommit> rows = window == null
+				? commits.findRecentAuthoredV23ByProject(projectId, studentId, top)
+				: commits.findRecentAuthoredV23ByProjectInRange(
+						projectId,
+						studentId,
+						window.start().atStartOfDay(),
+						window.endInclusive().plusDays(1).atStartOfDay(),
+						top);
 		if (rows.isEmpty()) {
 			return List.of();
 		}
@@ -816,6 +831,7 @@ public class StudentDashboardService {
 				row.priority(),
 				row.storyPoint(),
 				row.dueDate(),
+				row.sprintId(),
 				true);
 	}
 
@@ -828,6 +844,7 @@ public class StudentDashboardService {
 				task.getPriority(),
 				task.getStoryPoint(),
 				task.getDueDate(),
+				task.getSprint() == null ? null : task.getSprint().getId(),
 				false);
 	}
 
@@ -853,6 +870,7 @@ public class StudentDashboardService {
 			Priority priority,
 			Integer storyPoints,
 			LocalDateTime dueDate,
+			UUID sprintId,
 			boolean anomaly) {}
 
 	static int priorityRank(Priority priority) {

@@ -20,17 +20,24 @@ public record StudentDashboardResponse(
 								"The selected sprint's stats. With no ?sprintId= query param, this is the project's "
 										+ "current active sprint (null when there is none). With ?sprintId=, this is that "
 										+ "local Sprint's stats instead (historical/completed sprints allowed). The same "
-										+ "sprint also drives sprintMetrics and weeklyCommits; myMetrics, myActiveTasks, "
-										+ "recentCommits and actionableAlerts stay current/project-wide.")
+										+ "sprint also drives sprintMetrics, weeklyCommits, myActiveTasks and recentCommits; "
+										+ "myMetrics and actionableAlerts stay current/project-wide.")
 				StudentDashboardSprintResponse currentSprint,
 		@Schema(
 						description =
 								"Project-wide, never sprint-scoped. Null when there is no team project. Empty zeros "
 										+ "when the student has no personal work.")
 				StudentDashboardMetricsResponse myMetrics,
-		@Schema(description = "Needs-attention preview, cap 10. Empty when no team project or no matching tasks.")
+		@Schema(
+						description =
+								"Needs-attention preview, cap 10: only the selected sprint's tasks when currentSprint "
+										+ "is non-null, else project-wide. Empty when no team project or no matching tasks.")
 				List<StudentDashboardActiveTaskResponse> myActiveTasks,
-		@Schema(description = "Recent personal V23 commits, cap 5. Empty when no team project or no commits.")
+		@Schema(
+						description =
+								"Recent personal V23 commits, cap 5: only commits whose committedAt date falls in the "
+										+ "selected sprint's [startDate, endDate] when that window exists, else project-wide. "
+										+ "Empty when no team project or no commits.")
 				List<StudentDashboardRecentCommitResponse> recentCommits,
 		@Schema(
 						description =
