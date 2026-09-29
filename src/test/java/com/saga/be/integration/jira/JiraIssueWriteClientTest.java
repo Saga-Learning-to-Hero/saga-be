@@ -27,6 +27,7 @@ import org.springframework.http.converter.FormHttpMessageConverter;
 import org.springframework.http.converter.ResourceHttpMessageConverter;
 import org.springframework.http.converter.StringHttpMessageConverter;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.test.json.JsonCompareMode;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
@@ -919,6 +920,55 @@ class JiraIssueWriteClientTest {
 				.andRespond(withSuccess());
 
 		client.updateIssueFields("token", "cloud-13", "10001", Map.of("summary", "New title"));
+		server.verify();
+	}
+
+	@Test
+	void updateIssueFields_unchangedNonEditableIssueType_isDroppedAndRestIsWritten() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-14/rest/api/3/issue/10001/editmeta"))
+				.andRespond(withSuccess(
+						"""
+						{"fields":{"summary":{"operations":["set"]}}}
+						""",
+						MediaType.APPLICATION_JSON));
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-14/rest/api/3/issue/10001?fields=issuetype"))
+				.andRespond(withSuccess(
+						"""
+						{"fields":{"issuetype":{"id":"10005","name":"Task"}}}
+						""",
+						MediaType.APPLICATION_JSON));
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-14/rest/api/3/issue/10001"))
+				.andExpect(method(HttpMethod.PUT))
+				.andExpect(content().json("""
+						{"fields":{"summary":"New title"}}
+						""", JsonCompareMode.STRICT))
+				.andRespond(withSuccess());
+
+		client.updateIssueFields(
+				"token", "cloud-14", "10001", Map.of("summary", "New title", "issuetype", Map.of("id", "10005")));
+		server.verify();
+	}
+
+	@Test
+	void updateIssueFields_realIssueTypeChangeOnNonEditableType_stillRejected() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-15/rest/api/3/issue/10001/editmeta"))
+				.andRespond(withSuccess(
+						"""
+						{"fields":{"summary":{"operations":["set"]}}}
+						""",
+						MediaType.APPLICATION_JSON));
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-15/rest/api/3/issue/10001?fields=issuetype"))
+				.andRespond(withSuccess(
+						"""
+						{"fields":{"issuetype":{"id":"10005","name":"Task"}}}
+						""",
+						MediaType.APPLICATION_JSON));
+
+		assertThatThrownBy(() -> client.updateIssueFields(
+						"token", "cloud-15", "10001", Map.of("issuetype", Map.of("id", "10004"))))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.JIRA_FIELD_INVALID);
 		server.verify();
 	}
 

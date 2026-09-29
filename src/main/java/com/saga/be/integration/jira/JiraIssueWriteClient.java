@@ -12,6 +12,7 @@ import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -48,6 +49,7 @@ public class JiraIssueWriteClient {
 	private static final Set<String> STORY_POINT_SCHEMA_CUSTOM_TYPES = Set.of(
 			"com.atlassian.jira.plugin.system.customfieldtypes:float", "com.pyxis.greenhopper.jira:jsw-story-points");
 
+	private static final String ISSUE_TYPE_FIELD = "issuetype";
 	private static final String SPRINT_EXACT_NAME = "sprint";
 
 	/** Company-managed Sprint field's schema custom type. Not assumed present on Team-managed. */
@@ -301,6 +303,18 @@ public class JiraIssueWriteClient {
 		}
 		Set<String> editableFieldIds = fetchEditableFieldIds(accessToken, cloudId, issueIdOrKey);
 		if (editableFieldIds != null) {
+			if (!editableFieldIds.contains(ISSUE_TYPE_FIELD)
+					&& fieldUpdates.containsKey(ISSUE_TYPE_FIELD)
+					&& isCurrentIssueType(accessToken, cloudId, issueIdOrKey, fieldUpdates.get(ISSUE_TYPE_FIELD))) {
+				// Re-sending the issue's current type is a no-op, not a type change: drop it instead of
+				// failing the whole edit on a field Jira only lets you change via "Move".
+				Map<String, Object> withoutType = new LinkedHashMap<>(fieldUpdates);
+				withoutType.remove(ISSUE_TYPE_FIELD);
+				if (withoutType.isEmpty()) {
+					return;
+				}
+				fieldUpdates = withoutType;
+			}
 			List<String> notEditable = fieldUpdates.keySet().stream()
 					.filter(fieldId -> !editableFieldIds.contains(fieldId))
 					.toList();
@@ -366,6 +380,37 @@ public class JiraIssueWriteClient {
 		} catch (Exception ex) {
 			log.warn("jira operation=editmeta result=FETCH_FAILED type={}", ex.getClass().getSimpleName());
 			return null;
+		}
+	}
+
+	/**
+	 * True only when Jira confirms the issue's current type id equals the requested
+	 * {@code {"id": ...}} value; any fetch/parse failure answers false so the caller keeps the
+	 * normal FIELD_NOT_EDITABLE rejection.
+	 */
+	private boolean isCurrentIssueType(String accessToken, String cloudId, String issueIdOrKey, Object requested) {
+		Object requestedId = requested instanceof Map<?, ?> map ? map.get("id") : null;
+		if (requestedId == null) {
+			return false;
+		}
+		try {
+			String raw = restClient
+					.get()
+					.uri(
+							"https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issue}?fields=issuetype",
+							cloudId,
+							issueIdOrKey)
+					.header("Authorization", "Bearer " + accessToken)
+					.retrieve()
+					.body(String.class);
+			if (raw == null || raw.isBlank()) {
+				return false;
+			}
+			String currentId = mapper.readTree(raw).path("fields").path("issuetype").path("id").asText("");
+			return !currentId.isEmpty() && currentId.equals(String.valueOf(requestedId));
+		} catch (Exception ex) {
+			log.warn("jira operation=currentIssueType result=FETCH_FAILED type={}", ex.getClass().getSimpleName());
+			return false;
 		}
 	}
 
