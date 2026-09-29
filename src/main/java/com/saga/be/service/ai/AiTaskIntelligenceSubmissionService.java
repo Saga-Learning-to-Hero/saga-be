@@ -25,7 +25,7 @@ public class AiTaskIntelligenceSubmissionService {
 	private final ProjectDataAuthorization auth; private final TaskRepository tasks; private final AiTaskIntelligenceSnapshotBuilder snapshots; private final AiAnalysisRunRepository runs; private final AiAnalysisEvidenceRepository evidence; private final AiAnalysisProviderDecisionRepository decisions; private final AiAnalysisExecutor executor; private final List<AiModelProvider> providers; private final TransactionTemplate tx; private final AiCredentialResolver credentialResolver; private final CourseAiSettingsService courseSettings;
 
 	public AiTaskIntelligenceSubmissionService(ProjectDataAuthorization auth, TaskRepository tasks, AiTaskIntelligenceSnapshotBuilder snapshots, AiAnalysisRunRepository runs, AiAnalysisEvidenceRepository evidence, AiAnalysisProviderDecisionRepository decisions, AiAnalysisExecutor executor, List<AiModelProvider> providers, PlatformTransactionManager manager, AiCredentialResolver credentialResolver, CourseAiSettingsService courseSettings) {
-		this.auth = auth; this.tasks = tasks; this.snapshots = snapshots; this.runs = runs; this.evidence = evidence; this.decisions = decisions; this.executor = executor; this.providers = providers; this.tx = new TransactionTemplate(manager); this.credentialResolver = credentialResolver; this.courseSettings = courseSettings;
+		this.auth = auth; this.tasks = tasks; this.snapshots = snapshots; this.runs = runs; this.evidence = evidence; this.decisions = decisions; this.executor = executor; this.providers = providers; this.tx = AiSubmissionTransactions.requiresNew(manager); this.credentialResolver = credentialResolver; this.courseSettings = courseSettings;
 	}
 
 	public record Submission(AiAnalysisRun run, boolean created) {}
