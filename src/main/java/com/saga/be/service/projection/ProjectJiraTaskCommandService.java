@@ -33,7 +33,10 @@ import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
 import com.saga.be.repository.TaskWebLinkRepository;
 import com.saga.be.repository.TaskWorkSessionRepository;
+import com.saga.be.service.contribution.SagaTaskLabelPolicy;
+import com.saga.be.service.contribution.TaskLabelParser;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -150,11 +153,14 @@ public class ProjectJiraTaskCommandService {
 				users,
 				new ProjectTaskOptionsResponse.EstimationOption(
 						estimation.supported(), estimation.fieldId(), estimation.fieldName()),
-				sprints);
+				sprints,
+				SagaTaskLabelPolicy.ALLOWED);
 	}
 
 	public ProjectTaskResponse create(UUID userId, UUID projectId, CreateProjectTaskRequest request) {
 		RoleInTeam role = authorization.requireStudentTeamMember(userId, projectId);
+		requirePersonalIntegrations(userId);
+		List<String> labels = SagaTaskLabelPolicy.forCreate(request.labels());
 		String assigneeAccountId = role == RoleInTeam.LEADER
 				? request.assigneeAccountId()
 				: memberSelfAssignee(userId, request.assigneeAccountId());
@@ -176,11 +182,11 @@ public class ProjectJiraTaskCommandService {
 				assigneeAccountId,
 				request.priorityId(),
 				null,
-				request.labels(),
+				labels,
 				request.dueDate(),
 				request.startDate()) : jiraWrite.createIssue(
 				access, integration.getCloudId(), integration.getJiraProjectId(), request.summary(), request.description(),
-				request.issueTypeId(), assigneeAccountId, request.priorityId(), null, request.labels(),
+				request.issueTypeId(), assigneeAccountId, request.priorityId(), null, labels,
 				request.dueDate(), request.startDate(), jiraParentIssueId);
 
 		boolean secondaryFailed = false;
@@ -259,6 +265,7 @@ public class ProjectJiraTaskCommandService {
 			hierarchy.validateAssignable(projectId, taskId, nativeParentId);
 		}
 		Task task = requireTask(projectId, taskId);
+		List<String> labels = SagaTaskLabelPolicy.forPatch(TaskLabelParser.parse(task.getLabelsJson()), request.labels());
 		JiraIntegration integration = requireJiraForTask(projectId, task);
 		String access = tokens.accessToken(integration);
 		String issueRef = issueRef(task);
@@ -298,10 +305,11 @@ public class ProjectJiraTaskCommandService {
 		}
 		// PATCH semantics: labels omitted (null) -> preserve Jira's current labels (do not send the
 		// field at all). Explicitly [] -> clears all labels. A non-empty list -> replaces with
-		// exactly that list. "labels" is a standard Jira system field, always on the edit screen
+		// exactly that list (already vetted by SagaTaskLabelPolicy: existing labels kept, new ones
+		// must be SAGA markers). "labels" is a standard Jira system field, always on the edit screen
 		// when present, so no dynamic field id resolution is needed here.
-		if (request.labels() != null) {
-			fields.put("labels", normalizedLabels(request.labels()));
+		if (labels != null) {
+			fields.put("labels", labels);
 		}
 		// PATCH semantics (mirrors assignee/clearAssignee above): omitted (dueDate=null,
 		// clearDueDate not true) -> preserve. clearDueDate=true -> explicit clear (Jira standard
@@ -591,6 +599,31 @@ public class ProjectJiraTaskCommandService {
 		return own.get(0);
 	}
 
+	/**
+	 * Any student (Leader or Member) creating a task must have linked their own Jira and GitHub
+	 * accounts: without them the task cannot be attributed to them, nor their commits to the task.
+	 * "Linked" is the same ACTIVE/VERIFIED/PENDING set GET /api/integrations/me reports.
+	 */
+	private void requirePersonalIntegrations(UUID userId) {
+		List<String> missing = new ArrayList<>();
+		for (IntegrationProvider provider : List.of(IntegrationProvider.JIRA, IntegrationProvider.GITHUB)) {
+			boolean linked = !identities
+					.findFetchedByUserAccount_IdInAndProviderAndMappingStatusIn(
+							List.of(userId), provider, JiraTaskProjectionService.ACTIVE_STATUSES)
+					.isEmpty();
+			if (!linked) {
+				missing.add(provider.name());
+			}
+		}
+		if (!missing.isEmpty()) {
+			throw new IntegrationException(
+					IntegrationErrorCode.PERSONAL_INTEGRATION_REQUIRED,
+					HttpStatus.FORBIDDEN,
+					"Link your " + String.join(" and ", missing) + " account(s) before creating tasks.",
+					Map.of("missingProviders", missing));
+		}
+	}
+
 	/** Same identity statuses the task projection uses to resolve a Jira assignee to a student. */
 	private List<String> memberJiraAccountIds(UUID userId) {
 		return identities
@@ -648,15 +681,6 @@ public class ProjectJiraTaskCommandService {
 			return task.getExternalId();
 		}
 		return task.getExternalKey();
-	}
-
-	/**
-	 * Conservative, Jira-compatible normalization: drop null/blank entries only. Does not dedupe or
-	 * otherwise restrict label values -- Jira itself is authoritative on what a valid label is, and
-	 * no other list-valued field in this DTO layer normalizes beyond null-safety.
-	 */
-	private static List<String> normalizedLabels(List<String> labels) {
-		return labels.stream().filter(label -> label != null && !label.isBlank()).toList();
 	}
 
 	/**

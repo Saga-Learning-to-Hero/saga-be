@@ -131,6 +131,10 @@ class ProjectJiraTaskCommandServiceTest {
 		userId = UUID.randomUUID();
 		projectId = UUID.randomUUID();
 		lastEvent.set(null);
+		// Default: the caller has linked personal Jira + GitHub; tests needing otherwise override it.
+		org.mockito.Mockito.lenient()
+				.when(identities.findFetchedByUserAccount_IdInAndProviderAndMappingStatusIn(any(), any(), any()))
+				.thenReturn(List.of(identity("acc-linked")));
 		org.mockito.Mockito.lenient().when(projects.lockById(any())).thenAnswer(inv -> {
 			Project locked = new Project();
 			locked.setId(inv.getArgument(0));
@@ -244,7 +248,7 @@ class ProjectJiraTaskCommandServiceTest {
 	}
 
 	@Test
-	void create_withLabels_passesLabelsToJira() {
+	void create_withSagaLabel_passesCanonicalMarkerToJira() {
 		stubLeader();
 		JiraIntegration integration = activeJira();
 		Project project = project();
@@ -252,7 +256,7 @@ class ProjectJiraTaskCommandServiceTest {
 		when(tokens.accessToken(integration)).thenReturn("token");
 		when(jiraWrite.createIssue(
 						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
-						eq(List.of("backend", "urgent")), any(), any()))
+						eq(List.of("saga:code")), any(), any()))
 				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
 		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
@@ -262,12 +266,12 @@ class ProjectJiraTaskCommandServiceTest {
 				userId,
 				projectId,
 				new CreateProjectTaskRequest(
-						"Login", null, null, null, null, null, null, null, List.of("backend", "urgent")));
+						"Login", null, null, null, null, null, null, null, List.of(" SAGA:Code ")));
 
 		verify(jiraWrite)
 				.createIssue(
 						eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(), any(),
-						eq(List.of("backend", "urgent")), any(), any());
+						eq(List.of("saga:code")), any(), any());
 	}
 
 	@Test
@@ -371,13 +375,13 @@ class ProjectJiraTaskCommandServiceTest {
 				task.getId(),
 				new PatchProjectTaskRequest(
 						null, null, null, null, null, null, null, null, null, null, null,
-						List.of("backend", "urgent")));
+						List.of("saga:test")));
 
 		@SuppressWarnings("unchecked")
 		org.mockito.ArgumentCaptor<java.util.Map<String, Object>> captor =
 				org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
 		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
-		assertThat(captor.getValue()).containsEntry("labels", List.of("backend", "urgent"));
+		assertThat(captor.getValue()).containsEntry("labels", List.of("saga:test"));
 	}
 
 	@Test
@@ -401,7 +405,7 @@ class ProjectJiraTaskCommandServiceTest {
 						task.getId(),
 						new PatchProjectTaskRequest(
 								null, null, null, null, null, null, null, null, null, null, null,
-								List.of("backend"))))
+								List.of("saga:code"))))
 				.isInstanceOf(IntegrationException.class)
 				.extracting(ex -> ((IntegrationException) ex).getCode())
 				.isEqualTo(IntegrationErrorCode.JIRA_FIELD_INVALID);
@@ -1100,9 +1104,123 @@ class ProjectJiraTaskCommandServiceTest {
 		assertThatThrownBy(() -> service.create(
 						userId, projectId, new CreateProjectTaskRequest("X", null, null, null, null, null, null, null)))
 				.isInstanceOf(IntegrationException.class)
-				.extracting(ex -> ((IntegrationException) ex).getCode())
-				.isEqualTo(IntegrationErrorCode.JIRA_ACCOUNT_NOT_LINKED_TO_CURRENT_USER);
+				.satisfies(ex -> {
+					IntegrationException error = (IntegrationException) ex;
+					assertThat(error.getCode()).isEqualTo(IntegrationErrorCode.PERSONAL_INTEGRATION_REQUIRED);
+					assertThat(error.getDetails()).isEqualTo(java.util.Map.of("missingProviders", List.of("JIRA")));
+				});
 		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void leader_withoutLinkedGithub_cannotCreateTask() {
+		stubLeader();
+		when(identities.findFetchedByUserAccount_IdInAndProviderAndMappingStatusIn(
+						eq(List.of(userId)), eq(com.saga.be.entity.enums.IntegrationProvider.GITHUB), any()))
+				.thenReturn(List.of());
+
+		assertThatThrownBy(() -> service.create(
+						userId, projectId, new CreateProjectTaskRequest("X", null, null, null, null, null, null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.satisfies(ex -> {
+					IntegrationException error = (IntegrationException) ex;
+					assertThat(error.getCode()).isEqualTo(IntegrationErrorCode.PERSONAL_INTEGRATION_REQUIRED);
+					assertThat(error.getStatus()).isEqualTo(org.springframework.http.HttpStatus.FORBIDDEN);
+					assertThat(error.getDetails()).isEqualTo(java.util.Map.of("missingProviders", List.of("GITHUB")));
+				});
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void create_nonSagaLabel_isRejectedBeforeAnyJiraCall() {
+		stubLeader();
+
+		assertThatThrownBy(() -> service.create(
+						userId,
+						projectId,
+						new CreateProjectTaskRequest("X", null, null, null, null, null, null, null, List.of("frontend"))))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_LABEL_NOT_ALLOWED);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void create_twoSagaLabels_isRejectedBecauseTheTaskWouldBeAmbiguous() {
+		stubLeader();
+
+		assertThatThrownBy(() -> service.create(
+						userId,
+						projectId,
+						new CreateProjectTaskRequest(
+								"X", null, null, null, null, null, null, null, List.of("saga:code", "saga:test"))))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_LABEL_NOT_ALLOWED);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void patch_keepsExistingJiraLabelButRejectsAddingANewNonSagaLabel() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow(integration);
+		task.setLabelsJson("[\"backend\"]");
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+
+		assertThatThrownBy(() -> service.patch(
+						userId,
+						projectId,
+						task.getId(),
+						new PatchProjectTaskRequest(
+								null, null, null, null, null, null, null, null, null, null, null,
+								List.of("backend", "urgent"))))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_LABEL_NOT_ALLOWED);
+		verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+	}
+
+	@Test
+	void patch_keepsExistingJiraLabelWhileAddingASagaMarker() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow(integration);
+		task.setLabelsJson("[\"backend\"]");
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest(
+						null, null, null, null, null, null, null, null, null, null, null,
+						List.of("backend", "saga:doc")));
+
+		@SuppressWarnings("unchecked")
+		org.mockito.ArgumentCaptor<java.util.Map<String, Object>> captor =
+				org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
+		assertThat(captor.getValue()).containsEntry("labels", List.of("backend", "saga:document"));
+	}
+
+	@Test
+	void options_offerOnlyTheFourSagaLabels() {
+		stubReader();
+		JiraIntegration integration = activeJira();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.boardEstimationCapability(any(), any(), any()))
+				.thenReturn(new com.saga.be.integration.jira.JiraIssueWriteClient.EstimationInfo(false, null, null, null));
+
+		assertThat(service.options(userId, projectId, null).labels())
+				.containsExactly("saga:code", "saga:test", "saga:document", "saga:research");
 	}
 
 	// ==================== AUTHORIZATION MATRIX ====================

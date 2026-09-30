@@ -8,6 +8,10 @@ public enum IntegrationErrorCode {
 	INTEGRATION_FORBIDDEN,
 	NOT_TEAM_LEADER,
 	TASK_NOT_ASSIGNED_TO_YOU,
+	/** A task label outside the four SAGA markers, or more than one marker, was requested. */
+	TASK_LABEL_NOT_ALLOWED,
+	/** The caller must link their personal Jira and GitHub accounts first; details.missingProviders lists which. */
+	PERSONAL_INTEGRATION_REQUIRED,
 	GITHUB_INSTALLATION_INVALID,
 	GITHUB_INSTALLATION_NOT_AUTHORIZED,
 	GITHUB_INSTALLATION_IN_USE,

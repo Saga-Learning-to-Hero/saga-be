@@ -1179,6 +1179,8 @@ Base: `/api/projects/{projectId}/integrations` (yêu cầu là thành viên proj
 | `JIRA_OAUTH_CALLBACK_INVALID` | redirect `?code=` | Callback không hợp lệ/hết hạn | Thử kết nối lại từ đầu |
 | `JIRA_PROJECT_IN_USE` | 409 | Jira Project này đã được SAGA Project khác dùng | Chọn Jira Project khác |
 | `JIRA_PROJECT_KEY_AMBIGUOUS` | 409 | Không xác định rõ project key | Chọn lại rõ ràng từ danh sách |
+| `PERSONAL_INTEGRATION_REQUIRED` | 403 | Tạo task khi chưa liên kết Jira và/hoặc GitHub cá nhân (`details.missingProviders`) | Hiện thông báo + nút liên kết đúng provider còn thiếu |
+| `TASK_LABEL_NOT_ALLOWED` | 400 | Label ngoài 4 label SAGA, hoặc >1 label SAGA trên task (`details.allowedLabels`) | Chỉ cho chọn 1 label từ `GET /tasks/options` → `labels` |
 | `JIRA_SOURCE_REPLACE_BLOCKED_BY_EVIDENCE` | 409 | Không thể đổi nguồn Jira vì đã có bằng chứng đóng góp gắn với nguồn cũ | Không cho đổi; giải thích rõ cho người dùng |
 
 `error_description` từ Atlassian **không bao giờ** được phản ánh vào URL redirect (để tránh lộ thông tin nhạy cảm) — chỉ có `code` là mã enum ngắn gọn.
@@ -1289,11 +1291,17 @@ Quyền ghi:
 
 | Thao tác | Leader | Member |
 |---|---|---|
-| Tạo task (`POST /tasks`) | Giao cho ai cũng được | Được tạo. Task **luôn tự giao cho chính mình**: BE tự điền Jira account đã liên kết của member — FE **không cần** (và không nên đoán theo tên) gửi `assigneeAccountId`; nếu gửi account không phải của member, BE tự thay bằng account của member chứ không báo lỗi. Chưa liên kết Jira → `403 JIRA_ACCOUNT_NOT_LINKED_TO_CURRENT_USER` |
+| Tạo task (`POST /tasks`) | Giao cho ai cũng được | Được tạo. Task **luôn tự giao cho chính mình**: BE tự điền Jira account đã liên kết của member — FE **không cần** (và không nên đoán theo tên) gửi `assigneeAccountId`; nếu gửi account không phải của member, BE tự thay bằng account của member chứ không báo lỗi. |
 | Sửa (`PATCH`), đổi trạng thái / kéo thả (`/transition`, `/transitions`), dời sprint (`PUT /sprint`), xoá (`DELETE`) | Mọi task | Chỉ task **đang giao cho chính mình**, nếu không → `403 TASK_NOT_ASSIGNED_TO_YOU` |
 | Gỡ người được giao / giao cho người khác (`clearAssignee`, `assigneeAccountId` khác mình) | Được | `403 NOT_TEAM_LEADER` |
 
 FE: hiện nút tạo task cho **mọi thành viên**; với member, khoá ô "Người được giao" về chính mình. Xác định "task của tôi" bằng `task.assigneeStudentId === team.myStudentId` (xem `GET /api/student/courses/{courseId}/team`).
+
+**Điều kiện tạo task (Leader và Member):** phải liên kết **cả** Jira **và** GitHub cá nhân. Thiếu → `403 PERSONAL_INTEGRATION_REQUIRED`, `details.missingProviders` = `["JIRA"]`, `["GITHUB"]` hoặc `["JIRA","GITHUB"]` (kiểm tra trước, không gọi Jira). FE nên kiểm tra trước bằng `GET /api/integrations/me` (`identities[].provider`): thiếu provider nào thì disable nút "Tạo task" và hiện thông báo kèm nút liên kết (`POST /api/integrations/jira/link`, `POST /api/integrations/github/link`).
+
+**Label:** chỉ 4 label SAGA — `saga:code`, `saga:test`, `saga:document`, `saga:research` (lấy từ `GET /tasks/options` → `labels`, **không hard-code**). Mỗi task **tối đa 1** label SAGA — task có ≥2 label SAGA bị coi là mơ hồ và **không được tính** vào tiêu chí đóng góp.
+- Tạo: mọi label phải là label SAGA, tối đa 1; sai → `400 TASK_LABEL_NOT_ALLOWED` (`details.allowedLabels`). Không phân biệt hoa/thường; `saga:doc` được tự đổi thành `saga:document`.
+- Sửa: label Jira **đã có sẵn** trên task được **giữ nguyên** (không bị xoá khỏi Jira); chỉ label **mới thêm** phải là label SAGA, và thêm label SAGA không được làm task có hơn 1 label SAGA. Sai → `400 TASK_LABEL_NOT_ALLOWED`.
 
 | Method | Path | Mục đích |
 |---|---|---|
@@ -1320,7 +1328,9 @@ FE: hiện nút tạo task cho **mọi thành viên**; với member, khoá ô "N
   "priorityId": "tuỳ chọn — lấy từ /tasks/options",
   "storyPoints": 5,
   "sprintId": 123,
-  "sprintExternalId": "hoặc dùng field này thay cho sprintId"
+  "sprintExternalId": "hoặc dùng field này thay cho sprintId",
+  "labels": ["saga:code"],
+  "startDate": "yyyy-MM-dd (tuỳ chọn)", "dueDate": "yyyy-MM-dd (tuỳ chọn)"
 }
 ```
 
@@ -1382,10 +1392,11 @@ Vài lưu ý chính xác cần nhớ:
   "priorities": [{ "id": "...", "name": "High" }],
   "assignableUsers": [{ "accountId": "...", "displayName": "..." }],
   "estimation": { "supported": true, "fieldId": "...", "fieldName": "Story Points" },
-  "sprints": [{ "id": "...", "name": "Sprint 1", "state": "active" }]
+  "sprints": [{ "id": "...", "name": "Sprint 1", "state": "active" }],
+  "labels": ["saga:code", "saga:test", "saga:document", "saga:research"]
 }
 ```
-Dùng đúng `id` từ đây khi gửi `issueTypeId`/`priorityId` trong `POST`/`PATCH` task; dùng `accountId` từ `assignableUsers` khi gửi `assigneeAccountId` (mục 23). `sprints` trả rỗng nếu project chưa cấu hình board.
+Dùng đúng `id` từ đây khi gửi `issueTypeId`/`priorityId` trong `POST`/`PATCH` task; dùng `accountId` từ `assignableUsers` khi gửi `assigneeAccountId` (mục 23). `sprints` trả rỗng nếu project chưa cấu hình board. `labels` là **danh sách label duy nhất được phép** — ô chọn label chỉ hiện đúng danh sách này, chọn tối đa 1 (xem luật label ở mục 19).
 
 ---
 

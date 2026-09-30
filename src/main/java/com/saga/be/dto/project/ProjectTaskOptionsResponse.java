@@ -7,7 +7,9 @@ public record ProjectTaskOptionsResponse(
 		List<PriorityOption> priorities,
 		List<AssignableUserOption> assignableUsers,
 		EstimationOption estimation,
-		List<SprintOption> sprints) {
+		List<SprintOption> sprints,
+		/** The only labels a task may be given: the four SAGA contribution markers, at most one per task. */
+		List<String> labels) {
 
 	public record IssueTypeOption(String id, String name, String description) {}
 
