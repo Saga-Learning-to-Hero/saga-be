@@ -12,6 +12,7 @@ import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.RoleInTeam;
 import com.saga.be.entity.integration.IdentityMap;
 import com.saga.be.entity.jira.JiraIntegration;
+import com.saga.be.entity.jira.Sprint;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
@@ -28,13 +29,16 @@ import com.saga.be.realtime.ProjectRealtimePublisher;
 import com.saga.be.repository.ContributionConfirmationRepository;
 import com.saga.be.repository.IdentityMapRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
+import com.saga.be.repository.SprintRepository;
 import com.saga.be.repository.TaskFileRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
 import com.saga.be.repository.TaskWebLinkRepository;
 import com.saga.be.repository.TaskWorkSessionRepository;
 import com.saga.be.service.contribution.SagaTaskLabelPolicy;
+import com.saga.be.service.contribution.TaskEvidencePolicy;
 import com.saga.be.service.contribution.TaskLabelParser;
+import com.saga.be.service.task.TaskSchedulePolicy;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -66,6 +70,7 @@ public class ProjectJiraTaskCommandService {
 	private final ProjectRealtimePublisher realtime;
 	private final TaskHierarchyService hierarchy;
 	private final IdentityMapRepository identities;
+	private final SprintRepository sprints;
 	private final TransactionTemplate writes;
 
 	public ProjectJiraTaskCommandService(
@@ -83,6 +88,7 @@ public class ProjectJiraTaskCommandService {
 			ProjectRealtimePublisher realtime,
 			TaskHierarchyService hierarchy,
 			IdentityMapRepository identities,
+			SprintRepository sprints,
 			PlatformTransactionManager transactionManager) {
 		this.authorization = authorization;
 		this.jiraIntegrations = jiraIntegrations;
@@ -98,6 +104,7 @@ public class ProjectJiraTaskCommandService {
 		this.realtime = realtime;
 		this.hierarchy = hierarchy;
 		this.identities = identities;
+		this.sprints = sprints;
 		this.writes = new TransactionTemplate(transactionManager);
 	}
 
@@ -159,12 +166,19 @@ public class ProjectJiraTaskCommandService {
 
 	public ProjectTaskResponse create(UUID userId, UUID projectId, CreateProjectTaskRequest request) {
 		RoleInTeam role = authorization.requireStudentTeamMember(userId, projectId);
-		requirePersonalIntegrations(userId);
 		List<String> labels = SagaTaskLabelPolicy.forCreate(request.labels());
+		requirePersonalIntegrations(userId, labels);
 		String assigneeAccountId = role == RoleInTeam.LEADER
 				? request.assigneeAccountId()
 				: memberSelfAssignee(userId, request.assigneeAccountId());
 		JiraIntegration integration = resolveJiraForCreate(projectId, request.jiraIntegrationId());
+		if (request.startDate() != null || request.dueDate() != null) {
+			String sprintExternalId = request.resolvedSprintId();
+			Sprint targetSprint = sprintExternalId == null
+					? null
+					: sprints.findByJiraIntegration_IdAndExternalSprintId(integration.getId(), sprintExternalId).orElse(null);
+			requireValidSchedule(request.startDate(), request.dueDate(), targetSprint);
+		}
 		UUID nativeParentId = request.parentTaskId();
 		if (nativeParentId != null) {
 			hierarchy.validateAssignable(projectId, null, nativeParentId);
@@ -267,6 +281,7 @@ public class ProjectJiraTaskCommandService {
 		Task task = requireTask(projectId, taskId);
 		List<String> labels = SagaTaskLabelPolicy.forPatch(TaskLabelParser.parse(task.getLabelsJson()), request.labels());
 		JiraIntegration integration = requireJiraForTask(projectId, task);
+		requirePatchKeepsValidSchedule(task, integration, request);
 		String access = tokens.accessToken(integration);
 		String issueRef = issueRef(task);
 
@@ -604,9 +619,12 @@ public class ProjectJiraTaskCommandService {
 	 * accounts: without them the task cannot be attributed to them, nor their commits to the task.
 	 * "Linked" is the same ACTIVE/VERIFIED/PENDING set GET /api/integrations/me reports.
 	 */
-	private void requirePersonalIntegrations(UUID userId) {
+	private void requirePersonalIntegrations(UUID userId, List<String> labels) {
 		List<String> missing = new ArrayList<>();
-		for (IntegrationProvider provider : List.of(IntegrationProvider.JIRA, IntegrationProvider.GITHUB)) {
+		List<IntegrationProvider> required = TaskEvidencePolicy.requiresCommit(labels)
+				? List.of(IntegrationProvider.JIRA, IntegrationProvider.GITHUB)
+				: List.of(IntegrationProvider.JIRA);
+		for (IntegrationProvider provider : required) {
 			boolean linked = !identities
 					.findFetchedByUserAccount_IdInAndProviderAndMappingStatusIn(
 							List.of(userId), provider, JiraTaskProjectionService.ACTIVE_STATUSES)
@@ -622,6 +640,72 @@ public class ProjectJiraTaskCommandService {
 					"Link your " + String.join(" and ", missing) + " account(s) before creating tasks.",
 					Map.of("missingProviders", missing));
 		}
+	}
+
+	/**
+	 * Only an edit that sets or clears a date is checked, against the sprint the task will be in after
+	 * this edit. Moving a task between sprints alone, or editing other fields of a task whose dates
+	 * already drifted, is never blocked -- those show up as {@code scheduleCheck} warnings instead.
+	 */
+	private void requirePatchKeepsValidSchedule(Task task, JiraIntegration integration, PatchProjectTaskRequest request) {
+		boolean touchesDates = request.startDate() != null
+				|| request.dueDate() != null
+				|| Boolean.TRUE.equals(request.clearStartDate())
+				|| Boolean.TRUE.equals(request.clearDueDate());
+		if (!touchesDates) {
+			return;
+		}
+		java.time.LocalDate start = Boolean.TRUE.equals(request.clearStartDate())
+				? null
+				: request.startDate() != null ? request.startDate() : localDate(task.getStartDate());
+		java.time.LocalDate due = Boolean.TRUE.equals(request.clearDueDate())
+				? null
+				: request.dueDate() != null ? request.dueDate() : localDate(task.getDueDate());
+		Sprint targetSprint;
+		if (Boolean.TRUE.equals(request.moveToBacklog())) {
+			targetSprint = null;
+		} else if (request.sprintExternalId() != null && !request.sprintExternalId().isBlank()) {
+			targetSprint = sprints
+					.findByJiraIntegration_IdAndExternalSprintId(integration.getId(), request.sprintExternalId().trim())
+					.orElse(null);
+		} else {
+			targetSprint = task.getSprint();
+		}
+		requireValidSchedule(start, due, targetSprint);
+	}
+
+	private static void requireValidSchedule(java.time.LocalDate start, java.time.LocalDate due, Sprint sprint) {
+		TaskSchedulePolicy.SprintWindow window = TaskSchedulePolicy.windowOf(sprint);
+		List<TaskSchedulePolicy.Issue> issues = TaskSchedulePolicy.issues(start, due, window);
+		if (issues.isEmpty()) {
+			return;
+		}
+		if (issues.contains(TaskSchedulePolicy.Issue.START_AFTER_DUE)) {
+			Map<String, Object> details = new java.util.LinkedHashMap<>();
+			details.put("startDate", start);
+			details.put("dueDate", due);
+			throw new IntegrationException(
+					IntegrationErrorCode.TASK_DATE_RANGE_INVALID,
+					HttpStatus.BAD_REQUEST,
+					"Task start date must not be after its due date.",
+					details);
+		}
+		Map<String, Object> details = new java.util.LinkedHashMap<>();
+		details.put("issues", issues.stream().map(Enum::name).toList());
+		details.put("sprintId", sprint.getId());
+		details.put("sprintName", sprint.getName());
+		details.put("sprintStartDate", window.start());
+		details.put("sprintEndDate", window.end());
+		throw new IntegrationException(
+				IntegrationErrorCode.TASK_OUTSIDE_SPRINT,
+				HttpStatus.BAD_REQUEST,
+				"Task dates must fall inside sprint \"" + sprint.getName() + "\" (" + window.start() + " to "
+						+ window.end() + ").",
+				details);
+	}
+
+	private static java.time.LocalDate localDate(java.time.LocalDateTime value) {
+		return value == null ? null : value.toLocalDate();
 	}
 
 	/** Same identity statuses the task projection uses to resolve a Jira assignee to a student. */

@@ -78,6 +78,10 @@ public enum IntegrationErrorCode {
 	JIRA_SPRINT_INVALID,
 	/** Sprint dates would overlap another sprint of the same project (any Jira site); details name it. */
 	SPRINT_PERIOD_OVERLAP,
+	/** A task's start date is after its due date. */
+	TASK_DATE_RANGE_INVALID,
+	/** A task's start/due date falls outside its sprint's dates; details name the sprint window. */
+	TASK_OUTSIDE_SPRINT,
 	JIRA_SPRINT_WRITE_FAILED,
 	JIRA_WRITE_INCOMPLETE,
 	JIRA_DELETE_BLOCKED_BY_EVIDENCE,

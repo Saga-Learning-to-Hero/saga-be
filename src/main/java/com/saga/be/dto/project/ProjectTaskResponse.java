@@ -89,7 +89,21 @@ public record ProjectTaskResponse(
 						description =
 								"Which proof this task needs by its SAGA label and whether it is there. Use this for "
 										+ "'missing commit' / 'missing document' warnings -- never guess from the title.")
-				EvidenceCheck evidenceCheck) {
+				EvidenceCheck evidenceCheck,
+		@Schema(
+						description =
+								"Date warnings: start after due, or dates outside the task's sprint. SAGA rejects such "
+										+ "dates when they are entered; this reports tasks that drifted later (sprint "
+										+ "dates changed, task moved, Jira edits). Never null.")
+				ScheduleCheck scheduleCheck) {
+
+	/**
+	 * @param issues START_AFTER_DUE, START_BEFORE_SPRINT, START_AFTER_SPRINT, DUE_BEFORE_SPRINT,
+	 *     DUE_AFTER_SPRINT; empty = fine (or nothing to check)
+	 * @param sprintStartDate the task's sprint start, null when backlog / unset
+	 * @param sprintEndDate the task's sprint end (complete date once closed), null when backlog / unset
+	 */
+	public record ScheduleCheck(List<String> issues, LocalDate sprintStartDate, LocalDate sprintEndDate) {}
 
 	/**
 	 * @param categories SAGA markers on the task: CODE, TEST, DOCUMENT, RESEARCH (empty = none)

@@ -1196,6 +1196,8 @@ Base: `/api/projects/{projectId}/integrations` (yêu cầu là thành viên proj
 | `JIRA_PROJECT_KEY_AMBIGUOUS` | 409 | Không xác định rõ project key | Chọn lại rõ ràng từ danh sách |
 | `PERSONAL_INTEGRATION_REQUIRED` | 403 | Tạo task khi chưa liên kết Jira và/hoặc GitHub cá nhân (`details.missingProviders`) | Hiện thông báo + nút liên kết đúng provider còn thiếu |
 | `SPRINT_PERIOD_OVERLAP` | 409 | Tạo/đổi ngày/bắt đầu sprint chồng thời gian với sprint khác của project (mọi site) | Hiện sprint bị trùng từ `details`, cho chọn lại ngày (có thể bắt đầu đúng ngày sprint kia kết thúc) |
+| `TASK_DATE_RANGE_INVALID` | 400 | Ngày bắt đầu task sau hạn hoàn thành | Hiện lỗi ngay ở ô ngày |
+| `TASK_OUTSIDE_SPRINT` | 400 | Ngày task nằm ngoài sprint của task (`details` có khung ngày sprint) | Hiện "Ngày phải nằm trong {sprintName} ({sprintStartDate} → {sprintEndDate})", giới hạn date-picker theo khung này |
 | `TASK_LABEL_NOT_ALLOWED` | 400 | Label ngoài 4 label SAGA, hoặc >1 label SAGA trên task (`details.allowedLabels`) | Chỉ cho chọn 1 label từ `GET /tasks/options` → `labels` |
 | `JIRA_SOURCE_REPLACE_BLOCKED_BY_EVIDENCE` | 409 | Không thể đổi nguồn Jira vì đã có bằng chứng đóng góp gắn với nguồn cũ | Không cho đổi; giải thích rõ cho người dùng |
 
@@ -1313,7 +1315,14 @@ Quyền ghi:
 
 FE: hiện nút tạo task cho **mọi thành viên**; với member, khoá ô "Người được giao" về chính mình. Xác định "task của tôi" bằng `task.assigneeStudentId === team.myStudentId` (xem `GET /api/student/courses/{courseId}/team`).
 
-**Điều kiện tạo task (Leader và Member):** phải liên kết **cả** Jira **và** GitHub cá nhân. Thiếu → `403 PERSONAL_INTEGRATION_REQUIRED`, `details.missingProviders` = `["JIRA"]`, `["GITHUB"]` hoặc `["JIRA","GITHUB"]` (kiểm tra trước, không gọi Jira). FE nên kiểm tra trước bằng `GET /api/integrations/me` (`identities[].provider`): thiếu provider nào thì disable nút "Tạo task" và hiện thông báo kèm nút liên kết (`POST /api/integrations/jira/link`, `POST /api/integrations/github/link`).
+**Điều kiện tạo task (Leader và Member):** luôn phải liên kết **Jira** cá nhân; **GitHub** chỉ bắt buộc khi task có label `saga:code` hoặc `saga:test` (task cần commit làm minh chứng). Task tài liệu/nghiên cứu không cần GitHub. Thiếu → `403 PERSONAL_INTEGRATION_REQUIRED`, `details.missingProviders` = `["JIRA"]`, `["GITHUB"]` hoặc `["JIRA","GITHUB"]` (kiểm tra trước, không gọi Jira).
+
+**Ngày của task (tạo/sửa trong SAGA):**
+- `startDate` sau `dueDate` → `400 TASK_DATE_RANGE_INVALID` (`details.startDate`, `details.dueDate`).
+- Task thuộc một sprint: cả `startDate` và `dueDate` phải nằm trong sprint (từ ngày bắt đầu tới ngày kết thúc sprint; sprint đã đóng tính tới ngày đóng thật; được phép đúng ngày đầu/cuối). Sai → `400 TASK_OUTSIDE_SPRINT`, `details`: `issues` (`START_BEFORE_SPRINT` / `START_AFTER_SPRINT` / `DUE_BEFORE_SPRINT` / `DUE_AFTER_SPRINT`), `sprintId`, `sprintName`, `sprintStartDate`, `sprintEndDate`.
+- `PATCH` chỉ bị kiểm tra khi **đặt hoặc xoá ngày**, so với sprint mà task sẽ ở **sau** lần sửa đó (kể cả khi cùng lúc dời sprint). Chỉ dời sprint, hoặc sửa field khác của task đã lệch ngày từ trước → **không** chặn.
+- Task backlog (không sprint) chỉ bị kiểm tra `startDate <= dueDate`. Không chặn ngày bắt đầu trước hôm nay.
+- Lệch phát sinh về sau (sprint đổi ngày, kéo task sang sprint khác, sửa trên Jira) → không chặn, xem `scheduleCheck` trên task. FE nên kiểm tra trước bằng `GET /api/integrations/me` (`identities[].provider`): thiếu provider nào thì disable nút "Tạo task" và hiện thông báo kèm nút liên kết (`POST /api/integrations/jira/link`, `POST /api/integrations/github/link`).
 
 **Label:** chỉ 4 label SAGA — `saga:code`, `saga:test`, `saga:document`, `saga:research` (lấy từ `GET /tasks/options` → `labels`, **không hard-code**). Mỗi task **tối đa 1** label SAGA — task có ≥2 label SAGA bị coi là mơ hồ và **không được tính** vào tiêu chí đóng góp.
 - Tạo: mọi label phải là label SAGA, tối đa 1; sai → `400 TASK_LABEL_NOT_ALLOWED` (`details.allowedLabels`). Không phân biệt hoa/thường; `saga:doc` được tự đổi thành `saga:document`.
@@ -1386,6 +1395,7 @@ Mọi field đều tuỳ chọn — chỉ field khác `null` mới được cậ
     "commitEvidenceCount": 0, "documentEvidenceCount": 2,
     "status": "SATISFIED"
   },
+  "scheduleCheck": { "issues": [], "sprintStartDate": "2026-09-20", "sprintEndDate": "2026-10-03" },
   "externalUpdatedAt": "...", "createdAt": "...", "updatedAt": "..."
 }
 ```
@@ -1398,6 +1408,7 @@ Vài lưu ý chính xác cần nhớ:
 - `sprint` là `null` nếu task đang ở backlog.
 - `linkedCommitCount` được tính lại mỗi lần đọc (không phải cột lưu sẵn).
 - `evidenceCount` = số `task_file` + `task_web_link` (không gồm commit). `hasEvidence` = `evidenceCount > 0`. Chỉ count, không trả payload file/link.
+- **`scheduleCheck`** — cảnh báo ngày của task (không bao giờ `null`). `issues` rỗng = ổn; có thể chứa `START_AFTER_DUE`, `START_BEFORE_SPRINT`, `START_AFTER_SPRINT`, `DUE_BEFORE_SPRINT`, `DUE_AFTER_SPRINT`. `sprintStartDate`/`sprintEndDate` = khung ngày của sprint hiện tại của task (`null` khi backlog). FE hiện nhãn "Lệch lịch sprint" khi `issues` khác rỗng để Leader sửa lại ngày.
 - **`evidenceCheck` — dùng field này cho mọi cảnh báo "thiếu commit" / "thiếu minh chứng"**, không đoán theo tiêu đề task. Minh chứng cần có **theo label SAGA**:
 
   | Label | Cần | Được tính là minh chứng |

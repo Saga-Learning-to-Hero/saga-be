@@ -96,6 +96,8 @@ class ProjectJiraTaskCommandServiceTest {
 	private ApplicationEventPublisher events;
 	@Mock
 	private IdentityMapRepository identities;
+	@Mock
+	private com.saga.be.repository.SprintRepository sprints;
 
 	private ProjectJiraTaskCommandService service;
 	private UUID userId;
@@ -127,6 +129,7 @@ class ProjectJiraTaskCommandServiceTest {
 				realtime,
 				new TaskHierarchyService(projects, tasks, transactionManager),
 				identities,
+				sprints,
 				transactionManager);
 		userId = UUID.randomUUID();
 		projectId = UUID.randomUUID();
@@ -1113,14 +1116,16 @@ class ProjectJiraTaskCommandServiceTest {
 	}
 
 	@Test
-	void leader_withoutLinkedGithub_cannotCreateTask() {
+	void leader_withoutLinkedGithub_cannotCreateACodeTask() {
 		stubLeader();
 		when(identities.findFetchedByUserAccount_IdInAndProviderAndMappingStatusIn(
 						eq(List.of(userId)), eq(com.saga.be.entity.enums.IntegrationProvider.GITHUB), any()))
 				.thenReturn(List.of());
 
 		assertThatThrownBy(() -> service.create(
-						userId, projectId, new CreateProjectTaskRequest("X", null, null, null, null, null, null, null)))
+						userId,
+						projectId,
+						new CreateProjectTaskRequest("X", null, null, null, null, null, null, null, List.of("saga:code"))))
 				.isInstanceOf(IntegrationException.class)
 				.satisfies(ex -> {
 					IntegrationException error = (IntegrationException) ex;
@@ -1949,6 +1954,187 @@ class ProjectJiraTaskCommandServiceTest {
 				.isInstanceOf(IntegrationException.class)
 				.extracting(ex -> ((IntegrationException) ex).getCode())
 				.isEqualTo(IntegrationErrorCode.ACCESS_DENIED);
+	}
+
+	// ==================== TASK DATES (start <= due, inside the sprint) ====================
+
+	@Test
+	void create_startAfterDue_isRejectedBeforeAnyJiraCall() {
+		stubLeader();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(activeJira()));
+
+		assertThatThrownBy(() -> service.create(userId, projectId, datedCreate(null, day(10, 5), day(10, 1))))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_DATE_RANGE_INVALID);
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void create_datesOutsideItsSprint_isRejectedWithTheSprintWindow() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
+		com.saga.be.entity.jira.Sprint sprint5 = sprint("SAGA Sprint 5", "active", day(9, 20), day(10, 3));
+		when(sprints.findByJiraIntegration_IdAndExternalSprintId(integration.getId(), "31")).thenReturn(Optional.of(sprint5));
+
+		assertThatThrownBy(() -> service.create(userId, projectId, datedCreate("31", day(9, 18), day(10, 5))))
+				.isInstanceOf(IntegrationException.class)
+				.satisfies(ex -> {
+					IntegrationException error = (IntegrationException) ex;
+					assertThat(error.getCode()).isEqualTo(IntegrationErrorCode.TASK_OUTSIDE_SPRINT);
+					@SuppressWarnings("unchecked")
+					java.util.Map<String, Object> details = (java.util.Map<String, Object>) error.getDetails();
+					assertThat(details)
+							.containsEntry("sprintName", "SAGA Sprint 5")
+							.containsEntry("sprintStartDate", day(9, 20))
+							.containsEntry("sprintEndDate", day(10, 3))
+							.containsEntry("issues", List.of("START_BEFORE_SPRINT", "DUE_AFTER_SPRINT"));
+				});
+		verifyZeroProviderInteraction();
+	}
+
+	@Test
+	void create_datesOnTheSprintBoundaries_areAllowed() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
+		when(sprints.findByJiraIntegration_IdAndExternalSprintId(integration.getId(), "31"))
+				.thenReturn(Optional.of(sprint("SAGA Sprint 5", "active", day(9, 20), day(10, 3))));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(taskRow(integration));
+
+		service.create(userId, projectId, datedCreate("31", day(9, 20), day(10, 3)));
+
+		verify(jiraWrite).createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void patch_dueDateBeyondTheCurrentSprint_isRejected() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow(integration);
+		task.setSprint(sprint("SAGA Sprint 5", "active", day(9, 20), day(10, 3)));
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+
+		assertThatThrownBy(() -> service.patch(userId, projectId, task.getId(), datedPatch(null, day(10, 10), null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_OUTSIDE_SPRINT);
+		verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+	}
+
+	@Test
+	void patch_startMovedAfterTheExistingDue_isRejected() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow(integration);
+		task.setDueDate(day(9, 25).atStartOfDay());
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+
+		assertThatThrownBy(() -> service.patch(userId, projectId, task.getId(), datedPatch(day(9, 28), null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_DATE_RANGE_INVALID);
+	}
+
+	@Test
+	void patch_newDatesAreCheckedAgainstTheSprintTheTaskMovesInto() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow(integration);
+		task.setSprint(sprint("SAGA Sprint 5", "active", day(9, 20), day(10, 3)));
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(sprints.findByJiraIntegration_IdAndExternalSprintId(integration.getId(), "32"))
+				.thenReturn(Optional.of(sprint("SAGA Sprint 6", "future", day(10, 3), day(10, 17))));
+
+		assertThatThrownBy(() -> service.patch(userId, projectId, task.getId(), datedPatch(day(9, 25), null, "32")))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_OUTSIDE_SPRINT);
+	}
+
+	@Test
+	void patch_withoutTouchingDates_neverChecksTheSchedule() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow(integration);
+		task.setStartDate(day(9, 1).atStartOfDay());
+		task.setDueDate(day(8, 1).atStartOfDay());
+		task.setSprint(sprint("SAGA Sprint 5", "active", day(9, 20), day(10, 3)));
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		IssueSummary canonical = summary("10001", "SAGA-1", "Renamed");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(
+				userId,
+				projectId,
+				task.getId(),
+				new PatchProjectTaskRequest("Renamed", null, null, null, null, null, null, null, null, null, null));
+
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), any());
+	}
+
+	@Test
+	void create_documentTaskNeedsOnlyALinkedJiraAccount() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Report");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(taskRow(integration));
+
+		service.create(
+				userId,
+				projectId,
+				new CreateProjectTaskRequest("Report", null, null, null, null, null, null, null, List.of("saga:document")));
+
+		verify(jiraWrite).createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+		// A document task is never gated on a GitHub link.
+		verify(identities, never()).findFetchedByUserAccount_IdInAndProviderAndMappingStatusIn(
+				any(), eq(com.saga.be.entity.enums.IntegrationProvider.GITHUB), any());
+	}
+
+	private static java.time.LocalDate day(int month, int dayOfMonth) {
+		return java.time.LocalDate.of(2026, month, dayOfMonth);
+	}
+
+	private static com.saga.be.entity.jira.Sprint sprint(
+			String name, String state, java.time.LocalDate start, java.time.LocalDate end) {
+		com.saga.be.entity.jira.Sprint sprint = new com.saga.be.entity.jira.Sprint();
+		sprint.setId(UUID.randomUUID());
+		sprint.setName(name);
+		sprint.setState(state);
+		sprint.setStartDate(start.atTime(9, 0));
+		sprint.setEndDate(end.atTime(17, 0));
+		return sprint;
+	}
+
+	private static CreateProjectTaskRequest datedCreate(
+			String sprintExternalId, java.time.LocalDate start, java.time.LocalDate due) {
+		return new CreateProjectTaskRequest(
+				"Login", null, null, null, null, null, null, sprintExternalId, null, due, start, null, null, null);
+	}
+
+	private static PatchProjectTaskRequest datedPatch(
+			java.time.LocalDate start, java.time.LocalDate due, String sprintExternalId) {
+		return new PatchProjectTaskRequest(
+				null, null, null, null, null, null, null, sprintExternalId, null, null, null, null, due, null, start, null,
+				null, null);
 	}
 
 	private void verifyZeroProviderInteraction() {

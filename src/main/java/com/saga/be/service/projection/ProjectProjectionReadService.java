@@ -377,7 +377,20 @@ public class ProjectProjectionReadService {
 			source,
 			migration,
 			subtasks,
-			evidenceCheck(task, labels, commitProofCount, documentProofCount));
+			evidenceCheck(task, labels, commitProofCount, documentProofCount),
+			scheduleCheck(task, startDate, dueDate));
+	}
+
+	private static ProjectTaskResponse.ScheduleCheck scheduleCheck(
+			Task task, java.time.LocalDate startDate, java.time.LocalDate dueDate) {
+		com.saga.be.service.task.TaskSchedulePolicy.SprintWindow window =
+				com.saga.be.service.task.TaskSchedulePolicy.windowOf(task.getSprint());
+		return new ProjectTaskResponse.ScheduleCheck(
+				com.saga.be.service.task.TaskSchedulePolicy.issues(startDate, dueDate, window).stream()
+						.map(Enum::name)
+						.toList(),
+				window == null ? null : window.start(),
+				window == null ? null : window.end());
 	}
 
 	private static ProjectTaskResponse.EvidenceCheck evidenceCheck(
