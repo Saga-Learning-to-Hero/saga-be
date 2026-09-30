@@ -15,6 +15,18 @@ public interface TaskAttachmentRepository extends JpaRepository<TaskAttachment, 
 
 	List<TaskAttachment> findByTask_Id(UUID taskId);
 
+	/** Jira attachments per active task of a project: {@code Object[]{UUID taskId, Long count}}. */
+	@Query(
+			"""
+			select a.task.id, count(a)
+			from TaskAttachment a
+			join a.task t
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			group by a.task.id
+			""")
+	List<Object[]> countByProjectGrouped(@Param("projectId") UUID projectId);
+
 	Optional<TaskAttachment> findByTask_IdAndExternalId(UUID taskId, String externalId);
 
 	/** Heatmap documents from Jira attachments: {@code Object[]{UUID studentId, LocalDateTime createdAt}}. */

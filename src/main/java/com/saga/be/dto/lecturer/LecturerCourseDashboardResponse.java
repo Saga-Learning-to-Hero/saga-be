@@ -102,6 +102,11 @@ public record LecturerCourseDashboardResponse(
 	public record ActivityDay(
 			LocalDate date, long commits, long tasks, long peerReviews, long documents, long totalActivities) {}
 
+	/**
+	 * Task↔commit traceability of the current sprint. The task counts cover only DONE tasks whose
+	 * SAGA label needs commit proof (saga:code / saga:test); document/research/unlabelled tasks are
+	 * proven by files/links and never count as "without commit". Commit counts are unchanged.
+	 */
 	public record Traceability(
 			long completedTasks,
 			long completedTasksWithCommit,

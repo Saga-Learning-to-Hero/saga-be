@@ -21,10 +21,20 @@ public final class ReservedContributionMarkerClassifier {
 		AMBIGUOUS
 	}
 
+	/**
+	 * Exact spelling SAGA's own task form offered for DOCUMENT before the canonical marker was
+	 * enforced; tasks carrying it were meant as documents, so it counts as {@link #DOCUMENT}.
+	 */
+	public static final String DOCUMENT_ALIAS = "saga:doc";
+
 	private ReservedContributionMarkerClassifier() {}
 
-	public static Outcome classify(List<String> labels) {
-		Set<Outcome> found = new LinkedHashSet<>();
+	/**
+	 * Every reserved marker present on a task (exact, case-sensitive match after trim; never a
+	 * substring). Empty when the task has none. Order: CODE, TEST, DOCUMENT, RESEARCH.
+	 */
+	public static Set<Outcome> markers(List<String> labels) {
+		Set<Outcome> found = new java.util.TreeSet<>();
 		if (labels != null) {
 			for (String raw : labels) {
 				if (raw == null) {
@@ -35,13 +45,18 @@ public final class ReservedContributionMarkerClassifier {
 					found.add(Outcome.CODE);
 				} else if (TEST.equals(label)) {
 					found.add(Outcome.TEST);
-				} else if (DOCUMENT.equals(label)) {
+				} else if (DOCUMENT.equals(label) || DOCUMENT_ALIAS.equals(label)) {
 					found.add(Outcome.DOCUMENT);
 				} else if (RESEARCH.equals(label)) {
 					found.add(Outcome.RESEARCH);
 				}
 			}
 		}
+		return new LinkedHashSet<>(found);
+	}
+
+	public static Outcome classify(List<String> labels) {
+		Set<Outcome> found = markers(labels);
 		if (found.isEmpty()) {
 			return Outcome.NONE;
 		}

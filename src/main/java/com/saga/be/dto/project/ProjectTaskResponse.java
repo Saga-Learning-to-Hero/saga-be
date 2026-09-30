@@ -84,7 +84,28 @@ public record ProjectTaskResponse(
 		 * detail. Never recursive.
 		 */
 		@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
-		List<Subtask> subtasks) {
+		List<Subtask> subtasks,
+		@Schema(
+						description =
+								"Which proof this task needs by its SAGA label and whether it is there. Use this for "
+										+ "'missing commit' / 'missing document' warnings -- never guess from the title.")
+				EvidenceCheck evidenceCheck) {
+
+	/**
+	 * @param categories SAGA markers on the task: CODE, TEST, DOCUMENT, RESEARCH (empty = none)
+	 * @param requiresCommit a code/test marker is present: needs a linked non-merge commit
+	 * @param requiresDocument a document/research marker is present: needs a file, web link or Jira attachment
+	 * @param commitEvidenceCount linked non-merge commits counted as proof
+	 * @param documentEvidenceCount uploaded files + web links + Jira attachments
+	 * @param status NOT_DONE | SATISFIED | MISSING_COMMIT | MISSING_DOCUMENT | MISSING_COMMIT_AND_DOCUMENT | UNLABELED
+	 */
+	public record EvidenceCheck(
+			List<String> categories,
+			boolean requiresCommit,
+			boolean requiresDocument,
+			long commitEvidenceCount,
+			long documentEvidenceCount,
+			String status) {}
 
 	public record Assignee(String accountId, String displayName, UUID studentId, String avatarUrl) {}
 

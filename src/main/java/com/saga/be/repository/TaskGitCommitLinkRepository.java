@@ -57,6 +57,23 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			""")
 	List<Object[]> countLinksByProjectGrouped(@Param("projectId") UUID projectId);
 
+	/**
+	 * Distinct linked non-merge commits per active task ({@code parentCount} null/0/1): the commit
+	 * proof a code/test task needs. {@code Object[]{UUID taskId, Long count}}.
+	 */
+	@Query(
+			"""
+			select l.task.id, count(distinct c.id)
+			from TaskGitCommitLink l
+			join l.task t
+			join l.gitCommit c
+			where t.project.id = :projectId
+			  and t.deletedAt is null
+			  and (c.parentCount is null or c.parentCount <= 1)
+			group by l.task.id
+			""")
+	List<Object[]> countV23LinksByProjectGrouped(@Param("projectId") UUID projectId);
+
 	@Query(
 			"""
 			select c from TaskGitCommitLink l

@@ -580,7 +580,7 @@ class StudentDashboardPersistTest {
 					Priority.HIGHEST,
 					1,
 					null,
-					"[\"saga:code\",\"saga:test\"]",
+					"[\"saga:document\",\"saga:research\"]",
 					"SAGA-AMB"));
 
 			tasks.save(assigned(
@@ -754,7 +754,7 @@ class StudentDashboardPersistTest {
 						Priority.HIGHEST,
 						1,
 						LocalDateTime.of(2026, 7, 1, 0, 0).plusDays(i),
-						"[\"saga:code\",\"saga:test\"]",
+						"[\"saga:document\",\"saga:research\"]",
 						"SAGA-AMB" + i));
 			}
 			tasks.save(assigned(
@@ -863,7 +863,7 @@ class StudentDashboardPersistTest {
 						Priority.LOW,
 						1,
 						null,
-						"[\"saga:code\",\"saga:test\"]",
+						"[\"saga:document\",\"saga:research\"]",
 						"SAGA-C" + i));
 			}
 			tasks.save(assigned(project, active, member, TaskStatus.TODO, Priority.LOW, 1, null, null, "SAGA-OPEN"));
@@ -889,7 +889,7 @@ class StudentDashboardPersistTest {
 						Priority.LOW,
 						1,
 						null,
-						"[\"saga:code\",\"saga:test\"]",
+						"[\"saga:document\",\"saga:research\"]",
 						"SAGA-C" + i));
 			}
 			// The preview follows the current sprint, so the real anomaly lives in it.
@@ -991,7 +991,7 @@ class StudentDashboardPersistTest {
 
 			tasks.save(assigned(project, null, member, TaskStatus.DONE, Priority.HIGH, 1, null, "[\"saga:document\"]", "SAGA-DOC"));
 			tasks.save(assigned(project, null, member, TaskStatus.DONE, Priority.HIGH, 1, null, "[\"saga:research\"]", "SAGA-RES"));
-			tasks.save(assigned(project, null, member, TaskStatus.DONE, Priority.HIGHEST, 1, null, "[\"saga:code\",\"saga:test\"]", "SAGA-AMB"));
+			tasks.save(assigned(project, null, member, TaskStatus.DONE, Priority.HIGHEST, 1, null, "[\"saga:document\",\"saga:research\"]", "SAGA-AMB"));
 			tasks.save(assigned(project, null, leader, TaskStatus.DONE, Priority.HIGHEST, 1, LocalDateTime.of(2026, 8, 1, 0, 0), "[\"saga:code\"]", "SAGA-LEAD"));
 			Task deleted = assigned(project, null, member, TaskStatus.DONE, Priority.HIGHEST, 1, LocalDateTime.of(2026, 8, 2, 0, 0), "[\"saga:test\"]", "SAGA-DEL");
 			deleted.setDeletedAt(LocalDateTime.of(2026, 9, 4, 0, 0));

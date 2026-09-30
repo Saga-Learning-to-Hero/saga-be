@@ -24,6 +24,14 @@ class ReservedContributionMarkerClassifierTest {
 	}
 
 	@Test
+	void docAliasIsDocumentButOnlyInItsExactSpelling() {
+		assertEquals(Outcome.DOCUMENT, ReservedContributionMarkerClassifier.classify(List.of("saga:doc")));
+		assertEquals(Outcome.DOCUMENT, ReservedContributionMarkerClassifier.classify(List.of("saga:doc", "saga:document")));
+		assertEquals(Outcome.NONE, ReservedContributionMarkerClassifier.classify(List.of("SAGA:DOC")));
+		assertEquals(Outcome.NONE, ReservedContributionMarkerClassifier.classify(List.of("saga:docs")));
+	}
+
+	@Test
 	void conflictingMarkersAreAmbiguous() {
 		assertEquals(
 				Outcome.AMBIGUOUS,

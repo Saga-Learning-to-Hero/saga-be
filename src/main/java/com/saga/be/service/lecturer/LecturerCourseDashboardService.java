@@ -735,12 +735,22 @@ public class LecturerCourseDashboardService {
 		return out;
 	}
 
+	/**
+	 * DONE tasks that need commit proof (a code/test SAGA label), per sprint. A document/research or
+	 * unlabelled task is never counted as "completed without commit": documents prove themselves
+	 * with files/links, not commits (same TaskEvidencePolicy as the task list and the graph).
+	 */
 	private Map<UUID, Set<UUID>> doneTaskIds(Set<UUID> sprintIds) {
 		Map<UUID, Set<UUID>> out = new HashMap<>();
 		if (sprintIds.isEmpty()) {
 			return out;
 		}
 		for (Object[] row : tasks.findDoneTaskIdsBySprintIds(sprintIds)) {
+			String labelsJson = row.length > 2 ? (String) row[2] : null;
+			if (!com.saga.be.service.contribution.TaskEvidencePolicy.requiresCommit(
+					com.saga.be.service.contribution.TaskLabelParser.parse(labelsJson))) {
+				continue;
+			}
 			out.computeIfAbsent((UUID) row[0], id -> new HashSet<>()).add((UUID) row[1]);
 		}
 		return out;

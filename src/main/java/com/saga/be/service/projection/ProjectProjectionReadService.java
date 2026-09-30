@@ -14,6 +14,7 @@ import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.SprintRepository;
+import com.saga.be.repository.TaskAttachmentRepository;
 import com.saga.be.repository.TaskFileRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
@@ -51,6 +52,7 @@ public class ProjectProjectionReadService {
 	private final ProjectDataAuthorization authorization;
 	private final TaskHierarchyService hierarchy;
 	private final JiraTaskFailoverItemRepository failoverItems;
+	private TaskAttachmentRepository attachments;
 
 	public ProjectProjectionReadService(
 			TaskRepository tasks,
@@ -72,18 +74,28 @@ public class ProjectProjectionReadService {
 		this.failoverItems = failoverItems;
 	}
 
+	/** Jira attachments also prove a document/research task; optional so hand-built test instances need not wire it. */
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	void setAttachments(TaskAttachmentRepository attachments) {
+		this.attachments = attachments;
+	}
+
 	@Transactional(readOnly = true)
 	public List<ProjectTaskResponse> listTasks(UUID userId, UUID projectId) {
 		authorization.requireReader(userId, projectId);
 		List<Task> rows = tasks.findActiveFetchedByProject_Id(projectId);
 		Map<UUID, Long> counts = linkCounts(projectId);
 		Map<UUID, Long> evidence = evidenceCounts(projectId);
+		Map<UUID, Long> commitProof = commitProofCounts(projectId);
+		Map<UUID, Long> documentProof = documentProofCounts(projectId, evidence);
 		Map<UUID, TaskMigrationSummary> migrations = migrations(rows);
 		return rows.stream()
 				.map(task -> toTask(
 						task,
 						counts.getOrDefault(task.getId(), 0L),
 						evidence.getOrDefault(task.getId(), 0L),
+						commitProof.getOrDefault(task.getId(), 0L),
+						documentProof.getOrDefault(task.getId(), 0L),
 						null,
 						migrations.getOrDefault(task.getId(), TaskMigrationSummary.none())))
 				.toList();
@@ -101,6 +113,8 @@ public class ProjectProjectionReadService {
 				task,
 				counts.getOrDefault(task.getId(), 0L),
 				evidence.getOrDefault(task.getId(), 0L),
+				commitProofCounts(projectId).getOrDefault(task.getId(), 0L),
+				documentProofCounts(projectId, evidence).getOrDefault(task.getId(), 0L),
 				directSubtasks(task.getId()),
 				migrations(List.of(task)).getOrDefault(task.getId(), TaskMigrationSummary.none()));
 	}
@@ -205,6 +219,23 @@ public class ProjectProjectionReadService {
 		return counts;
 	}
 
+	/** Linked non-merge commits per task: the commit proof a code/test task needs. */
+	private Map<UUID, Long> commitProofCounts(UUID projectId) {
+		return groupedCounts(links.countV23LinksByProjectGrouped(projectId));
+	}
+
+	/** Files + web links (already in {@code evidence}) + Jira attachments: a document/research task's proof. */
+	private Map<UUID, Long> documentProofCounts(UUID projectId, Map<UUID, Long> evidence) {
+		Map<UUID, Long> counts = new HashMap<>(evidence);
+		if (attachments == null) {
+			return counts;
+		}
+		for (Map.Entry<UUID, Long> row : groupedCounts(attachments.countByProjectGrouped(projectId)).entrySet()) {
+			counts.merge(row.getKey(), row.getValue(), Long::sum);
+		}
+		return counts;
+	}
+
 	private static Map<UUID, Long> groupedCounts(List<Object[]> rows) {
 		Map<UUID, Long> counts = new HashMap<>();
 		if (rows == null) {
@@ -236,10 +267,25 @@ public class ProjectProjectionReadService {
 		return toTask(task, linkedCommitCount, 0L, subtasks, migration);
 	}
 
+	/**
+	 * Write-path responses (create/patch) have no per-task proof breakdown at hand, so the evidence
+	 * check falls back to the raw link count and files + web links; list/detail are authoritative.
+	 */
 	static ProjectTaskResponse toTask(
 			Task task,
 			long linkedCommitCount,
 			long evidenceCount,
+			List<ProjectTaskResponse.Subtask> subtasks,
+			TaskMigrationSummary migration) {
+		return toTask(task, linkedCommitCount, evidenceCount, linkedCommitCount, evidenceCount, subtasks, migration);
+	}
+
+	static ProjectTaskResponse toTask(
+			Task task,
+			long linkedCommitCount,
+			long evidenceCount,
+			long commitProofCount,
+			long documentProofCount,
 			List<ProjectTaskResponse.Subtask> subtasks,
 			TaskMigrationSummary migration) {
 		UserAccount assigneeUser =
@@ -330,7 +376,22 @@ public class ProjectProjectionReadService {
 			parentTask,
 			source,
 			migration,
-			subtasks);
+			subtasks,
+			evidenceCheck(task, labels, commitProofCount, documentProofCount));
+	}
+
+	private static ProjectTaskResponse.EvidenceCheck evidenceCheck(
+			Task task, List<String> labels, long commitProofCount, long documentProofCount) {
+		com.saga.be.service.contribution.TaskEvidencePolicy.Result result =
+				com.saga.be.service.contribution.TaskEvidencePolicy.evaluate(
+						task.getStatus(), labels, commitProofCount, documentProofCount);
+		return new ProjectTaskResponse.EvidenceCheck(
+				result.categories(),
+				result.requiresCommit(),
+				result.requiresDocument(),
+				commitProofCount,
+				documentProofCount,
+				result.status().name());
 	}
 
 	private Map<UUID, TaskMigrationSummary> migrations(List<Task> rows) {

@@ -985,7 +985,7 @@ Quy tắc Phase B1:
 | `commits.unlinkedCommits` | `totalCommits - linkedCommits` |
 | `commits.traceabilityPercent` | `linkedCommits / totalCommits * 100`. **`null` khi không có commit** |
 | `commits.lastCommittedAt` | `MAX(COALESCE(committedAt, createdAt))` — timestamp hoạt động, **có** fallback `createdAt`. Khác `recentCommits[].committedAt` |
-| `myActiveTasks` | Preview **cần chú ý**, **không** phải full list. Cap **10** đúng top 10 theo rule cuối. Gồm mọi task cá nhân `status != DONE` **cộng** task `DONE` mà classifier = CODE/TEST và `evidenceCommitCount = 0`. DONE thường / DOCUMENT / RESEARCH / AMBIGUOUS không vào preview chỉ vì thiếu commit. Ứng viên DONE được classify đủ, không cắt 50 row thô |
+| `myActiveTasks` | Preview **cần chú ý**, **không** phải full list. Cap **10** đúng top 10 theo rule cuối. Gồm mọi task cá nhân `status != DONE` **cộng** task `DONE` có label **`saga:code` hoặc `saga:test`** (kể cả khi gắn kèm label SAGA khác) và `evidenceCommitCount = 0`. Task chỉ có label tài liệu/nghiên cứu, hoặc không có label SAGA, không vào preview vì thiếu commit (tài liệu được chứng minh bằng tệp/link, xem `evidenceCheck` ở mục 19). Ứng viên DONE được classify đủ, không cắt 50 row thô |
 | `linkedCommitCount` | Số link raw (kể cả merge) |
 | `evidenceCommitCount` | Số link tới commit V23 (`parentCount` null/0/1) |
 | `hasAnomaly` | `true` khi DONE CODE/TEST và `evidenceCommitCount = 0` (kể cả chỉ link merge) |
@@ -1044,7 +1044,7 @@ Phase D1+D2 — `actionableAlerts` (`MSR_ANOMALY`, `GHOSTING_WARNING`, `PEER_REV
 | Thứ tự | Mọi `MSR_ANOMALY`, rồi tối đa **một** `GHOSTING_WARNING`, rồi tối đa **một** `PEER_REVIEW_PENDING` |
 | `id` | Deterministic, không persist: `MSR:<taskId>` / `GHOSTING:<studentId>:<courseId>` / `PEER_REVIEW_PENDING:<sprintId>` |
 | `actionType` + `targetIds` | Backend sở hữu semantics. FE tự route. **Không** trả URL / href |
-| `MSR_ANOMALY` | Cùng rule B1: task gán cho chính SV, chưa xoá, `DONE`, classifier CODE/TEST, `evidenceCommitCount = 0` (kể cả chỉ link merge). DOCUMENT / RESEARCH / AMBIGUOUS **không** tạo alert. Một alert / task. `severity` = `WARNING` |
+| `MSR_ANOMALY` | Cùng rule B1: task gán cho chính SV, chưa xoá, `DONE`, classifier CODE/TEST, `evidenceCommitCount = 0` (kể cả chỉ link merge), với task có label `saga:code`/`saga:test` (kể cả gắn kèm label khác). Task chỉ có label tài liệu/nghiên cứu hoặc không có label SAGA **không** tạo alert này. Một alert / task. `severity` = `WARNING` |
 | Thứ tự MSR | `dueDate` ASC (null last), priority HIGHEST→LOWEST, `taskId` ASC — cùng secondary order với `myActiveTasks` |
 | Preview vs alert | `myActiveTasks` cap 10. `actionableAlerts` MSR **không** cap — mọi anomaly. Mọi `hasAnomaly=true` trong preview **phải** có alert `MSR:<id>` khớp |
 | `PEER_REVIEW_PENDING` | Chỉ khi `currentSprint != null` **và** `remainingPeers > 0`. Đúng **một** card / sprint hiện tại |
@@ -1365,6 +1365,12 @@ Mọi field đều tuỳ chọn — chỉ field khác `null` mới được cậ
   "linkedCommitCount": 3,
   "evidenceCount": 2,
   "hasEvidence": true,
+  "evidenceCheck": {
+    "categories": ["DOCUMENT"],
+    "requiresCommit": false, "requiresDocument": true,
+    "commitEvidenceCount": 0, "documentEvidenceCount": 2,
+    "status": "SATISFIED"
+  },
   "externalUpdatedAt": "...", "createdAt": "...", "updatedAt": "..."
 }
 ```
@@ -1376,7 +1382,17 @@ Vài lưu ý chính xác cần nhớ:
 - `assignee` là `null` nếu task chưa gán ai.
 - `sprint` là `null` nếu task đang ở backlog.
 - `linkedCommitCount` được tính lại mỗi lần đọc (không phải cột lưu sẵn).
-- `evidenceCount` = số `task_file` + `task_web_link` (không gồm commit). `hasEvidence` = `evidenceCount > 0`. Chỉ count, không trả payload file/link. Pipeline dùng hai field này, không N+1 `GET /tasks/{id}/files` và `/web-links`.
+- `evidenceCount` = số `task_file` + `task_web_link` (không gồm commit). `hasEvidence` = `evidenceCount > 0`. Chỉ count, không trả payload file/link.
+- **`evidenceCheck` — dùng field này cho mọi cảnh báo "thiếu commit" / "thiếu minh chứng"**, không đoán theo tiêu đề task. Minh chứng cần có **theo label SAGA**:
+
+  | Label | Cần | Được tính là minh chứng |
+  |---|---|---|
+  | `saga:code`, `saga:test` | Commit | Commit liên kết **không phải merge** (`commitEvidenceCount`) |
+  | `saga:document` (hoặc `saga:doc`), `saga:research` | Tài liệu | Tệp tải lên SAGA + link + tệp đính kèm trên Jira (`documentEvidenceCount`). Commit **không** thay được |
+  | Gắn nhiều label | Hợp của các loại trên | VD code + document → cần **cả** commit **và** tài liệu |
+
+  `status`: `NOT_DONE` (chưa xong, không cảnh báo) · `SATISFIED` (đủ) · `MISSING_COMMIT` · `MISSING_DOCUMENT` · `MISSING_COMMIT_AND_DOCUMENT` · `UNLABELED` (DONE nhưng chưa có label SAGA — SAGA không biết cần minh chứng gì, và task **không được tính điểm tiêu chí** cho tới khi gắn label). Gợi ý hiển thị: `MISSING_COMMIT` → "Thiếu commit" (đỏ); `MISSING_DOCUMENT` → "Thiếu tài liệu" (vàng); `MISSING_COMMIT_AND_DOCUMENT` → cả hai; `UNLABELED` → "Chưa gắn nhãn SAGA" (xám). Đếm "task hoàn thành chưa có commit" = số task có `status` là `MISSING_COMMIT` hoặc `MISSING_COMMIT_AND_DOCUMENT`.
+  `evidenceCheck` trên `GET /tasks` và `GET /tasks/{id}` là chuẩn; response của `POST`/`PATCH` là ước tính (đếm link thô, chưa gồm tệp Jira) — FE refetch danh sách sau khi ghi.
 
 ### Xoá task — chặn nếu đã có bằng chứng
 `DELETE /tasks/{taskId}` → **409 `TASK_DELETE_BLOCKED_BY_EVIDENCE`** nếu task đã có Work Session hoặc Contribution Confirmation gắn vào (mục 28) — không cho xoá để bảo toàn dữ liệu chấm điểm.

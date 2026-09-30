@@ -3,6 +3,7 @@ package com.saga.be.graph;
 import com.saga.be.entity.enums.ContributionCriterion;
 import com.saga.be.entity.enums.TaskStatus;
 import com.saga.be.service.contribution.ReservedContributionMarkerClassifier;
+import com.saga.be.service.contribution.TaskEvidencePolicy;
 import com.saga.be.service.contribution.ReservedContributionMarkerClassifier.Outcome;
 import java.util.List;
 
@@ -21,9 +22,10 @@ public final class SagaGraphRules {
 			classified = hasFileEvidence;
 		}
 		String weightType = classified ? criterion.name() : null;
-		boolean codeOrTest =
-				criterion == ContributionCriterion.CODE || criterion == ContributionCriterion.TEST;
-		boolean anomaly = status == TaskStatus.DONE && codeOrTest && linkedCommitCount == 0;
+		// Anomaly = a DONE task missing the proof its own labels require (commit for code/test,
+		// file/link/attachment for document/research) -- the same TaskEvidencePolicy the task list uses.
+		boolean anomaly = TaskEvidencePolicy.evaluate(status, labels, linkedCommitCount, hasFileEvidence ? 1 : 0)
+				.missingProof();
 		return new TaskGraphAttrs(weightType, classified && weightType != null, anomaly);
 	}
 }

@@ -24,7 +24,6 @@ import com.saga.be.entity.academic.Course;
 import com.saga.be.entity.academic.CourseEnrollment;
 import com.saga.be.entity.academic.Semester;
 import com.saga.be.entity.academic.Subject;
-import com.saga.be.entity.enums.ContributionCriterion;
 import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.Priority;
 import com.saga.be.entity.enums.TaskStatus;
@@ -48,7 +47,6 @@ import com.saga.be.repository.StudentDashboardAnomalyCandidateRow;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
 import com.saga.be.repository.TeamMemberRepository;
-import com.saga.be.service.contribution.ReservedContributionMarkerClassifier;
 import com.saga.be.service.contribution.TaskLabelParser;
 import java.time.Clock;
 import java.time.DayOfWeek;
@@ -816,10 +814,9 @@ public class StudentDashboardService {
 		return new StudentDashboardWeeklyCommitResponse(monday, monday.plusDays(6), commits);
 	}
 
+	/** Any code/test marker means the task needs commit proof (same rule as the task list and graph). */
 	private static boolean isCodeOrTest(String labelsJson) {
-		ContributionCriterion criterion = ReservedContributionMarkerClassifier.toCriterion(
-				ReservedContributionMarkerClassifier.classify(TaskLabelParser.parse(labelsJson)));
-		return criterion == ContributionCriterion.CODE || criterion == ContributionCriterion.TEST;
+		return com.saga.be.service.contribution.TaskEvidencePolicy.requiresCommit(TaskLabelParser.parse(labelsJson));
 	}
 
 	private static AttentionRow toAnomalyRow(StudentDashboardAnomalyCandidateRow row) {

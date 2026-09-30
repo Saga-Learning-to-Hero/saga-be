@@ -592,10 +592,13 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			""")
 	long countDueSoonForProjects(@Param("projectIds") Collection<UUID> projectIds, @Param("now") LocalDateTime now, @Param("dueSoonCutoff") LocalDateTime dueSoonCutoff);
 
-	/** Lecturer dashboard: DONE tasks in sprints — {@code Object[]{UUID sprintId, UUID taskId}}. */
+	/**
+	 * Lecturer dashboard: DONE tasks in sprints — {@code Object[]{UUID sprintId, UUID taskId, String labelsJson}}.
+	 * Labels let the caller keep only tasks whose SAGA label requires commit proof.
+	 */
 	@Query(
 			"""
-			select t.sprint.id, t.id
+			select t.sprint.id, t.id, t.labelsJson
 			from Task t
 			where t.sprint.id in :sprintIds
 			  and t.deletedAt is null

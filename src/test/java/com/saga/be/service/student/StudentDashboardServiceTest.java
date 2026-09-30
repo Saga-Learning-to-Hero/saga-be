@@ -562,7 +562,7 @@ class StudentDashboardServiceTest {
 		stubEmptyIntegrations(projectId);
 		Task open = assignedTask(TaskStatus.TODO, Priority.LOW, LocalDateTime.of(2026, 9, 20, 0, 0), null);
 		Task anomaly = assignedTask(TaskStatus.DONE, Priority.MEDIUM, null, "[\"saga:code\"]");
-		Task ambiguous = assignedTask(TaskStatus.DONE, Priority.HIGH, null, "[\"saga:code\",\"saga:test\"]");
+		Task ambiguous = assignedTask(TaskStatus.DONE, Priority.HIGH, null, "[\"saga:document\",\"saga:research\"]");
 		when(tasks.findAttentionNonDoneByProjectAndAssignee(eq(projectId), eq(profile.getId()), any(Pageable.class)))
 				.thenReturn(List.of(open));
 		when(tasks.findDoneWithoutV23EvidenceCandidates(projectId, profile.getId()))
@@ -586,6 +586,28 @@ class StudentDashboardServiceTest {
 		assertEquals("MSR_ANOMALY", response.actionableAlerts().getFirst().type());
 		assertEquals(anomaly.getId(), response.actionableAlerts().getFirst().targetIds().taskId());
 		verify(peerReviews, never()).countRemainingPeers(any(), any(), any());
+	}
+
+	@Test
+	void doneTaskCarryingACodeLabelAmongOthersStillNeedsCommitProof() {
+		Team team = team(project());
+		UUID projectId = team.getProject().getId();
+		when(enrollments.findFetchedActiveByUserAndCourse(account.getId(), course.getId()))
+				.thenReturn(Optional.of(enrollment));
+		when(members.findFetchedByCourseEnrollment_Id(enrollment.getId()))
+				.thenReturn(Optional.of(member(team, RoleInTeam.MEMBER)));
+		when(members.countActiveByTeam_Id(team.getId())).thenReturn(1L);
+		stubEmptyIntegrations(projectId);
+		Task codeAndDoc = assignedTask(TaskStatus.DONE, Priority.HIGH, null, "[\"saga:code\",\"saga:document\"]");
+		Task docOnly = assignedTask(TaskStatus.DONE, Priority.HIGH, null, "[\"saga:doc\"]");
+		when(tasks.findDoneWithoutV23EvidenceCandidates(projectId, profile.getId()))
+				.thenReturn(List.of(candidate(codeAndDoc), candidate(docOnly)));
+
+		var response = service.get(account.getId(), course.getId());
+
+		assertEquals(1, response.actionableAlerts().size());
+		assertEquals("MSR:" + codeAndDoc.getId(), response.actionableAlerts().getFirst().id());
+		assertTrue(response.myActiveTasks().stream().noneMatch(row -> row.id().equals(docOnly.getId())));
 	}
 
 	@Test

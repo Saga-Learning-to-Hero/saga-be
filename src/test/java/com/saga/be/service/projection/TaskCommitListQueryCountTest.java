@@ -154,6 +154,8 @@ class TaskCommitListQueryCountTest {
 	private TaskFileRepository files;
 	@Autowired
 	private TaskWebLinkRepository webLinks;
+	@Autowired
+	private com.saga.be.repository.TaskAttachmentRepository taskAttachments;
 
 	private TransactionTemplate tx;
 	private UserAccount student;
@@ -335,6 +337,65 @@ class TaskCommitListQueryCountTest {
 		assertThat(evidence.total()).isEqualTo(page.total());
 		assertThat(evidenceIds.getTotalElements()).isEqualTo(page.total());
 		assertThat(links.countByTask_Id(task.getId())).isEqualTo(5);
+	}
+
+	@Test
+	void listTasks_codeTaskIsProvenOnlyByANonMergeCommit() {
+		tx.executeWithoutResult(status -> {
+			Task row = tasks.findById(task.getId()).orElseThrow();
+			row.setStatus(TaskStatus.DONE);
+			row.setLabelsJson("[\"saga:code\"]");
+			tasks.save(row);
+			persistLinked("M", 2, LocalDateTime.of(2026, 6, 1, 0, 0), null, "Merge branch main");
+		});
+
+		com.saga.be.dto.project.ProjectTaskResponse onlyMerge = listedTask();
+		assertThat(onlyMerge.linkedCommitCount()).isEqualTo(1);
+		assertThat(onlyMerge.evidenceCheck().commitEvidenceCount()).isZero();
+		assertThat(onlyMerge.evidenceCheck().requiresCommit()).isTrue();
+		assertThat(onlyMerge.evidenceCheck().requiresDocument()).isFalse();
+		assertThat(onlyMerge.evidenceCheck().status()).isEqualTo("MISSING_COMMIT");
+
+		tx.executeWithoutResult(status -> persistLinked("N", 1, LocalDateTime.of(2026, 6, 2, 0, 0), null, "feat"));
+
+		assertThat(listedTask().evidenceCheck().status()).isEqualTo("SATISFIED");
+	}
+
+	@Test
+	void listTasks_documentTaskIsProvenByAJiraAttachmentAndNeverByCommits() {
+		readService.setAttachments(taskAttachments);
+		tx.executeWithoutResult(status -> {
+			Task row = tasks.findById(task.getId()).orElseThrow();
+			row.setStatus(TaskStatus.DONE);
+			row.setLabelsJson("[\"saga:doc\"]");
+			tasks.save(row);
+			persistLinked("C1", 1, LocalDateTime.of(2026, 6, 1, 0, 0), null, "feat");
+		});
+
+		com.saga.be.dto.project.ProjectTaskResponse withCommitOnly = listedTask();
+		assertThat(withCommitOnly.evidenceCheck().categories()).containsExactly("DOCUMENT");
+		assertThat(withCommitOnly.evidenceCheck().status()).isEqualTo("MISSING_DOCUMENT");
+
+		tx.executeWithoutResult(status -> {
+			com.saga.be.entity.jira.TaskAttachment attachment = new com.saga.be.entity.jira.TaskAttachment();
+			attachment.setTask(tasks.findById(task.getId()).orElseThrow());
+			attachment.setExternalId("att-1");
+			attachment.setFilename("report.pdf");
+			taskAttachments.save(attachment);
+		});
+
+		com.saga.be.dto.project.ProjectTaskResponse withAttachment = listedTask();
+		assertThat(withAttachment.evidenceCheck().documentEvidenceCount()).isEqualTo(1);
+		assertThat(withAttachment.evidenceCheck().status()).isEqualTo("SATISFIED");
+		// evidenceCount keeps its documented meaning (SAGA files + web links only).
+		assertThat(withAttachment.evidenceCount()).isZero();
+	}
+
+	private com.saga.be.dto.project.ProjectTaskResponse listedTask() {
+		return tx.execute(status -> readService.listTasks(student.getId(), project.getId())).stream()
+				.filter(row -> row.id().equals(task.getId()))
+				.findFirst()
+				.orElseThrow();
 	}
 
 	@Test

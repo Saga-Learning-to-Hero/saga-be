@@ -21,10 +21,25 @@ class SagaGraphRulesTest {
 	}
 
 	@Test
-	void documentWithoutFileIsNotClassified() {
+	void documentWithoutFileIsNotClassifiedAndIsAnomalyEvenWithCommits() {
+		// A document is proven by a file/link/attachment; commits never stand in for it.
 		TaskGraphAttrs attrs = SagaGraphRules.classify(TaskStatus.DONE, List.of("saga:document"), false, 2);
 		assertNull(attrs.weightType());
 		assertFalse(attrs.classified());
+		assertTrue(attrs.anomaly());
+	}
+
+	@Test
+	void researchWithoutFileIsAnomalyButNotDoneOrUnlabelledTasksAreNot() {
+		assertTrue(SagaGraphRules.classify(TaskStatus.DONE, List.of("saga:research"), false, 0).anomaly());
+		assertFalse(SagaGraphRules.classify(TaskStatus.IN_PROGRESS, List.of("saga:research"), false, 0).anomaly());
+		assertFalse(SagaGraphRules.classify(TaskStatus.DONE, List.of("backend"), false, 0).anomaly());
+	}
+
+	@Test
+	void docAliasCountsAsDocument() {
+		TaskGraphAttrs attrs = SagaGraphRules.classify(TaskStatus.DONE, List.of("saga:doc"), true, 0);
+		assertEquals("DOCUMENT", attrs.weightType());
 		assertFalse(attrs.anomaly());
 	}
 
@@ -37,11 +52,12 @@ class SagaGraphRulesTest {
 	}
 
 	@Test
-	void ambiguousLabelsAreNotClassified() {
+	void ambiguousLabelsAreNotClassifiedButStillNeedTheirProof() {
 		TaskGraphAttrs attrs =
 				SagaGraphRules.classify(TaskStatus.DONE, List.of("saga:code", "saga:test"), false, 0);
 		assertNull(attrs.weightType());
 		assertFalse(attrs.classified());
-		assertFalse(attrs.anomaly());
+		assertTrue(attrs.anomaly());
+		assertFalse(SagaGraphRules.classify(TaskStatus.DONE, List.of("saga:code", "saga:test"), false, 1).anomaly());
 	}
 }
