@@ -59,6 +59,7 @@ public record ProjectProgressResponse(
 			UUID userId,
 			String fullName,
 			String studentCode,
+			String avatarUrl,
 			String teamRole,
 			TaskAttribution taskSummary,
 			CommitAttribution commitSummary) {}

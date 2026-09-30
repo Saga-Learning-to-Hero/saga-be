@@ -184,6 +184,7 @@ public class ProjectProgressService {
 				userAccountId,
 				fullName(member),
 				member.getCourseEnrollment().getStudentProfile().getStudentCode(),
+				member.getCourseEnrollment().getStudentProfile().getUserAccount().getAvatarUrl(),
 				member.getRoleInTeam() == null ? null : member.getRoleInTeam().name(),
 				taskSummary,
 				assignedTasks,
@@ -281,6 +282,7 @@ public class ProjectProgressService {
 				member.getCourseEnrollment().getStudentProfile().getUserAccount().getId(),
 				fullName(member),
 				member.getCourseEnrollment().getStudentProfile().getStudentCode(),
+				member.getCourseEnrollment().getStudentProfile().getUserAccount().getAvatarUrl(),
 				member.getRoleInTeam() == null ? null : member.getRoleInTeam().name(),
 				taskSummary,
 				commitSummary);

@@ -95,6 +95,7 @@ public class StudentTeamService {
 		return new StudentTeamMemberResponse(
 				profile == null ? null : profile.getStudentCode(),
 				user == null ? null : user.getFullName(),
+				user == null ? null : user.getAvatarUrl(),
 				member.getRoleInTeam() == null ? null : member.getRoleInTeam().name());
 	}
 }

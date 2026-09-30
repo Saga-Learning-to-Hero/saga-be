@@ -197,6 +197,13 @@ public class TaskWorkSessionTimelineService {
 				elapsedSeconds(session.getStartedAt(), session.getEndedAt(), now));
 	}
 
+	private static String authorAvatarUrl(GitCommit commit) {
+		if (commit.getAuthorStudent() == null || commit.getAuthorStudent().getUserAccount() == null) {
+			return null;
+		}
+		return commit.getAuthorStudent().getUserAccount().getAvatarUrl();
+	}
+
 	static CommitItem toCommit(TaskGitCommitLink link) {
 		GitCommit commit = link.getGitCommit();
 		return new CommitItem(
@@ -205,6 +212,7 @@ public class TaskWorkSessionTimelineService {
 				commit.getMessage(),
 				commit.getRepo() == null ? null : commit.getRepo().getFullName(),
 				commit.getAuthorStudent() == null ? null : commit.getAuthorStudent().getId(),
+				authorAvatarUrl(commit),
 				commit.getCommittedAt(),
 				link.getCreatedAt(),
 				link.getLinkSource() == null ? null : link.getLinkSource().name());

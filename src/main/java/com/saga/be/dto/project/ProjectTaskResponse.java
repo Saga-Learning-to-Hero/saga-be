@@ -86,7 +86,7 @@ public record ProjectTaskResponse(
 		@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
 		List<Subtask> subtasks) {
 
-	public record Assignee(String accountId, String displayName, UUID studentId) {}
+	public record Assignee(String accountId, String displayName, UUID studentId, String avatarUrl) {}
 
 	public record PriorityDetail(String id, String name) {}
 

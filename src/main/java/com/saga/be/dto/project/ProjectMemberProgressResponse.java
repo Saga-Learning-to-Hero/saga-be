@@ -14,6 +14,7 @@ public record ProjectMemberProgressResponse(
 		UUID userId,
 		String fullName,
 		String studentCode,
+		String avatarUrl,
 		String teamRole,
 		ProjectProgressResponse.TaskAttribution taskSummary,
 		List<AssignedTask> assignedTasks,
