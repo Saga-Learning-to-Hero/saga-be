@@ -1,5 +1,6 @@
 package com.saga.be.service.student;
 
+import com.saga.be.dto.student.StudentCoursePageResponse;
 import com.saga.be.dto.student.StudentCourseResponse;
 import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.academic.AcademicClass;
@@ -16,9 +17,11 @@ import com.saga.be.exception.AcademicException;
 import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.StudentProfileRepository;
 import com.saga.be.repository.TeamMemberRepository;
+import com.saga.be.service.admin.AdminPaging;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
@@ -45,6 +48,34 @@ public class StudentCourseService {
 
 	@Transactional(readOnly = true)
 	public List<StudentCourseResponse> listMine(UUID userId) {
+		return toResponses(sortedActiveEnrollments(userId));
+	}
+
+	/**
+	 * Same rows and order as {@link #listMine}, optionally narrowed to one semester and/or a search
+	 * over course code, subject code/name, class code and semester code (case-insensitive contains),
+	 * then cut to one page. A student has few enrollments, so this pages in memory; team rows are
+	 * loaded only for the page returned.
+	 */
+	@Transactional(readOnly = true)
+	public StudentCoursePageResponse listMinePaged(
+			UUID userId, UUID semesterId, String search, Integer page, Integer size) {
+		int pageNumber = AdminPaging.page(page);
+		int pageSize = AdminPaging.size(size);
+		String needle = AdminPaging.search(search);
+		String lowered = needle == null ? null : needle.toLowerCase(Locale.ROOT);
+		List<CourseEnrollment> matching = sortedActiveEnrollments(userId).stream()
+				.filter(row -> semesterId == null || semesterId.equals(semesterId(row.getCourse())))
+				.filter(row -> lowered == null || matches(row.getCourse(), lowered))
+				.toList();
+		long from = (long) pageNumber * pageSize;
+		List<CourseEnrollment> slice = from >= matching.size()
+				? List.of()
+				: matching.subList((int) from, (int) Math.min(from + pageSize, matching.size()));
+		return new StudentCoursePageResponse(toResponses(slice), pageNumber, pageSize, matching.size());
+	}
+
+	private List<CourseEnrollment> sortedActiveEnrollments(UUID userId) {
 		StudentProfile profile = students.findByUserAccount_Id(userId).orElse(null);
 		if (profile == null) {
 			throw new AcademicException(
@@ -52,8 +83,14 @@ public class StudentCourseService {
 					HttpStatus.FORBIDDEN,
 					"Student is not ACTIVE in this course.");
 		}
-		List<CourseEnrollment> rows =
-				enrollments.findFetchedByStudentProfile_IdAndEnrollmentStatus(profile.getId(), EnrollmentStatus.ACTIVE);
+		return enrollments
+				.findFetchedByStudentProfile_IdAndEnrollmentStatus(profile.getId(), EnrollmentStatus.ACTIVE)
+				.stream()
+				.sorted(courseOrder())
+				.toList();
+	}
+
+	private List<StudentCourseResponse> toResponses(List<CourseEnrollment> rows) {
 		if (rows.isEmpty()) {
 			return List.of();
 		}
@@ -62,10 +99,32 @@ public class StudentCourseService {
 				.stream()
 				.collect(Collectors.toMap(
 						member -> member.getCourseEnrollment().getId(), Function.identity(), (first, ignored) -> first));
-		return rows.stream()
-				.sorted(courseOrder())
-				.map(row -> toResponse(row, memberships.get(row.getId())))
-				.toList();
+		return rows.stream().map(row -> toResponse(row, memberships.get(row.getId()))).toList();
+	}
+
+	private static UUID semesterId(Course course) {
+		return course == null || course.getSemester() == null ? null : course.getSemester().getId();
+	}
+
+	private static boolean matches(Course course, String loweredNeedle) {
+		if (course == null) {
+			return false;
+		}
+		Subject subject = course.getSubject();
+		Semester semester = course.getSemester();
+		for (String value : new String[] {
+			course.getCourseCode(),
+			course.getName(),
+			subject == null ? null : subject.getSubjectCode(),
+			subject == null ? null : subject.getName(),
+			classCode(course),
+			semester == null ? null : semester.getCode()
+		}) {
+			if (value != null && value.toLowerCase(Locale.ROOT).contains(loweredNeedle)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static Comparator<CourseEnrollment> courseOrder() {

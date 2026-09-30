@@ -753,7 +753,8 @@ Base: `/api/lecturer/courses/{courseId}` — role `LECTURER` hoặc `ADMIN`.
 
 | Method | Path | Mục đích |
 |---|---|---|
-| GET | `/api/lecturer/courses` | Danh sách course được phân công cho lecturer đang đăng nhập |
+| GET | `/api/lecturer/courses` | Danh sách course được phân công cho lecturer đang đăng nhập (mảng đầy đủ) |
+| GET | `/api/lecturer/courses/paged` | Như trên nhưng **phân trang** + lọc `semesterId`, `search` — dùng cho trang chọn course (xem "Phân trang trang chọn course") |
 | GET | `/api/lecturer/courses/{courseId}` | Chi tiết 1 course |
 | GET | `/api/lecturer/courses/{courseId}/roster` | Danh sách sinh viên **ACTIVE** (chỉ đọc, không thao tác được ở đây) |
 | GET | `/api/lecturer/courses/{courseId}/teams` | Danh sách team + thành viên, kèm `unassignedStudents[]` (SV ACTIVE chưa có nhóm: `courseEnrollmentId`, `studentProfileId`, `studentCode`, `fullName`, `email` — sort theo mã SV, không bao giờ `null`) |
@@ -784,6 +785,20 @@ FE nên thiết kế UI "Đổi trưởng nhóm"/"Chuyển thành viên" xử l�
 ## 14. Student — Course / Team
 
 Base: `/api/student/**` — role `STUDENT` only.
+
+### Phân trang trang chọn course (sinh viên & giảng viên)
+
+API cũ trả **mảng đầy đủ** (giữ nguyên, dùng cho bộ chuyển course trên header / xác định course đang chọn). **Trang chọn course** dùng API `/paged`:
+
+| Method | Path | Ghi chú |
+|---|---|---|
+| GET | `/api/student/courses/paged?page=&size=&semesterId=&search=` | Course ACTIVE của SV. **Cùng item và cùng thứ tự** với `GET /api/student/courses` (học kỳ mới nhất trước) |
+| GET | `/api/lecturer/courses/paged?page=&size=&semesterId=&search=` | Course được phân công (ADMIN: mọi course). **Cùng phạm vi và thứ tự** với `GET /api/lecturer/courses` (theo tên course) |
+
+- `page` mặc định `0`, `size` mặc định `50`, tối đa `200`. Sai → `400 REQUEST_INVALID`.
+- `semesterId` (tuỳ chọn): chỉ course của học kỳ đó.
+- `search` (tuỳ chọn): không phân biệt hoa/thường, khớp **một phần** với mã course, mã/tên môn, mã lớp (SV: thêm mã học kỳ; GV: thêm tên course). Ký tự `%` `_` được hiểu đúng nghĩa đen.
+- Response: `{ "items": [...], "page": 0, "size": 50, "total": 3 }` — `items` cùng shape với từng phần tử của API cũ. Trang vượt quá cuối → `items: []`, `total` vẫn đúng.
 
 ### `GET /api/student/courses`
 Danh sách các course sinh viên **đang** ghi danh ACTIVE (course đã bị withdraw sẽ **không** hiện ở đây nữa — khớp đúng với hành vi xoá ở mục 12).
@@ -2228,6 +2243,7 @@ export function subscribeProjectEvents(
 | Method | Path | Role |
 |---|---|---|
 | GET | `/api/student/courses` | STUDENT |
+| GET | `/api/student/courses/paged` | STUDENT |
 | GET | `/api/student/courses/{courseId}/team` | STUDENT |
 | GET | `/api/student/courses/{courseId}/dashboard` | STUDENT (MEMBER/LEADER/MENTOR) |
 | GET | `/api/student/project-types` | STUDENT |

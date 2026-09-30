@@ -1,5 +1,6 @@
 package com.saga.be.service.lecturer;
 
+import com.saga.be.dto.academic.CoursePageResponse;
 import com.saga.be.dto.academic.CourseResponse;
 import com.saga.be.dto.team.LecturerActiveRosterEntryResponse;
 import com.saga.be.dto.team.LecturerActiveRosterResponse;
@@ -16,9 +17,15 @@ import com.saga.be.entity.enums.EnrollmentStatus;
 import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.CourseRepository;
 import com.saga.be.repository.LecturerProfileRepository;
+import com.saga.be.service.admin.AdminPaging;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -57,6 +64,42 @@ public class LecturerCourseService {
 			rows = courses.search(null, null, null, profile.getId());
 		}
 		return rows.stream().map(this::toCourse).toList();
+	}
+
+	/**
+	 * Same scope and order as {@link #listCourses} (a lecturer's own courses; every course for
+	 * ADMIN), paged in the database and optionally narrowed by semester and search text.
+	 */
+	@Transactional(readOnly = true)
+	public CoursePageResponse listCoursesPaged(
+			UserAccount actor, UUID semesterId, String search, Integer page, Integer size) {
+		int pageNumber = AdminPaging.page(page);
+		int pageSize = AdminPaging.size(size);
+		UUID lecturerId;
+		if (actor != null && actor.getAccountRole() == AccountRole.ADMIN) {
+			lecturerId = null;
+		} else {
+			LecturerProfile profile = actor == null ? null : lecturers.findByUserAccount_Id(actor.getId()).orElse(null);
+			if (profile == null) {
+				return new CoursePageResponse(List.of(), pageNumber, pageSize, 0);
+			}
+			lecturerId = profile.getId();
+		}
+		Page<UUID> ids = courses.findLecturerPickerPageIds(
+				lecturerId, semesterId, AdminPaging.likeSearch(search), PageRequest.of(pageNumber, pageSize));
+		List<CourseResponse> items = List.of();
+		if (!ids.getContent().isEmpty()) {
+			Map<UUID, Course> byId = new HashMap<>();
+			for (Course course : courses.findFetchedByIdIn(ids.getContent())) {
+				byId.put(course.getId(), course);
+			}
+			items = ids.getContent().stream()
+					.map(byId::get)
+					.filter(Objects::nonNull)
+					.map(this::toCourse)
+					.toList();
+		}
+		return new CoursePageResponse(items, pageNumber, pageSize, ids.getTotalElements());
 	}
 
 	@Transactional(readOnly = true)

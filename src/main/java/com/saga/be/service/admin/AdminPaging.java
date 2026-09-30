@@ -39,4 +39,19 @@ public final class AdminPaging {
 	public static AcademicException invalidRequest(String message) {
 		return new AcademicException(AcademicErrorCode.REQUEST_INVALID, HttpStatus.BAD_REQUEST, message);
 	}
+
+	/** Trimmed search text capped at {@value #SEARCH_MAX_LENGTH} chars, or null when blank. */
+	public static String search(String raw) {
+		if (raw == null || raw.isBlank()) {
+			return null;
+		}
+		String trimmed = raw.trim();
+		return trimmed.length() > SEARCH_MAX_LENGTH ? trimmed.substring(0, SEARCH_MAX_LENGTH) : trimmed;
+	}
+
+	/** {@link #search} escaped for a JPQL {@code like ... escape '\\'} term, or null when blank. */
+	public static String likeSearch(String raw) {
+		String value = search(raw);
+		return value == null ? null : value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+	}
 }

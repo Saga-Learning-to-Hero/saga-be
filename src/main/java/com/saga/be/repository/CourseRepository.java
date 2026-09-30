@@ -87,6 +87,51 @@ public interface CourseRepository extends JpaRepository<Course, UUID> {
 			""")
 	List<Course> findFetchedByIdIn(@Param("ids") Collection<UUID> ids);
 
+	/**
+	 * Lecturer course picker IDs (lecturerId null = every course, for ADMIN). {@code q} is an
+	 * already LIKE-escaped term matched case-insensitively against course name/code, class code and
+	 * subject code/name. Same order as {@link #search}. Pass an unsorted {@link Pageable}.
+	 */
+	@Query(
+			value =
+					"""
+					select c.id
+					from Course c
+					left join c.academicClass ac
+					left join c.subject s
+					where c.deletedAt is null
+					  and (:lecturerId is null or c.instructor.id = :lecturerId)
+					  and (:semesterId is null or c.semester.id = :semesterId)
+					  and (:q is null
+					    or lower(coalesce(c.name, '')) like lower(concat('%', :q, '%')) escape '\\'
+					    or lower(coalesce(c.courseCode, '')) like lower(concat('%', :q, '%')) escape '\\'
+					    or lower(coalesce(ac.classCode, '')) like lower(concat('%', :q, '%')) escape '\\'
+					    or lower(coalesce(s.subjectCode, '')) like lower(concat('%', :q, '%')) escape '\\'
+					    or lower(coalesce(s.name, '')) like lower(concat('%', :q, '%')) escape '\\')
+					order by c.name asc, c.id asc
+					""",
+			countQuery =
+					"""
+					select count(c.id)
+					from Course c
+					left join c.academicClass ac
+					left join c.subject s
+					where c.deletedAt is null
+					  and (:lecturerId is null or c.instructor.id = :lecturerId)
+					  and (:semesterId is null or c.semester.id = :semesterId)
+					  and (:q is null
+					    or lower(coalesce(c.name, '')) like lower(concat('%', :q, '%')) escape '\\'
+					    or lower(coalesce(c.courseCode, '')) like lower(concat('%', :q, '%')) escape '\\'
+					    or lower(coalesce(ac.classCode, '')) like lower(concat('%', :q, '%')) escape '\\'
+					    or lower(coalesce(s.subjectCode, '')) like lower(concat('%', :q, '%')) escape '\\'
+					    or lower(coalesce(s.name, '')) like lower(concat('%', :q, '%')) escape '\\')
+					""")
+	Page<UUID> findLecturerPickerPageIds(
+			@Param("lecturerId") UUID lecturerId,
+			@Param("semesterId") UUID semesterId,
+			@Param("q") String q,
+			Pageable pageable);
+
 	@Query(
 			"""
 			SELECT c FROM Course c

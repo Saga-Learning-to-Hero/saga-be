@@ -217,6 +217,73 @@ class StudentCourseServiceTest {
 		assertEquals(2, ids.getValue().size());
 	}
 
+	@Test
+	void pagedKeepsTheUnpagedOrderAndLoadsTeamsOnlyForThePage() {
+		CourseEnrollment spring = enrollment("SWD392", "SE17A01", "SP26", LocalDateTime.of(2026, 1, 1, 0, 0));
+		CourseEnrollment fallA = enrollment("PRN231", "SE18A01", "FA26", LocalDateTime.of(2026, 9, 1, 0, 0));
+		CourseEnrollment fallB = enrollment("SWP391", "SE18B01", "FA26", LocalDateTime.of(2026, 9, 1, 0, 0));
+		stubActive(spring, fallB, fallA);
+		when(members.findFetchedByCourseEnrollment_IdIn(any())).thenReturn(List.of());
+
+		var first = service.listMinePaged(student.getId(), null, null, 0, 2);
+		var second = service.listMinePaged(student.getId(), null, null, 1, 2);
+
+		assertEquals(3, first.total());
+		assertEquals(0, first.page());
+		assertEquals(2, first.size());
+		assertEquals(List.of("PRN231", "SWP391"), first.items().stream().map(StudentCourseResponse::subjectCode).toList());
+		assertEquals(List.of("SWD392"), second.items().stream().map(StudentCourseResponse::subjectCode).toList());
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<UUID>> ids = ArgumentCaptor.forClass(List.class);
+		verify(members, org.mockito.Mockito.times(2)).findFetchedByCourseEnrollment_IdIn(ids.capture());
+		assertEquals(List.of(fallA.getId(), fallB.getId()), ids.getAllValues().get(0));
+		assertEquals(List.of(spring.getId()), ids.getAllValues().get(1));
+	}
+
+	@Test
+	void pagedFiltersBySemesterAndCaseInsensitiveSearch() {
+		CourseEnrollment spring = enrollment("SWD392", "SE17A01", "SP26", LocalDateTime.of(2026, 1, 1, 0, 0));
+		CourseEnrollment fall = enrollment("SWP391", "SE18B01", "FA26", LocalDateTime.of(2026, 9, 1, 0, 0));
+		stubActive(spring, fall);
+		when(members.findFetchedByCourseEnrollment_IdIn(any())).thenReturn(List.of());
+
+		var bySemester = service.listMinePaged(student.getId(), spring.getCourse().getSemester().getId(), null, null, null);
+		var byClass = service.listMinePaged(student.getId(), null, "  se18b ", null, null);
+		var bySubjectName = service.listMinePaged(student.getId(), null, "development", null, null);
+		var noMatch = service.listMinePaged(student.getId(), null, "PRJ301", null, null);
+
+		assertEquals(List.of(spring.getCourse().getId()), bySemester.items().stream().map(StudentCourseResponse::courseId).toList());
+		assertEquals(50, bySemester.size());
+		assertEquals(List.of(fall.getCourse().getId()), byClass.items().stream().map(StudentCourseResponse::courseId).toList());
+		assertEquals(2, bySubjectName.total());
+		assertEquals(0, noMatch.total());
+		assertTrue(noMatch.items().isEmpty());
+	}
+
+	@Test
+	void pagedPastTheEndIsEmptyAndInvalidPagingIsRejected() {
+		stubActive(enrollment("SWP391", "SE18B01", "FA26", LocalDateTime.of(2026, 9, 1, 0, 0)));
+		org.mockito.Mockito.lenient().when(members.findFetchedByCourseEnrollment_IdIn(any())).thenReturn(List.of());
+
+		var beyond = service.listMinePaged(student.getId(), null, null, 5, 10);
+		assertTrue(beyond.items().isEmpty());
+		assertEquals(1, beyond.total());
+		verify(members, never()).findFetchedByCourseEnrollment_IdIn(any());
+
+		assertEquals(
+				AcademicErrorCode.REQUEST_INVALID,
+				assertThrows(AcademicException.class, () -> service.listMinePaged(student.getId(), null, null, -1, 10)).getCode());
+		assertEquals(
+				AcademicErrorCode.REQUEST_INVALID,
+				assertThrows(AcademicException.class, () -> service.listMinePaged(student.getId(), null, null, 0, 201)).getCode());
+	}
+
+	private void stubActive(CourseEnrollment... rows) {
+		when(students.findByUserAccount_Id(student.getId())).thenReturn(Optional.of(profile));
+		when(enrollments.findFetchedByStudentProfile_IdAndEnrollmentStatus(profile.getId(), EnrollmentStatus.ACTIVE))
+				.thenReturn(List.of(rows));
+	}
+
 	private CourseEnrollment enrollment(String subjectCode, String classCode, String semesterCode, LocalDateTime start) {
 		Semester semester = new Semester();
 		semester.setId(UUID.randomUUID());

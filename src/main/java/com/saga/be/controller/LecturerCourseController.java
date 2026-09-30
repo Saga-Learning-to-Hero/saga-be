@@ -1,5 +1,6 @@
 package com.saga.be.controller;
 
+import com.saga.be.dto.academic.CoursePageResponse;
 import com.saga.be.dto.academic.CourseResponse;
 import com.saga.be.dto.lecturer.LecturerCourseDashboardResponse;
 import com.saga.be.dto.team.LecturerActiveRosterResponse;
@@ -51,9 +52,28 @@ public class LecturerCourseController {
 	}
 
 	@GetMapping
-	@Operation(summary = "List courses assigned to the current lecturer")
+	@Operation(
+			summary = "List courses assigned to the current lecturer",
+			description = "Unpaged array for the course switcher/context. Course pickers should use GET /api/lecturer/courses/paged.")
 	public List<CourseResponse> list(@AuthenticationPrincipal SagaUserPrincipal principal) {
 		return courses.listCourses(actor(principal));
+	}
+
+	@GetMapping("/paged")
+	@Operation(
+			summary = "Paged assigned courses for the course picker",
+			description =
+					"Same scope and order as the unpaged list (own courses; every course for ADMIN), sorted by course "
+							+ "name. page default 0, size default 50, size max 200. Filters: semesterId; search "
+							+ "(case-insensitive, matches course name/code, class code, subject code/name). "
+							+ "Invalid page/size -> 400 REQUEST_INVALID.")
+	public CoursePageResponse listPaged(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@RequestParam(required = false) UUID semesterId,
+			@RequestParam(required = false) String search,
+			@RequestParam(required = false) Integer page,
+			@RequestParam(required = false) Integer size) {
+		return courses.listCoursesPaged(actor(principal), semesterId, search, page, size);
 	}
 
 	@GetMapping("/{courseId}")
