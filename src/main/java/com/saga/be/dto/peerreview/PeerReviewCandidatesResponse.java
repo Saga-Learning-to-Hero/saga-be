@@ -10,6 +10,7 @@ public record PeerReviewCandidatesResponse(
 			UUID studentId,
 			String fullName,
 			String studentCode,
+			String avatarUrl,
 			boolean alreadyReviewed,
 			UUID existingReviewId,
 			Integer existingTotalStarRating) {}

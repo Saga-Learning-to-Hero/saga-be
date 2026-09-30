@@ -298,7 +298,8 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			from TaskGitCommitLink l
 			join fetch l.gitCommit c
 			join fetch c.repo r
-			left join fetch c.authorStudent
+			left join fetch c.authorStudent author
+			left join fetch author.userAccount
 			where l.id in :ids
 			""")
 	List<TaskGitCommitLink> findFetchedWithAuthorByIdIn(@Param("ids") Collection<UUID> ids);

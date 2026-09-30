@@ -40,7 +40,8 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			"""
 			select c from GitCommit c
 			join fetch c.repo
-			left join fetch c.authorStudent
+			left join fetch c.authorStudent author
+			left join fetch author.userAccount
 			where c.id in :ids
 			""")
 	List<GitCommit> findFetchedByIdIn(@Param("ids") Collection<UUID> ids);

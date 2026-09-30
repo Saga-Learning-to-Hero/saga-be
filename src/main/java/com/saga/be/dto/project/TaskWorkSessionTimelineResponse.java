@@ -47,6 +47,7 @@ public record TaskWorkSessionTimelineResponse(
 			String message,
 			String repositoryFullName,
 			UUID authorStudentId,
+			String authorAvatarUrl,
 			LocalDateTime committedAt,
 			LocalDateTime linkedAt,
 			String linkSource) {}

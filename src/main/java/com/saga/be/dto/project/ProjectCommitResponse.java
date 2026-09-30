@@ -11,6 +11,7 @@ public record ProjectCommitResponse(
 		String message,
 		String authorExternalId,
 		UUID authorStudentId,
+		String authorAvatarUrl,
 		String headRef,
 		LocalDateTime committedAt,
 		LocalDateTime createdAt,

@@ -9,6 +9,7 @@ public record CourseRosterEntryResponse(
 		UUID studentUserId,
 		String studentCode,
 		String fullName,
+		String avatarUrl,
 		String email,
 		String enrollmentStatus,
 		String invitationStatus,

@@ -8,5 +8,6 @@ public record LecturerTeamMemberResponse(
 		UUID studentProfileId,
 		String studentCode,
 		String fullName,
+		String avatarUrl,
 		String email,
 		String role) {}
