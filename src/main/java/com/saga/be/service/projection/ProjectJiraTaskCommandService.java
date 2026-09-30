@@ -571,7 +571,12 @@ public class ProjectJiraTaskCommandService {
 		}
 	}
 
-	/** A Member's new task is always theirs: default to, and only allow, their own linked Jira account. */
+	/**
+	 * A Member's new task is always theirs. The server owns that rule: a requested assignee that is
+	 * one of the Member's own linked Jira accounts is kept, anything else (blank, or a client-side
+	 * guess that picked someone else's account) is replaced by their own account rather than failing
+	 * the create.
+	 */
 	private String memberSelfAssignee(UUID userId, String requestedAssignee) {
 		List<String> own = memberJiraAccountIds(userId);
 		if (own.isEmpty()) {
@@ -580,16 +585,10 @@ public class ProjectJiraTaskCommandService {
 					HttpStatus.FORBIDDEN,
 					"Link your Jira account before creating tasks.");
 		}
-		if (requestedAssignee == null || requestedAssignee.isBlank()) {
-			return own.get(0);
+		if (requestedAssignee != null && own.contains(requestedAssignee)) {
+			return requestedAssignee;
 		}
-		if (!own.contains(requestedAssignee)) {
-			throw new IntegrationException(
-					IntegrationErrorCode.TASK_NOT_ASSIGNED_TO_YOU,
-					HttpStatus.FORBIDDEN,
-					"Members can only create tasks assigned to themselves.");
-		}
-		return requestedAssignee;
+		return own.get(0);
 	}
 
 	/** Same identity statuses the task projection uses to resolve a Jira assignee to a student. */

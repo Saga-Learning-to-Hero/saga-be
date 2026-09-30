@@ -1281,7 +1281,7 @@ Quyền ghi:
 
 | Thao tác | Leader | Member |
 |---|---|---|
-| Tạo task (`POST /tasks`) | Giao cho ai cũng được | Được tạo. Task **luôn tự giao cho chính mình** (bỏ trống `assigneeAccountId` → BE tự điền Jira account của member). Truyền account người khác → `403 TASK_NOT_ASSIGNED_TO_YOU`. Chưa liên kết Jira → `403 JIRA_ACCOUNT_NOT_LINKED_TO_CURRENT_USER` |
+| Tạo task (`POST /tasks`) | Giao cho ai cũng được | Được tạo. Task **luôn tự giao cho chính mình**: BE tự điền Jira account đã liên kết của member — FE **không cần** (và không nên đoán theo tên) gửi `assigneeAccountId`; nếu gửi account không phải của member, BE tự thay bằng account của member chứ không báo lỗi. Chưa liên kết Jira → `403 JIRA_ACCOUNT_NOT_LINKED_TO_CURRENT_USER` |
 | Sửa (`PATCH`), đổi trạng thái / kéo thả (`/transition`, `/transitions`), dời sprint (`PUT /sprint`), xoá (`DELETE`) | Mọi task | Chỉ task **đang giao cho chính mình**, nếu không → `403 TASK_NOT_ASSIGNED_TO_YOU` |
 | Gỡ người được giao / giao cho người khác (`clearAssignee`, `assigneeAccountId` khác mình) | Được | `403 NOT_TEAM_LEADER` |
 

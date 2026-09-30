@@ -1071,16 +1071,25 @@ class ProjectJiraTaskCommandServiceTest {
 	}
 
 	@Test
-	void member_cannotCreateTaskForSomeoneElse() {
+	void member_createForSomeoneElse_isReassignedToOwnJiraAccount() {
 		stubMember();
 		stubMemberJiraAccount("acc-me");
+		JiraIntegration integration = activeJira();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.createIssue(
+						eq("token"), eq("cloud"), eq("10067"), eq("X"), any(), any(), eq("acc-me"), any(), any(), any(),
+						any(), any()))
+				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "X");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(taskRow(integration));
 
-		assertThatThrownBy(() -> service.create(
-						userId, projectId, new CreateProjectTaskRequest("X", null, null, "acc-other", null, null, null, null)))
-				.isInstanceOf(IntegrationException.class)
-				.extracting(ex -> ((IntegrationException) ex).getCode())
-				.isEqualTo(IntegrationErrorCode.TASK_NOT_ASSIGNED_TO_YOU);
-		verifyZeroProviderInteraction();
+		service.create(userId, projectId, new CreateProjectTaskRequest("X", null, null, "acc-other", null, null, null, null));
+
+		// Never sent to Jira with the other person's account.
+		verify(jiraWrite, never())
+				.createIssue(any(), any(), any(), any(), any(), any(), eq("acc-other"), any(), any(), any(), any(), any());
 	}
 
 	@Test
