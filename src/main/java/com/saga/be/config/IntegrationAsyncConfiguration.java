@@ -25,4 +25,21 @@ public class IntegrationAsyncConfiguration {
 		executor.initialize();
 		return executor;
 	}
+
+	/**
+	 * Sprint-overlap checks run off the caller's thread: they are triggered from afterCommit
+	 * callbacks that still hold their JDBC connection, and must not ask the small pool for a second
+	 * one there. The check is idempotent, so a rejected run is simply redone on the next change.
+	 */
+	@Bean(name = "sprintOverlapExecutor")
+	public Executor sprintOverlapExecutor() {
+		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+		executor.setCorePoolSize(1);
+		executor.setMaxPoolSize(1);
+		executor.setQueueCapacity(QUEUE_CAPACITY);
+		executor.setThreadNamePrefix("sprint-overlap-");
+		executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+		executor.initialize();
+		return executor;
+	}
 }

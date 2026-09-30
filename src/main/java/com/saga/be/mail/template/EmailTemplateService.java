@@ -14,6 +14,7 @@ public class EmailTemplateService {
 	public static final String COURSE_INVITATION = "course-invitation";
 	public static final String TEAM_ASSIGNED = "team-assigned";
 	public static final String DEV_SMOKE = "dev-smoke";
+	public static final String SPRINT_PERIOD_OVERLAP = "sprint-period-overlap";
 
 	private final FrontendLinkResolver links;
 
@@ -216,6 +217,64 @@ public class EmailTemplateService {
 						"Role",
 						role));
 		return new EmailTemplate(subject, text, html);
+	}
+
+	/**
+	 * Warning to a team Leader / course lecturer that two sprints of one project (possibly on
+	 * different Jira sites) run at the same time. Each sprint line is pre-formatted by the caller,
+	 * e.g. {@code "SAGA Sprint 5 — site-a (2026-09-20 → 2026-10-03)"}.
+	 */
+	public Map<String, Object> sprintPeriodOverlapPayload(
+			String fullName, String recipientEmail, String projectName, String classCode, String firstSprint, String secondSprint) {
+		String project = EmailHtml.blankTo(text(projectName), "your project");
+		String subject = "SAGA — Sprints overlap in " + project;
+		String greeting = greeting(fullName);
+		String cta = links.dashboardUrl();
+		String explain = "Two sprints of this project run at the same time. SAGA scores contribution and peer review "
+				+ "per sprint, so sprints must run one after another, even when the team uses several Jira sites. "
+				+ "Please adjust the dates or close one of the sprints in Jira.";
+		String text = greeting
+				+ "\n\n"
+				+ explain
+				+ "\n\nProject: "
+				+ project
+				+ (text(classCode).isEmpty() ? "" : "\nClass: " + text(classCode))
+				+ "\nSprint 1: "
+				+ text(firstSprint)
+				+ "\nSprint 2: "
+				+ text(secondSprint)
+				+ "\n\nOpen SAGA: "
+				+ cta
+				+ footerText();
+		String inner = """
+			<p style="margin:0 0 16px 0;">%s</p>
+			<h1 style="margin:0 0 12px 0;font-size:22px;line-height:28px;color:#0f172a;">Sprints overlap</h1>
+			<p style="margin:0 0 20px 0;">%s</p>
+			"""
+				.formatted(EmailHtml.escape(greeting), EmailHtml.escape(explain));
+		String html = SagaEmailLayout.document(
+				subject,
+				inner,
+				"Open SAGA",
+				cta,
+				SagaEmailLayout.infoPanel(
+						"Project",
+						project,
+						"Class",
+						EmailHtml.blankTo(text(classCode), "—"),
+						"Sprint 1",
+						text(firstSprint),
+						"Sprint 2",
+						text(secondSprint)));
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("subject", subject);
+		payload.put("textBody", text);
+		payload.put("htmlBody", html);
+		payload.put("fullName", text(fullName));
+		payload.put("recipientEmail", text(recipientEmail));
+		payload.put("projectName", project);
+		payload.put("ctaUrl", cta);
+		return payload;
 	}
 
 	private EmailTemplate smoke(EmailTemplateModel model) {

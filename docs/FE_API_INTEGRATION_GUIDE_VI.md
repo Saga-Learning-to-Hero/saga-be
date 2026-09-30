@@ -1180,6 +1180,7 @@ Base: `/api/projects/{projectId}/integrations` (yêu cầu là thành viên proj
 | `JIRA_PROJECT_IN_USE` | 409 | Jira Project này đã được SAGA Project khác dùng | Chọn Jira Project khác |
 | `JIRA_PROJECT_KEY_AMBIGUOUS` | 409 | Không xác định rõ project key | Chọn lại rõ ràng từ danh sách |
 | `PERSONAL_INTEGRATION_REQUIRED` | 403 | Tạo task khi chưa liên kết Jira và/hoặc GitHub cá nhân (`details.missingProviders`) | Hiện thông báo + nút liên kết đúng provider còn thiếu |
+| `SPRINT_PERIOD_OVERLAP` | 409 | Tạo/đổi ngày/bắt đầu sprint chồng thời gian với sprint khác của project (mọi site) | Hiện sprint bị trùng từ `details`, cho chọn lại ngày (có thể bắt đầu đúng ngày sprint kia kết thúc) |
 | `TASK_LABEL_NOT_ALLOWED` | 400 | Label ngoài 4 label SAGA, hoặc >1 label SAGA trên task (`details.allowedLabels`) | Chỉ cho chọn 1 label từ `GET /tasks/options` → `labels` |
 | `JIRA_SOURCE_REPLACE_BLOCKED_BY_EVIDENCE` | 409 | Không thể đổi nguồn Jira vì đã có bằng chứng đóng góp gắn với nguồn cũ | Không cho đổi; giải thích rõ cho người dùng |
 
@@ -1449,15 +1450,28 @@ Base: `/api/projects/{projectId}/sprints`.
 
 Request tạo:
 ```json
-{ "name": "Sprint 1", "goal": "tuỳ chọn", "startDate": "tuỳ chọn", "endDate": "tuỳ chọn" }
+{ "name": "Sprint 1", "goal": "tuỳ chọn", "startDate": "tuỳ chọn", "endDate": "tuỳ chọn", "jiraIntegrationId": "bắt buộc khi project có >1 site" }
 ```
 Response:
 ```json
 {
   "id": "uuid", "externalSprintId": "...", "name": "...", "state": "active",
-  "goal": "...", "startDate": "...", "endDate": "...", "completeDate": null
+  "goal": "...", "startDate": "...", "endDate": "...", "completeDate": null,
+  "source": { "jiraIntegrationId": "uuid", "siteName": "...", "projectKey": "SAGA", "boardId": "68", "connectionStatus": "ACTIVE" },
+  "overlaps": [
+    { "sprintId": "uuid", "name": "B Sprint 1", "state": "active", "jiraIntegrationId": "uuid", "siteName": "site-b" }
+  ]
 }
 ```
+
+### Sprint phải chạy nối tiếp nhau (kể cả nhiều site Jira)
+
+Điểm đóng góp, đánh giá chéo và "sprint hiện tại" đều tính **theo sprint**, nên trong một project các sprint của **mọi site** phải chạy **lần lượt theo giai đoạn**, không được chồng thời gian.
+
+- **Khoảng thời gian của sprint** = từ ngày `startDate` tới ngày kết thúc: sprint đã đóng dùng `completeDate` (ngày đóng thật), còn lại dùng `endDate`. So theo **ngày**, ngày kết thúc **không tính** → sprint A kết thúc ngày D, sprint B bắt đầu ngày D là **hợp lệ** (ngày bàn giao). Sprint đang chạy trên site còn kết nối được coi là **vẫn chạy tới hôm nay** dù đã quá `endDate`. Sprint chưa có `startDate` (hoặc chưa có ngày kết thúc) thì chưa bị xét.
+- **Chặn trong SAGA:** `POST /sprints`, `PATCH /sprints/{id}` (đổi ngày hoặc `state: "active"`) mà chồng thời gian với sprint khác của project → **`409 SPRINT_PERIOD_OVERLAP`**, không gọi Jira. `details`: `conflictingSprintId`, `conflictingSprintName`, `conflictingSprintState`, `conflictingJiraIntegrationId`, `conflictingSiteName`, `conflictingStartDate`, `conflictingEndDate` → FE hiện rõ "trùng với sprint X của site Y (từ … tới …)". **Không bao giờ chặn**: đổi tên/goal, và đóng sprint (`state: "closed"`).
+- **Sprint bắt đầu thẳng trên Jira** (SAGA không chặn được): khi đồng bộ về, BE phát hiện và gửi **thông báo trong app (loại `WARNING`, tiêu đề "Sprints overlap") + email** cho **Leader** của nhóm và **giảng viên** của lớp — **một lần cho mỗi cặp sprint** (đồng bộ lại không gửi lại). Chỉ cảnh báo khi cả 2 sprint đã thật sự chạy (`active`/`closed`).
+- **`overlaps[]`** trên mỗi sprint (`GET /sprints`, response của `POST`/`PATCH`): các sprint khác của project đang chồng thời gian với sprint này (kể cả sprint đã lên lịch). Không bao giờ `null`; rỗng = không trùng. FE hiện nhãn cảnh báo cho sprint có `overlaps` khác rỗng.
 
 ### Gán task vào Sprint / đưa về Backlog
 

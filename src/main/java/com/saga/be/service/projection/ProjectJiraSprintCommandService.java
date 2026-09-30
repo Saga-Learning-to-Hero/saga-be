@@ -17,9 +17,17 @@ import com.saga.be.realtime.ProjectRealtimeEventType;
 import com.saga.be.realtime.ProjectRealtimePublisher;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.SprintRepository;
+import com.saga.be.service.sprint.SprintOverlapAlertService;
+import com.saga.be.service.sprint.SprintPeriods;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -38,6 +46,7 @@ public class ProjectJiraSprintCommandService {
 	private final JiraTaskProjectionService projection;
 	private final ProjectRealtimePublisher realtime;
 	private final TransactionTemplate writes;
+	private SprintOverlapAlertService overlapAlerts;
 
 	public ProjectJiraSprintCommandService(
 			ProjectDataAuthorization authorization,
@@ -56,6 +65,12 @@ public class ProjectJiraSprintCommandService {
 		this.projection = projection;
 		this.realtime = realtime;
 		this.writes = new TransactionTemplate(transactionManager);
+	}
+
+	/** Optional so unit tests that build this service by hand need not wire alerting. */
+	@Autowired(required = false)
+	void setOverlapAlerts(SprintOverlapAlertService overlapAlerts) {
+		this.overlapAlerts = overlapAlerts;
 	}
 
 	public List<ProjectSprintResponse> syncAndList(UUID userId, UUID projectId) {
@@ -89,7 +104,8 @@ public class ProjectJiraSprintCommandService {
 					"jiraIntegrationId is required when the project has multiple active Jira sources.");
 		}
 		if (active.isEmpty()) {
-			return sprints.findActiveFetchedByProject_Id(projectId).stream().map(this::toResponse).toList();
+			List<Sprint> all = sprints.findActiveFetchedByProject_Id(projectId);
+			return toResponses(all, all);
 		}
 		return syncNamedSourceThenListLocal(active.get(0), projectId);
 	}
@@ -114,19 +130,36 @@ public class ProjectJiraSprintCommandService {
 					detail.goal(),
 					ProjectionMappings.parseInstant(detail.completeDate())));
 		}
+		if (!remote.isEmpty() && overlapAlerts != null) {
+			// Board sync is where Jira-side sprint dates (e.g. a sprint started directly in Jira) land;
+			// no SPRINTS_CHANGED is published here, so run the overlap check explicitly.
+			overlapAlerts.checkProjectAsync(projectId);
+		}
 		return listLocalSource(integration.getId(), projectId);
 	}
 
 	private List<ProjectSprintResponse> listLocalSource(UUID jiraIntegrationId, UUID projectId) {
-		return sprints.findActiveFetchedByJiraIntegration_IdAndProject_Id(jiraIntegrationId, projectId).stream()
-				.map(this::toResponse)
-				.toList();
+		return toResponses(
+				sprints.findActiveFetchedByJiraIntegration_IdAndProject_Id(jiraIntegrationId, projectId),
+				sprints.findActiveFetchedByProject_Id(projectId));
 	}
 
 	public ProjectSprintResponse create(UUID userId, UUID projectId, CreateProjectSprintRequest request) {
 		authorization.requireStudentLeader(userId, projectId);
 		JiraIntegration integration = resolveJiraForCreate(projectId, request.jiraIntegrationId());
 		requireBoard(integration);
+		LocalDate today = today();
+		requireNoPeriodOverlap(
+				SprintPeriods.of(
+						"future",
+						SprintPeriods.parseRequestDate(request.startDate()),
+						SprintPeriods.parseRequestDate(request.endDate()),
+						null,
+						true,
+						today),
+				projectId,
+				null,
+				today);
 		String access = tokens.accessToken(integration);
 		SprintDetail created = jiraWrite.createSprint(
 				access,
@@ -151,7 +184,7 @@ public class ProjectJiraSprintCommandService {
 			realtime.publish(ProjectRealtimeEventType.SPRINTS_CHANGED, projectId, row.getId().toString());
 			return row;
 		});
-		return toResponse(saved);
+		return toResponses(List.of(saved), sprints.findActiveFetchedByProject_Id(projectId)).getFirst();
 	}
 
 	public ProjectSprintResponse patch(UUID userId, UUID projectId, UUID sprintId, PatchProjectSprintRequest request) {
@@ -160,6 +193,7 @@ public class ProjectJiraSprintCommandService {
 				.orElseThrow(() -> new AcademicException(
 						AcademicErrorCode.PROJECT_NOT_FOUND, HttpStatus.NOT_FOUND, "Sprint was not found for this project."));
 		JiraIntegration integration = requireJiraForSprint(projectId, local);
+		requirePatchKeepsSprintsSequential(projectId, local, integration, request);
 		String access = tokens.accessToken(integration);
 		SprintDetail updated = jiraWrite.updateSprint(
 				access,
@@ -185,7 +219,7 @@ public class ProjectJiraSprintCommandService {
 			realtime.publish(ProjectRealtimeEventType.SPRINTS_CHANGED, projectId, row.getId().toString());
 			return row;
 		});
-		return toResponse(saved);
+		return toResponses(List.of(saved), sprints.findActiveFetchedByProject_Id(projectId)).getFirst();
 	}
 
 	public void delete(UUID userId, UUID projectId, UUID sprintId) {
@@ -270,6 +304,104 @@ public class ProjectJiraSprintCommandService {
 					HttpStatus.BAD_REQUEST,
 					"Jira board is required to manage sprints.");
 		}
+	}
+
+	/**
+	 * Only a change to dates or state can create an overlap, so a rename/goal edit of a sprint Jira
+	 * already made overlapping stays allowed; closing a sprint only ever shortens it.
+	 */
+	private void requirePatchKeepsSprintsSequential(
+			UUID projectId, Sprint local, JiraIntegration integration, PatchProjectSprintRequest request) {
+		boolean touchesSchedule = request.state() != null || request.startDate() != null || request.endDate() != null;
+		if (!touchesSchedule || SprintPeriods.isClosed(request.state())) {
+			return;
+		}
+		LocalDate today = today();
+		String state = request.state() != null ? request.state() : local.getState();
+		LocalDateTime start =
+				request.startDate() != null ? SprintPeriods.parseRequestDate(request.startDate()) : local.getStartDate();
+		if (start == null && SprintPeriods.isActive(state)) {
+			start = today.atStartOfDay();
+		}
+		LocalDateTime end = request.endDate() != null ? SprintPeriods.parseRequestDate(request.endDate()) : local.getEndDate();
+		SprintPeriods.Period candidate = SprintPeriods.of(
+				state,
+				start,
+				end,
+				local.getCompleteDate(),
+				integration.getConnectionStatus() == IntegrationStatus.ACTIVE,
+				today);
+		requireNoPeriodOverlap(candidate, projectId, local.getId(), today);
+	}
+
+	private void requireNoPeriodOverlap(SprintPeriods.Period candidate, UUID projectId, UUID selfId, LocalDate today) {
+		if (candidate == null) {
+			return;
+		}
+		SprintPeriods.firstConflict(candidate, sprints.findActiveFetchedByProject_Id(projectId), selfId, today)
+				.ifPresent(conflict -> {
+					JiraIntegration source = conflict.getJiraIntegration();
+					LocalDateTime conflictEnd = SprintPeriods.isClosed(conflict.getState()) && conflict.getCompleteDate() != null
+							? conflict.getCompleteDate()
+							: conflict.getEndDate();
+					Map<String, Object> details = new LinkedHashMap<>();
+					details.put("conflictingSprintId", conflict.getId());
+					details.put("conflictingSprintName", conflict.getName());
+					details.put("conflictingSprintState", conflict.getState());
+					details.put("conflictingJiraIntegrationId", source == null ? null : source.getId());
+					details.put("conflictingSiteName", source == null ? null : source.getSiteName());
+					details.put("conflictingStartDate", conflict.getStartDate());
+					details.put("conflictingEndDate", conflictEnd);
+					throw new IntegrationException(
+							IntegrationErrorCode.SPRINT_PERIOD_OVERLAP,
+							HttpStatus.CONFLICT,
+							"Sprint dates overlap sprint \"" + conflict.getName()
+									+ "\". Sprints of a project must run one after another, even across Jira sites.",
+							details);
+				});
+	}
+
+	private List<ProjectSprintResponse> toResponses(List<Sprint> shown, List<Sprint> projectSprints) {
+		LocalDate today = today();
+		Map<UUID, List<ProjectSprintResponse.OverlapRef>> overlapsBySprint = new LinkedHashMap<>();
+		for (SprintPeriods.Overlap overlap : SprintPeriods.overlaps(projectSprints, today, false)) {
+			overlapsBySprint.computeIfAbsent(overlap.first().getId(), key -> new ArrayList<>())
+					.add(toOverlapRef(overlap.second()));
+			overlapsBySprint.computeIfAbsent(overlap.second().getId(), key -> new ArrayList<>())
+					.add(toOverlapRef(overlap.first()));
+		}
+		return shown.stream()
+				.map(sprint -> withOverlaps(toResponse(sprint), overlapsBySprint.getOrDefault(sprint.getId(), List.of())))
+				.toList();
+	}
+
+	private static ProjectSprintResponse withOverlaps(
+			ProjectSprintResponse response, List<ProjectSprintResponse.OverlapRef> overlaps) {
+		return new ProjectSprintResponse(
+				response.id(),
+				response.externalSprintId(),
+				response.name(),
+				response.state(),
+				response.goal(),
+				response.startDate(),
+				response.endDate(),
+				response.completeDate(),
+				response.source(),
+				overlaps);
+	}
+
+	private static ProjectSprintResponse.OverlapRef toOverlapRef(Sprint sprint) {
+		JiraIntegration source = sprint.getJiraIntegration();
+		return new ProjectSprintResponse.OverlapRef(
+				sprint.getId(),
+				sprint.getName(),
+				sprint.getState(),
+				source == null ? null : source.getId(),
+				source == null ? null : source.getSiteName());
+	}
+
+	private static LocalDate today() {
+		return LocalDate.now(ZoneOffset.UTC);
 	}
 
 	private ProjectSprintResponse toResponse(Sprint sprint) {

@@ -452,6 +452,156 @@ class ProjectJiraSprintCommandServiceTest {
 		verifyZeroProviderInteraction();
 	}
 
+	// ==================== SPRINTS RUN ONE AFTER ANOTHER (ALL JIRA SITES) ====================
+	// Dates are in 2027 so the "active sprint is still running today" extension never matters.
+
+	@Test
+	void create_overlappingASprintOfAnotherSite_isRejectedBeforeAnyJiraCall() {
+		stubLeader();
+		JiraIntegration siteA = activeJira();
+		JiraIntegration siteB = activeJira();
+		siteB.setSiteName("site-b");
+		when(jiraIntegrations.findByIdAndProject_Id(siteA.getId(), projectId)).thenReturn(Optional.of(siteA));
+		Sprint otherSite = dated(sprintRow(siteB), "future", "2027-01-10T00:00:00", "2027-01-24T00:00:00");
+		otherSite.setName("B Sprint 1");
+		when(sprints.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(otherSite));
+
+		assertThatThrownBy(() -> service.create(
+						userId,
+						projectId,
+						new CreateProjectSprintRequest(
+								"A Sprint 2", null, "2027-01-20T00:00:00.000Z", "2027-02-03T00:00:00.000Z", siteA.getId())))
+				.isInstanceOf(IntegrationException.class)
+				.satisfies(ex -> {
+					IntegrationException error = (IntegrationException) ex;
+					assertThat(error.getCode()).isEqualTo(IntegrationErrorCode.SPRINT_PERIOD_OVERLAP);
+					assertThat(error.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+					@SuppressWarnings("unchecked")
+					java.util.Map<String, Object> details = (java.util.Map<String, Object>) error.getDetails();
+					assertThat(details)
+							.containsEntry("conflictingSprintId", otherSite.getId())
+							.containsEntry("conflictingSprintName", "B Sprint 1")
+							.containsEntry("conflictingSiteName", "site-b");
+				});
+		verify(tokens, never()).accessToken(any());
+		verify(jiraWrite, never()).createSprint(any(), any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void create_startingOnTheDayTheOtherSprintEnds_isAllowed() {
+		stubLeader();
+		JiraIntegration siteA = activeJira();
+		when(jiraIntegrations.findByIdAndProject_Id(siteA.getId(), projectId)).thenReturn(Optional.of(siteA));
+		Sprint previous = dated(sprintRow(activeJira()), "future", "2027-01-10T00:00:00", "2027-01-24T00:00:00");
+		when(sprints.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(previous));
+		when(tokens.accessToken(siteA)).thenReturn("token");
+		SprintDetail created = new SprintDetail(
+				32L, "Next", "future", "2027-01-24T00:00:00.000Z", "2027-02-07T00:00:00.000Z", null, null, null);
+		when(jiraWrite.createSprint(any(), any(), any(), any(), any(), any(), any())).thenReturn(created);
+		when(jiraWrite.getSprint("token", "cloud", "32")).thenReturn(created);
+		when(projection.upsertSprint(eq(siteA), eq("32"), any(), any(), any(), any(), any(), any()))
+				.thenReturn(sprintRow(siteA));
+
+		service.create(
+				userId,
+				projectId,
+				new CreateProjectSprintRequest(
+						"Next", null, "2027-01-24T00:00:00.000Z", "2027-02-07T00:00:00.000Z", siteA.getId()));
+
+		verify(jiraWrite).createSprint(any(), any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void patch_startingASprintThatOverlapsAnotherSite_isRejected() {
+		stubLeader();
+		JiraIntegration siteA = activeJira();
+		Sprint local = dated(sprintRow(siteA), "future", "2027-01-20T00:00:00", "2027-02-03T00:00:00");
+		Sprint otherSite = dated(sprintRow(activeJira()), "future", "2027-01-10T00:00:00", "2027-01-24T00:00:00");
+		when(jiraIntegrations.findByIdAndProject_Id(siteA.getId(), projectId)).thenReturn(Optional.of(siteA));
+		when(sprints.findActiveByIdAndProject_Id(local.getId(), projectId)).thenReturn(Optional.of(local));
+		when(sprints.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(local, otherSite));
+
+		assertThatThrownBy(() -> service.patch(
+						userId, projectId, local.getId(), new PatchProjectSprintRequest(null, null, "active", null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.SPRINT_PERIOD_OVERLAP);
+		verify(jiraWrite, never()).updateSprint(any(), any(), any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void patch_renamingOrClosingAnAlreadyOverlappingSprint_isNeverBlocked() {
+		stubLeader();
+		JiraIntegration siteA = activeJira();
+		Sprint local = dated(sprintRow(siteA), "active", "2027-01-20T00:00:00", "2027-02-03T00:00:00");
+		Sprint otherSite = dated(sprintRow(activeJira()), "active", "2027-01-10T00:00:00", "2027-01-24T00:00:00");
+		when(jiraIntegrations.findByIdAndProject_Id(siteA.getId(), projectId)).thenReturn(Optional.of(siteA));
+		when(sprints.findActiveByIdAndProject_Id(local.getId(), projectId)).thenReturn(Optional.of(local));
+		org.mockito.Mockito.lenient()
+				.when(sprints.findActiveFetchedByProject_Id(projectId))
+				.thenReturn(List.of(local, otherSite));
+		when(tokens.accessToken(siteA)).thenReturn("token");
+		SprintDetail updated = new SprintDetail(31L, "Renamed", "active", null, null, null, null, null);
+		when(jiraWrite.updateSprint(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(updated);
+		when(jiraWrite.getSprint("token", "cloud", "31")).thenReturn(updated);
+		when(projection.upsertSprint(eq(siteA), eq("31"), any(), any(), any(), any(), any(), any())).thenReturn(local);
+
+		service.patch(userId, projectId, local.getId(), new PatchProjectSprintRequest("Renamed", null, null, null, null));
+		service.patch(userId, projectId, local.getId(), new PatchProjectSprintRequest(null, null, "closed", null, null));
+
+		verify(jiraWrite, org.mockito.Mockito.times(2)).updateSprint(any(), any(), any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void syncAndList_marksEachOverlappingSprintWithTheOtherOne() {
+		stubReader();
+		JiraIntegration revoked = activeJira();
+		revoked.setConnectionStatus(IntegrationStatus.REVOKED);
+		JiraIntegration siteB = activeJira();
+		siteB.setConnectionStatus(IntegrationStatus.REVOKED);
+		siteB.setSiteName("site-b");
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(revoked, siteB));
+		Sprint a = dated(sprintRow(revoked), "closed", "2027-01-10T00:00:00", "2027-01-24T00:00:00");
+		a.setCompleteDate(java.time.LocalDateTime.of(2027, 1, 24, 0, 0));
+		Sprint b = dated(sprintRow(siteB), "closed", "2027-01-20T00:00:00", "2027-02-03T00:00:00");
+		b.setCompleteDate(java.time.LocalDateTime.of(2027, 2, 3, 0, 0));
+		b.setName("B Sprint");
+		Sprint alone = dated(sprintRow(siteB), "closed", "2027-02-03T00:00:00", "2027-02-17T00:00:00");
+		alone.setCompleteDate(java.time.LocalDateTime.of(2027, 2, 17, 0, 0));
+		when(sprints.findActiveFetchedByProject_Id(projectId)).thenReturn(List.of(a, b, alone));
+
+		List<ProjectSprintResponse> listed = service.syncAndList(userId, projectId);
+
+		assertThat(listed.get(0).overlaps()).extracting(ProjectSprintResponse.OverlapRef::sprintId).containsExactly(b.getId());
+		assertThat(listed.get(0).overlaps().getFirst().siteName()).isEqualTo("site-b");
+		assertThat(listed.get(1).overlaps()).extracting(ProjectSprintResponse.OverlapRef::sprintId).containsExactly(a.getId());
+		assertThat(listed.get(2).overlaps()).isEmpty();
+	}
+
+	@Test
+	void syncAndList_boardSyncRunsTheOverlapAlertCheck() {
+		stubReader();
+		JiraIntegration site = activeJira();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(site));
+		when(tokens.accessToken(site)).thenReturn("token");
+		when(jiraWrite.listBoardSprints("token", "cloud", "68"))
+				.thenReturn(List.of(new SprintDetail(31L, "Sprint 1", "active", null, null, null, null, null)));
+		com.saga.be.service.sprint.SprintOverlapAlertService alerts =
+				org.mockito.Mockito.mock(com.saga.be.service.sprint.SprintOverlapAlertService.class);
+		service.setOverlapAlerts(alerts);
+
+		service.syncAndList(userId, projectId);
+
+		verify(alerts).checkProjectAsync(projectId);
+	}
+
+	private static Sprint dated(Sprint sprint, String state, String start, String end) {
+		sprint.setState(state);
+		sprint.setStartDate(java.time.LocalDateTime.parse(start));
+		sprint.setEndDate(java.time.LocalDateTime.parse(end));
+		return sprint;
+	}
+
 	private void verifyZeroProviderInteraction() {
 		verify(tokens, never()).accessToken(any());
 		verify(jiraWrite, never()).createSprint(any(), any(), any(), any(), any(), any(), any());

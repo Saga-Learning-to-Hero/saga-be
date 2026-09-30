@@ -76,6 +76,8 @@ public enum IntegrationErrorCode {
 	JIRA_ISSUE_NOT_FOUND,
 	JIRA_TRANSITION_UNAVAILABLE,
 	JIRA_SPRINT_INVALID,
+	/** Sprint dates would overlap another sprint of the same project (any Jira site); details name it. */
+	SPRINT_PERIOD_OVERLAP,
 	JIRA_SPRINT_WRITE_FAILED,
 	JIRA_WRITE_INCOMPLETE,
 	JIRA_DELETE_BLOCKED_BY_EVIDENCE,
