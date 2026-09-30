@@ -1,5 +1,6 @@
 package com.saga.be.controller;
 
+import com.saga.be.dto.team.AssignTeamMemberRequest;
 import com.saga.be.dto.team.LecturerCourseTeamsResponse;
 import com.saga.be.dto.team.MoveTeamMemberRequest;
 import com.saga.be.dto.team.ReplaceTeamLeaderRequest;
@@ -120,6 +121,29 @@ public class LecturerTeamController {
 			@Valid @RequestBody ReplaceTeamLeaderRequest request,
 			HttpServletRequest http) {
 		return teams.replaceLeader(actor(principal), courseId, teamId, request.teamMemberId(), audit(http));
+	}
+
+	@PostMapping("/teams/{teamId}/members")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
+	@ResponseStatus(HttpStatus.OK)
+	@Operation(
+			summary = "Add a student to a team, or move them there",
+			description =
+					"""
+					`courseEnrollmentId` must be an ACTIVE enrollment of this course (else 404 \
+					ROSTER_STUDENT_NOT_FOUND). Student on no team: joins as MEMBER, or as LEADER when the \
+					team has no ACTIVE member. Student on another team: same rules as \
+					PATCH /team-members/{teamMemberId}/team (moving the only Leader or into a Leader-less \
+					team is 409 TEAM_LEADER_INVALID; a moved Leader becomes MEMBER). Already on this team: \
+					no-op. Sends the TEAM_ASSIGNED email. Returns the refreshed team list.
+					""")
+	public LecturerCourseTeamsResponse assignStudent(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID courseId,
+			@PathVariable UUID teamId,
+			@Valid @RequestBody AssignTeamMemberRequest request,
+			HttpServletRequest http) {
+		return teams.assignStudent(actor(principal), courseId, teamId, request.courseEnrollmentId(), audit(http));
 	}
 
 	@PatchMapping("/team-members/{teamMemberId}/team")

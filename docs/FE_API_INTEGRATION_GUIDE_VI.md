@@ -756,12 +756,20 @@ Base: `/api/lecturer/courses/{courseId}` — role `LECTURER` hoặc `ADMIN`.
 | GET | `/api/lecturer/courses` | Danh sách course được phân công cho lecturer đang đăng nhập |
 | GET | `/api/lecturer/courses/{courseId}` | Chi tiết 1 course |
 | GET | `/api/lecturer/courses/{courseId}/roster` | Danh sách sinh viên **ACTIVE** (chỉ đọc, không thao tác được ở đây) |
-| GET | `/api/lecturer/courses/{courseId}/teams` | Danh sách team + thành viên |
+| GET | `/api/lecturer/courses/{courseId}/teams` | Danh sách team + thành viên, kèm `unassignedStudents[]` (SV ACTIVE chưa có nhóm: `courseEnrollmentId`, `studentProfileId`, `studentCode`, `fullName`, `email` — sort theo mã SV, không bao giờ `null`) |
 | GET | `/api/lecturer/courses/{courseId}/teams/template` | Tải XLSX mẫu chia nhóm |
 | POST | `/api/lecturer/courses/{courseId}/teams/import/preview` (multipart `file`) | Xem trước kết quả chia nhóm từ file |
 | POST | `/api/lecturer/courses/{courseId}/teams/import/confirm` | Áp dụng kết quả chia nhóm |
 | PUT | `/api/lecturer/courses/{courseId}/teams/{teamId}/leader` | **Đổi trưởng nhóm** — body: `{ "teamMemberId": "uuid" }` |
-| PATCH | `/api/lecturer/courses/{courseId}/team-members/{teamMemberId}/team` | Chuyển 1 thành viên sang team khác — body: `{ "targetTeamId": "uuid" }` |
+| PATCH | `/api/lecturer/courses/{courseId}/team-members/{teamMemberId}/team` | Chuyển 1 thành viên sang team khác — body: `{ "targetTeamId": "uuid" }`. Có gửi mail `TEAM_ASSIGNED` cho SV |
+| POST | `/api/lecturer/courses/{courseId}/teams/{teamId}/members` | **Thêm SV vào team / đổi team** — body: `{ "courseEnrollmentId": "uuid" }` (lấy từ `unassignedStudents[]` hoặc `members[].courseEnrollmentId`). Trả lại danh sách team đã cập nhật |
+
+`POST .../teams/{teamId}/members` — một API cho cả thêm lẫn đổi nhóm:
+- SV **chưa có nhóm** → vào team với vai trò `MEMBER`; nếu team đang **trống** thì thành `LEADER` (team có người luôn phải có Leader). Gửi mail `TEAM_ASSIGNED`.
+- SV **đang ở team khác** → đổi team, **cùng luật** với `PATCH .../team-members/{id}/team`: Leader bị chuyển đi thành `MEMBER`; chuyển Leader duy nhất đi, hoặc chuyển vào team có người mà không có Leader → `409 TEAM_LEADER_INVALID`.
+- SV **đã ở đúng team đó** → không làm gì (200).
+- `courseEnrollmentId` không phải SV `ACTIVE` của lớp (đã rút, lớp khác, không tồn tại) → `404 ROSTER_STUDENT_NOT_FOUND`. `teamId` không thuộc lớp → `404 TEAM_NOT_FOUND`.
+- Hai request cùng lúc cho cùng 1 SV → request sau nhận `409 TEAM_CONFIRM_BLOCKED`, FE tải lại danh sách rồi thử lại.
 
 ### Bất biến bắt buộc: mỗi team đang hoạt động phải có đúng 1 LEADER
 

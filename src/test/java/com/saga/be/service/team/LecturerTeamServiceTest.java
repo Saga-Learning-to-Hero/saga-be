@@ -500,6 +500,128 @@ class LecturerTeamServiceTest {
 	}
 
 	@Test
+	void unassignedStudentIsListedThenJoinsTeamAsMemberWithEmailAndAudit() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		Team teamA = store.teams.values().iterator().next();
+		CourseEnrollment gamma = enroll("SE333333", "Gamma Student", "gamma@gmail.com");
+		enrollWithdrawn("SE444444", "Gone", "gone@gmail.com");
+
+		LecturerCourseTeamsResponse before = service.listTeams(lecturer, course.getId());
+		assertEquals(1, before.unassignedStudents().size());
+		assertEquals(gamma.getId(), before.unassignedStudents().getFirst().courseEnrollmentId());
+		assertEquals("SE333333", before.unassignedStudents().getFirst().studentCode());
+
+		LecturerCourseTeamsResponse after =
+				service.assignStudent(lecturer, course.getId(), teamA.getId(), gamma.getId(), auditReq());
+
+		TeamMember added = store.findMemberByEnrollment(gamma.getId()).orElseThrow();
+		assertEquals(teamA.getId(), added.getTeam().getId());
+		assertEquals(RoleInTeam.MEMBER, added.getRoleInTeam());
+		assertTrue(after.unassignedStudents().isEmpty());
+		assertEquals(3, after.teams().getFirst().members().size());
+		ArgumentCaptor<EmailEnqueueRequest> captor = ArgumentCaptor.forClass(EmailEnqueueRequest.class);
+		verify(emails, times(3)).enqueue(captor.capture());
+		assertEquals("gamma@gmail.com", captor.getAllValues().getLast().recipientEmail());
+		verify(audit).record(
+				any(), any(), eq(teamA), eq(LecturerTeamService.TEAM_MEMBER_ASSIGNED), eq("team_member"), eq(added.getId()),
+				any(), any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void unassignedStudentJoiningAnEmptyTeamBecomesItsLeader() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		Team empty = team(2, "Bravo");
+		CourseEnrollment gamma = enroll("SE333333", "Gamma Student", "gamma@gmail.com");
+
+		service.assignStudent(lecturer, course.getId(), empty.getId(), gamma.getId(), auditReq());
+
+		TeamMember added = store.findMemberByEnrollment(gamma.getId()).orElseThrow();
+		assertEquals(empty.getId(), added.getTeam().getId());
+		assertEquals(RoleInTeam.LEADER, added.getRoleInTeam());
+	}
+
+	@Test
+	void assigningAStudentAlreadyOnAnotherTeamMovesThemWithoutDuplicating() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		Team teamB = team(2, "Bravo");
+		member(teamB, enroll("SE333333", "Gamma Student", "gamma@gmail.com"), RoleInTeam.LEADER);
+
+		service.assignStudent(lecturer, course.getId(), teamB.getId(), beta.getId(), auditReq());
+
+		assertEquals(1, store.members.values().stream()
+				.filter(row -> beta.getId().equals(row.getCourseEnrollment().getId()))
+				.count());
+		TeamMember moved = store.findMemberByEnrollment(beta.getId()).orElseThrow();
+		assertEquals(teamB.getId(), moved.getTeam().getId());
+		assertEquals(RoleInTeam.MEMBER, moved.getRoleInTeam());
+	}
+
+	@Test
+	void assigningTheOnlyLeaderAwayUsesMoveRulesAndIsBlocked() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		Team teamA = store.teams.values().iterator().next();
+		Team teamB = team(2, "Bravo");
+		member(teamB, enroll("SE333333", "Gamma Student", "gamma@gmail.com"), RoleInTeam.LEADER);
+
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.assignStudent(lecturer, course.getId(), teamB.getId(), alpha.getId(), auditReq()));
+
+		assertEquals(AcademicErrorCode.TEAM_LEADER_INVALID, ex.getCode());
+		assertEquals(teamA.getId(), store.findMemberByEnrollment(alpha.getId()).orElseThrow().getTeam().getId());
+	}
+
+	@Test
+	void assigningAStudentToTheirCurrentTeamIsANoOp() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		Team teamA = store.teams.values().iterator().next();
+		int membersBefore = store.members.size();
+
+		service.assignStudent(lecturer, course.getId(), teamA.getId(), beta.getId(), auditReq());
+
+		assertEquals(membersBefore, store.members.size());
+		assertEquals(RoleInTeam.MEMBER, store.findMemberByEnrollment(beta.getId()).orElseThrow().getRoleInTeam());
+		verify(emails, times(2)).enqueue(any());
+	}
+
+	@Test
+	void assigningANonActiveOrUnknownEnrollmentIsNotFound() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		Team teamA = store.teams.values().iterator().next();
+		CourseEnrollment gone = enrollWithdrawn("SE444444", "Gone", "gone@gmail.com");
+
+		AcademicException withdrawn = assertThrows(
+				AcademicException.class,
+				() -> service.assignStudent(lecturer, course.getId(), teamA.getId(), gone.getId(), auditReq()));
+		AcademicException unknown = assertThrows(
+				AcademicException.class,
+				() -> service.assignStudent(lecturer, course.getId(), teamA.getId(), UUID.randomUUID(), auditReq()));
+
+		assertEquals(AcademicErrorCode.ROSTER_STUDENT_NOT_FOUND, withdrawn.getCode());
+		assertEquals(AcademicErrorCode.ROSTER_STUDENT_NOT_FOUND, unknown.getCode());
+		assertTrue(store.findMemberByEnrollment(gone.getId()).isEmpty());
+	}
+
+	@Test
+	void assigningToAnotherCoursesTeamIsNotFound() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		Course other = course("SE1706");
+		Team foreign = new Team();
+		foreign.setCourse(other);
+		foreign.setTeamNo(1);
+		foreign.setName("Foreign");
+		store.saveTeam(foreign);
+		CourseEnrollment gamma = enroll("SE333333", "Gamma Student", "gamma@gmail.com");
+
+		AcademicException ex = assertThrows(
+				AcademicException.class,
+				() -> service.assignStudent(lecturer, course.getId(), foreign.getId(), gamma.getId(), auditReq()));
+
+		assertEquals(AcademicErrorCode.TEAM_NOT_FOUND, ex.getCode());
+		assertTrue(store.findMemberByEnrollment(gamma.getId()).isEmpty());
+	}
+
+	@Test
 	void unrelatedLecturerIsForbiddenByAuthorization() {
 		UserAccount other = account(AccountRole.LECTURER, "other@fe.edu.vn");
 		when(authorization.requireCourse(eq(other), eq(course.getId())))
@@ -589,6 +711,23 @@ class LecturerTeamServiceTest {
 		created.setSubject(subject);
 		store.putCourse(created);
 		return created;
+	}
+
+	private Team team(int teamNo, String name) {
+		Team team = new Team();
+		team.setCourse(course);
+		team.setTeamNo(teamNo);
+		team.setName(name);
+		return store.saveTeam(team);
+	}
+
+	private TeamMember member(Team team, CourseEnrollment enrollment, RoleInTeam role) {
+		TeamMember member = new TeamMember();
+		member.setTeam(team);
+		member.setCourse(course);
+		member.setCourseEnrollment(enrollment);
+		member.setRoleInTeam(role);
+		return store.saveMember(member);
 	}
 
 	private static AuditRequest auditReq() {

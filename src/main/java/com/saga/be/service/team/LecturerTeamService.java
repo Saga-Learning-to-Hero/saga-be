@@ -6,6 +6,7 @@ import com.saga.be.dto.mail.EmailEnqueueRequest;
 import com.saga.be.dto.team.LecturerCourseTeamsResponse;
 import com.saga.be.dto.team.LecturerTeamMemberResponse;
 import com.saga.be.dto.team.LecturerTeamResponse;
+import com.saga.be.dto.team.LecturerUnassignedStudentResponse;
 import com.saga.be.dto.team.TeamConfirmResponse;
 import com.saga.be.dto.team.TeamPreviewResponse;
 import com.saga.be.dto.team.TeamPreviewRow;
@@ -43,6 +44,7 @@ import java.util.UUID;
 import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -222,9 +224,84 @@ public class LecturerTeamService {
 		return listTeams(actor, courseId);
 	}
 
+	/**
+	 * Puts one ACTIVE-enrolled student on {@code teamId}. Not on a team yet: joins as MEMBER, or as
+	 * LEADER when the team has no ACTIVE member (a team is never occupied without a Leader).
+	 * Already on another team: exactly {@link #moveMember}'s rules. Already on this team: no-op.
+	 */
+	public LecturerCourseTeamsResponse assignStudent(
+			UserAccount actor, UUID courseId, UUID teamId, UUID courseEnrollmentId, AuditRequest auditRequest) {
+		authorization.requireCourse(actor, courseId);
+		try {
+			writeAtomic(() -> {
+				applyAssignStudent(authorization.requireCourse(actor, courseId), teamId, courseEnrollmentId, actor, auditRequest);
+				return null;
+			});
+		} catch (DataIntegrityViolationException ex) {
+			// uk_team_member_enrollment_once: a concurrent request placed this student first.
+			throw new AcademicException(
+					AcademicErrorCode.TEAM_CONFIRM_BLOCKED,
+					HttpStatus.CONFLICT,
+					"Student was just assigned by another request; reload and retry.");
+		}
+		return listTeams(actor, courseId);
+	}
+
+	private Void applyAssignStudent(
+			Course course, UUID teamId, UUID courseEnrollmentId, UserAccount actor, AuditRequest auditRequest) {
+		CourseEnrollment enrollment = courseEnrollmentId == null
+				? null
+				: store.listActiveEnrollments(course.getId()).stream()
+						.filter(row -> courseEnrollmentId.equals(row.getId()))
+						.findFirst()
+						.orElse(null);
+		if (enrollment == null) {
+			throw new AcademicException(
+					AcademicErrorCode.ROSTER_STUDENT_NOT_FOUND,
+					HttpStatus.NOT_FOUND,
+					"Student is not ACTIVE in this course.");
+		}
+		TeamMember existing = store.findMemberByEnrollment(enrollment.getId()).orElse(null);
+		if (existing != null) {
+			return applyMoveMember(course.getId(), existing.getId(), teamId, actor, auditRequest);
+		}
+		Team team = requireLockedTeam(course.getId(), teamId);
+		boolean occupied = store.listMembersByTeamId(team.getId()).stream().anyMatch(this::isActiveMember);
+		RoleInTeam role = occupied ? RoleInTeam.MEMBER : RoleInTeam.LEADER;
+		TeamMember member = new TeamMember();
+		member.setTeam(team);
+		member.setCourse(course);
+		member.setCourseEnrollment(enrollment);
+		member.setRoleInTeam(role);
+		member = store.saveMember(member);
+		Map<UUID, TeamMember> scoped = new LinkedHashMap<>();
+		for (TeamMember row : store.listMembersByTeamId(team.getId())) {
+			if (row.getCourseEnrollment() != null) {
+				scoped.put(row.getCourseEnrollment().getId(), row);
+			}
+		}
+		scoped.put(enrollment.getId(), member);
+		assertLeadershipForOccupiedTeams(Set.of(team.getId()), scoped);
+		enqueueAssigned(course, enrollment, team, role);
+		record(
+				actor,
+				team,
+				TEAM_MEMBER_ASSIGNED,
+				"team_member",
+				member.getId(),
+				null,
+				Map.of("teamId", team.getId(), "teamNo", team.getTeamNo(), "role", role.name()),
+				auditRequest);
+		return null;
+	}
+
 	private LecturerCourseTeamsResponse listTeamsInternal(Course course) {
 		Map<UUID, List<TeamMember>> membersByTeam = new LinkedHashMap<>();
+		Set<UUID> assignedEnrollmentIds = new LinkedHashSet<>();
 		for (TeamMember member : store.listMembers(course.getId())) {
+			if (member.getCourseEnrollment() != null) {
+				assignedEnrollmentIds.add(member.getCourseEnrollment().getId());
+			}
 			if (member.getTeam() == null) {
 				continue;
 			}
@@ -240,7 +317,25 @@ public class LecturerTeamService {
 								.map(this::toLecturerMember)
 								.toList()))
 				.toList();
-		return new LecturerCourseTeamsResponse(course.getId(), teams);
+		List<LecturerUnassignedStudentResponse> unassigned = store.listActiveEnrollments(course.getId()).stream()
+				.filter(enrollment -> !assignedEnrollmentIds.contains(enrollment.getId()))
+				.map(LecturerTeamService::toUnassigned)
+				.sorted(Comparator.comparing(
+						(LecturerUnassignedStudentResponse row) -> row.studentCode() == null ? "" : row.studentCode(),
+						String.CASE_INSENSITIVE_ORDER))
+				.toList();
+		return new LecturerCourseTeamsResponse(course.getId(), teams, unassigned);
+	}
+
+	private static LecturerUnassignedStudentResponse toUnassigned(CourseEnrollment enrollment) {
+		StudentProfile profile = enrollment.getStudentProfile();
+		UserAccount user = profile == null ? null : profile.getUserAccount();
+		return new LecturerUnassignedStudentResponse(
+				enrollment.getId(),
+				profile == null ? null : profile.getId(),
+				profile == null ? null : profile.getStudentCode(),
+				user == null ? null : user.getFullName(),
+				user == null ? null : user.getEmail());
 	}
 
 	private Void applyReplaceLeader(
@@ -356,6 +451,8 @@ public class LecturerTeamService {
 			}
 		}
 		assertLeadershipForOccupiedTeams(Set.of(source.getId(), target.getId()), scoped);
+		// Same notice the XLSX import sends on a reassignment.
+		enqueueAssigned(target.getCourse(), member.getCourseEnrollment(), target, member.getRoleInTeam());
 		record(
 				actor,
 				target,
