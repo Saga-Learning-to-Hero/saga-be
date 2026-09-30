@@ -101,6 +101,7 @@ public class PeerReviewService {
 					student.getId(),
 					fullName(student),
 					student.getStudentCode(),
+					avatarUrl(student),
 					prior != null,
 					prior == null ? null : prior.getId(),
 					prior == null ? null : prior.getStarRating()));
@@ -338,6 +339,13 @@ public class PeerReviewService {
 		return name == null || name.isBlank() ? student.getStudentCode() : name;
 	}
 
+	private static String avatarUrl(StudentProfile student) {
+		if (student == null || student.getUserAccount() == null) {
+			return null;
+		}
+		return student.getUserAccount().getAvatarUrl();
+	}
+
 	private static List<PeerReviewRubricResponse.Criterion> toCriteria(List<RubricTemplate> rows) {
 		List<PeerReviewRubricResponse.Criterion> criteria = new ArrayList<>();
 		for (RubricTemplate row : rows) {
@@ -359,8 +367,10 @@ public class PeerReviewService {
 				sprint.getName(),
 				row.getReviewerStudent().getId(),
 				fullName(row.getReviewerStudent()),
+				avatarUrl(row.getReviewerStudent()),
 				row.getRevieweeStudent().getId(),
 				fullName(row.getRevieweeStudent()),
+				avatarUrl(row.getRevieweeStudent()),
 				row.getStarRating(),
 				ratings,
 				row.getComment(),

@@ -21,6 +21,7 @@ import com.saga.be.repository.TaskWebLinkRepository;
 import com.saga.be.repository.JiraTaskFailoverItemRepository;
 import com.saga.be.entity.jira.JiraTaskFailoverItem;
 import com.saga.be.dto.integration.failover.TaskMigrationSummary;
+import com.saga.be.entity.account.UserAccount;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -241,17 +242,20 @@ public class ProjectProjectionReadService {
 			long evidenceCount,
 			List<ProjectTaskResponse.Subtask> subtasks,
 			TaskMigrationSummary migration) {
+		UserAccount assigneeUser =
+				task.getAssigneeStudent() == null ? null : task.getAssigneeStudent().getUserAccount();
 		String assigneeDisplay = null;
-		if (task.getAssigneeStudent() != null
-				&& task.getAssigneeStudent().getUserAccount() != null
-				&& task.getAssigneeStudent().getUserAccount().getFullName() != null
-				&& !task.getAssigneeStudent().getUserAccount().getFullName().isBlank()) {
-			assigneeDisplay = task.getAssigneeStudent().getUserAccount().getFullName();
+		if (assigneeUser != null && assigneeUser.getFullName() != null && !assigneeUser.getFullName().isBlank()) {
+			assigneeDisplay = assigneeUser.getFullName();
 		}
 		UUID studentId = task.getAssigneeStudent() == null ? null : task.getAssigneeStudent().getId();
 		ProjectTaskResponse.Assignee assignee = null;
 		if (task.getAssigneeExternalId() != null || assigneeDisplay != null || studentId != null) {
-			assignee = new ProjectTaskResponse.Assignee(task.getAssigneeExternalId(), assigneeDisplay, studentId);
+			assignee = new ProjectTaskResponse.Assignee(
+					task.getAssigneeExternalId(),
+					assigneeDisplay,
+					studentId,
+					assigneeUser == null ? null : assigneeUser.getAvatarUrl());
 		}
 		String priorityName = task.getPriority() == null ? null : task.getPriority().name();
 		ProjectTaskResponse.PriorityDetail priorityDetail =
@@ -377,6 +381,13 @@ public class ProjectProjectionReadService {
 				integration.getConnectionStatus() == null ? null : integration.getConnectionStatus().name());
 	}
 
+	private static String authorAvatarUrl(GitCommit commit) {
+		if (commit.getAuthorStudent() == null || commit.getAuthorStudent().getUserAccount() == null) {
+			return null;
+		}
+		return commit.getAuthorStudent().getUserAccount().getAvatarUrl();
+	}
+
 	private ProjectCommitResponse toCommit(GitCommit commit) {
 		return new ProjectCommitResponse(
 				commit.getId(),
@@ -386,6 +397,7 @@ public class ProjectProjectionReadService {
 				commit.getMessage(),
 				commit.getAuthorExternalId(),
 				commit.getAuthorStudent() == null ? null : commit.getAuthorStudent().getId(),
+				authorAvatarUrl(commit),
 				commit.getHeadRef(),
 				commit.getCommittedAt(),
 				commit.getCreatedAt(),

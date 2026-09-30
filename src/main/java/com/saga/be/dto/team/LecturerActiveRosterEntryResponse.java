@@ -7,5 +7,6 @@ public record LecturerActiveRosterEntryResponse(
 		UUID studentProfileId,
 		String studentCode,
 		String fullName,
+		String avatarUrl,
 		String email,
 		String classCode) {}

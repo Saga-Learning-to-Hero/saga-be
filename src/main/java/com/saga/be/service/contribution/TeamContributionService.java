@@ -270,6 +270,7 @@ public class TeamContributionService {
 					result.studentProfileId(),
 					account == null ? null : account.getFullName(),
 					profile.getStudentCode(),
+					account == null ? null : account.getAvatarUrl(),
 					member.getRoleInTeam(),
 					scale(result.sliceScore()),
 					scale(result.sliceContributionPercentage()),

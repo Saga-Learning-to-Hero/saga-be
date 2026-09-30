@@ -9,6 +9,7 @@ public record ContributionMemberResponse(
 		UUID studentProfileId,
 		String fullName,
 		String studentCode,
+		String avatarUrl,
 		RoleInTeam roleInTeam,
 		BigDecimal sliceScore,
 		BigDecimal sliceContributionPercentage,

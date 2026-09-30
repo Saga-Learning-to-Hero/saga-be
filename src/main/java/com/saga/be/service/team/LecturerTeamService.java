@@ -995,6 +995,7 @@ public class LecturerTeamService {
 				profile == null ? null : profile.getId(),
 				profile == null ? null : profile.getStudentCode(),
 				user == null ? null : user.getFullName(),
+				user == null ? null : user.getAvatarUrl(),
 				user == null ? null : user.getEmail(),
 				member.getRoleInTeam() == null ? null : member.getRoleInTeam().name());
 	}
