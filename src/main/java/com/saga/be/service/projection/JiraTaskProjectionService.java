@@ -271,6 +271,10 @@ public class JiraTaskProjectionService {
 		task.setJiraStatusName(issue.statusName());
 		task.setJiraStatusCategory(issue.statusCategory());
 		task.setIssueTypeName(issue.issueTypeName());
+		// Only a payload that carries the issue type rewrites its identity/level; a level Jira did
+		// not report stays null (unknown) rather than being guessed from the name.
+		TaskIssueTypePolicy.applyJiraIssueType(
+				task, issue.issueTypeId(), issue.issueTypeSubtask(), issue.issueTypeHierarchyLevel());
 		TaskStatus status = ProjectionMappings.taskStatus(issue.statusCategory(), issue.statusName());
 		task.setStatus(status);
 		task.setTaskType(ProjectionMappings.taskType(issue.issueTypeName()));
@@ -422,6 +426,9 @@ public class JiraTaskProjectionService {
 					row.setJiraStatusName(candidate.getJiraStatusName());
 					row.setJiraStatusCategory(candidate.getJiraStatusCategory());
 					row.setIssueTypeName(candidate.getIssueTypeName());
+					row.setIssueTypeId(candidate.getIssueTypeId());
+					row.setIssueTypeLevel(candidate.getIssueTypeLevel());
+					row.setJiraHierarchyLevel(candidate.getJiraHierarchyLevel());
 					row.setStatus(candidate.getStatus());
 					row.setTaskType(candidate.getTaskType());
 					row.setSagaCompletionState(candidate.getSagaCompletionState());

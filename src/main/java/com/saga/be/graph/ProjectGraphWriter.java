@@ -28,7 +28,8 @@ public class ProjectGraphWriter {
 	/**
 	 * Shape of what {@link #rebuild} writes. Bump it whenever nodes, properties or edges change:
 	 * a project graph stored under an older version counts as missing and is rebuilt on its next
-	 * read. 2 = task issueType/issueTypeName + DECOMPOSED_INTO (Jira parent -> child).
+	 * read. 2 = task issue-type metadata + PARENT_OF (Jira parent -> child) + HAS_WORK_ITEM
+	 * (Project -> item with no Jira parent).
 	 */
 	public static final int GRAPH_VERSION = 2;
 
@@ -153,6 +154,15 @@ public class ProjectGraphWriter {
 					row.put("linkedCommitCount", task.linkedCommitCount());
 					row.put("issueType", task.issueType());
 					row.put("issueTypeName", task.issueTypeName());
+					row.put("issueTypeId", task.issueTypeId());
+					row.put("issueTypeLevel", task.issueTypeLevel());
+					row.put("jiraHierarchyLevel", task.jiraHierarchyLevel());
+					row.put("jiraIntegrationId", task.jiraIntegrationId() == null ? null : task.jiraIntegrationId().toString());
+					row.put("parentExternalId", task.parentExternalId());
+					row.put("parentExternalKey", task.parentExternalKey());
+					row.put("parentResolution", task.parentResolution());
+					row.put("parentResolutionReason", task.parentResolutionReason());
+					row.put("topLevel", task.topLevel());
 					row.put("sagaId", task.id().toString());
 					row.put("sprintId", task.sprintId() == null ? null : SagaGraphIds.sprint(task.sprintId()));
 					row.put(
@@ -169,8 +179,17 @@ public class ProjectGraphWriter {
 						    t.classified = row.classified, t.isAnomaly = row.isAnomaly,
 						    t.linkedCommitCount = row.linkedCommitCount,
 						    t.issueType = row.issueType, t.issueTypeName = row.issueTypeName,
+						    t.issueTypeId = row.issueTypeId, t.issueTypeLevel = row.issueTypeLevel,
+						    t.jiraHierarchyLevel = row.jiraHierarchyLevel, t.jiraIntegrationId = row.jiraIntegrationId,
+						    t.parentExternalId = row.parentExternalId, t.parentExternalKey = row.parentExternalKey,
+						    t.parentResolution = row.parentResolution,
+						    t.parentResolutionReason = row.parentResolutionReason,
 						    t.projectId = $pid, t.sagaId = row.sagaId
 						WITH t, row
+						FOREACH (_ IN CASE WHEN row.topLevel = true THEN [1] ELSE [] END |
+						  MERGE (p:Project {id: $projectKey})
+						  MERGE (p)-[:HAS_WORK_ITEM]->(t)
+						)
 						FOREACH (_ IN CASE WHEN row.sprintId IS NULL THEN [] ELSE [1] END |
 						  MERGE (sp:Sprint {id: row.sprintId})
 						  MERGE (sp)-[:CONTAINS]->(t)
@@ -190,7 +209,7 @@ public class ProjectGraphWriter {
 						  MERGE (t)-[:CLASSIFIED_AS]->(c)
 						)
 						""",
-						Map.of("rows", rows, "pid", projectId.toString()));
+						Map.of("rows", rows, "pid", projectId.toString(), "projectKey", projectKey));
 			}
 			if (snapshot.hierarchy() != null && !snapshot.hierarchy().isEmpty()) {
 				List<Map<String, Object>> rows = new ArrayList<>();
@@ -206,7 +225,7 @@ public class ProjectGraphWriter {
 						UNWIND $rows AS row
 						MATCH (parent:Task {id: row.parentId})
 						MATCH (child:Task {id: row.childId})
-						MERGE (parent)-[:DECOMPOSED_INTO]->(child)
+						MERGE (parent)-[:PARENT_OF]->(child)
 						""",
 						Map.of("rows", rows));
 			}

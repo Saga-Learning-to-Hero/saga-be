@@ -14,7 +14,21 @@ public record CytoscapeNodeData(
 		String avatar,
 		String role,
 		Integer storyPoint,
-		/** TASK nodes only: EPIC / STORY / TASK / BUG / SUBTASK / REQUEST. Omitted for other nodes. */
+		/* TASK nodes only below; omitted (null) on every other node. */
+		/** Normalized display type: EPIC / STORY / TASK / BUG / SUBTASK / REQUEST. Use issueTypeLevel for sizing. */
 		String issueType,
-		/** TASK nodes only: the Jira type name, e.g. "Feature". Omitted for other nodes. */
-		String issueTypeName) {}
+		/** The Jira type name, e.g. "Feature". */
+		String issueTypeName,
+		String issueTypeId,
+		/** SUBTASK / STANDARD / EPIC / ABOVE_EPIC; null = not known yet (sync the Jira source). */
+		String issueTypeLevel,
+		/** Jira's raw hierarchyLevel (-1 / 0 / 1 / 2+), orders levels above Epic. */
+		Integer jiraHierarchyLevel,
+		String jiraIntegrationId,
+		String parentExternalId,
+		/** Display only; parents are resolved by (jiraIntegrationId, parentExternalId). */
+		String parentExternalKey,
+		/** RESOLVED / UNRESOLVED; absent for a top-level item. */
+		String parentResolution,
+		/** PARENT_NOT_SYNCED / PARENT_SOURCE_REVOKED when UNRESOLVED. */
+		String parentResolutionReason) {}

@@ -326,6 +326,52 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			@Param("qPrefix") String qPrefix,
 			Pageable pageable);
 
+	/**
+	 * Jira parent candidates: active tasks of one source with a KNOWN level (unknown-level rows are
+	 * never offered), not superseded by a failover, never the item itself.
+	 */
+	@Query(
+			"""
+			select t.id, t.title, t.status, t.externalKey, t.issueTypeName, t.issueTypeLevel
+			from Task t
+			where t.project.id = :projectId
+			  and t.jiraIntegration.id = :jiraIntegrationId
+			  and t.issueTypeLevel = :level
+			  and t.deletedAt is null
+			  and t.id <> :excludeId
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
+			  and (
+			    :qBlank = true
+			    or lower(t.title) like concat(:qPrefix, '%')
+			    or lower(coalesce(t.externalKey, '')) like concat(:qPrefix, '%')
+			  )
+			order by t.title asc, t.id asc
+			""")
+	Page<Object[]> findJiraParentOptions(
+			@Param("projectId") UUID projectId,
+			@Param("jiraIntegrationId") UUID jiraIntegrationId,
+			@Param("level") String level,
+			@Param("excludeId") UUID excludeId,
+			@Param("qBlank") boolean qBlank,
+			@Param("qPrefix") String qPrefix,
+			Pageable pageable);
+
+	/** Direct Jira children: same source, parent = the given Jira issue id. */
+	@Query(
+			"""
+			select t.id, t.title, t.status, t.externalKey, t.issueTypeName, t.issueTypeLevel
+			from Task t
+			where t.jiraIntegration.id = :jiraIntegrationId
+			  and t.parentExternalId = :parentExternalId
+			  and t.deletedAt is null
+			order by t.title asc, t.id asc
+			""")
+	List<Object[]> findActiveJiraChildSummaries(
+			@Param("jiraIntegrationId") UUID jiraIntegrationId, @Param("parentExternalId") String parentExternalId);
+
+	boolean existsByJiraIntegration_IdAndParentExternalIdAndDeletedAtIsNull(
+			UUID jiraIntegrationId, String parentExternalId);
+
 	@Modifying(clearAutomatically = true, flushAutomatically = true)
 	@Query("update Task t set t.parentTask = null where t.project.id = :projectId")
 	int clearParentTaskReferencesByProjectId(@Param("projectId") UUID projectId);

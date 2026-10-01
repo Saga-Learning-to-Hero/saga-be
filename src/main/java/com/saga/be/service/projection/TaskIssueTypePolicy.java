@@ -25,31 +25,68 @@ public final class TaskIssueTypePolicy {
 		SUBTASK,
 		STANDARD,
 		EPIC,
-		ABOVE_EPIC
+		ABOVE_EPIC,
+		/** Jira did not report a hierarchy level; never guessed from the type name. */
+		UNKNOWN
 	}
 
 	private TaskIssueTypePolicy() {}
 
-	/** Jira's hierarchyLevel when given (-1, 0, 1, 2+), else the subtask flag, else the name "Epic". */
 	public static Level level(IssueTypeOption type) {
-		if (type == null) {
-			return Level.STANDARD;
-		}
-		Integer hierarchy = type.hierarchyLevel();
-		if (hierarchy != null) {
-			if (hierarchy < 0) {
+		return type == null ? Level.UNKNOWN : fromJira(type.subtask(), type.hierarchyLevel());
+	}
+
+	/**
+	 * Jira's hierarchyLevel (-1, 0, 1, 2+) decides; without it only the explicit subtask flag can
+	 * say SUBTASK. Anything else is UNKNOWN -- a name like "Feature" or "Epic" is never trusted.
+	 */
+	public static Level fromJira(Boolean subtask, Integer hierarchyLevel) {
+		if (hierarchyLevel != null) {
+			if (hierarchyLevel < 0) {
 				return Level.SUBTASK;
 			}
-			if (hierarchy == 0) {
+			if (hierarchyLevel == 0) {
 				return Level.STANDARD;
 			}
-			return hierarchy == 1 ? Level.EPIC : Level.ABOVE_EPIC;
+			return hierarchyLevel == 1 ? Level.EPIC : Level.ABOVE_EPIC;
 		}
-		if (type.subtask()) {
-			return Level.SUBTASK;
+		return Boolean.TRUE.equals(subtask) ? Level.SUBTASK : Level.UNKNOWN;
+	}
+
+	/**
+	 * Writes the issue type Jira reported onto the task. The level is only rewritten when Jira says
+	 * what it is, or when the type itself changed (then an unreported level becomes unknown) -- a
+	 * payload without hierarchy metadata never erases a level already known for the same type.
+	 */
+	public static void applyJiraIssueType(
+			com.saga.be.entity.jira.Task task, String issueTypeId, Boolean subtask, Integer hierarchyLevel) {
+		if (issueTypeId == null || issueTypeId.isBlank()) {
+			return;
 		}
-		String name = type.name() == null ? "" : type.name().trim().toLowerCase(Locale.ROOT);
-		return "epic".equals(name) ? Level.EPIC : Level.STANDARD;
+		Level level = fromJira(subtask, hierarchyLevel);
+		boolean typeChanged = !issueTypeId.equals(task.getIssueTypeId());
+		task.setIssueTypeId(issueTypeId);
+		if (level != Level.UNKNOWN || typeChanged) {
+			task.setIssueTypeLevel(storedValue(level));
+			task.setJiraHierarchyLevel(hierarchyLevel);
+		}
+	}
+
+	/** The stored column value, or null when unknown (never stores UNKNOWN). */
+	public static String storedValue(Level level) {
+		return level == null || level == Level.UNKNOWN ? null : level.name();
+	}
+
+	/** Reads the stored column; null / unrecognised -> UNKNOWN. */
+	public static Level fromStored(String value) {
+		if (value == null || value.isBlank()) {
+			return Level.UNKNOWN;
+		}
+		try {
+			return Level.valueOf(value.trim());
+		} catch (IllegalArgumentException ex) {
+			return Level.UNKNOWN;
+		}
 	}
 
 	/** Allows an edit only between two normal work-item types; the caller skips an unchanged type. */
@@ -71,6 +108,9 @@ public final class TaskIssueTypePolicy {
 
 	/** {@code parent} is null when no Jira parent was given. */
 	public static void requireParent(Level child, Level parent) {
+		if (parent != null && (child == Level.UNKNOWN || parent == Level.UNKNOWN)) {
+			throw parentInvalid("Jira did not report the hierarchy level of this issue type; sync the Jira source and retry.");
+		}
 		if (child == Level.SUBTASK) {
 			if (parent == null) {
 				throw new IntegrationException(
@@ -105,6 +145,7 @@ public final class TaskIssueTypePolicy {
 			case STANDARD -> "A normal task";
 			case EPIC -> "An Epic";
 			case ABOVE_EPIC -> "An issue above Epic level";
+			case UNKNOWN -> "An issue of unknown hierarchy level";
 		};
 	}
 }

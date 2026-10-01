@@ -92,6 +92,30 @@ class JiraIssueWriteClientTest {
 	}
 
 	@Test
+	void toSummary_carriesTheIssueTypeHierarchy() throws Exception {
+		com.fasterxml.jackson.databind.JsonNode withLevel = new ObjectMapper().readTree(
+				"""
+				{"id":"10002","key":"SAGA-2","fields":{"summary":"Login API",
+				  "issuetype":{"id":"10003","name":"Subtask","subtask":true,"hierarchyLevel":-1},
+				  "parent":{"id":"10001","key":"SAGA-1"}}}
+				""");
+		com.fasterxml.jackson.databind.JsonNode without = new ObjectMapper().readTree(
+				"""
+				{"id":"10004","key":"SAGA-4","fields":{"summary":"Old","issuetype":{"id":"10001","name":"Task"}}}
+				""");
+
+		var summary = JiraIssueWriteClient.toSummary(withLevel, null, null, null, true);
+		var legacy = JiraIssueWriteClient.toSummary(without, null, null, null, true);
+
+		assertThat(summary.issueTypeId()).isEqualTo("10003");
+		assertThat(summary.issueTypeSubtask()).isTrue();
+		assertThat(summary.issueTypeHierarchyLevel()).isEqualTo(-1);
+		assertThat(summary.parentExternalId()).isEqualTo("10001");
+		assertThat(legacy.issueTypeSubtask()).isNull();
+		assertThat(legacy.issueTypeHierarchyLevel()).isNull();
+	}
+
+	@Test
 	void getIssueType_returnsTheIssuesCurrentTypeAndLevel() {
 		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issue/SAGA-7?fields=issuetype"))
 				.andRespond(withSuccess(

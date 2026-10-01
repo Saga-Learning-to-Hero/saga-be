@@ -141,7 +141,7 @@ Response headers: `ETag`, `X-Graph-Revision`. Cùng revision **và cùng query**
 | `focusNodeId` | không | — | `task:{id}`, `student:{id}`, … đúng prefix mục 5.1. Phải nằm **trong** graph đã scoped (project + `sprintId` nếu có). Sai scope → `400 REQUEST_INVALID`. |
 | `depth` | không | `1` | Neighborhood vô hướng từ `focusNodeId` (hoặc từ anomaly). Chỉ `1`–`3`. **Chỉ có `depth` thì bị bỏ qua** — phải kèm focus / type / paging. |
 | `nodeTypes` | không | Overview/Activity: không COMMIT. Graph khác: mọi type | CSV enum canonical: `STUDENT,TEAM,PROJECT,SPRINT,TASK,COMMIT,CRITERION,IDENTITY`. Sai enum → 400. |
-| `edgeTypes` | không | mọi label | CSV: `MEMBER_OF,OWNS,HAS_SPRINT,CONTAINS,ASSIGNED_TO,EVIDENCED_BY,DECOMPOSED_INTO,CLASSIFIED_AS,AUTHORED_BY,MAPS_TO,REVIEWED`. |
+| `edgeTypes` | không | mọi label | CSV: `MEMBER_OF,OWNS,HAS_SPRINT,HAS_WORK_ITEM,CONTAINS,PARENT_OF,ASSIGNED_TO,EVIDENCED_BY,CLASSIFIED_AS,AUTHORED_BY,MAPS_TO,REVIEWED`. |
 | `anomaliesOnly` | không | `false` | `true` = anomaly **kèm neighborhood** (không trả node cô lập nếu chúng còn cạnh). |
 | `maxNodes` | không | — | `1`–`2000`. Cắt theo thứ tự ổn định trong cùng revision. |
 | `cursor` | không | — | Token `revision:lastNodeId` từ `meta.nextCursor`. Alias: `continuationToken`. Sai revision → 400. |
@@ -258,8 +258,17 @@ interface CytoscapeNodeData {
   avatar?: string;      // STUDENT: URL ảnh. Không phải avatarUrl (đó là field /auth/me)
   role?: string;        // STUDENT: LEADER | MEMBER | …
   storyPoint?: number;  // TASK
-  issueType?: "EPIC" | "STORY" | "TASK" | "BUG" | "SUBTASK" | "REQUEST"; // TASK: loại đã chuẩn hoá (Feature → TASK)
-  issueTypeName?: string; // TASK: tên loại đúng như trên Jira, vd "Feature", "User Story"
+  // ---- chỉ node TASK (node khác không có các field này) ----
+  issueTypeLevel?: "EPIC" | "STANDARD" | "SUBTASK" | "ABOVE_EPIC"; // cấp theo Jira — dùng để chọn kích thước; thiếu = chưa biết
+  jiraHierarchyLevel?: number; // số thô của Jira: -1 / 0 / 1 / 2+ (xếp các cấp trên Epic)
+  issueTypeId?: string;
+  issueTypeName?: string;  // tên loại đúng như trên Jira, vd "Feature", "User Story"
+  issueType?: "EPIC" | "STORY" | "TASK" | "BUG" | "SUBTASK" | "REQUEST"; // nhóm hiển thị (Feature → TASK); KHÔNG dùng để suy cấp
+  jiraIntegrationId?: string;
+  parentExternalId?: string;
+  parentExternalKey?: string; // chỉ để hiển thị
+  parentResolution?: "RESOLVED" | "UNRESOLVED"; // thiếu = item cấp cao nhất (có cạnh HAS_WORK_ITEM từ Project)
+  parentResolutionReason?: "PARENT_NOT_SYNCED" | "PARENT_SOURCE_REVOKED";
 }
 
 interface CytoscapeEdgeData {
@@ -273,7 +282,8 @@ interface CytoscapeEdgeData {
     | "CONTAINS"
     | "ASSIGNED_TO"
     | "EVIDENCED_BY"
-    | "DECOMPOSED_INTO"   // task cha → task con theo Jira: Epic → Task/Story/Bug, Task → Subtask
+    | "HAS_WORK_ITEM"     // Project → work item cấp cao nhất (Epic, hoặc item không có cha trên Jira)
+    | "PARENT_OF"         // cha → con theo Jira: Initiative → Epic → Task/Story/Bug → Subtask
     | "CLASSIFIED_AS"
     | "AUTHORED_BY"
     | "MAPS_TO"
@@ -291,8 +301,12 @@ cy.json({ elements: payload }); // hoặc cy.add(payload.nodes.concat(payload.ed
 
 Style CSS theo `node[type = "TASK"]` và `edge[label = "EVIDENCED_BY"]` — **đúng string trên**, không dùng `IMPLEMENTS` / `AUTHORED` / `DOC`.
 
-**Phân rã công việc (Graph 1 — overview):** cạnh `DECOMPOSED_INTO` đi từ task cha sang task con đúng như quan hệ cha/con trên Jira, nên luồng hiển thị là
-`EPIC → STORY / TASK / BUG → SUBTASK → COMMIT` (Story và Task **cùng cấp**, Story không làm cha Task). Overview toàn project trả mọi cặp cha/con; overview theo sprint trả cặp có task con nằm trong sprint đó **kèm node cha** (vd Epic — Epic không thuộc sprint nào) để luồng không bị đứt. Gợi ý style: `node[issueType = "EPIC"]` to hơn, `node[issueType = "SUBTASK"]` nhỏ hơn, `edge[label = "DECOMPOSED_INTO"]` nét đứt. Chỉ là hiển thị — **không ảnh hưởng tính điểm**. Graph cũ tự dựng lại lần đầu được mở sau khi BE deploy.
+**Phân rã công việc:** Project vẫn là gốc. `HAS_WORK_ITEM` nối Project với **mọi item không có cha trên Jira** (Epic, hoặc Task/Story/Bug không thuộc Epic nào); `PARENT_OF` đi từ cha sang con đúng như Jira:
+`PROJECT ─HAS_WORK_ITEM→ EPIC ─PARENT_OF→ STORY / TASK / BUG ─PARENT_OF→ SUBTASK ─EVIDENCED_BY→ COMMIT` (Story và Task **cùng cấp** — không có cạnh Story → Task; cấp trên Epic như Initiative cũng hiện, chỉ đọc). Item có cha trên Jira nhưng SAGA **chưa có** cha đó → **không** có `HAS_WORK_ITEM`, node mang `parentResolution = "UNRESOLVED"` (+ lý do) để FE hiện cảnh báo. Sprint chỉ là lập kế hoạch (`CONTAINS`), không phải cha.
+- **Overview toàn project:** mọi `PARENT_OF` và `HAS_WORK_ITEM`.
+- **Overview theo sprint, Activity:** task của sprint + **toàn bộ chuỗi cha** (kể cả Epic/Initiative không thuộc sprint) + Subtask con + `HAS_WORK_ITEM` tới gốc mỗi chuỗi.
+- **Attribution:** commit → item nó chứng minh → chuỗi cha → Project. Drill-down (`focusNodeId` + `depth`) chạy trên dữ liệu của view nên cũng có các cạnh này.
+- Gợi ý kích thước theo `issueTypeLevel`: Project 1.5, Above-Epic 1.4, Epic 1.3, Standard 1.0, Subtask 0.78, Commit 0.72; `PARENT_OF` nét đứt. Chỉ là hiển thị — **không ảnh hưởng tính điểm**. Graph cũ tự dựng lại lần đầu được mở sau khi BE deploy.
 
 ### 5.1 `id` node (prefix)
 

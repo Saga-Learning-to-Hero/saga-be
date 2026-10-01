@@ -17,6 +17,15 @@ public record ProjectTaskResponse(
 		String jiraStatusId,
 		String jiraStatusName,
 		String issueTypeName,
+		/** Jira's issue type id. Compare this (not a display group) to detect a type change. Null until synced. */
+		String issueTypeId,
+		/**
+		 * SUBTASK / STANDARD / EPIC / ABOVE_EPIC as Jira reports it; null = not known yet (sync the
+		 * Jira source). While null, issue type and parent edits must stay locked.
+		 */
+		String issueTypeLevel,
+		/** Jira's raw hierarchyLevel (-1 / 0 / 1 / 2+); null until synced. */
+		Integer jiraHierarchyLevel,
 		/** Flat alias of {@link Assignee#accountId()} for existing clients. */
 		String assigneeExternalId,
 		/** Flat alias of {@link Assignee#displayName()}. */
@@ -125,9 +134,18 @@ public record ProjectTaskResponse(
 
 	public record PriorityDetail(String id, String name) {}
 
-	public record Parent(String externalId, String externalKey) {}
+	/**
+	 * Jira parent. {@code taskId} is the SAGA task of the same Jira source with that Jira id (null
+	 * when not found). {@code resolution}: RESOLVED / UNRESOLVED; {@code resolutionReason} when
+	 * UNRESOLVED: PARENT_NOT_SYNCED / PARENT_SOURCE_REVOKED. Both null only on responses that do
+	 * not resolve parents.
+	 */
+	public record Parent(
+			String externalId, String externalKey, UUID taskId, String resolution, String resolutionReason) {}
 
 	public record ParentTask(UUID id, String title) {}
 
-	public record Subtask(UUID id, String title, String status) {}
+	/** A direct Jira child (Epic -> its items, item -> its Subtasks). */
+	public record Subtask(
+			UUID id, String title, String status, String externalKey, String issueTypeName, String issueTypeLevel) {}
 }

@@ -34,10 +34,24 @@ public record ProjectGraphSnapshot(
 			boolean classified,
 			boolean anomaly,
 			int linkedCommitCount,
-			/** EPIC / STORY / TASK / BUG / SUBTASK / REQUEST (SAGA's normalized type). */
+			/** EPIC / STORY / TASK / BUG / SUBTASK / REQUEST (SAGA's normalized type, display only). */
 			String issueType,
 			/** The Jira type name as the team sees it, e.g. "Feature". */
-			String issueTypeName) {}
+			String issueTypeName,
+			String issueTypeId,
+			/** SUBTASK / STANDARD / EPIC / ABOVE_EPIC as Jira reports it; null = not known yet. */
+			String issueTypeLevel,
+			/** Jira's raw hierarchyLevel (-1 / 0 / 1 / 2+). */
+			Integer jiraHierarchyLevel,
+			UUID jiraIntegrationId,
+			String parentExternalId,
+			String parentExternalKey,
+			/** RESOLVED / UNRESOLVED; null for a top-level item (no Jira parent). */
+			String parentResolution,
+			/** PARENT_NOT_SYNCED / PARENT_SOURCE_REVOKED when UNRESOLVED. */
+			String parentResolutionReason,
+			/** No Jira parent at all: linked to the Project by HAS_WORK_ITEM. */
+			boolean topLevel) {}
 
 	public record CommitNode(
 			UUID id,

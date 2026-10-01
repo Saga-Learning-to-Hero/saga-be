@@ -1,6 +1,6 @@
 package com.saga.be.service.projection;
 
-import com.saga.be.dto.JiraWriteIncompleteDetails;
+import com.saga.be.dto.integration.failover.TaskMigrationSummary;
 import com.saga.be.dto.project.CreateProjectTaskRequest;
 import com.saga.be.dto.project.PatchProjectTaskRequest;
 import com.saga.be.dto.project.ProjectTaskOptionsResponse;
@@ -46,7 +46,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -179,25 +178,16 @@ public class ProjectJiraTaskCommandService {
 				? request.assigneeAccountId()
 				: memberSelfAssignee(userId, request.assigneeAccountId());
 		JiraIntegration integration = resolveJiraForCreate(projectId, request.jiraIntegrationId());
-		UUID nativeParentId = request.parentTaskId();
-		// Local checks first: a wrong-source parent is refused before any Jira call.
-		Task jiraParent = request.jiraParentTaskId() == null
-				? null
-				: requireJiraParent(projectId, integration, request.jiraParentTaskId());
+		// One parent relation only: the Jira parent. parentTaskId is the deprecated name of the same
+		// picker. Local checks first: a wrong-source parent is refused before any Jira call.
+		UUID parentRef = request.jiraParentTaskId() != null ? request.jiraParentTaskId() : request.parentTaskId();
+		Task jiraParent = parentRef == null ? null : requireJiraParent(projectId, integration, parentRef);
 		boolean typeChosen = request.issueTypeId() != null && !request.issueTypeId().isBlank();
-		String access = typeChosen ? tokens.accessToken(integration) : null;
+		String access = typeChosen || jiraParent != null ? tokens.accessToken(integration) : null;
 		TaskIssueTypePolicy.Level level = typeChosen
 				? TaskIssueTypePolicy.level(requireProjectIssueType(access, integration, request.issueTypeId()))
 				: TaskIssueTypePolicy.Level.STANDARD;
 		boolean subtask = level == TaskIssueTypePolicy.Level.SUBTASK;
-		// The create form's "parent task" picker sends the native parentTaskId. A Jira Subtask cannot
-		// exist without a Jira parent, so for a Subtask that same task also becomes its Jira parent.
-		if (jiraParent == null && subtask && nativeParentId != null) {
-			jiraParent = requireJiraParent(projectId, integration, nativeParentId);
-		}
-		if (jiraParent != null && access == null) {
-			access = tokens.accessToken(integration);
-		}
 		TaskIssueTypePolicy.requireParent(
 				level,
 				jiraParent == null
@@ -214,9 +204,6 @@ public class ProjectJiraTaskCommandService {
 							? null
 							: sprints.findByJiraIntegration_IdAndExternalSprintId(integration.getId(), sprintId).orElse(null);
 			requireValidSchedule(request.startDate(), request.dueDate(), targetSprint);
-		}
-		if (nativeParentId != null) {
-			hierarchy.validateAssignable(projectId, null, nativeParentId);
 		}
 		String jiraParentIssueId = jiraParent == null ? null : jiraParent.getExternalId();
 		if (access == null) {
@@ -262,31 +249,21 @@ public class ProjectJiraTaskCommandService {
 		}
 
 		IssueSummary canonical = jiraWrite.getIssue(access, integration.getCloudId(), created.id());
-		AtomicBoolean nativeParentFailed = new AtomicBoolean(false);
 		Task saved = writes.execute(status -> {
-			if (nativeParentId != null) {
-				hierarchy.acquireHierarchyMutationLock(projectId);
-			}
 			Task row = projection.upsertOne(integration, integration.getProjectKey(), canonical);
-			if (nativeParentId != null) {
-				row = applyParentAfterProviderSuccess(projectId, row, nativeParentId, nativeParentFailed);
-			}
 			realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, projectId, row.getId().toString());
 			if (sprintId != null) {
 				realtime.publish(ProjectRealtimeEventType.SPRINTS_CHANGED, projectId);
 			}
 			return row;
 		});
-		if (nativeParentFailed.get()) {
-			throw nativeParentIncomplete(true, saved);
-		}
 		if (secondaryFailed) {
 			throw new IntegrationException(
 					IntegrationErrorCode.JIRA_WRITE_INCOMPLETE,
 					HttpStatus.BAD_GATEWAY,
 					"Jira issue was created but a secondary field update failed. Local state reflects provider truth; retry the failed field.");
 		}
-		return ProjectProjectionReadService.toTask(saved, 0L, 0L);
+		return toProjectedTask(projectId, saved);
 	}
 
 	public ProjectTaskResponse patch(UUID userId, UUID projectId, UUID taskId, PatchProjectTaskRequest request) {
@@ -295,26 +272,20 @@ public class ProjectJiraTaskCommandService {
 			requireMemberKeepsOwnership(userId, request);
 		}
 		requireLeaderOrAssignee(role, userId, projectId, taskId);
-		if (Boolean.TRUE.equals(request.clearParent()) && request.parentTaskId() != null) {
+		if (request.clearsJiraParent() && request.requestedJiraParentId() != null) {
 			throw new AcademicException(
 					AcademicErrorCode.REQUEST_INVALID,
 					HttpStatus.BAD_REQUEST,
-					"clearParent cannot be combined with parentTaskId.");
-		}
-		boolean nativeTouched = request.touchesNativeParent();
-		boolean providerTouched = request.touchesProviderFields();
-		UUID nativeParentId = Boolean.TRUE.equals(request.clearParent()) ? null : request.parentTaskId();
-		if (nativeTouched && !providerTouched) {
-			Task task = requireTask(projectId, taskId);
-			Task saved = hierarchy.mutateParent(projectId, task.getId(), nativeParentId);
-			realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, projectId, saved.getId().toString());
-			return toProjectedTask(projectId, saved);
-		}
-		if (nativeTouched) {
-			requireTask(projectId, taskId);
-			hierarchy.validateAssignable(projectId, taskId, nativeParentId);
+					"clearJiraParent cannot be combined with jiraParentTaskId.");
 		}
 		Task task = requireTask(projectId, taskId);
+		// Local checks first: a parent of another project/source is refused before any Jira call.
+		UUID parentRef = request.requestedJiraParentId();
+		Task newParent = parentRef == null ? null : requireJiraParent(projectId, task.getJiraIntegration(), parentRef);
+		if (newParent != null && newParent.getId().equals(task.getId())) {
+			throw new IntegrationException(
+					IntegrationErrorCode.TASK_PARENT_TYPE_INVALID, HttpStatus.BAD_REQUEST, "A task cannot be its own parent.");
+		}
 		List<String> labels = SagaTaskLabelPolicy.forPatch(TaskLabelParser.parse(task.getLabelsJson()), request.labels());
 		JiraIntegration integration = requireJiraForTask(projectId, task);
 		requirePatchKeepsValidSchedule(task, integration, request);
@@ -339,13 +310,36 @@ public class ProjectJiraTaskCommandService {
 							List.of(Map.of("type", "text", "text", request.description())))));
 			fields.put("description", doc);
 		}
+		IssueTypeOption current = null;
 		if (request.issueTypeId() != null && !request.issueTypeId().isBlank()) {
-			IssueTypeOption current = jiraWrite.getIssueType(access, integration.getCloudId(), issueRef);
+			current = jiraWrite.getIssueType(access, integration.getCloudId(), issueRef);
 			// Re-sending the current type is not a change (the edit form may send it back unchanged).
 			if (!request.issueTypeId().equals(current.id())) {
 				TaskIssueTypePolicy.requireEditable(
 						current, requireProjectIssueType(access, integration, request.issueTypeId()));
 				fields.put("issuetype", Map.of("id", request.issueTypeId()));
+			}
+		}
+		if (request.touchesJiraParent()) {
+			if (current == null) {
+				current = jiraWrite.getIssueType(access, integration.getCloudId(), issueRef);
+			}
+			if (TaskIssueTypePolicy.level(current) != TaskIssueTypePolicy.Level.STANDARD) {
+				throw new IntegrationException(
+						IntegrationErrorCode.TASK_PARENT_TYPE_INVALID,
+						HttpStatus.BAD_REQUEST,
+						"Only a Task, Story, Feature or Bug can change its Epic in SAGA. An Epic or a Subtask keeps its parent "
+								+ "here; change it in Jira and sync.");
+			}
+			if (newParent == null) {
+				// Removes the Epic: the item becomes a top-level work item of the project.
+				fields.put("parent", null);
+			} else {
+				TaskIssueTypePolicy.requireParent(
+						TaskIssueTypePolicy.Level.STANDARD,
+						TaskIssueTypePolicy.level(
+								jiraWrite.getIssueType(access, integration.getCloudId(), newParent.getExternalId())));
+				fields.put("parent", Map.of("id", newParent.getExternalId()));
 			}
 		}
 		if (Boolean.TRUE.equals(request.clearAssignee())) {
@@ -413,26 +407,14 @@ public class ProjectJiraTaskCommandService {
 
 		IssueSummary canonical = jiraWrite.getIssue(access, integration.getCloudId(), issueRef);
 		boolean sprintMembershipChanged = sprintChanged;
-		boolean persistNativeParent = nativeTouched;
-		UUID persistParentId = nativeParentId;
-		AtomicBoolean nativeParentFailed = new AtomicBoolean(false);
 		Task saved = writes.execute(status -> {
-			if (persistNativeParent) {
-				hierarchy.acquireHierarchyMutationLock(projectId);
-			}
 			Task row = projection.upsertOne(integration, integration.getProjectKey(), canonical);
-			if (persistNativeParent) {
-				row = applyParentAfterProviderSuccess(projectId, row, persistParentId, nativeParentFailed);
-			}
 			realtime.publish(ProjectRealtimeEventType.TASKS_CHANGED, projectId, row.getId().toString());
 			if (sprintMembershipChanged) {
 				realtime.publish(ProjectRealtimeEventType.SPRINTS_CHANGED, projectId);
 			}
 			return row;
 		});
-		if (nativeParentFailed.get()) {
-			throw nativeParentIncomplete(false, saved);
-		}
 		return toProjectedTask(projectId, saved);
 	}
 
@@ -488,6 +470,13 @@ public class ProjectJiraTaskCommandService {
 					IntegrationErrorCode.TASK_DELETE_BLOCKED_BY_EVIDENCE,
 					HttpStatus.CONFLICT,
 					"Cannot delete Jira issue while work sessions or contribution confirmations exist for this task.");
+		}
+		if (task.getExternalId() != null
+				&& tasks.existsByJiraIntegration_IdAndParentExternalIdAndDeletedAtIsNull(integration.getId(), task.getExternalId())) {
+			throw new IntegrationException(
+					IntegrationErrorCode.TASK_DELETE_BLOCKED_BY_SUBTASKS,
+					HttpStatus.CONFLICT,
+					"Cannot delete a task that still has child work items in Jira (subtasks, or items under this Epic).");
 		}
 		hierarchy.assertDeletableWithoutActiveChildren(projectId, taskId);
 		String access = tokens.accessToken(integration);
@@ -802,7 +791,11 @@ public class ProjectJiraTaskCommandService {
 	}
 
 	private ProjectTaskResponse toProjectedTask(UUID projectId, Task saved) {
-		return ProjectProjectionReadService.toTask(saved, linkedCount(projectId, saved.getId()), evidenceCount(saved.getId()));
+		long evidence = evidenceCount(saved.getId());
+		long linked = linkedCount(projectId, saved.getId());
+		return ProjectProjectionReadService.toTask(
+				saved, linked, evidence, linked, evidence, null, TaskMigrationSummary.none(),
+				ProjectProjectionReadService.repositoryParentLookup(tasks, projectId));
 	}
 
 	private long linkedCount(UUID projectId, UUID taskId) {
@@ -823,33 +816,5 @@ public class ProjectJiraTaskCommandService {
 			return task.getExternalId();
 		}
 		return task.getExternalKey();
-	}
-
-	/**
-	 * Jira already succeeded; persist provider truth even if native parent cannot be assigned.
-	 * Catching {@code TASK_PARENT_INVALID} inside the transaction lets {@code upsertOne} commit.
-	 * Callers then surface {@link IntegrationErrorCode#JIRA_WRITE_INCOMPLETE} (no Jira retry).
-	 */
-	private Task applyParentAfterProviderSuccess(
-			UUID projectId, Task row, UUID parentId, AtomicBoolean nativeParentFailed) {
-		try {
-			return hierarchy.applyParent(projectId, row.getId(), parentId);
-		} catch (AcademicException ex) {
-			if (ex.getCode() != AcademicErrorCode.TASK_PARENT_INVALID) {
-				throw ex;
-			}
-			nativeParentFailed.set(true);
-			return row;
-		}
-	}
-
-	private static IntegrationException nativeParentIncomplete(boolean created, Task saved) {
-		return new IntegrationException(
-				IntegrationErrorCode.JIRA_WRITE_INCOMPLETE,
-				HttpStatus.BAD_GATEWAY,
-				created
-						? "Jira issue was created but native parent could not be assigned. Local Task already exists and reflects provider truth; do not retry create. Retry the parent assignment with PATCH."
-						: "Jira issue was updated but native parent could not be assigned. Local state reflects provider truth; retry the parent assignment with PATCH.",
-				JiraWriteIncompleteDetails.nativeParentNotApplied(saved.getId()));
 	}
 }

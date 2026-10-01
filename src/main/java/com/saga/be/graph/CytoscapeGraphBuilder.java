@@ -43,7 +43,22 @@ public final class CytoscapeGraphBuilder {
 			String avatar,
 			String role,
 			Integer storyPoint) {
-		return nodeData(id, label, subLabel, type, status, weightType, anomaly, avatar, role, storyPoint, null, null);
+		return nodeData(id, label, subLabel, type, status, weightType, anomaly, avatar, role, storyPoint, TaskInfo.NONE);
+	}
+
+	/** Work-item metadata of a TASK node; every field null on other nodes (omitted from JSON). */
+	public record TaskInfo(
+			String issueType,
+			String issueTypeName,
+			String issueTypeId,
+			String issueTypeLevel,
+			Integer jiraHierarchyLevel,
+			String jiraIntegrationId,
+			String parentExternalId,
+			String parentExternalKey,
+			String parentResolution,
+			String parentResolutionReason) {
+		public static final TaskInfo NONE = new TaskInfo(null, null, null, null, null, null, null, null, null, null);
 	}
 
 	public static CytoscapeNodeData nodeData(
@@ -57,10 +72,13 @@ public final class CytoscapeGraphBuilder {
 			String avatar,
 			String role,
 			Integer storyPoint,
-			String issueType,
-			String issueTypeName) {
+			TaskInfo task) {
+		TaskInfo info = task == null ? TaskInfo.NONE : task;
 		return new CytoscapeNodeData(
-				id, label, subLabel, type, status, weightType, anomaly, avatar, role, storyPoint, issueType, issueTypeName);
+				id, label, subLabel, type, status, weightType, anomaly, avatar, role, storyPoint,
+				info.issueType(), info.issueTypeName(), info.issueTypeId(), info.issueTypeLevel(),
+				info.jiraHierarchyLevel(), info.jiraIntegrationId(), info.parentExternalId(),
+				info.parentExternalKey(), info.parentResolution(), info.parentResolutionReason());
 	}
 
 	public static CytoscapeEdgeData edgeData(

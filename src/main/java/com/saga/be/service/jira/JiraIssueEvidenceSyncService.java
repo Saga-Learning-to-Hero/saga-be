@@ -433,6 +433,11 @@ public class JiraIssueEvidenceSyncService {
 		TaskStatus status = mapStatus(task.getJiraStatusCategory(), task.getJiraStatusName());
 		task.setStatus(status);
 		task.setIssueTypeName(JiraIssueEvidenceParser.issueTypeName(issue));
+		com.saga.be.service.projection.TaskIssueTypePolicy.applyJiraIssueType(
+				task,
+				JiraIssueEvidenceParser.issueTypeId(issue),
+				JiraIssueEvidenceParser.issueTypeSubtask(issue),
+				JiraIssueEvidenceParser.issueTypeHierarchyLevel(issue));
 		task.setTaskType(mapType(task.getIssueTypeName()));
 		task.setSagaCompletionState(TaskCompletionEvaluator.evaluate(status, task.getJiraStatusCategory(), null, null, LocalDateTime.now()));
 		try {

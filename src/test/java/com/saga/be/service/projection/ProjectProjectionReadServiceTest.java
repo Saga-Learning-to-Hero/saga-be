@@ -249,7 +249,6 @@ class ProjectProjectionReadServiceTest {
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 		when(files.countByProjectGrouped(projectId)).thenReturn(List.<Object[]>of(new Object[] {task.getId(), 1L}));
 		when(webLinks.countByProjectGrouped(projectId)).thenReturn(List.of());
-		when(tasks.findActiveDirectChildSummaries(task.getId())).thenReturn(List.of());
 
 		ProjectTaskResponse response = service.getTask(userId, projectId, task.getId());
 
@@ -935,24 +934,77 @@ class ProjectProjectionReadServiceTest {
 	}
 
 	@Test
-	void getTask_exposesDirectSubtasksOnly() {
+	void getTask_exposesDirectJiraChildren() {
 		stubStudent(RoleInTeam.MEMBER);
+		com.saga.be.entity.jira.JiraIntegration source = new com.saga.be.entity.jira.JiraIntegration();
+		source.setId(UUID.randomUUID());
 		Task parent = new Task();
 		parent.setId(UUID.randomUUID());
 		parent.setTitle("Parent");
 		parent.setStatus(TaskStatus.TODO);
+		parent.setJiraIntegration(source);
+		parent.setExternalId("10049");
 		when(tasks.findActiveFetchedByIdAndProject_Id(parent.getId(), projectId)).thenReturn(Optional.of(parent));
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
 		UUID childId = UUID.randomUUID();
-		when(tasks.findActiveDirectChildSummaries(parent.getId()))
-				.thenReturn(java.util.List.<Object[]>of(new Object[] {childId, "Child", TaskStatus.IN_PROGRESS}));
+		when(tasks.findActiveJiraChildSummaries(source.getId(), "10049"))
+				.thenReturn(java.util.List.<Object[]>of(
+						new Object[] {childId, "Child", TaskStatus.IN_PROGRESS, "SAGA-2", "Subtask", "SUBTASK"}));
 
 		ProjectTaskResponse response = service.getTask(userId, projectId, parent.getId());
 
-		assertThat(response.subtasks()).containsExactly(new ProjectTaskResponse.Subtask(childId, "Child", "IN_PROGRESS"));
+		assertThat(response.subtasks()).containsExactly(
+				new ProjectTaskResponse.Subtask(childId, "Child", "IN_PROGRESS", "SAGA-2", "Subtask", "SUBTASK"));
 		assertThat(response.parentTask()).isNull();
-		verify(tasks, times(1)).findActiveDirectChildSummaries(parent.getId());
+		assertThat(response.parent()).isNull();
+		verify(tasks, never()).findActiveDirectChildSummaries(any());
 		verify(tasks, never()).findById(any());
+	}
+
+	@Test
+	void getTask_reportsWhetherItsJiraParentIsSynced() {
+		stubStudent(RoleInTeam.MEMBER);
+		com.saga.be.entity.jira.JiraIntegration source = new com.saga.be.entity.jira.JiraIntegration();
+		source.setId(UUID.randomUUID());
+		source.setConnectionStatus(com.saga.be.entity.enums.IntegrationStatus.ACTIVE);
+		com.saga.be.entity.project.Project project = new com.saga.be.entity.project.Project();
+		project.setId(projectId);
+		Task epic = new Task();
+		epic.setId(UUID.randomUUID());
+		epic.setProject(project);
+		Task child = new Task();
+		child.setId(UUID.randomUUID());
+		child.setStatus(TaskStatus.TODO);
+		child.setJiraIntegration(source);
+		child.setExternalId("10050");
+		child.setParentExternalId("10049");
+		child.setParentExternalKey("SAGA-1");
+		child.setIssueTypeId("10001");
+		child.setIssueTypeLevel("STANDARD");
+		child.setJiraHierarchyLevel(0);
+		Task orphan = new Task();
+		orphan.setId(UUID.randomUUID());
+		orphan.setStatus(TaskStatus.TODO);
+		orphan.setJiraIntegration(source);
+		orphan.setExternalId("10051");
+		orphan.setParentExternalId("99999");
+		when(tasks.findActiveFetchedByIdAndProject_Id(child.getId(), projectId)).thenReturn(Optional.of(child));
+		when(tasks.findActiveFetchedByIdAndProject_Id(orphan.getId(), projectId)).thenReturn(Optional.of(orphan));
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+		when(tasks.findByJiraIntegration_IdAndExternalId(source.getId(), "10049")).thenReturn(Optional.of(epic));
+		when(tasks.findByJiraIntegration_IdAndExternalId(source.getId(), "99999")).thenReturn(Optional.empty());
+
+		ProjectTaskResponse resolved = service.getTask(userId, projectId, child.getId());
+		ProjectTaskResponse unresolved = service.getTask(userId, projectId, orphan.getId());
+
+		assertThat(resolved.issueTypeId()).isEqualTo("10001");
+		assertThat(resolved.issueTypeLevel()).isEqualTo("STANDARD");
+		assertThat(resolved.jiraHierarchyLevel()).isZero();
+		assertThat(resolved.parent()).isEqualTo(new ProjectTaskResponse.Parent("10049", "SAGA-1", epic.getId(), "RESOLVED", null));
+		assertThat(unresolved.parent().resolution()).isEqualTo("UNRESOLVED");
+		assertThat(unresolved.parent().resolutionReason()).isEqualTo("PARENT_NOT_SYNCED");
+		assertThat(unresolved.parent().taskId()).isNull();
+		assertThat(unresolved.issueTypeLevel()).isNull();
 	}
 
 	@Test
@@ -969,18 +1021,16 @@ class ProjectProjectionReadServiceTest {
 		child.setParentTask(parent);
 		when(tasks.findActiveFetchedByIdAndProject_Id(child.getId(), projectId)).thenReturn(Optional.of(child));
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
-		when(tasks.findActiveDirectChildSummaries(child.getId())).thenReturn(List.of());
 
 		ProjectTaskResponse response = service.getTask(userId, projectId, child.getId());
 
 		assertThat(response.parentTask()).isNull();
 		verify(tasks, times(1)).findActiveFetchedByIdAndProject_Id(child.getId(), projectId);
-		verify(tasks, times(1)).findActiveDirectChildSummaries(child.getId());
 		verify(tasks, never()).findById(any());
 	}
 
 	@Test
-	void getTask_omitsSoftDeletedDirectChildren() {
+	void getTask_withoutAJiraIdentityHasNoChildrenQuery() {
 		stubStudent(RoleInTeam.MEMBER);
 		Task parent = new Task();
 		parent.setId(UUID.randomUUID());
@@ -988,14 +1038,11 @@ class ProjectProjectionReadServiceTest {
 		parent.setStatus(TaskStatus.TODO);
 		when(tasks.findActiveFetchedByIdAndProject_Id(parent.getId(), projectId)).thenReturn(Optional.of(parent));
 		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
-		UUID activeChildId = UUID.randomUUID();
-		when(tasks.findActiveDirectChildSummaries(parent.getId()))
-				.thenReturn(java.util.List.<Object[]>of(new Object[] {activeChildId, "C1", TaskStatus.TODO}));
 
 		ProjectTaskResponse response = service.getTask(userId, projectId, parent.getId());
 
-		assertThat(response.subtasks()).containsExactly(new ProjectTaskResponse.Subtask(activeChildId, "C1", "TODO"));
-		verify(tasks, times(1)).findActiveDirectChildSummaries(parent.getId());
+		assertThat(response.subtasks()).isEmpty();
+		verify(tasks, never()).findActiveJiraChildSummaries(any(), any());
 		verify(tasks, never()).findById(any());
 	}
 

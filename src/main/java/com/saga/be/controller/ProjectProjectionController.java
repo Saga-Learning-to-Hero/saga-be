@@ -133,7 +133,10 @@ public class ProjectProjectionController {
 					"""
 					Local DB only. page default 0, size default 20, size max 50. page < 0 or size
 					outside 1..50 is 400 REQUEST_INVALID (not clamped). Order is title ASC, id ASC.
-					q is prefix search on title and externalKey.
+					q is prefix search on title and externalKey. Jira parent picker: pass childLevel
+					(level of the item being created/edited, from /tasks/options) and jiraIntegrationId:
+					STANDARD -> Epics of that source, SUBTASK -> standard items, EPIC/ABOVE_EPIC -> none;
+					only tasks with a known level are offered. Without childLevel: legacy list.
 					""")
 	public TaskParentOptionsResponse parentOptions(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -141,8 +144,11 @@ public class ProjectProjectionController {
 			@RequestParam(required = false) String q,
 			@RequestParam(defaultValue = "0") int page,
 			@RequestParam(defaultValue = "20") int size,
-			@RequestParam(required = false) UUID excludeTaskId) {
-		return projections.listParentOptions(principal.getUserId(), projectId, q, page, size, excludeTaskId);
+			@RequestParam(required = false) UUID excludeTaskId,
+			@RequestParam(required = false) String childLevel,
+			@RequestParam(required = false) UUID jiraIntegrationId) {
+		return projections.listParentOptions(
+				principal.getUserId(), projectId, q, page, size, excludeTaskId, childLevel, jiraIntegrationId);
 	}
 
 	@GetMapping("/tasks/{taskId}")

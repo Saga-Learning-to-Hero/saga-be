@@ -37,16 +37,54 @@ public record PatchProjectTaskRequest(
 		 */
 		LocalDate startDate,
 		Boolean clearStartDate,
-		/**
-		 * PATCH semantics: omitted (null, with {@code clearParent} not true) -> preserve native
-		 * parent. A value -> assign/change native parent. Never written to Jira {@code fields.parent}.
-		 */
+		/** Deprecated name of {@link #jiraParentTaskId()}; read the same way (the Jira parent). */
 		java.util.UUID parentTaskId,
+		/** Deprecated name of {@link #clearJiraParent()}. */
+		Boolean clearParent,
 		/**
-		 * Explicit clear of native parent. A bare {@code parentTaskId=null} is never treated as an
-		 * accidental clear. Cannot be combined with a non-null {@code parentTaskId}.
+		 * The Epic to place this Task/Story/Feature/Bug under (a SAGA task id of the same Jira
+		 * source). Omitted with {@code clearJiraParent} not true -> parent unchanged. Only a
+		 * STANDARD item may change its parent here; an Epic or a Subtask keeps it.
 		 */
-		Boolean clearParent) {
+		java.util.UUID jiraParentTaskId,
+		/** true -> remove the Epic parent (the item becomes top-level). Not combinable with an id. */
+		Boolean clearJiraParent) {
+
+	/** Pre-Jira-parent shape: parent unchanged unless the deprecated fields say otherwise. */
+	public PatchProjectTaskRequest(
+			String summary,
+			String description,
+			String issueTypeId,
+			String assigneeAccountId,
+			Boolean clearAssignee,
+			String priorityId,
+			Integer storyPoints,
+			String sprintExternalId,
+			Boolean moveToBacklog,
+			String transitionId,
+			String targetStatusId,
+			List<String> labels,
+			LocalDate dueDate,
+			Boolean clearDueDate,
+			LocalDate startDate,
+			Boolean clearStartDate,
+			java.util.UUID parentTaskId,
+			Boolean clearParent) {
+		this(
+				summary, description, issueTypeId, assigneeAccountId, clearAssignee, priorityId, storyPoints,
+				sprintExternalId, moveToBacklog, transitionId, targetStatusId, labels, dueDate, clearDueDate,
+				startDate, clearStartDate, parentTaskId, clearParent, null, null);
+	}
+
+	/** The Jira parent asked for, from the current field or its deprecated name. */
+	public java.util.UUID requestedJiraParentId() {
+		return jiraParentTaskId != null ? jiraParentTaskId : parentTaskId;
+	}
+
+	/** true when the Jira parent is to be removed, via the current field or its deprecated name. */
+	public boolean clearsJiraParent() {
+		return Boolean.TRUE.equals(clearJiraParent) || Boolean.TRUE.equals(clearParent);
+	}
 
 	/** Legacy overload (no labels/dueDate/startDate) for existing callers/tests -- preserves all. */
 	public PatchProjectTaskRequest(
@@ -133,8 +171,8 @@ public record PatchProjectTaskRequest(
 				startDate, clearStartDate, null, null);
 	}
 
-	public boolean touchesNativeParent() {
-		return parentTaskId != null || Boolean.TRUE.equals(clearParent);
+	public boolean touchesJiraParent() {
+		return requestedJiraParentId() != null || clearsJiraParent();
 	}
 
 	public boolean touchesProviderFields() {
@@ -153,6 +191,7 @@ public record PatchProjectTaskRequest(
 				|| dueDate != null
 				|| Boolean.TRUE.equals(clearDueDate)
 				|| startDate != null
-				|| Boolean.TRUE.equals(clearStartDate);
+				|| Boolean.TRUE.equals(clearStartDate)
+				|| touchesJiraParent();
 	}
 }

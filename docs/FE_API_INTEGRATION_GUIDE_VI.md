@@ -1448,7 +1448,7 @@ Vài lưu ý chính xác cần nhớ:
 
 ```json
 {
-  "issueTypes": [{ "id": "...", "name": "Story", "description": "...", "subtask": false, "hierarchyLevel": 0, "level": "STANDARD" }],
+  "issueTypes": [{ "id": "...", "name": "Story", "description": "...", "subtask": false, "hierarchyLevel": 0, "level": "STANDARD" }],  // level: EPIC | STANDARD | SUBTASK | ABOVE_EPIC | UNKNOWN
   "priorities": [{ "id": "...", "name": "High" }],
   "assignableUsers": [{ "accountId": "...", "displayName": "..." }],
   "estimation": { "supported": true, "fieldId": "...", "fieldName": "Story Points" },
@@ -1456,10 +1456,28 @@ Vài lưu ý chính xác cần nhớ:
   "labels": ["saga:code", "saga:test", "saga:document", "saga:research"]
 }
 ```
-**Loại thẻ (issue type) — luật cấp:** `level` là cấp của loại theo Jira: `EPIC` (mảng lớn, không thuộc sprint), `STANDARD` (Task / Story / Feature / Bug — cùng một cấp), `SUBTASK` (việc con, bắt buộc có task cha), hiếm khi `ABOVE_EPIC`. **Lọc theo `level`, đừng đoán theo tên** (tên có thể đổi/tiếng Việt).
-- **Form sửa:** chỉ cho chọn các loại `STANDARD` khi task hiện tại là `STANDARD`; task là `EPIC`/`SUBTASK` thì **khoá** ô loại. Đổi sai cấp → **400 `TASK_ISSUE_TYPE_CHANGE_NOT_ALLOWED`** (không có gì bị ghi). Gửi lại đúng loại hiện tại thì BE bỏ qua, không lỗi. Gửi `issueTypeId` khi **id** thay đổi (Task → Feature cũng là thay đổi, dù cùng nhóm hiển thị).
-- **Form tạo:** chọn `SUBTASK` thì **bắt buộc** chọn "Task cha" (`parentTaskId`), và task cha phải là loại `STANDARD` — BE tự dùng chính task đó làm cha trên Jira. Thiếu → **400 `TASK_SUBTASK_PARENT_REQUIRED`**; cha là Epic/Subtask → **400 `TASK_PARENT_TYPE_INVALID`**. Subtask **luôn chạy theo sprint của task cha**: ô Sprint nên ẩn (nếu vẫn gửi, BE bỏ qua; ngày bắt đầu/hạn được kiểm tra theo sprint của task cha). Chọn `EPIC` thì nên ẩn ô Sprint. Loại không thuộc project Jira → **400 `TASK_ISSUE_TYPE_INVALID`**.
-- Đổi loại **không ảnh hưởng tính điểm** (điểm chỉ dựa trên DONE + sprint + người được giao + label SAGA + story point).
+**Loại thẻ & hạng mục cha (Jira hierarchy):** SAGA chỉ có **một** quan hệ cha–con: **cha trên Jira**.
+
+`level` (ở `/tasks/options` → `issueTypes[]`, và ở task list/detail → `issueTypeLevel`) là cấp theo Jira: `EPIC` (level 1), `STANDARD` (level 0 — Task/Story/Feature/Bug… cùng một cấp), `SUBTASK` (level -1), `ABOVE_EPIC` (≥ 2, vd Initiative — chỉ đọc). `jiraHierarchyLevel` là số thô của Jira. **Lọc theo `level`/`issueTypeId`, không bao giờ theo tên.** `issueTypeLevel = null` nghĩa là **chưa biết** (task cũ chưa đồng bộ lại) → hiện "Chưa xác định cấp, vui lòng đồng bộ lại Jira" và **khoá** ô loại thẻ và ô cha.
+
+| Cấp | Tạo: cha | Tạo: Sprint | Sửa loại thẻ | Sửa cha |
+|---|---|---|---|---|
+| `ABOVE_EPIC` | — (không tạo từ SAGA) | — | Khoá | Khoá |
+| `EPIC` | Không có | Ẩn | Khoá | Khoá |
+| `STANDARD` | Epic, **tuỳ chọn** | Hiện | Chỉ sang loại `STANDARD` khác | Chọn / đổi / bỏ Epic |
+| `SUBTASK` | Item `STANDARD`, **bắt buộc** | Ẩn (theo sprint của cha) | Khoá | Khoá (đổi trên Jira rồi đồng bộ) |
+
+- **Ô cha** (nhãn gợi ý: "Epic cha" cho Standard, "Công việc cha" cho Subtask) gửi **`jiraParentTaskId`** (id task SAGA cùng nguồn Jira). Danh sách chọn: `GET /tasks/parent-options?childLevel={level của item đang tạo/sửa}&jiraIntegrationId=...&excludeTaskId={item đang sửa}` — BE trả đúng cấp (Standard → các Epic, Subtask → các item Standard, Epic/Above → rỗng), cùng nguồn Jira, bỏ task đã xoá / đã bị thay thế khi chuyển nguồn / chưa rõ cấp. Mỗi item có `issueTypeName`, `issueTypeLevel`.
+- **Tạo:** `POST /tasks` với `issueTypeId` + `jiraParentTaskId` (tuỳ cấp). Subtask: sprint gửi lên bị bỏ qua, ngày được kiểm tra theo sprint của cha.
+- **Sửa:** `PATCH /tasks/{id}`: đổi loại → gửi `issueTypeId` khi **id khác `issueTypeId` hiện tại** (Task → Feature cũng là đổi); đổi Epic → `jiraParentTaskId`; bỏ Epic → `clearJiraParent: true` (item thành cấp cao nhất). Không gửi cả hai cùng lúc (400 `REQUEST_INVALID`).
+- **Lỗi:** `TASK_ISSUE_TYPE_CHANGE_NOT_ALLOWED` (ô loại), `TASK_ISSUE_TYPE_INVALID` (ô loại), `TASK_SUBTASK_PARENT_REQUIRED` (ô cha), `TASK_PARENT_TYPE_INVALID` (ô cha — sai cấp, cấp chưa biết, tự làm cha của mình, hoặc đổi cha của Epic/Subtask), `JIRA_PARENT_SOURCE_MISMATCH` / `JIRA_PARENT_TASK_NOT_FOUND` (ô cha). Hai item cùng `STANDARD` nhưng khác workflow trên Jira vẫn có thể bị Jira từ chối → `JIRA_FIELD_INVALID`.
+- **`parent`** trong task list/detail: `{ externalId, externalKey, taskId, resolution, resolutionReason }` — `resolution` = `RESOLVED` (có `taskId`) / `UNRESOLVED` (`resolutionReason`: `PARENT_NOT_SYNCED` | `PARENT_SOURCE_REVOKED`). `parent = null` = item cấp cao nhất. Cha được tìm theo **(nguồn Jira, id issue)**, `externalKey` chỉ để hiển thị.
+- **`subtasks`** (detail): các **con trực tiếp trên Jira** (Epic → item, item → Subtask): `{ id, title, status, externalKey, issueTypeName, issueTypeLevel }`.
+- **Xoá** task còn con trên Jira → **409 `TASK_DELETE_BLOCKED_BY_SUBTASKS`**.
+- **Đã bỏ:** `parentTaskId` / `clearParent` (cha nội bộ SAGA) — BE vẫn nhận như tên cũ của `jiraParentTaskId` / `clearJiraParent` để FE cũ không vỡ; field `parentTask` trong response chỉ còn dữ liệu cũ, đừng dùng.
+- Đổi loại thẻ hoặc cha **không ảnh hưởng tính điểm** (điểm chỉ dựa trên DONE + sprint + người được giao + label SAGA + story point).
+
+**Backfill sau khi deploy:** task cũ có `issueTypeId/issueTypeLevel = null` cho tới khi đồng bộ lại. Team Leader bấm đồng bộ (`POST /api/projects/{projectId}/sync`, hoặc từng nguồn `POST .../jira-sources/{integrationId}/sync`) — đồng bộ đầy đủ ghi lại cả issue không đổi. Graph tự dựng lại. Kiểm tra còn sót: `select count(*) from task where deleted_at is null and issue_type_level is null`.
 
 Dùng đúng `id` từ đây khi gửi `issueTypeId`/`priorityId` trong `POST`/`PATCH` task; dùng `accountId` từ `assignableUsers` khi gửi `assigneeAccountId` (mục 23). `sprints` trả rỗng nếu project chưa cấu hình board. `labels` là **danh sách label duy nhất được phép** — ô chọn label chỉ hiện đúng danh sách này, chọn tối đa 1 (xem luật label ở mục 19).
 

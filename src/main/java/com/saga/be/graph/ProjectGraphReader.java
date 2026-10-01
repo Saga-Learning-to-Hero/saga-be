@@ -9,6 +9,7 @@ import java.util.UUID;
 import org.neo4j.driver.Record;
 import org.neo4j.driver.Value;
 import org.neo4j.driver.types.Node;
+import org.neo4j.driver.types.Path;
 import org.neo4j.driver.types.Relationship;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
@@ -81,11 +82,23 @@ public class ProjectGraphReader {
 			}
 			for (Record record : graph.read(
 					"""
-					MATCH (parent:Task {projectId: $projectId})-[:DECOMPOSED_INTO]->(child:Task {projectId: $projectId})
+					MATCH (parent:Task {projectId: $projectId})-[:PARENT_OF]->(child:Task {projectId: $projectId})
 					RETURN parent, child
 					""",
 					Map.of("projectId", projectUuid))) {
-				addHierarchyRow(builder, record);
+				addNode(builder, record, "parent");
+				addNode(builder, record, "child");
+				addRel(builder, record.get("parent"), record.get("child"), "PARENT_OF");
+			}
+			for (Record record : graph.read(
+					"""
+					MATCH (p:Project {id: $id})-[:HAS_WORK_ITEM]->(t:Task)
+					RETURN p, t
+					""",
+					Map.of("id", pid))) {
+				addNode(builder, record, "p");
+				addNode(builder, record, "t");
+				addRel(builder, record.get("p"), record.get("t"), "HAS_WORK_ITEM");
 			}
 			return builder.build();
 		}
@@ -109,24 +122,64 @@ public class ProjectGraphReader {
 				Map.of("projectId", projectUuid, "sprintId", SagaGraphIds.sprint(sprintId)))) {
 			addOverviewTaskRow(builder, record);
 		}
-		// Parent links of this sprint's tasks; the parent (e.g. an Epic, which sits in no sprint) is
-		// pulled in so the decomposition EPIC -> task -> subtask stays visible.
-		for (Record record : graph.read(
-				"""
-				MATCH (sp:Sprint {id: $sprintId, projectId: $projectId})-[:CONTAINS]->(child:Task)
-				MATCH (parent:Task {projectId: $projectId})-[:DECOMPOSED_INTO]->(child)
-				RETURN parent, child
-				""",
-				Map.of("projectId", projectUuid, "sprintId", SagaGraphIds.sprint(sprintId)))) {
-			addHierarchyRow(builder, record);
-		}
+		addHierarchy(builder, SPRINT_TASKS, projectId, Map.of("sprintId", SagaGraphIds.sprint(sprintId)), true);
 		return builder.build();
 	}
 
-	private static void addHierarchyRow(CytoscapeGraphBuilder builder, Record record) {
-		addNode(builder, record, "parent");
-		addNode(builder, record, "child");
-		addRel(builder, record.get("parent"), record.get("child"), "DECOMPOSED_INTO");
+	/** Binds {@code t} to the tasks of one sprint. */
+	private static final String SPRINT_TASKS =
+			"MATCH (sp:Sprint {id: $sprintId, projectId: $projectId})-[:CONTAINS]->(t:Task)";
+
+	/**
+	 * The decomposition around the tasks {@code taskMatch} binds to {@code t}: every ancestor chain
+	 * (Initiative -> Epic -> item, which sit in no sprint) and, when asked, the children (Subtasks),
+	 * plus HAS_WORK_ITEM from the Project to each chain's top-level item -- so a focused view still
+	 * reads Project -> Epic -> item -> Subtask -> Commit.
+	 */
+	private void addHierarchy(
+			CytoscapeGraphBuilder builder, String taskMatch, UUID projectId, Map<String, Object> extra, boolean children) {
+		Map<String, Object> params = new java.util.HashMap<>(extra);
+		params.put("projectId", projectId.toString());
+		params.put("pid", SagaGraphIds.project(projectId));
+		for (Record record : graph.read(
+				taskMatch + "\nWITH DISTINCT t\nMATCH up = (:Task {projectId: $projectId})-[:PARENT_OF*1..6]->(t)\nRETURN up",
+				params)) {
+			addParentPath(builder, record.get("up"));
+		}
+		if (children) {
+			for (Record record : graph.read(
+					taskMatch + "\nWITH DISTINCT t\nMATCH down = (t)-[:PARENT_OF*1..6]->(:Task {projectId: $projectId})\nRETURN down",
+					params)) {
+				addParentPath(builder, record.get("down"));
+			}
+		}
+		for (Record record : graph.read(
+				taskMatch
+						+ "\nWITH DISTINCT t\nMATCH (root:Task {projectId: $projectId})-[:PARENT_OF*0..6]->(t)"
+						+ "\nWITH DISTINCT root\nMATCH (p:Project {id: $pid})-[:HAS_WORK_ITEM]->(root)\nRETURN p, root",
+				params)) {
+			addNode(builder, record, "p");
+			addNode(builder, record, "root");
+			addRel(builder, record.get("p"), record.get("root"), "HAS_WORK_ITEM");
+		}
+	}
+
+	private static void addParentPath(CytoscapeGraphBuilder builder, Value value) {
+		if (value == null || value.isNull()) {
+			return;
+		}
+		Path path = value.asPath();
+		for (Path.Segment segment : path) {
+			builder.node(toNode(segment.start()));
+			builder.node(toNode(segment.end()));
+			builder.edge(edgeData(
+					SagaGraphIds.edge("PARENT_OF", segment.start().get("id").asString(), segment.end().get("id").asString()),
+					segment.start().get("id").asString(),
+					segment.end().get("id").asString(),
+					"PARENT_OF",
+					null,
+					null));
+		}
 	}
 
 	private static void addOverviewTaskRow(CytoscapeGraphBuilder builder, Record record) {
@@ -216,6 +269,7 @@ public class ProjectGraphReader {
 			addRel(builder, record.get("task"), record.get("crit"), "CLASSIFIED_AS");
 			addRel(builder, record.get("task"), record.get("c"), "EVIDENCED_BY");
 		}
+		addHierarchy(builder, SPRINT_TASKS, projectId, Map.of("sprintId", SagaGraphIds.sprint(sprintId)), true);
 		return builder.build();
 	}
 
@@ -254,6 +308,22 @@ public class ProjectGraphReader {
 			addRel(builder, record.get("i"), record.get("s"), "MAPS_TO");
 			addRel(builder, record.get("task"), record.get("c"), "EVIDENCED_BY");
 			addRel(builder, record.get("assignee"), record.get("task"), "ASSIGNED_TO");
+		}
+		// Commit -> the work item it proves -> its Epic (and above) -> Project.
+		if (sprintId == null) {
+			addHierarchy(
+					builder,
+					"MATCH (t:Task {projectId: $projectId})-[:EVIDENCED_BY]->(:Commit)",
+					projectId,
+					Map.of(),
+					false);
+		} else {
+			addHierarchy(
+					builder,
+					SPRINT_TASKS + "\nMATCH (t)-[:EVIDENCED_BY]->(:Commit)",
+					projectId,
+					Map.of("sprintId", SagaGraphIds.sprint(sprintId)),
+					false);
 		}
 		return builder.build();
 	}
@@ -361,8 +431,19 @@ public class ProjectGraphReader {
 				str(node, "avatar"),
 				str(node, "role"),
 				storyPoint,
-				str(node, "issueType"),
-				str(node, "issueTypeName"));
+				new CytoscapeGraphBuilder.TaskInfo(
+						str(node, "issueType"),
+						str(node, "issueTypeName"),
+						str(node, "issueTypeId"),
+						str(node, "issueTypeLevel"),
+						node.containsKey("jiraHierarchyLevel") && !node.get("jiraHierarchyLevel").isNull()
+								? node.get("jiraHierarchyLevel").asInt()
+								: null,
+						str(node, "jiraIntegrationId"),
+						str(node, "parentExternalId"),
+						str(node, "parentExternalKey"),
+						str(node, "parentResolution"),
+						str(node, "parentResolutionReason")));
 	}
 
 	private static String str(Node node, String key) {

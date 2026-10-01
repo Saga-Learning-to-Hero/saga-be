@@ -1263,7 +1263,9 @@ public class JiraIssueWriteClient {
 				dueDate,
 				dueDateProvided,
 				startDate,
-				startDateProvided);
+				startDateProvided,
+				type.isObject() && type.has("subtask") ? Boolean.valueOf(type.path("subtask").asBoolean()) : null,
+				type.path("hierarchyLevel").isIntegralNumber() ? Integer.valueOf(type.path("hierarchyLevel").asInt()) : null);
 	}
 
 	/**

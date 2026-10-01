@@ -146,7 +146,58 @@ public class TaskHierarchyService {
 					(String) row[1],
 					status == null ? null : status.name(),
 					(UUID) row[3],
-					(String) row[4]));
+					(String) row[4],
+					null,
+					null));
+		}
+		return new TaskParentOptionsResponse(items, page, size, result.getTotalElements());
+	}
+
+	public TaskParentOptionsResponse listJiraParentOptions(
+			UUID projectId, UUID jiraIntegrationId, String childLevel, String q, int page, int size, UUID excludeTaskId) {
+		if (page < 0 || size < 1 || size > PARENT_OPTIONS_MAX_SIZE) {
+			throw new AcademicException(
+					AcademicErrorCode.REQUEST_INVALID,
+					HttpStatus.BAD_REQUEST,
+					"page must be >= 0 and size must be between 1 and " + PARENT_OPTIONS_MAX_SIZE + ".");
+		}
+		if (jiraIntegrationId == null) {
+			throw new AcademicException(
+					AcademicErrorCode.REQUEST_INVALID, HttpStatus.BAD_REQUEST, "jiraIntegrationId is required with childLevel.");
+		}
+		String parentLevel = switch (TaskIssueTypePolicy.fromStored(childLevel.trim().toUpperCase(java.util.Locale.ROOT))) {
+			case STANDARD -> TaskIssueTypePolicy.Level.EPIC.name();
+			case SUBTASK -> TaskIssueTypePolicy.Level.STANDARD.name();
+			case EPIC, ABOVE_EPIC -> null;
+			case UNKNOWN -> throw new AcademicException(
+					AcademicErrorCode.REQUEST_INVALID,
+					HttpStatus.BAD_REQUEST,
+					"childLevel must be one of SUBTASK, STANDARD, EPIC, ABOVE_EPIC.");
+		};
+		if (parentLevel == null) {
+			return new TaskParentOptionsResponse(List.of(), page, size, 0);
+		}
+		boolean qBlank = q == null || q.isBlank();
+		String qPrefix = qBlank ? "" : q.trim().toLowerCase();
+		Page<Object[]> result = tasks.findJiraParentOptions(
+				projectId,
+				jiraIntegrationId,
+				parentLevel,
+				excludeTaskId == null ? SENTINEL_EXCLUDE : excludeTaskId,
+				qBlank,
+				qPrefix,
+				PageRequest.of(page, size));
+		List<TaskParentOptionItem> items = new ArrayList<>(result.getNumberOfElements());
+		for (Object[] row : result.getContent()) {
+			TaskStatus status = (TaskStatus) row[2];
+			items.add(new TaskParentOptionItem(
+					(UUID) row[0],
+					(String) row[1],
+					status == null ? null : status.name(),
+					null,
+					(String) row[3],
+					(String) row[4],
+					(String) row[5]));
 		}
 		return new TaskParentOptionsResponse(items, page, size, result.getTotalElements());
 	}

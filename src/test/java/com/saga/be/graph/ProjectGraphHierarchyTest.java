@@ -49,21 +49,52 @@ class ProjectGraphHierarchyTest {
 	}
 
 	@Test
-	void theDecompositionEdgeCanBeFilteredOn() {
-		GraphViewQuery query = GraphViewQuery.parse(null, 1, null, "DECOMPOSED_INTO,EVIDENCED_BY", null, null, null);
+	void parentResolutionTellsResolvedUnresolvedAndTopLevelApart() {
+		Task epic = task(siteA, "100", null);
+		Task story = task(siteA, "101", "100");
+		Task orphan = task(siteA, "102", "999");
+		java.util.Map<String, UUID> index = java.util.Map.of(
+				com.saga.be.service.projection.JiraParentResolution.key(siteA.getId(), "100"), epic.getId());
 
-		assertThat(query.edgeTypes()).containsExactlyInAnyOrder("DECOMPOSED_INTO", "EVIDENCED_BY");
+		assertThat(ProjectGraphLoader.resolveParent(epic, index)).isNull();
+		assertThat(ProjectGraphLoader.resolveParent(story, index))
+				.isEqualTo(new com.saga.be.service.projection.JiraParentResolution.Result(epic.getId(), "RESOLVED", null));
+		assertThat(ProjectGraphLoader.resolveParent(orphan, index))
+				.isEqualTo(new com.saga.be.service.projection.JiraParentResolution.Result(null, "UNRESOLVED", "PARENT_NOT_SYNCED"));
+	}
+
+	@Test
+	void aRevokedSourceIsReportedAsTheReason() {
+		siteA.setConnectionStatus(com.saga.be.entity.enums.IntegrationStatus.REVOKED);
+		Task orphan = task(siteA, "102", "999");
+
+		assertThat(ProjectGraphLoader.resolveParent(orphan, java.util.Map.of()).reason()).isEqualTo("PARENT_SOURCE_REVOKED");
+	}
+
+	@Test
+	void theDecompositionEdgeCanBeFilteredOn() {
+		GraphViewQuery query = GraphViewQuery.parse(null, 1, null, "PARENT_OF,HAS_WORK_ITEM,EVIDENCED_BY", null, null, null);
+
+		assertThat(query.edgeTypes()).containsExactlyInAnyOrder("PARENT_OF", "HAS_WORK_ITEM", "EVIDENCED_BY");
 	}
 
 	@Test
 	void onlyTaskNodesCarryTheIssueTypeInTheJsonSentToTheFrontend() throws Exception {
 		ObjectMapper json = new ObjectMapper();
 		String taskNode = json.writeValueAsString(CytoscapeGraphBuilder.nodeData(
-				"task_1", "SAGA-1", "Login", "TASK", "DONE", null, null, null, null, 3, "STORY", "User Story"));
+				"task_1", "SAGA-1", "Login", "TASK", "DONE", null, null, null, null, 3,
+				new CytoscapeGraphBuilder.TaskInfo(
+						"STORY", "User Story", "10001", "STANDARD", 0, "src-1", "10049", "SAGA-0", "RESOLVED", null)));
 		String studentNode = json.writeValueAsString(
 				CytoscapeGraphBuilder.nodeData("student_1", "Minh", null, "STUDENT", null, null, null, null, "LEADER", null));
 
-		assertThat(taskNode).contains("\"issueType\":\"STORY\"").contains("\"issueTypeName\":\"User Story\"");
+		assertThat(taskNode)
+				.contains("\"issueType\":\"STORY\"")
+				.contains("\"issueTypeName\":\"User Story\"")
+				.contains("\"issueTypeLevel\":\"STANDARD\"")
+				.contains("\"jiraHierarchyLevel\":0")
+				.contains("\"parentResolution\":\"RESOLVED\"")
+				.doesNotContain("parentResolutionReason");
 		assertThat(studentNode).doesNotContain("issueType");
 	}
 

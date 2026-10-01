@@ -96,6 +96,22 @@ public final class JiraIssueEvidenceParser {
 		return text(issue.path("fields").path("issuetype"), "name");
 	}
 
+	public static String issueTypeId(JsonNode issue) {
+		return text(issue.path("fields").path("issuetype"), "id");
+	}
+
+	/** issuetype.subtask; null when the payload has no such flag. */
+	public static Boolean issueTypeSubtask(JsonNode issue) {
+		JsonNode value = issue.path("fields").path("issuetype").path("subtask");
+		return value.isBoolean() ? Boolean.valueOf(value.asBoolean()) : null;
+	}
+
+	/** issuetype.hierarchyLevel; null when Jira omitted it. */
+	public static Integer issueTypeHierarchyLevel(JsonNode issue) {
+		JsonNode value = issue.path("fields").path("issuetype").path("hierarchyLevel");
+		return value.isIntegralNumber() ? Integer.valueOf(value.asInt()) : null;
+	}
+
 	public static List<String> labels(JsonNode issue) {
 		List<String> out = new ArrayList<>();
 		JsonNode node = issue.path("fields").path("labels");

@@ -36,6 +36,7 @@ import com.saga.be.repository.TaskWebLinkRepository;
 import com.saga.be.repository.TeamByProjectRepository;
 import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.service.contribution.TaskLabelParser;
+import com.saga.be.service.projection.JiraParentResolution;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -144,8 +145,10 @@ public class ProjectGraphLoader {
 				commitCounts.merge(taskId, 1, Integer::sum);
 			}
 		}
+		Map<String, UUID> bySourceAndJiraId = jiraIdIndex(projectTasks);
 		List<TaskNode> taskNodes = new ArrayList<>();
 		for (Task task : projectTasks) {
+			JiraParentResolution.Result parent = resolveParent(task, bySourceAndJiraId);
 			int linked = commitCounts.getOrDefault(task.getId(), 0);
 			TaskGraphAttrs attrs = SagaGraphRules.classify(
 					task.getStatus(),
@@ -165,7 +168,16 @@ public class ProjectGraphLoader {
 					attrs.anomaly(),
 					linked,
 					task.getTaskType() == null ? null : task.getTaskType().name(),
-					task.getIssueTypeName()));
+					task.getIssueTypeName(),
+					task.getIssueTypeId(),
+					task.getIssueTypeLevel(),
+					task.getJiraHierarchyLevel(),
+					task.getJiraIntegration() == null ? null : task.getJiraIntegration().getId(),
+					task.getParentExternalId(),
+					task.getParentExternalKey(),
+					parent == null ? null : parent.resolution(),
+					parent == null ? null : parent.reason(),
+					!JiraParentResolution.hasParent(task)));
 		}
 		List<CommitNode> commitNodes = new ArrayList<>();
 		for (GitCommit commit : commits.findFetchedByProject_Id(projectId)) {
@@ -209,28 +221,40 @@ public class ProjectGraphLoader {
 	}
 
 	/**
-	 * One link per task whose Jira parent is another task of the same project and Jira source.
-	 * Jira issue ids are unique only within a site, so the parent is looked up per source; a parent
-	 * that is deleted, in another project or not synced yet simply yields no link.
+	 * One PARENT_OF link per task whose Jira parent is another task of the same project and Jira
+	 * source (resolved by source + Jira id, never by key). An unresolved parent yields no link and
+	 * no HAS_WORK_ITEM either -- the node carries parentResolution=UNRESOLVED instead.
 	 */
 	static List<TaskHierarchyLink> hierarchyLinks(List<Task> projectTasks) {
-		Map<String, UUID> byExternalId = new HashMap<>();
-		for (Task task : projectTasks) {
-			if (task.getJiraIntegration() != null && task.getExternalId() != null && !task.getExternalId().isBlank()) {
-				byExternalId.put(task.getJiraIntegration().getId() + "|" + task.getExternalId(), task.getId());
-			}
-		}
+		Map<String, UUID> index = jiraIdIndex(projectTasks);
 		List<TaskHierarchyLink> out = new ArrayList<>();
 		for (Task task : projectTasks) {
-			String parentExternalId = task.getParentExternalId();
-			if (task.getJiraIntegration() == null || parentExternalId == null || parentExternalId.isBlank()) {
-				continue;
-			}
-			UUID parentId = byExternalId.get(task.getJiraIntegration().getId() + "|" + parentExternalId);
-			if (parentId != null && !parentId.equals(task.getId())) {
-				out.add(new TaskHierarchyLink(parentId, task.getId()));
+			JiraParentResolution.Result parent = resolveParent(task, index);
+			if (parent != null && parent.parentTaskId() != null) {
+				out.add(new TaskHierarchyLink(parent.parentTaskId(), task.getId()));
 			}
 		}
 		return out;
+	}
+
+	private static Map<String, UUID> jiraIdIndex(List<Task> projectTasks) {
+		Map<String, UUID> index = new HashMap<>();
+		for (Task task : projectTasks) {
+			if (task.getJiraIntegration() != null && task.getExternalId() != null && !task.getExternalId().isBlank()) {
+				index.put(JiraParentResolution.key(task.getJiraIntegration().getId(), task.getExternalId()), task.getId());
+			}
+		}
+		return index;
+	}
+
+	/** Null for a top-level item. */
+	static JiraParentResolution.Result resolveParent(Task task, Map<String, UUID> index) {
+		if (!JiraParentResolution.hasParent(task)) {
+			return null;
+		}
+		UUID found = task.getJiraIntegration() == null
+				? null
+				: index.get(JiraParentResolution.key(task.getJiraIntegration().getId(), task.getParentExternalId()));
+		return JiraParentResolution.of(task, found);
 	}
 }

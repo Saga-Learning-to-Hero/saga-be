@@ -212,6 +212,46 @@ class TaskHierarchyServiceTest {
 	}
 
 	@Test
+	void jiraParentOptionsAskForTheLevelAboveTheChild() {
+		UUID source = UUID.randomUUID();
+		UUID epicId = UUID.randomUUID();
+		when(tasks.findJiraParentOptions(eq(projectId), eq(source), eq("EPIC"), any(), eq(true), eq(""), eq(PageRequest.of(0, 20))))
+				.thenReturn(new PageImpl<Object[]>(
+						List.<Object[]>of(new Object[] {epicId, "Auth", com.saga.be.entity.enums.TaskStatus.TODO, "SAGA-1", "Epic", "EPIC"}),
+						PageRequest.of(0, 20),
+						1));
+		when(tasks.findJiraParentOptions(eq(projectId), eq(source), eq("STANDARD"), any(), eq(true), eq(""), eq(PageRequest.of(0, 20))))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+		assertThat(service.listJiraParentOptions(projectId, source, "standard", null, 0, 20, null).items())
+				.containsExactly(new TaskParentOptionItem(epicId, "Auth", "TODO", null, "SAGA-1", "Epic", "EPIC"));
+		assertThat(service.listJiraParentOptions(projectId, source, "SUBTASK", null, 0, 20, null).items()).isEmpty();
+		verify(tasks).findJiraParentOptions(eq(projectId), eq(source), eq("STANDARD"), any(), eq(true), eq(""), any());
+	}
+
+	@Test
+	void jiraParentOptionsForAnEpicOrHigherAreEmptyWithoutAQuery() {
+		UUID source = UUID.randomUUID();
+
+		assertThat(service.listJiraParentOptions(projectId, source, "EPIC", null, 0, 20, null).total()).isZero();
+		assertThat(service.listJiraParentOptions(projectId, source, "ABOVE_EPIC", null, 0, 20, null).items()).isEmpty();
+		verify(tasks, never()).findJiraParentOptions(any(), any(), any(), any(), anyBoolean(), any(), any());
+	}
+
+	@Test
+	void jiraParentOptionsRejectAnUnknownLevelOrAMissingSource() {
+		UUID source = UUID.randomUUID();
+
+		assertThatThrownBy(() -> service.listJiraParentOptions(projectId, source, "FEATURE", null, 0, 20, null))
+				.isInstanceOf(AcademicException.class)
+				.satisfies(this::assertInvalidPage);
+		assertThatThrownBy(() -> service.listJiraParentOptions(projectId, null, "STANDARD", null, 0, 20, null))
+				.isInstanceOf(AcademicException.class)
+				.satisfies(this::assertInvalidPage);
+		verify(tasks, never()).findJiraParentOptions(any(), any(), any(), any(), anyBoolean(), any(), any());
+	}
+
+	@Test
 	void parentOptionsMapsPagedRows() {
 		UUID optionId = UUID.randomUUID();
 		when(tasks.findParentOptions(eq(projectId), any(), eq(false), eq("log"), eq(PageRequest.of(1, 20))))
@@ -225,7 +265,7 @@ class TaskHierarchyServiceTest {
 		assertThat(response.total()).isEqualTo(42);
 		assertThat(response.page()).isEqualTo(1);
 		assertThat(response.size()).isEqualTo(20);
-		assertThat(response.items()).containsExactly(new TaskParentOptionItem(optionId, "Login", "TODO", parentId, "SAGA-1"));
+		assertThat(response.items()).containsExactly(new TaskParentOptionItem(optionId, "Login", "TODO", parentId, "SAGA-1", null, null));
 	}
 
 	private void assertInvalidPage(Throwable ex) {

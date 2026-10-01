@@ -42,6 +42,7 @@ import lombok.Setter;
 		@Index(name = "ix_task_due_date", columnList = "due_date"),
 		@Index(name = "ix_task_external_key", columnList = "external_key"),
 		@Index(name = "ix_task_parent_task_id", columnList = "parent_task_id"),
+		@Index(name = "ix_task_integration_parent_external", columnList = "jira_integration_id, parent_external_id"),
 		@Index(name = "ix_task_project_jira_integration", columnList = "project_id, jira_integration_id")
 	}
 )
@@ -132,6 +133,21 @@ public class Task extends BaseEntity {
 
 	@Column(name = "issue_type_name", length = 64)
 	private String issueTypeName;
+
+	/** Jira's issue type id. Null until a sync after V37 writes it. */
+	@Column(name = "issue_type_id", length = 64)
+	private String issueTypeId;
+
+	/**
+	 * SUBTASK / STANDARD / EPIC / ABOVE_EPIC, derived only from what Jira reports (never from the
+	 * type name). Null = not known yet: hierarchy edits stay refused until a sync fills it.
+	 */
+	@Column(name = "issue_type_level", length = 16)
+	private String issueTypeLevel;
+
+	/** Jira's raw hierarchyLevel (-1 subtask, 0 standard, 1 epic, 2+ above epic). */
+	@Column(name = "jira_hierarchy_level")
+	private Integer jiraHierarchyLevel;
 
 	@Enumerated(EnumType.STRING)
 	@Column(name = "saga_completion_state", length = 32)

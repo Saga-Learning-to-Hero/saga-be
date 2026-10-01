@@ -944,6 +944,31 @@ class JiraTaskProjectionServiceTest {
 		assertThat(captor.getValue().getFirst().getStartDate()).isNull();
 	}
 
+	@Test
+	void upsertBatch_storesTheIssueTypeIdAndHierarchyLevelJiraReports() {
+		when(tasks.findByJiraIntegration_IdAndExternalIdIn(eq(integration.getId()), any())).thenReturn(List.of());
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+		IssueSummary subtask = new IssueSummary(
+				"10002", "SAGA-2", "Login API", "1", "To Do", "new", "Subtask", "10003", null, null, null, null, null,
+				null, null, null, null, null, "2026-01-02T10:00:00Z", true, true, "10001", "SAGA-1", true, List.of(), true,
+				null, true, null, true, Boolean.TRUE, -1);
+		IssueSummary legacy = issue("10004", "SAGA-4", "Old", "2026-01-02T10:00:00Z");
+
+		service.upsertBatch(integration, "SAGA", List.of(subtask, legacy));
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<Task>> captor = ArgumentCaptor.forClass(List.class);
+		verify(tasks).saveAll(captor.capture());
+		Task savedSubtask = captor.getValue().stream().filter(t -> "10002".equals(t.getExternalId())).findFirst().orElseThrow();
+		assertThat(savedSubtask.getIssueTypeId()).isEqualTo("10003");
+		assertThat(savedSubtask.getIssueTypeLevel()).isEqualTo("SUBTASK");
+		assertThat(savedSubtask.getJiraHierarchyLevel()).isEqualTo(-1);
+		assertThat(savedSubtask.getParentExternalId()).isEqualTo("10001");
+		Task savedLegacy = captor.getValue().stream().filter(t -> "10004".equals(t.getExternalId())).findFirst().orElseThrow();
+		assertThat(savedLegacy.getIssueTypeId()).isEqualTo("10001");
+		assertThat(savedLegacy.getIssueTypeLevel()).isNull();
+	}
+
 	private static IssueSummary issue(String id, String key, String summary, String updated) {
 		return new IssueSummary(
 				id, key, summary, "1", "To Do", "new", "Task", "10001", null, null, null, null, null, null, null, null,

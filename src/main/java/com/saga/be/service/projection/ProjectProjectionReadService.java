@@ -89,6 +89,13 @@ public class ProjectProjectionReadService {
 		Map<UUID, Long> commitProof = commitProofCounts(projectId);
 		Map<UUID, Long> documentProof = documentProofCounts(projectId, evidence);
 		Map<UUID, TaskMigrationSummary> migrations = migrations(rows);
+		Map<String, UUID> bySourceAndJiraId = new java.util.HashMap<>();
+		for (Task row : rows) {
+			if (row.getJiraIntegration() != null && row.getExternalId() != null) {
+				bySourceAndJiraId.put(JiraParentResolution.key(row.getJiraIntegration().getId(), row.getExternalId()), row.getId());
+			}
+		}
+		ParentLookup lookup = (integrationId, externalId) -> bySourceAndJiraId.get(JiraParentResolution.key(integrationId, externalId));
 		return rows.stream()
 				.map(task -> toTask(
 						task,
@@ -97,7 +104,8 @@ public class ProjectProjectionReadService {
 						commitProof.getOrDefault(task.getId(), 0L),
 						documentProof.getOrDefault(task.getId(), 0L),
 						null,
-						migrations.getOrDefault(task.getId(), TaskMigrationSummary.none())))
+						migrations.getOrDefault(task.getId(), TaskMigrationSummary.none()),
+						lookup))
 				.toList();
 	}
 
@@ -115,15 +123,55 @@ public class ProjectProjectionReadService {
 				evidence.getOrDefault(task.getId(), 0L),
 				commitProofCounts(projectId).getOrDefault(task.getId(), 0L),
 				documentProofCounts(projectId, evidence).getOrDefault(task.getId(), 0L),
-				directSubtasks(task.getId()),
-				migrations(List.of(task)).getOrDefault(task.getId(), TaskMigrationSummary.none()));
+				jiraChildren(task),
+				migrations(List.of(task)).getOrDefault(task.getId(), TaskMigrationSummary.none()),
+				repositoryParentLookup(tasks, projectId));
+	}
+
+	/**
+	 * Resolves (Jira source, parent Jira id) to a SAGA task id, or null. Single-task responses look
+	 * it up; the list builds it from the rows it already loaded.
+	 */
+	@FunctionalInterface
+	interface ParentLookup {
+		UUID find(UUID jiraIntegrationId, String parentExternalId);
+	}
+
+	/** One query per call: an active task of this project with that (source, Jira id). */
+	static ParentLookup repositoryParentLookup(TaskRepository tasks, UUID projectId) {
+		return (integrationId, externalId) -> tasks.findByJiraIntegration_IdAndExternalId(integrationId, externalId)
+				.filter(row -> row.getDeletedAt() == null)
+				.filter(row -> row.getProject() != null && projectId.equals(row.getProject().getId()))
+				.map(Task::getId)
+				.orElse(null);
 	}
 
 	@Transactional(readOnly = true)
 	public TaskParentOptionsResponse listParentOptions(
 			UUID userId, UUID projectId, String q, int page, int size, UUID excludeTaskId) {
+		return listParentOptions(userId, projectId, q, page, size, excludeTaskId, null, null);
+	}
+
+	/**
+	 * With {@code childLevel} (the level of the item being created/edited): Jira parent candidates of
+	 * the right level in that Jira source -- STANDARD child -> Epics, SUBTASK child -> standard items,
+	 * EPIC / ABOVE_EPIC child -> none. Without it: the legacy list of every task.
+	 */
+	@Transactional(readOnly = true)
+	public TaskParentOptionsResponse listParentOptions(
+			UUID userId,
+			UUID projectId,
+			String q,
+			int page,
+			int size,
+			UUID excludeTaskId,
+			String childLevel,
+			UUID jiraIntegrationId) {
 		authorization.requireReader(userId, projectId);
-		return hierarchy.listParentOptions(projectId, q, page, size, excludeTaskId);
+		if (childLevel == null || childLevel.isBlank()) {
+			return hierarchy.listParentOptions(projectId, q, page, size, excludeTaskId);
+		}
+		return hierarchy.listJiraParentOptions(projectId, jiraIntegrationId, childLevel, q, page, size, excludeTaskId);
 	}
 
 	@Transactional(readOnly = true)
@@ -288,6 +336,19 @@ public class ProjectProjectionReadService {
 			long documentProofCount,
 			List<ProjectTaskResponse.Subtask> subtasks,
 			TaskMigrationSummary migration) {
+		return toTask(task, linkedCommitCount, evidenceCount, commitProofCount, documentProofCount, subtasks, migration, null);
+	}
+
+	/** {@code parentLookup} null -> the Jira parent is echoed without resolution. */
+	static ProjectTaskResponse toTask(
+			Task task,
+			long linkedCommitCount,
+			long evidenceCount,
+			long commitProofCount,
+			long documentProofCount,
+			List<ProjectTaskResponse.Subtask> subtasks,
+			TaskMigrationSummary migration,
+			ParentLookup parentLookup) {
 		UserAccount assigneeUser =
 				task.getAssigneeStudent() == null ? null : task.getAssigneeStudent().getUserAccount();
 		String assigneeDisplay = null;
@@ -314,11 +375,21 @@ public class ProjectProjectionReadService {
 					task.getSprint().getName(),
 					task.getSprint().getState());
 		}
-		// Jira's own parent identity, echoed verbatim -- never a local Task lookup/join. A parent
-		// SAGA hasn't synced yet (or never will) still surfaces its true provider identity here.
-		ProjectTaskResponse.Parent parent = task.getParentExternalId() == null
-				? null
-				: new ProjectTaskResponse.Parent(task.getParentExternalId(), task.getParentExternalKey());
+		// Jira's own parent identity, always echoed (a parent SAGA hasn't synced still shows its true
+		// provider identity), plus whether SAGA has that parent -- resolved by (source, Jira id).
+		ProjectTaskResponse.Parent parent = null;
+		if (JiraParentResolution.hasParent(task)) {
+			JiraParentResolution.Result resolved = parentLookup == null || task.getJiraIntegration() == null
+					? null
+					: JiraParentResolution.of(
+							task, parentLookup.find(task.getJiraIntegration().getId(), task.getParentExternalId()));
+			parent = new ProjectTaskResponse.Parent(
+					task.getParentExternalId(),
+					task.getParentExternalKey(),
+					resolved == null ? null : resolved.parentTaskId(),
+					resolved == null ? null : resolved.resolution(),
+					resolved == null ? null : resolved.reason());
+		}
 		// JOIN FETCH may load a soft-deleted parent via parent_task_id; treat that as absent so
 		// list/detail never expose a deleted title/id as an active hierarchy relation.
 		ProjectTaskResponse.ParentTask parentTask = null;
@@ -355,6 +426,9 @@ public class ProjectProjectionReadService {
 				task.getJiraStatusId(),
 				task.getJiraStatusName(),
 				task.getIssueTypeName(),
+				task.getIssueTypeId(),
+				task.getIssueTypeLevel(),
+				task.getJiraHierarchyLevel(),
 				task.getAssigneeExternalId(),
 				assigneeDisplay,
 				studentId,
@@ -420,12 +494,21 @@ public class ProjectProjectionReadService {
 		return result;
 	}
 
-	private List<ProjectTaskResponse.Subtask> directSubtasks(UUID parentId) {
+	/** Direct Jira children (same source, parent = this issue's Jira id); the canonical hierarchy. */
+	private List<ProjectTaskResponse.Subtask> jiraChildren(Task task) {
 		List<ProjectTaskResponse.Subtask> children = new java.util.ArrayList<>();
-		for (Object[] row : tasks.findActiveDirectChildSummaries(parentId)) {
+		if (task.getJiraIntegration() == null || task.getExternalId() == null || task.getExternalId().isBlank()) {
+			return children;
+		}
+		for (Object[] row : tasks.findActiveJiraChildSummaries(task.getJiraIntegration().getId(), task.getExternalId())) {
 			com.saga.be.entity.enums.TaskStatus status = (com.saga.be.entity.enums.TaskStatus) row[2];
 			children.add(new ProjectTaskResponse.Subtask(
-					(UUID) row[0], (String) row[1], status == null ? null : status.name()));
+					(UUID) row[0],
+					(String) row[1],
+					status == null ? null : status.name(),
+					(String) row[3],
+					(String) row[4],
+					(String) row[5]));
 		}
 		return children;
 	}

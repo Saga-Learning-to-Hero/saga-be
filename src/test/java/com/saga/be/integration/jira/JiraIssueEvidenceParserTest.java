@@ -36,6 +36,24 @@ class JiraIssueEvidenceParserTest {
 	}
 
 	@Test
+	void readsTheIssueTypeIdentityAndHierarchyLevel() throws Exception {
+		JsonNode epic = MAPPER.readTree(
+				"""
+				{"id":"1","fields":{"issuetype":{"id":"10000","name":"Epic","subtask":false,"hierarchyLevel":1}}}
+				""");
+		JsonNode bare = MAPPER.readTree("""
+				{"id":"2","fields":{"issuetype":{"name":"Task"}}}
+				""");
+
+		assertEquals("10000", JiraIssueEvidenceParser.issueTypeId(epic));
+		assertEquals(Boolean.FALSE, JiraIssueEvidenceParser.issueTypeSubtask(epic));
+		assertEquals(1, JiraIssueEvidenceParser.issueTypeHierarchyLevel(epic));
+		org.junit.jupiter.api.Assertions.assertNull(JiraIssueEvidenceParser.issueTypeId(bare));
+		org.junit.jupiter.api.Assertions.assertNull(JiraIssueEvidenceParser.issueTypeSubtask(bare));
+		org.junit.jupiter.api.Assertions.assertNull(JiraIssueEvidenceParser.issueTypeHierarchyLevel(bare));
+	}
+
+	@Test
 	void readsRemoteLinks() throws Exception {
 		JsonNode node = MAPPER.readTree(
 				"""

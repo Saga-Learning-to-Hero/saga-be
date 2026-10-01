@@ -525,7 +525,51 @@ public class JiraOAuthClient {
 			 * that may not exist at all on a given site, hence nullable with its own provided flag.
 			 */
 			LocalDate startDate,
-			boolean startDateProvided) {
+			boolean startDateProvided,
+			/** issuetype.subtask as Jira reports it; null when the payload carried no issue type. */
+			Boolean issueTypeSubtask,
+			/** issuetype.hierarchyLevel (-1 / 0 / 1 / 2+); null when Jira omitted it. */
+			Integer issueTypeHierarchyLevel) {
+
+		/** Pre-V37 shape: issue type hierarchy unknown. */
+		public IssueSummary(
+				String id,
+				String key,
+				String summary,
+				String statusId,
+				String statusName,
+				String statusCategory,
+				String issueTypeName,
+				String issueTypeId,
+				String assigneeAccountId,
+				String assigneeDisplayName,
+				String priorityId,
+				String priorityName,
+				Integer storyPoints,
+				String description,
+				String sprintExternalId,
+				String sprintName,
+				String sprintState,
+				String created,
+				String updated,
+				boolean storyPointsProvided,
+				boolean sprintProvided,
+				String parentExternalId,
+				String parentExternalKey,
+				boolean parentProvided,
+				List<String> labels,
+				boolean labelsProvided,
+				LocalDate dueDate,
+				boolean dueDateProvided,
+				LocalDate startDate,
+				boolean startDateProvided) {
+			this(
+					id, key, summary, statusId, statusName, statusCategory, issueTypeName, issueTypeId,
+					assigneeAccountId, assigneeDisplayName, priorityId, priorityName, storyPoints, description,
+					sprintExternalId, sprintName, sprintState, created, updated, storyPointsProvided, sprintProvided,
+					parentExternalId, parentExternalKey, parentProvided, labels, labelsProvided, dueDate,
+					dueDateProvided, startDate, startDateProvided, null, null);
+		}
 
 		public IssueSummary(
 				String id,
@@ -551,7 +595,7 @@ public class JiraOAuthClient {
 					id, key, summary, statusId, statusName, statusCategory, issueTypeName, issueTypeId,
 					assigneeAccountId, assigneeDisplayName, priorityId, priorityName, storyPoints, description,
 					sprintExternalId, sprintName, sprintState, created, updated,
-					true, true, null, null, true, List.of(), true, null, true, null, true);
+					true, true, null, null, true, List.of(), true, null, true, null, true, null, null);
 		}
 	}
 

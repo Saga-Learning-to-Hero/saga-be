@@ -32,11 +32,37 @@ class TaskIssueTypePolicyTest {
 	}
 
 	@Test
-	void withoutAHierarchyLevelTheSubtaskFlagAndTheEpicNameDecide() {
+	void withoutAHierarchyLevelOnlyTheSubtaskFlagCountsAndNamesAreNeverTrusted() {
 		assertThat(TaskIssueTypePolicy.level(new IssueTypeOption("1", "Sub-task", null, true, null))).isEqualTo(Level.SUBTASK);
-		assertThat(TaskIssueTypePolicy.level(new IssueTypeOption("2", " EPIC ", null))).isEqualTo(Level.EPIC);
-		assertThat(TaskIssueTypePolicy.level(new IssueTypeOption("3", "Feature", null))).isEqualTo(Level.STANDARD);
-		assertThat(TaskIssueTypePolicy.level(null)).isEqualTo(Level.STANDARD);
+		assertThat(TaskIssueTypePolicy.level(new IssueTypeOption("2", "Epic", null))).isEqualTo(Level.UNKNOWN);
+		assertThat(TaskIssueTypePolicy.level(new IssueTypeOption("3", "Feature", null))).isEqualTo(Level.UNKNOWN);
+		assertThat(TaskIssueTypePolicy.level(null)).isEqualTo(Level.UNKNOWN);
+	}
+
+	@Test
+	void storedLevelRoundTripsAndUnknownIsNeverStored() {
+		for (Level level : List.of(Level.SUBTASK, Level.STANDARD, Level.EPIC, Level.ABOVE_EPIC)) {
+			assertThat(TaskIssueTypePolicy.fromStored(TaskIssueTypePolicy.storedValue(level))).isEqualTo(level);
+		}
+		assertThat(TaskIssueTypePolicy.storedValue(Level.UNKNOWN)).isNull();
+		assertThat(TaskIssueTypePolicy.fromStored(null)).isEqualTo(Level.UNKNOWN);
+		assertThat(TaskIssueTypePolicy.fromStored("SOMETHING")).isEqualTo(Level.UNKNOWN);
+	}
+
+	@Test
+	void anUnknownLevelBlocksEveryHierarchyChange() {
+		IssueTypeOption unknown = new IssueTypeOption("9", "Feature", null);
+		assertThatThrownBy(() -> TaskIssueTypePolicy.requireEditable(TASK, unknown))
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_ISSUE_TYPE_CHANGE_NOT_ALLOWED);
+		assertThatThrownBy(() -> TaskIssueTypePolicy.requireParent(Level.UNKNOWN, Level.EPIC))
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_PARENT_TYPE_INVALID);
+		assertThatThrownBy(() -> TaskIssueTypePolicy.requireParent(Level.STANDARD, Level.UNKNOWN))
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_PARENT_TYPE_INVALID);
+		// No parent, no hierarchy question: an unknown-level type can still be created.
+		assertThatCode(() -> TaskIssueTypePolicy.requireParent(Level.UNKNOWN, null)).doesNotThrowAnyException();
 	}
 
 	@Test
@@ -78,6 +104,36 @@ class TaskIssueTypePolicyTest {
 		assertCode(Level.STANDARD, Level.STANDARD, IntegrationErrorCode.TASK_PARENT_TYPE_INVALID);
 		assertCode(Level.STANDARD, Level.SUBTASK, IntegrationErrorCode.TASK_PARENT_TYPE_INVALID);
 		assertCode(Level.EPIC, Level.EPIC, IntegrationErrorCode.TASK_PARENT_TYPE_INVALID);
+	}
+
+	@Test
+	void writesTheReportedTypeButNeverErasesAKnownLevelForTheSameType() {
+		com.saga.be.entity.jira.Task task = new com.saga.be.entity.jira.Task();
+
+		TaskIssueTypePolicy.applyJiraIssueType(task, "10000", false, 1);
+		assertThat(task.getIssueTypeId()).isEqualTo("10000");
+		assertThat(task.getIssueTypeLevel()).isEqualTo("EPIC");
+		assertThat(task.getJiraHierarchyLevel()).isEqualTo(1);
+
+		// Same type, payload without hierarchy metadata: the known level stays.
+		TaskIssueTypePolicy.applyJiraIssueType(task, "10000", null, null);
+		assertThat(task.getIssueTypeLevel()).isEqualTo("EPIC");
+		assertThat(task.getJiraHierarchyLevel()).isEqualTo(1);
+
+		// Type changed and Jira did not say the new level: unknown, not guessed.
+		TaskIssueTypePolicy.applyJiraIssueType(task, "10007", null, null);
+		assertThat(task.getIssueTypeId()).isEqualTo("10007");
+		assertThat(task.getIssueTypeLevel()).isNull();
+		assertThat(task.getJiraHierarchyLevel()).isNull();
+
+		// Initiative keeps its raw level.
+		TaskIssueTypePolicy.applyJiraIssueType(task, "10020", false, 2);
+		assertThat(task.getIssueTypeLevel()).isEqualTo("ABOVE_EPIC");
+		assertThat(task.getJiraHierarchyLevel()).isEqualTo(2);
+
+		// No issue type in the payload: nothing changes.
+		TaskIssueTypePolicy.applyJiraIssueType(task, null, true, -1);
+		assertThat(task.getIssueTypeId()).isEqualTo("10020");
 	}
 
 	private static void assertCode(Level child, Level parent, IntegrationErrorCode code) {
