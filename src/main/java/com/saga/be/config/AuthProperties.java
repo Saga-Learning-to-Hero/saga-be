@@ -14,7 +14,8 @@ public class AuthProperties {
 	private final BootstrapAdmin bootstrapAdmin = new BootstrapAdmin();
 	private final BootstrapLecturer bootstrapLecturer = new BootstrapLecturer();
 	private final Password password = new Password();
-	private String passwordResetUrl = "http://localhost:3000/reset-password";
+	/** Explicit reset page URL; blank = derived from the first frontend origin (see resolvedPasswordResetUrl). */
+	private String passwordResetUrl = "";
 	private Duration passwordResetTtl = Duration.ofMinutes(30);
 
 	public List<String> getFrontendOrigins() {
@@ -31,6 +32,33 @@ public class AuthProperties {
 
 	public void setPasswordResetUrl(String passwordResetUrl) {
 		this.passwordResetUrl = passwordResetUrl;
+	}
+
+	/**
+	 * The page the password-reset email links to: the explicit {@code passwordResetUrl} when it is an
+	 * absolute http(s) URL, otherwise the first frontend origin + {@code /reset-password} -- the same
+	 * origin every other email link uses, so a deploy only has to set the frontend origin once.
+	 */
+	public String resolvedPasswordResetUrl() {
+		String explicit = passwordResetUrl == null ? "" : passwordResetUrl.trim();
+		String lower = explicit.toLowerCase(java.util.Locale.ROOT);
+		if (lower.startsWith("http://") || lower.startsWith("https://")) {
+			return explicit;
+		}
+		String origin = frontendOrigins == null
+				? ""
+				: frontendOrigins.stream()
+						.filter(value -> value != null && !value.isBlank())
+						.map(String::trim)
+						.findFirst()
+						.orElse("");
+		if (origin.isEmpty()) {
+			origin = "http://localhost:3000";
+		}
+		while (origin.endsWith("/")) {
+			origin = origin.substring(0, origin.length() - 1);
+		}
+		return origin + "/reset-password";
 	}
 
 	public Duration getPasswordResetTtl() {

@@ -104,6 +104,50 @@ class PasswordResetServiceTest {
 	}
 
 	@Test
+	void resetLinkInTheEmailPointsAtTheDeployedFrontendDomain() {
+		properties.setFrontendOrigins(java.util.List.of("https://saga-fe.vercel.app"));
+		UserAccount account = googleStudent(null);
+		when(users.findByEmail("student@fpt.edu.vn")).thenReturn(Optional.of(account));
+		when(users.findByIdForUpdate(account.getId())).thenReturn(Optional.of(account));
+		when(tokens.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(emails.enqueue(any())).thenReturn(sentRecord());
+
+		service.forgotPassword("student@fpt.edu.vn");
+
+		ArgumentCaptor<EmailEnqueueRequest> emailCaptor = ArgumentCaptor.forClass(EmailEnqueueRequest.class);
+		verify(emails).enqueue(emailCaptor.capture());
+		String body = (String) emailCaptor.getValue().payload().get("textBody");
+		assertTrue(body.contains("https://saga-fe.vercel.app/reset-password?token="), body);
+		assertTrue(!body.contains("localhost"), body);
+	}
+
+	@Test
+	void resetEmailShowsAButtonInsteadOfTheRawLink() {
+		properties.setFrontendOrigins(java.util.List.of("https://saga-fe.vercel.app"));
+		UserAccount account = googleStudent(null);
+		when(users.findByEmail("student@fpt.edu.vn")).thenReturn(Optional.of(account));
+		when(users.findByIdForUpdate(account.getId())).thenReturn(Optional.of(account));
+		when(tokens.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(emails.enqueue(any())).thenReturn(sentRecord());
+
+		service.forgotPassword("student@fpt.edu.vn");
+
+		ArgumentCaptor<EmailEnqueueRequest> emailCaptor = ArgumentCaptor.forClass(EmailEnqueueRequest.class);
+		verify(emails).enqueue(emailCaptor.capture());
+		java.util.Map<String, Object> payload = emailCaptor.getValue().payload();
+		String token = extractToken((String) payload.get("textBody"));
+		String html = (String) payload.get("htmlBody");
+		assertEquals("SAGA — Đặt lại mật khẩu", payload.get("subject"));
+		assertEquals("password-reset", emailCaptor.getValue().templateKey());
+		// The link lives only in the button's href; the visible text is the label.
+		assertTrue(html.contains("href=\"https://saga-fe.vercel.app/reset-password?token=" + token + "\""), html);
+		assertTrue(html.contains(">Đặt lại mật khẩu</a>"), html);
+		assertEquals(1, html.split(java.util.regex.Pattern.quote("reset-password?token="), -1).length - 1, html);
+		assertTrue(html.contains("Hiệu lực của liên kết"), html);
+		assertTrue(html.contains("lang=\"vi\""), html);
+	}
+
+	@Test
 	void forgotWithNonexistentEmailCreatesNoTokenAndSendsNoEmail() {
 		when(users.findByEmail("ghost@fpt.edu.vn")).thenReturn(Optional.empty());
 

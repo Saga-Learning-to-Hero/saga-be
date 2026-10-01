@@ -14,7 +14,6 @@ import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -51,6 +50,7 @@ public class PasswordResetService {
 	private final PasswordPolicy passwordPolicy;
 	private final EmailOutboxService emails;
 	private final AuthProperties properties;
+	private final com.saga.be.mail.template.EmailTemplateService templates;
 	private final TransactionTemplate writes;
 
 	public PasswordResetService(
@@ -67,6 +67,7 @@ public class PasswordResetService {
 		this.passwordPolicy = passwordPolicy;
 		this.emails = emails;
 		this.properties = properties;
+		this.templates = new com.saga.be.mail.template.EmailTemplateService(properties);
 		this.writes = new TransactionTemplate(Objects.requireNonNull(transactionManager, "transactionManager"));
 	}
 
@@ -153,21 +154,18 @@ public class PasswordResetService {
 		String resetUrl = buildResetUrl(rawToken);
 		long minutes = Math.max(1, properties.getPasswordResetTtl().toMinutes());
 		String greetingName = StringUtils.hasText(account.getFullName()) ? account.getFullName() : account.getEmail();
-		String subject = "SAGA — Đặt lại mật khẩu";
-		String textBody = "Xin chào " + greetingName + ",\n\n"
-				+ "Có yêu cầu đặt lại mật khẩu cho tài khoản SAGA của bạn.\n\n"
-				+ "Đặt lại mật khẩu: " + resetUrl + "\n\n"
-				+ "Liên kết này hết hạn sau " + minutes + " phút.\n\n"
-				+ "Nếu bạn không yêu cầu điều này, hãy bỏ qua email này — mật khẩu của bạn sẽ không đổi.\n\n"
-				+ "SAGA — Student Activity Graph Based Continuous Assessment\nĐây là email tự động, vui lòng không trả lời.";
-		Map<String, Object> payload = new LinkedHashMap<>();
-		payload.put("subject", subject);
-		payload.put("textBody", textBody);
-		emails.enqueue(new EmailEnqueueRequest(account.getEmail(), account.getId(), EMAIL_TYPE, "password-reset", payload, null));
+		Map<String, Object> payload = templates.passwordResetPayload(greetingName, resetUrl, minutes);
+		emails.enqueue(new EmailEnqueueRequest(
+				account.getEmail(),
+				account.getId(),
+				EMAIL_TYPE,
+				com.saga.be.mail.template.EmailTemplateService.PASSWORD_RESET,
+				payload,
+				null));
 	}
 
 	private String buildResetUrl(String rawToken) {
-		String base = properties.getPasswordResetUrl();
+		String base = properties.resolvedPasswordResetUrl();
 		String encoded;
 		try {
 			encoded = URLEncoder.encode(rawToken, StandardCharsets.UTF_8.name());

@@ -17,6 +17,7 @@ public class EmailTemplateService {
 	public static final String SPRINT_PERIOD_OVERLAP = "sprint-period-overlap";
 	public static final String COURSE_WITHDRAWN = "course-withdrawn";
 	public static final String TEAM_REMOVED = "team-removed";
+	public static final String PASSWORD_RESET = "password-reset";
 
 	/** Label of the call-to-action button and of the plain-text link line. */
 	static final String OPEN_SAGA = "Mở SAGA";
@@ -353,6 +354,45 @@ public class EmailTemplateService {
 		payload.put("removedBy", by);
 		payload.put("removedByName", text(removedByName));
 		payload.put("ctaUrl", cta);
+		return payload;
+	}
+
+	/**
+	 * Password-reset email: a button instead of the raw link in the HTML body; the plain-text body
+	 * keeps the link for mail clients that show text only. {@code resetUrl} carries a one-time token
+	 * -- it only ever goes into the escaped button href, never into visible text of the HTML.
+	 */
+	public Map<String, Object> passwordResetPayload(String displayName, String resetUrl, long validMinutes) {
+		String subject = "SAGA — Đặt lại mật khẩu";
+		String greeting = greeting(displayName);
+		String explain = "Có yêu cầu đặt lại mật khẩu cho tài khoản SAGA của bạn. Bấm nút bên dưới để đặt mật khẩu mới.";
+		String validity = validMinutes + " phút";
+		String ignore = "Nếu bạn không yêu cầu điều này, hãy bỏ qua email này — mật khẩu của bạn sẽ không đổi.";
+		String text = greeting
+				+ "\n\nCó yêu cầu đặt lại mật khẩu cho tài khoản SAGA của bạn.\n\n"
+				+ "Đặt lại mật khẩu: "
+				+ text(resetUrl)
+				+ "\n\nLiên kết này hết hạn sau "
+				+ validity
+				+ ".\n\n"
+				+ ignore
+				+ footerText();
+		String inner = """
+			<p style="margin:0 0 16px 0;">%s</p>
+			<h1 style="margin:0 0 12px 0;font-size:22px;line-height:28px;color:#0f172a;">Đặt lại mật khẩu</h1>
+			<p style="margin:0 0 20px 0;">%s</p>
+			"""
+				.formatted(EmailHtml.escape(greeting), EmailHtml.escape(explain));
+		String html = SagaEmailLayout.document(
+				subject,
+				inner,
+				"Đặt lại mật khẩu",
+				resetUrl,
+				SagaEmailLayout.infoPanel("Hiệu lực của liên kết", validity, "Không phải bạn yêu cầu?", ignore));
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("subject", subject);
+		payload.put("textBody", text);
+		payload.put("htmlBody", html);
 		return payload;
 	}
 
