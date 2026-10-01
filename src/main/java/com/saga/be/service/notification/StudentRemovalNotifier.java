@@ -29,6 +29,8 @@ import org.springframework.util.StringUtils;
 public class StudentRemovalNotifier {
 
 	public static final int REASON_MAX_LENGTH = 500;
+	/** Longest staff name shown to the student; a longer one is cut with an ellipsis. */
+	static final int ACTOR_NAME_MAX_LENGTH = 120;
 	static final String COURSE_EMAIL_TYPE = "COURSE_WITHDRAWN";
 	static final String TEAM_EMAIL_TYPE = "TEAM_REMOVED";
 
@@ -64,9 +66,20 @@ public class StudentRemovalNotifier {
 		return actor != null && actor.getAccountRole() == AccountRole.ADMIN ? "Admin" : "Lecturer";
 	}
 
-	/** The in-app (Vietnamese) wording of who removed the student. */
+	/**
+	 * The staff member's full name as shown to the student, or null when they have none. Never the
+	 * email address: the student only needs to know who acted, not how to reach their account.
+	 */
+	static String actorName(UserAccount actor) {
+		String name = actor == null || actor.getFullName() == null ? "" : actor.getFullName().trim().replaceAll("\\s+", " ");
+		return name.isEmpty() ? null : truncate(name, ACTOR_NAME_MAX_LENGTH);
+	}
+
+	/** In-app wording of who removed the student, e.g. "giảng viên Nguyễn Văn A" (role only without a name). */
 	private static String removedByVi(UserAccount actor) {
-		return actor != null && actor.getAccountRole() == AccountRole.ADMIN ? "quản trị viên" : "giảng viên";
+		String role = actor != null && actor.getAccountRole() == AccountRole.ADMIN ? "quản trị viên" : "giảng viên";
+		String name = actorName(actor);
+		return name == null ? role : role + " " + name;
 	}
 
 	public void courseWithdrawn(CourseEnrollment enrollment, Course course, String reason, UserAccount actor) {
@@ -83,7 +96,9 @@ public class StudentRemovalNotifier {
 				truncate("Bạn đã bị " + removedByVi(actor) + " rút khỏi lớp " + code + "." + reasonSuffix(reason), 1000),
 				null,
 				"course-withdrawn:" + enrollment.getId() + ":" + UUID.randomUUID());
-		enqueue(student, COURSE_EMAIL_TYPE, EmailTemplateService.COURSE_WITHDRAWN, model(student, course, null), false, reason, by);
+		enqueue(
+				student, COURSE_EMAIL_TYPE, EmailTemplateService.COURSE_WITHDRAWN, model(student, course, null), false, reason, by,
+				actorName(actor));
 	}
 
 	public void teamRemoved(CourseEnrollment enrollment, Course course, Team team, String reason, UserAccount actor) {
@@ -104,7 +119,9 @@ public class StudentRemovalNotifier {
 						1000),
 				null,
 				"team-removed:" + enrollment.getId() + ":" + UUID.randomUUID());
-		enqueue(student, TEAM_EMAIL_TYPE, EmailTemplateService.TEAM_REMOVED, model(student, course, team), true, reason, by);
+		enqueue(
+				student, TEAM_EMAIL_TYPE, EmailTemplateService.TEAM_REMOVED, model(student, course, team), true, reason, by,
+				actorName(actor));
 	}
 
 	private void enqueue(
@@ -114,7 +131,8 @@ public class StudentRemovalNotifier {
 			EmailTemplateModel model,
 			boolean teamOnly,
 			String reason,
-			String by) {
+			String by,
+			String byName) {
 		if (!StringUtils.hasText(student.getEmail())) {
 			return;
 		}
@@ -123,7 +141,7 @@ public class StudentRemovalNotifier {
 				student.getId(),
 				emailType,
 				templateKey,
-				templates.studentRemovalPayload(model, teamOnly, reason, by),
+				templates.studentRemovalPayload(model, teamOnly, reason, by, byName),
 				null));
 	}
 

@@ -290,9 +290,10 @@ public class EmailTemplateService {
 	 * @param model course/class/semester and, for a team removal, the team they left
 	 * @param teamOnly true = removed from the team but still in the course
 	 * @param removedBy "Lecturer" or "Admin" (shown as "Giảng viên" / "Quản trị viên")
+	 * @param removedByName full name of the staff member who removed the student; blank shows the role only
 	 */
 	public Map<String, Object> studentRemovalPayload(
-			EmailTemplateModel model, boolean teamOnly, String reason, String removedBy) {
+			EmailTemplateModel model, boolean teamOnly, String reason, String removedBy, String removedByName) {
 		EmailTemplateModel safe = model == null ? EmailTemplateModel.course("", "", "", "", "", "", "", false) : model;
 		String code = displayCode(safe);
 		String subject = teamOnly
@@ -301,7 +302,7 @@ public class EmailTemplateService {
 		String greeting = greeting(safe.fullName());
 		String courseLine = courseLine(safe);
 		String semester = semesterLine(safe);
-		String by = removedByVi(removedBy);
+		String by = removedByLabel(removedBy, removedByName);
 		String why = EmailHtml.blankTo(text(reason), "Không có");
 		String explain = teamOnly
 				? "Bạn đã bị rút khỏi nhóm. Bạn vẫn còn trong lớp học phần; giảng viên có thể xếp bạn vào nhóm khác."
@@ -350,6 +351,7 @@ public class EmailTemplateService {
 		payload.put("classCode", text(safe.classCode()));
 		payload.put("reason", why);
 		payload.put("removedBy", by);
+		payload.put("removedByName", text(removedByName));
 		payload.put("ctaUrl", cta);
 		return payload;
 	}
@@ -456,6 +458,13 @@ public class EmailTemplateService {
 			return "Giảng viên";
 		}
 		return value.isEmpty() ? "Giảng viên phụ trách lớp" : value;
+	}
+
+	/** e.g. "Giảng viên Nguyễn Văn A"; just the role when the name is blank. */
+	static String removedByLabel(String removedBy, String removedByName) {
+		String role = removedByVi(removedBy);
+		String name = text(removedByName);
+		return name.isEmpty() ? role : role + " " + name;
 	}
 
 	private static String footerText() {

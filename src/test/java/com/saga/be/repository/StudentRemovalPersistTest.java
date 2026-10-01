@@ -214,7 +214,7 @@ class StudentRemovalPersistTest {
 		verify(emails).enqueue(mail.capture());
 		assertThat(mail.getValue().emailType()).isEqualTo("COURSE_WITHDRAWN");
 		assertThat(String.valueOf(mail.getValue().payload().get("textBody")))
-				.contains("Người thực hiện: Giảng viên")
+				.contains("Người thực hiện: Giảng viên lecturer\n")
 				.contains("Lý do: Transferred to SE1803");
 	}
 

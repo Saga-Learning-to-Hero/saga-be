@@ -189,6 +189,10 @@ class EmailTemplateServiceTest {
 		assertEquals("Quản trị viên", EmailTemplateService.removedByVi("Admin"));
 		assertEquals("Giảng viên", EmailTemplateService.removedByVi("Lecturer"));
 		assertEquals("Giảng viên phụ trách lớp", EmailTemplateService.removedByVi(" "));
+		assertEquals("Giảng viên Nguyễn Văn A", EmailTemplateService.removedByLabel("Lecturer", " Nguyễn Văn A "));
+		assertEquals("Quản trị viên Trần B", EmailTemplateService.removedByLabel("Admin", "Trần B"));
+		assertEquals("Giảng viên", EmailTemplateService.removedByLabel("Lecturer", null));
+		assertEquals("Quản trị viên", EmailTemplateService.removedByLabel("Admin", "  "));
 	}
 
 	@Test
@@ -210,15 +214,21 @@ class EmailTemplateServiceTest {
 		EmailTemplateModel model = EmailTemplateModel.teamAssigned(
 				"Nguyễn Văn Ánh", "student@gmail.com", "Software Requirement", "SWR302", "SE1802", "FA26", "Fall 2026",
 				2, "Beta", null);
-		Map<String, Object> course = templates.studentRemovalPayload(model, false, "Chuyển <b>lớp</b>", "Lecturer");
+		Map<String, Object> course = templates.studentRemovalPayload(
+				model, false, "Chuyển <b>lớp</b>", "Lecturer", "Nguyễn <i>Văn</i> A");
 		assertEquals("SAGA — Bạn đã bị rút khỏi lớp học phần SWR302", course.get("subject"));
-		assertTrue(String.valueOf(course.get("textBody")).contains("Người thực hiện: Giảng viên\nLý do: Chuyển <b>lớp</b>"));
+		assertTrue(String.valueOf(course.get("textBody"))
+				.contains("Người thực hiện: Giảng viên Nguyễn <i>Văn</i> A\nLý do: Chuyển <b>lớp</b>"));
+		assertEquals("Giảng viên Nguyễn <i>Văn</i> A", course.get("removedBy"));
+		assertEquals("Nguyễn <i>Văn</i> A", course.get("removedByName"));
 		String html = String.valueOf(course.get("htmlBody"));
 		assertTrue(html.contains("Bạn đã bị rút khỏi lớp học phần"));
+		assertTrue(html.contains("Giảng viên Nguyễn &lt;i&gt;Văn&lt;/i&gt; A"));
+		assertFalse(html.contains("<i>Văn</i>"));
 		assertTrue(html.contains("Chuyển &lt;b&gt;lớp&lt;/b&gt;"));
 		assertFalse(html.contains("<b>lớp</b>"));
 
-		Map<String, Object> team = templates.studentRemovalPayload(model, true, null, "Admin");
+		Map<String, Object> team = templates.studentRemovalPayload(model, true, null, "Admin", null);
 		assertEquals("SAGA — Bạn đã bị rút khỏi nhóm trong lớp học phần SWR302", team.get("subject"));
 		assertTrue(String.valueOf(team.get("textBody")).contains("Nhóm: Nhóm 2 — Beta"));
 		assertTrue(String.valueOf(team.get("textBody")).contains("Người thực hiện: Quản trị viên\nLý do: Không có"));
@@ -240,8 +250,8 @@ class EmailTemplateServiceTest {
 		}
 		for (Map<String, Object> payload : List.of(
 				templates.sprintPeriodOverlapPayload("A", "a@x.com", "P", "SE1", "s1", "s2"),
-				templates.studentRemovalPayload(model, false, "r", "Admin"),
-				templates.studentRemovalPayload(model, true, "r", "Lecturer"))) {
+				templates.studentRemovalPayload(model, false, "r", "Admin", "Trần B"),
+				templates.studentRemovalPayload(model, true, "r", "Lecturer", "Nguyễn A"))) {
 			bodies.add(String.valueOf(payload.get("subject")));
 			bodies.add(String.valueOf(payload.get("textBody")));
 			bodies.add(String.valueOf(payload.get("htmlBody")));

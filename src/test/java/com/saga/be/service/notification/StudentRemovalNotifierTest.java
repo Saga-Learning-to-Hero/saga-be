@@ -151,6 +151,59 @@ class StudentRemovalNotifierTest {
 	}
 
 	@Test
+	void theStaffMemberIsNamedInTheNotificationAndTheEmail() {
+		UserAccount lecturer = lecturer();
+		lecturer.setFullName("  Nguyễn   Ngọc Gia Minh ");
+		lecturer.setEmail("lecturer@fpt.edu.vn");
+
+		notifier.courseWithdrawn(enrollment, course, "Sai lớp", lecturer);
+
+		ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
+		verify(notifications).createNotification(any(), any(), any(), message.capture(), any(), any());
+		assertThat(message.getValue())
+				.isEqualTo("Bạn đã bị giảng viên Nguyễn Ngọc Gia Minh rút khỏi lớp SWR302 · SE1802. Lý do: Sai lớp");
+		ArgumentCaptor<EmailEnqueueRequest> mail = ArgumentCaptor.forClass(EmailEnqueueRequest.class);
+		verify(emails).enqueue(mail.capture());
+		assertThat(String.valueOf(mail.getValue().payload().get("textBody")))
+				.contains("Người thực hiện: Giảng viên Nguyễn Ngọc Gia Minh\nLý do: Sai lớp");
+		assertThat(String.valueOf(mail.getValue().payload().get("htmlBody"))).contains("Giảng viên Nguyễn Ngọc Gia Minh");
+		assertThat(mail.getValue().payload().values()).noneMatch(value -> String.valueOf(value).contains("lecturer@fpt.edu.vn"));
+		assertThat(message.getValue()).doesNotContain("lecturer@fpt.edu.vn");
+	}
+
+	@Test
+	void anAdminIsNamedTooAndAMissingNameShowsTheRoleOnly() {
+		UserAccount admin = admin();
+		admin.setFullName("Trần Quản Trị");
+		Team team = new Team();
+		team.setTeamNo(2);
+
+		notifier.teamRemoved(enrollment, course, team, "Đổi nhóm", admin);
+		notifier.courseWithdrawn(enrollment, course, "Sai lớp", admin());
+
+		ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
+		verify(notifications, times(2)).createNotification(any(), any(), any(), message.capture(), any(), any());
+		assertThat(message.getAllValues().get(0)).startsWith("Bạn đã bị quản trị viên Trần Quản Trị rút khỏi nhóm 2 trong lớp");
+		assertThat(message.getAllValues().get(1)).startsWith("Bạn đã bị quản trị viên rút khỏi lớp SWR302 · SE1802.");
+		ArgumentCaptor<EmailEnqueueRequest> mail = ArgumentCaptor.forClass(EmailEnqueueRequest.class);
+		verify(emails, times(2)).enqueue(mail.capture());
+		assertThat(String.valueOf(mail.getAllValues().get(0).payload().get("textBody")))
+				.contains("Người thực hiện: Quản trị viên Trần Quản Trị\n");
+		assertThat(String.valueOf(mail.getAllValues().get(1).payload().get("textBody")))
+				.contains("Người thực hiện: Quản trị viên\n");
+	}
+
+	@Test
+	void aVeryLongStaffNameIsCut() {
+		UserAccount lecturer = lecturer();
+		lecturer.setFullName("A".repeat(300));
+
+		assertThat(StudentRemovalNotifier.actorName(lecturer)).hasSize(StudentRemovalNotifier.ACTOR_NAME_MAX_LENGTH).endsWith("…");
+		assertThat(StudentRemovalNotifier.actorName(lecturer())).isNull();
+		assertThat(StudentRemovalNotifier.actorName(null)).isNull();
+	}
+
+	@Test
 	void studentWithoutEmailStillGetsTheInAppNotification() {
 		student.setEmail(" ");
 
