@@ -5,6 +5,7 @@ import com.saga.be.graph.ProjectGraphSnapshot.ReviewEdge;
 import com.saga.be.graph.ProjectGraphSnapshot.SprintNode;
 import com.saga.be.graph.ProjectGraphSnapshot.StudentNode;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskCommitLink;
+import com.saga.be.graph.ProjectGraphSnapshot.TaskHierarchyLink;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskNode;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -23,6 +24,13 @@ public class ProjectGraphWriter {
 			Map.of("id", "crit_test", "name", "TEST", "label", "Kiem thu"),
 			Map.of("id", "crit_document", "name", "DOCUMENT", "label", "Tai lieu"),
 			Map.of("id", "crit_research", "name", "RESEARCH", "label", "Nghien cuu"));
+
+	/**
+	 * Shape of what {@link #rebuild} writes. Bump it whenever nodes, properties or edges change:
+	 * a project graph stored under an older version counts as missing and is rebuilt on its next
+	 * read. 2 = task issueType/issueTypeName + DECOMPOSED_INTO (Jira parent -> child).
+	 */
+	public static final int GRAPH_VERSION = 2;
 
 	private final SagaGraphClient graph;
 
@@ -52,7 +60,7 @@ public class ProjectGraphWriter {
 			tx.run(
 					"""
 					MERGE (p:Project {id: $id})
-					SET p.name = $name, p.projectId = $projectId, p.sagaId = $sagaId
+					SET p.name = $name, p.projectId = $projectId, p.sagaId = $sagaId, p.graphVersion = $graphVersion
 					""",
 					Map.of(
 							"id",
@@ -62,7 +70,9 @@ public class ProjectGraphWriter {
 							"projectId",
 							projectId.toString(),
 							"sagaId",
-							projectId.toString()));
+							projectId.toString(),
+							"graphVersion",
+							GRAPH_VERSION));
 			if (snapshot.team() != null) {
 				tx.run(
 						"""
@@ -141,6 +151,8 @@ public class ProjectGraphWriter {
 					row.put("classified", task.classified());
 					row.put("isAnomaly", task.anomaly());
 					row.put("linkedCommitCount", task.linkedCommitCount());
+					row.put("issueType", task.issueType());
+					row.put("issueTypeName", task.issueTypeName());
 					row.put("sagaId", task.id().toString());
 					row.put("sprintId", task.sprintId() == null ? null : SagaGraphIds.sprint(task.sprintId()));
 					row.put(
@@ -156,6 +168,7 @@ public class ProjectGraphWriter {
 						    t.storyPoint = row.storyPoint, t.weightType = row.weightType,
 						    t.classified = row.classified, t.isAnomaly = row.isAnomaly,
 						    t.linkedCommitCount = row.linkedCommitCount,
+						    t.issueType = row.issueType, t.issueTypeName = row.issueTypeName,
 						    t.projectId = $pid, t.sagaId = row.sagaId
 						WITH t, row
 						FOREACH (_ IN CASE WHEN row.sprintId IS NULL THEN [] ELSE [1] END |
@@ -178,6 +191,24 @@ public class ProjectGraphWriter {
 						)
 						""",
 						Map.of("rows", rows, "pid", projectId.toString()));
+			}
+			if (snapshot.hierarchy() != null && !snapshot.hierarchy().isEmpty()) {
+				List<Map<String, Object>> rows = new ArrayList<>();
+				for (TaskHierarchyLink link : snapshot.hierarchy()) {
+					rows.add(Map.of(
+							"parentId",
+							SagaGraphIds.task(link.parentTaskId()),
+							"childId",
+							SagaGraphIds.task(link.childTaskId())));
+				}
+				tx.run(
+						"""
+						UNWIND $rows AS row
+						MATCH (parent:Task {id: row.parentId})
+						MATCH (child:Task {id: row.childId})
+						MERGE (parent)-[:DECOMPOSED_INTO]->(child)
+						""",
+						Map.of("rows", rows));
 			}
 			if (!snapshot.commits().isEmpty()) {
 				List<Map<String, Object>> rows = new ArrayList<>();

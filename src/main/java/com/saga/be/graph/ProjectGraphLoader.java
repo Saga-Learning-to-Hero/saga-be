@@ -20,6 +20,7 @@ import com.saga.be.graph.ProjectGraphSnapshot.ReviewEdge;
 import com.saga.be.graph.ProjectGraphSnapshot.SprintNode;
 import com.saga.be.graph.ProjectGraphSnapshot.StudentNode;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskCommitLink;
+import com.saga.be.graph.ProjectGraphSnapshot.TaskHierarchyLink;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskNode;
 import com.saga.be.graph.ProjectGraphSnapshot.TeamNode;
 import com.saga.be.graph.SagaGraphRules.TaskGraphAttrs;
@@ -162,7 +163,9 @@ public class ProjectGraphLoader {
 					attrs.weightType(),
 					attrs.classified(),
 					attrs.anomaly(),
-					linked));
+					linked,
+					task.getTaskType() == null ? null : task.getTaskType().name(),
+					task.getIssueTypeName()));
 		}
 		List<CommitNode> commitNodes = new ArrayList<>();
 		for (GitCommit commit : commits.findFetchedByProject_Id(projectId)) {
@@ -201,6 +204,33 @@ public class ProjectGraphLoader {
 				taskNodes,
 				commitNodes,
 				linkNodes,
-				reviews);
+				reviews,
+				hierarchyLinks(projectTasks));
+	}
+
+	/**
+	 * One link per task whose Jira parent is another task of the same project and Jira source.
+	 * Jira issue ids are unique only within a site, so the parent is looked up per source; a parent
+	 * that is deleted, in another project or not synced yet simply yields no link.
+	 */
+	static List<TaskHierarchyLink> hierarchyLinks(List<Task> projectTasks) {
+		Map<String, UUID> byExternalId = new HashMap<>();
+		for (Task task : projectTasks) {
+			if (task.getJiraIntegration() != null && task.getExternalId() != null && !task.getExternalId().isBlank()) {
+				byExternalId.put(task.getJiraIntegration().getId() + "|" + task.getExternalId(), task.getId());
+			}
+		}
+		List<TaskHierarchyLink> out = new ArrayList<>();
+		for (Task task : projectTasks) {
+			String parentExternalId = task.getParentExternalId();
+			if (task.getJiraIntegration() == null || parentExternalId == null || parentExternalId.isBlank()) {
+				continue;
+			}
+			UUID parentId = byExternalId.get(task.getJiraIntegration().getId() + "|" + parentExternalId);
+			if (parentId != null && !parentId.equals(task.getId())) {
+				out.add(new TaskHierarchyLink(parentId, task.getId()));
+			}
+		}
+		return out;
 	}
 }

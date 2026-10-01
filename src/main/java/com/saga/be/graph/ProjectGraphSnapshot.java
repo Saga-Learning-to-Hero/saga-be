@@ -12,7 +12,8 @@ public record ProjectGraphSnapshot(
 		List<TaskNode> tasks,
 		List<CommitNode> commits,
 		List<TaskCommitLink> links,
-		List<ReviewEdge> reviews) {
+		List<ReviewEdge> reviews,
+		List<TaskHierarchyLink> hierarchy) {
 
 	public record TeamNode(UUID id, String name) {}
 
@@ -32,7 +33,11 @@ public record ProjectGraphSnapshot(
 			String weightType,
 			boolean classified,
 			boolean anomaly,
-			int linkedCommitCount) {}
+			int linkedCommitCount,
+			/** EPIC / STORY / TASK / BUG / SUBTASK / REQUEST (SAGA's normalized type). */
+			String issueType,
+			/** The Jira type name as the team sees it, e.g. "Feature". */
+			String issueTypeName) {}
 
 	public record CommitNode(
 			UUID id,
@@ -43,6 +48,9 @@ public record ProjectGraphSnapshot(
 			boolean unmapped) {}
 
 	public record TaskCommitLink(UUID taskId, UUID commitId) {}
+
+	/** Jira parent -> child (Epic -> Story/Task/Bug, Task -> Subtask), both tasks of this project. */
+	public record TaskHierarchyLink(UUID parentTaskId, UUID childTaskId) {}
 
 	public record ReviewEdge(UUID reviewerStudentId, UUID revieweeStudentId, UUID sprintId, int stars) {}
 }

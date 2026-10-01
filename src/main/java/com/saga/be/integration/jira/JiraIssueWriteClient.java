@@ -384,6 +384,44 @@ public class JiraIssueWriteClient {
 	}
 
 	/**
+	 * The issue's current type as Jira reports it, with its hierarchy level (Epic / normal /
+	 * Subtask). Provider failures surface as controlled integration errors, never as a guess.
+	 */
+	public IssueTypeOption getIssueType(String accessToken, String cloudId, String issueIdOrKey) {
+		try {
+			JsonNode body = restClient
+					.get()
+					.uri(
+							"https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issue}?fields=issuetype",
+							cloudId,
+							issueIdOrKey)
+					.header("Authorization", "Bearer " + accessToken)
+					.retrieve()
+					.body(JsonNode.class);
+			JsonNode type = body == null ? null : body.path("fields").path("issuetype");
+			if (type == null || type.isMissingNode() || text(type, "id") == null) {
+				throw new IntegrationException(
+						IntegrationErrorCode.INTEGRATION_UNAVAILABLE,
+						HttpStatus.BAD_GATEWAY,
+						"Jira did not return the issue type.");
+			}
+			return issueTypeOption(type);
+		} catch (RestClientResponseException ex) {
+			throw mapWriteFailure("getIssueType", IntegrationErrorCode.INTEGRATION_UNAVAILABLE, ex);
+		}
+	}
+
+	private static IssueTypeOption issueTypeOption(JsonNode node) {
+		JsonNode level = node.path("hierarchyLevel");
+		return new IssueTypeOption(
+				text(node, "id"),
+				text(node, "name"),
+				text(node, "description"),
+				node.path("subtask").asBoolean(false),
+				level.isIntegralNumber() ? Integer.valueOf(level.asInt()) : null);
+	}
+
+	/**
 	 * True only when Jira confirms the issue's current type id equals the requested
 	 * {@code {"id": ...}} value; any fetch/parse failure answers false so the caller keeps the
 	 * normal FIELD_NOT_EDITABLE rejection.
@@ -810,7 +848,7 @@ public class JiraIssueWriteClient {
 			List<IssueTypeOption> out = new ArrayList<>();
 			if (body != null && body.isArray()) {
 				for (JsonNode node : body) {
-					out.add(new IssueTypeOption(text(node, "id"), text(node, "name"), text(node, "description")));
+					out.add(issueTypeOption(node));
 				}
 			}
 			return out;
@@ -1393,7 +1431,15 @@ public class JiraIssueWriteClient {
 
 	public record EstimationInfo(boolean supported, String fieldId, String fieldName, Integer value) {}
 
-	public record IssueTypeOption(String id, String name, String description) {}
+	/**
+	 * A Jira issue type. {@code hierarchyLevel} is Jira's own level: -1 Subtask, 0 a normal work item
+	 * (Task/Story/Bug/Feature...), 1 Epic, 2+ above Epic. Null when Jira omits it.
+	 */
+	public record IssueTypeOption(String id, String name, String description, boolean subtask, Integer hierarchyLevel) {
+		public IssueTypeOption(String id, String name, String description) {
+			this(id, name, description, false, null);
+		}
+	}
 
 	public record PriorityOption(String id, String name) {}
 

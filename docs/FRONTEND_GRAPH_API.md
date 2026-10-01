@@ -141,7 +141,7 @@ Response headers: `ETag`, `X-Graph-Revision`. Cùng revision **và cùng query**
 | `focusNodeId` | không | — | `task:{id}`, `student:{id}`, … đúng prefix mục 5.1. Phải nằm **trong** graph đã scoped (project + `sprintId` nếu có). Sai scope → `400 REQUEST_INVALID`. |
 | `depth` | không | `1` | Neighborhood vô hướng từ `focusNodeId` (hoặc từ anomaly). Chỉ `1`–`3`. **Chỉ có `depth` thì bị bỏ qua** — phải kèm focus / type / paging. |
 | `nodeTypes` | không | Overview/Activity: không COMMIT. Graph khác: mọi type | CSV enum canonical: `STUDENT,TEAM,PROJECT,SPRINT,TASK,COMMIT,CRITERION,IDENTITY`. Sai enum → 400. |
-| `edgeTypes` | không | mọi label | CSV: `MEMBER_OF,OWNS,HAS_SPRINT,CONTAINS,ASSIGNED_TO,EVIDENCED_BY,CLASSIFIED_AS,AUTHORED_BY,MAPS_TO,REVIEWED`. |
+| `edgeTypes` | không | mọi label | CSV: `MEMBER_OF,OWNS,HAS_SPRINT,CONTAINS,ASSIGNED_TO,EVIDENCED_BY,DECOMPOSED_INTO,CLASSIFIED_AS,AUTHORED_BY,MAPS_TO,REVIEWED`. |
 | `anomaliesOnly` | không | `false` | `true` = anomaly **kèm neighborhood** (không trả node cô lập nếu chúng còn cạnh). |
 | `maxNodes` | không | — | `1`–`2000`. Cắt theo thứ tự ổn định trong cùng revision. |
 | `cursor` | không | — | Token `revision:lastNodeId` từ `meta.nextCursor`. Alias: `continuationToken`. Sai revision → 400. |
@@ -258,6 +258,8 @@ interface CytoscapeNodeData {
   avatar?: string;      // STUDENT: URL ảnh. Không phải avatarUrl (đó là field /auth/me)
   role?: string;        // STUDENT: LEADER | MEMBER | …
   storyPoint?: number;  // TASK
+  issueType?: "EPIC" | "STORY" | "TASK" | "BUG" | "SUBTASK" | "REQUEST"; // TASK: loại đã chuẩn hoá (Feature → TASK)
+  issueTypeName?: string; // TASK: tên loại đúng như trên Jira, vd "Feature", "User Story"
 }
 
 interface CytoscapeEdgeData {
@@ -271,6 +273,7 @@ interface CytoscapeEdgeData {
     | "CONTAINS"
     | "ASSIGNED_TO"
     | "EVIDENCED_BY"
+    | "DECOMPOSED_INTO"   // task cha → task con theo Jira: Epic → Task/Story/Bug, Task → Subtask
     | "CLASSIFIED_AS"
     | "AUTHORED_BY"
     | "MAPS_TO"
@@ -287,6 +290,9 @@ cy.json({ elements: payload }); // hoặc cy.add(payload.nodes.concat(payload.ed
 ```
 
 Style CSS theo `node[type = "TASK"]` và `edge[label = "EVIDENCED_BY"]` — **đúng string trên**, không dùng `IMPLEMENTS` / `AUTHORED` / `DOC`.
+
+**Phân rã công việc (Graph 1 — overview):** cạnh `DECOMPOSED_INTO` đi từ task cha sang task con đúng như quan hệ cha/con trên Jira, nên luồng hiển thị là
+`EPIC → STORY / TASK / BUG → SUBTASK → COMMIT` (Story và Task **cùng cấp**, Story không làm cha Task). Overview toàn project trả mọi cặp cha/con; overview theo sprint trả cặp có task con nằm trong sprint đó **kèm node cha** (vd Epic — Epic không thuộc sprint nào) để luồng không bị đứt. Gợi ý style: `node[issueType = "EPIC"]` to hơn, `node[issueType = "SUBTASK"]` nhỏ hơn, `edge[label = "DECOMPOSED_INTO"]` nét đứt. Chỉ là hiển thị — **không ảnh hưởng tính điểm**. Graph cũ tự dựng lại lần đầu được mở sau khi BE deploy.
 
 ### 5.1 `id` node (prefix)
 

@@ -43,8 +43,24 @@ public final class CytoscapeGraphBuilder {
 			String avatar,
 			String role,
 			Integer storyPoint) {
+		return nodeData(id, label, subLabel, type, status, weightType, anomaly, avatar, role, storyPoint, null, null);
+	}
+
+	public static CytoscapeNodeData nodeData(
+			String id,
+			String label,
+			String subLabel,
+			String type,
+			String status,
+			String weightType,
+			Boolean anomaly,
+			String avatar,
+			String role,
+			Integer storyPoint,
+			String issueType,
+			String issueTypeName) {
 		return new CytoscapeNodeData(
-				id, label, subLabel, type, status, weightType, anomaly, avatar, role, storyPoint);
+				id, label, subLabel, type, status, weightType, anomaly, avatar, role, storyPoint, issueType, issueTypeName);
 	}
 
 	public static CytoscapeEdgeData edgeData(

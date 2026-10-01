@@ -50,10 +50,19 @@ public class SagaGraphClient {
 		}
 	}
 
+	/**
+	 * True when the project's graph is stored AND was written by the current {@link
+	 * ProjectGraphWriter#GRAPH_VERSION}; a graph from an older version answers false, so the next
+	 * read rebuilds it with the new shape (e.g. after a deploy that adds edges).
+	 */
 	public boolean projectExists(UUID projectId) {
 		return !read(
-						"MATCH (p:Project {id: $id}) RETURN p.id AS id LIMIT 1",
-						Map.of("id", SagaGraphIds.project(projectId)))
+						"""
+						MATCH (p:Project {id: $id})
+						WHERE coalesce(p.graphVersion, 1) >= $graphVersion
+						RETURN p.id AS id LIMIT 1
+						""",
+						Map.of("id", SagaGraphIds.project(projectId), "graphVersion", ProjectGraphWriter.GRAPH_VERSION))
 				.isEmpty();
 	}
 

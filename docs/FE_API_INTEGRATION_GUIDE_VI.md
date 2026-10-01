@@ -1448,7 +1448,7 @@ Vài lưu ý chính xác cần nhớ:
 
 ```json
 {
-  "issueTypes": [{ "id": "...", "name": "Story", "description": "..." }],
+  "issueTypes": [{ "id": "...", "name": "Story", "description": "...", "subtask": false, "hierarchyLevel": 0, "level": "STANDARD" }],
   "priorities": [{ "id": "...", "name": "High" }],
   "assignableUsers": [{ "accountId": "...", "displayName": "..." }],
   "estimation": { "supported": true, "fieldId": "...", "fieldName": "Story Points" },
@@ -1456,6 +1456,11 @@ Vài lưu ý chính xác cần nhớ:
   "labels": ["saga:code", "saga:test", "saga:document", "saga:research"]
 }
 ```
+**Loại thẻ (issue type) — luật cấp:** `level` là cấp của loại theo Jira: `EPIC` (mảng lớn, không thuộc sprint), `STANDARD` (Task / Story / Feature / Bug — cùng một cấp), `SUBTASK` (việc con, bắt buộc có task cha), hiếm khi `ABOVE_EPIC`. **Lọc theo `level`, đừng đoán theo tên** (tên có thể đổi/tiếng Việt).
+- **Form sửa:** chỉ cho chọn các loại `STANDARD` khi task hiện tại là `STANDARD`; task là `EPIC`/`SUBTASK` thì **khoá** ô loại. Đổi sai cấp → **400 `TASK_ISSUE_TYPE_CHANGE_NOT_ALLOWED`** (không có gì bị ghi). Gửi lại đúng loại hiện tại thì BE bỏ qua, không lỗi. Gửi `issueTypeId` khi **id** thay đổi (Task → Feature cũng là thay đổi, dù cùng nhóm hiển thị).
+- **Form tạo:** chọn `SUBTASK` thì **bắt buộc** chọn "Task cha" (`parentTaskId`), và task cha phải là loại `STANDARD` — BE tự dùng chính task đó làm cha trên Jira. Thiếu → **400 `TASK_SUBTASK_PARENT_REQUIRED`**; cha là Epic/Subtask → **400 `TASK_PARENT_TYPE_INVALID`**. Subtask **luôn chạy theo sprint của task cha**: ô Sprint nên ẩn (nếu vẫn gửi, BE bỏ qua; ngày bắt đầu/hạn được kiểm tra theo sprint của task cha). Chọn `EPIC` thì nên ẩn ô Sprint. Loại không thuộc project Jira → **400 `TASK_ISSUE_TYPE_INVALID`**.
+- Đổi loại **không ảnh hưởng tính điểm** (điểm chỉ dựa trên DONE + sprint + người được giao + label SAGA + story point).
+
 Dùng đúng `id` từ đây khi gửi `issueTypeId`/`priorityId` trong `POST`/`PATCH` task; dùng `accountId` từ `assignableUsers` khi gửi `assigneeAccountId` (mục 23). `sprints` trả rỗng nếu project chưa cấu hình board. `labels` là **danh sách label duy nhất được phép** — ô chọn label chỉ hiện đúng danh sách này, chọn tối đa 1 (xem luật label ở mục 19).
 
 ---

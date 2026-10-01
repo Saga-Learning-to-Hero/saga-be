@@ -79,6 +79,14 @@ public class ProjectGraphReader {
 				addRel(builder, record.get("assignee"), record.get("task"), "ASSIGNED_TO");
 				addRel(builder, record.get("task"), record.get("c"), "EVIDENCED_BY");
 			}
+			for (Record record : graph.read(
+					"""
+					MATCH (parent:Task {projectId: $projectId})-[:DECOMPOSED_INTO]->(child:Task {projectId: $projectId})
+					RETURN parent, child
+					""",
+					Map.of("projectId", projectUuid))) {
+				addHierarchyRow(builder, record);
+			}
 			return builder.build();
 		}
 		for (Record record : graph.read(
@@ -101,7 +109,24 @@ public class ProjectGraphReader {
 				Map.of("projectId", projectUuid, "sprintId", SagaGraphIds.sprint(sprintId)))) {
 			addOverviewTaskRow(builder, record);
 		}
+		// Parent links of this sprint's tasks; the parent (e.g. an Epic, which sits in no sprint) is
+		// pulled in so the decomposition EPIC -> task -> subtask stays visible.
+		for (Record record : graph.read(
+				"""
+				MATCH (sp:Sprint {id: $sprintId, projectId: $projectId})-[:CONTAINS]->(child:Task)
+				MATCH (parent:Task {projectId: $projectId})-[:DECOMPOSED_INTO]->(child)
+				RETURN parent, child
+				""",
+				Map.of("projectId", projectUuid, "sprintId", SagaGraphIds.sprint(sprintId)))) {
+			addHierarchyRow(builder, record);
+		}
 		return builder.build();
+	}
+
+	private static void addHierarchyRow(CytoscapeGraphBuilder builder, Record record) {
+		addNode(builder, record, "parent");
+		addNode(builder, record, "child");
+		addRel(builder, record.get("parent"), record.get("child"), "DECOMPOSED_INTO");
 	}
 
 	private static void addOverviewTaskRow(CytoscapeGraphBuilder builder, Record record) {
@@ -335,7 +360,9 @@ public class ProjectGraphReader {
 				anomaly,
 				str(node, "avatar"),
 				str(node, "role"),
-				storyPoint);
+				storyPoint,
+				str(node, "issueType"),
+				str(node, "issueTypeName"));
 	}
 
 	private static String str(Node node, String key) {

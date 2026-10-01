@@ -399,7 +399,7 @@ Năm endpoint Cytoscape dưới đây **đã chốt**, luôn scoped 1 project / 
 Quyền: `ProjectDataAuthorization.requireReader` (ACTIVE team member hoặc lecturer phụ trách course). ADMIN bị deny.
 
 `type` node: `STUDENT | TEAM | PROJECT | SPRINT | TASK | COMMIT | CRITERION | IDENTITY`  
-`label` cạnh: `MEMBER_OF | OWNS | HAS_SPRINT | CONTAINS | ASSIGNED_TO | EVIDENCED_BY | CLASSIFIED_AS | AUTHORED_BY | MAPS_TO | REVIEWED`
+`label` cạnh: `MEMBER_OF | OWNS | HAS_SPRINT | CONTAINS | ASSIGNED_TO | EVIDENCED_BY | DECOMPOSED_INTO | CLASSIFIED_AS | AUTHORED_BY | MAPS_TO | REVIEWED` (`DECOMPOSED_INTO` = task cha → task con theo Jira; node TASK có thêm `issueType`, `issueTypeName`)
 
 | Method | Path | Graph |
 | --- | --- | --- |

@@ -29,6 +29,7 @@ import com.saga.be.exception.IntegrationException;
 import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.jira.JiraIssueWriteClient;
 import com.saga.be.integration.jira.JiraIssueWriteClient.CreatedIssue;
+import com.saga.be.integration.jira.JiraIssueWriteClient.IssueTypeOption;
 import com.saga.be.integration.jira.JiraIssueWriteClient.TransitionOption;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
 import com.saga.be.integration.jira.JiraTeamTokenService;
@@ -189,6 +190,7 @@ class ProjectJiraTaskCommandServiceTest {
 		parent.setExternalId("10049");
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(parent.getId(), projectId)).thenReturn(Optional.of(parent));
 		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.getIssueType("token", "cloud", "10049")).thenReturn(new IssueTypeOption("10000", "Epic", null, false, 1));
 		when(jiraWrite.createIssue(eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), any(), any(), any(),
 				any(), any(), any(), any(), eq("10049"))).thenReturn(new CreatedIssue("10001", "SAGA-1"));
 		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
@@ -2145,6 +2147,284 @@ class ProjectJiraTaskCommandServiceTest {
 		verify(jiraWrite, never()).transitionIssue(any(), any(), any(), any());
 		verify(jiraWrite, never()).moveIssuesToSprint(any(), any(), any(), any());
 		verify(jiraWrite, never()).moveIssuesToBacklog(any(), any(), any(), any());
+	}
+
+	// ==================== ISSUE TYPE: EDIT ONLY WITHIN A LEVEL, SUBTASK NEEDS A PARENT ====================
+
+	private static final IssueTypeOption TYPE_TASK = new IssueTypeOption("10001", "Task", null, false, 0);
+	private static final IssueTypeOption TYPE_BUG = new IssueTypeOption("10004", "Bug", null, false, 0);
+	private static final IssueTypeOption TYPE_FEATURE = new IssueTypeOption("10005", "Feature", null, false, 0);
+	private static final IssueTypeOption TYPE_EPIC = new IssueTypeOption("10000", "Epic", null, false, 1);
+	private static final IssueTypeOption TYPE_SUBTASK = new IssueTypeOption("10003", "Subtask", null, true, -1);
+	private static final List<IssueTypeOption> PROJECT_TYPES =
+			List.of(TYPE_EPIC, TYPE_TASK, TYPE_BUG, TYPE_FEATURE, TYPE_SUBTASK);
+
+	private Task stubPatchableTask(JiraIntegration integration) {
+		stubLeader();
+		Task task = taskRow(integration);
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		return task;
+	}
+
+	private static PatchProjectTaskRequest typeOnly(String issueTypeId) {
+		return new PatchProjectTaskRequest(null, null, issueTypeId, null, null, null, null, null, null, null, null);
+	}
+
+	@Test
+	void patch_switchingBetweenNormalTypes_sendsTheNewType() {
+		JiraIntegration integration = activeJira();
+		Task task = stubPatchableTask(integration);
+		when(jiraWrite.getIssueType("token", "cloud", "10001")).thenReturn(TYPE_TASK);
+		when(jiraWrite.listProjectIssueTypes("token", "cloud", "10067")).thenReturn(PROJECT_TYPES);
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(userId, projectId, task.getId(), typeOnly("10005"));
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<java.util.Map<String, Object>> captor = ArgumentCaptor.forClass(java.util.Map.class);
+		verify(jiraWrite).updateIssueFields(eq("token"), eq("cloud"), eq("10001"), captor.capture());
+		assertThat(captor.getValue()).containsEntry("issuetype", java.util.Map.of("id", "10005"));
+	}
+
+	@Test
+	void patch_resendingTheCurrentType_isNotAChangeAndWritesNothing() {
+		JiraIntegration integration = activeJira();
+		Task task = stubPatchableTask(integration);
+		when(jiraWrite.getIssueType("token", "cloud", "10001")).thenReturn(TYPE_TASK);
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(task);
+		when(links.countLinksByProjectGrouped(projectId)).thenReturn(List.of());
+
+		service.patch(userId, projectId, task.getId(), typeOnly("10001"));
+
+		verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+		verify(jiraWrite, never()).listProjectIssueTypes(any(), any(), any());
+	}
+
+	@Test
+	void patch_normalTaskCannotBecomeASubtaskOrAnEpic() {
+		for (String target : List.of("10003", "10000")) {
+			org.mockito.Mockito.reset(jiraWrite, projection);
+			JiraIntegration integration = activeJira();
+			Task task = stubPatchableTask(integration);
+			when(jiraWrite.getIssueType("token", "cloud", "10001")).thenReturn(TYPE_TASK);
+			when(jiraWrite.listProjectIssueTypes("token", "cloud", "10067")).thenReturn(PROJECT_TYPES);
+
+			assertThatThrownBy(() -> service.patch(userId, projectId, task.getId(), typeOnly(target)))
+					.isInstanceOf(IntegrationException.class)
+					.extracting(ex -> ((IntegrationException) ex).getCode())
+					.isEqualTo(IntegrationErrorCode.TASK_ISSUE_TYPE_CHANGE_NOT_ALLOWED);
+			verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+			verify(projection, never()).upsertOne(any(), any(), any());
+		}
+	}
+
+	@Test
+	void patch_subtaskAndEpicKeepTheirType() {
+		for (IssueTypeOption current : List.of(TYPE_SUBTASK, TYPE_EPIC)) {
+			org.mockito.Mockito.reset(jiraWrite, projection);
+			JiraIntegration integration = activeJira();
+			Task task = stubPatchableTask(integration);
+			when(jiraWrite.getIssueType("token", "cloud", "10001")).thenReturn(current);
+			when(jiraWrite.listProjectIssueTypes("token", "cloud", "10067")).thenReturn(PROJECT_TYPES);
+
+			assertThatThrownBy(() -> service.patch(userId, projectId, task.getId(), typeOnly("10004")))
+					.isInstanceOf(IntegrationException.class)
+					.extracting(ex -> ((IntegrationException) ex).getCode())
+					.isEqualTo(IntegrationErrorCode.TASK_ISSUE_TYPE_CHANGE_NOT_ALLOWED);
+			verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+		}
+	}
+
+	@Test
+	void patch_typeChangeIsRefusedBeforeOtherFieldsAreWritten() {
+		JiraIntegration integration = activeJira();
+		Task task = stubPatchableTask(integration);
+		when(jiraWrite.getIssueType("token", "cloud", "10001")).thenReturn(TYPE_TASK);
+		when(jiraWrite.listProjectIssueTypes("token", "cloud", "10067")).thenReturn(PROJECT_TYPES);
+
+		assertThatThrownBy(() -> service.patch(
+						userId, projectId, task.getId(),
+						new PatchProjectTaskRequest("New title", null, "10003", null, null, null, 5, null, null, null, null)))
+				.isInstanceOf(IntegrationException.class);
+		verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+		verify(jiraWrite, never()).setIssueEstimation(any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void patch_typeFromAnotherProject_isInvalid() {
+		JiraIntegration integration = activeJira();
+		Task task = stubPatchableTask(integration);
+		when(jiraWrite.getIssueType("token", "cloud", "10001")).thenReturn(TYPE_TASK);
+		when(jiraWrite.listProjectIssueTypes("token", "cloud", "10067")).thenReturn(PROJECT_TYPES);
+
+		assertThatThrownBy(() -> service.patch(userId, projectId, task.getId(), typeOnly("99999")))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_ISSUE_TYPE_INVALID);
+		verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+	}
+
+	private static CreateProjectTaskRequest createRequest(
+			String issueTypeId, String sprintExternalId, UUID parentTaskId, UUID jiraParentTaskId) {
+		return new CreateProjectTaskRequest(
+				"Login", null, issueTypeId, null, null, null, null, sprintExternalId, null, null, null, parentTaskId,
+				jiraParentTaskId, null);
+	}
+
+	@Test
+	void create_subtaskWithoutAParent_isRefusedBeforeJiraCreate() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.listProjectIssueTypes("token", "cloud", "10067")).thenReturn(PROJECT_TYPES);
+
+		assertThatThrownBy(() -> service.create(userId, projectId, createRequest("10003", "5", null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_SUBTASK_PARENT_REQUIRED);
+		verify(jiraWrite, never()).createIssue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+		verify(jiraWrite, never()).createIssue(
+				any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void create_subtaskUsesTheFormsParentAsItsJiraParentAndFollowsTheParentsSprint() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		UUID parentId = UUID.randomUUID();
+		Task parent = new Task();
+		parent.setId(parentId);
+		parent.setTitle("Parent");
+		parent.setProject(project);
+		parent.setJiraIntegration(integration);
+		parent.setExternalId("10049");
+		Task saved = taskRow();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
+		when(tasks.findParentIdentity(parentId)).thenReturn(Optional.of(identity(parentId, projectId, null)));
+		when(tasks.findParentIdentity(saved.getId())).thenReturn(Optional.of(identity(saved.getId(), projectId, null)));
+		when(tasks.findParentTaskIdById(parentId)).thenReturn(Optional.empty());
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(saved.getId(), projectId)).thenReturn(Optional.of(saved));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(parentId, projectId)).thenReturn(Optional.of(parent));
+		when(tasks.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.listProjectIssueTypes("token", "cloud", "10067")).thenReturn(PROJECT_TYPES);
+		when(jiraWrite.getIssueType("token", "cloud", "10049")).thenReturn(TYPE_TASK);
+		when(jiraWrite.createIssue(eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), eq("10003"), any(), any(),
+				any(), any(), any(), any(), eq("10049"))).thenReturn(new CreatedIssue("10101", "SAGA-101"));
+		IssueSummary canonical = summary("10101", "SAGA-101", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10101")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(saved);
+
+		ProjectTaskResponse response = service.create(userId, projectId, createRequest("10003", "5", parentId, null));
+
+		verify(jiraWrite).createIssue(eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), eq("10003"), any(), any(),
+				any(), any(), any(), any(), eq("10049"));
+		verify(jiraWrite, never()).moveIssuesToSprint(any(), any(), any(), any());
+		assertThat(response.parentTask()).isNotNull();
+		assertThat(response.parentTask().id()).isEqualTo(parentId);
+	}
+
+	@Test
+	void create_subtaskUnderAnEpic_isRefused() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		UUID parentId = UUID.randomUUID();
+		Task epic = taskRow(integration);
+		epic.setId(parentId);
+		epic.setExternalId("10050");
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(parentId, projectId)).thenReturn(Optional.of(epic));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.listProjectIssueTypes("token", "cloud", "10067")).thenReturn(PROJECT_TYPES);
+		when(jiraWrite.getIssueType("token", "cloud", "10050")).thenReturn(TYPE_EPIC);
+
+		assertThatThrownBy(() -> service.create(userId, projectId, createRequest("10003", null, null, parentId)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_PARENT_TYPE_INVALID);
+		verify(jiraWrite, never()).createIssue(
+				any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void create_normalTaskUnderANormalJiraParent_isRefused() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		UUID parentId = UUID.randomUUID();
+		Task parent = taskRow(integration);
+		parent.setId(parentId);
+		parent.setExternalId("10049");
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(parentId, projectId)).thenReturn(Optional.of(parent));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.listProjectIssueTypes("token", "cloud", "10067")).thenReturn(PROJECT_TYPES);
+		when(jiraWrite.getIssueType("token", "cloud", "10049")).thenReturn(TYPE_BUG);
+
+		assertThatThrownBy(() -> service.create(userId, projectId, createRequest("10001", null, null, parentId)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_PARENT_TYPE_INVALID);
+	}
+
+	@Test
+	void create_normalTaskWithOnlyANativeParent_staysOutOfJiraHierarchy() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Project project = project();
+		UUID parentId = UUID.randomUUID();
+		Task parent = new Task();
+		parent.setId(parentId);
+		parent.setProject(project);
+		Task saved = taskRow();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
+		when(tasks.findParentIdentity(parentId)).thenReturn(Optional.of(identity(parentId, projectId, null)));
+		when(tasks.findParentIdentity(saved.getId())).thenReturn(Optional.of(identity(saved.getId(), projectId, null)));
+		when(tasks.findParentTaskIdById(parentId)).thenReturn(Optional.empty());
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(saved.getId(), projectId)).thenReturn(Optional.of(saved));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(parentId, projectId)).thenReturn(Optional.of(parent));
+		when(tasks.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.listProjectIssueTypes("token", "cloud", "10067")).thenReturn(PROJECT_TYPES);
+		when(jiraWrite.createIssue(any(), any(), any(), any(), any(), eq("10004"), any(), any(), any(), any(), any(), any()))
+				.thenReturn(new CreatedIssue("10001", "SAGA-1"));
+		IssueSummary canonical = summary("10001", "SAGA-1", "Login");
+		when(jiraWrite.getIssue("token", "cloud", "10001")).thenReturn(canonical);
+		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(saved);
+
+		service.create(userId, projectId, createRequest("10004", null, parentId, null));
+
+		verify(jiraWrite).createIssue(any(), any(), any(), any(), any(), eq("10004"), any(), any(), any(), any(), any(), any());
+		verify(jiraWrite, never()).getIssueType(any(), any(), any());
+	}
+
+	@Test
+	void options_tellTheFormEachTypesLevel() {
+		stubReader();
+		JiraIntegration integration = activeJira();
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.boardEstimationCapability(any(), any(), any()))
+				.thenReturn(new com.saga.be.integration.jira.JiraIssueWriteClient.EstimationInfo(false, null, null, null));
+		when(jiraWrite.listProjectIssueTypes("token", "cloud", "10067")).thenReturn(PROJECT_TYPES);
+
+		assertThat(service.options(userId, projectId, null).issueTypes())
+				.extracting(com.saga.be.dto.project.ProjectTaskOptionsResponse.IssueTypeOption::name,
+						com.saga.be.dto.project.ProjectTaskOptionsResponse.IssueTypeOption::level)
+				.containsExactly(
+						org.assertj.core.groups.Tuple.tuple("Epic", "EPIC"),
+						org.assertj.core.groups.Tuple.tuple("Task", "STANDARD"),
+						org.assertj.core.groups.Tuple.tuple("Bug", "STANDARD"),
+						org.assertj.core.groups.Tuple.tuple("Feature", "STANDARD"),
+						org.assertj.core.groups.Tuple.tuple("Subtask", "SUBTASK"));
 	}
 
 	private void stubLeader() {

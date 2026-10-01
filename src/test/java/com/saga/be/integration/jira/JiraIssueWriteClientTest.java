@@ -66,6 +66,58 @@ class JiraIssueWriteClientTest {
 	}
 
 	@Test
+	void listProjectIssueTypes_readsEachTypesHierarchyLevel() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issuetype/project?projectId=10067"))
+				.andRespond(withSuccess(
+						"""
+						[
+						  {"id":"10000","name":"Epic","subtask":false,"hierarchyLevel":1},
+						  {"id":"10001","name":"Task","subtask":false,"hierarchyLevel":0},
+						  {"id":"10003","name":"Subtask","subtask":true,"hierarchyLevel":-1},
+						  {"id":"10009","name":"Legacy"}
+						]
+						""",
+						MediaType.APPLICATION_JSON));
+
+		assertThat(client.listProjectIssueTypes("token", "cloud-1", "10067"))
+				.extracting(JiraIssueWriteClient.IssueTypeOption::name,
+						JiraIssueWriteClient.IssueTypeOption::subtask,
+						JiraIssueWriteClient.IssueTypeOption::hierarchyLevel)
+				.containsExactly(
+						org.assertj.core.groups.Tuple.tuple("Epic", false, 1),
+						org.assertj.core.groups.Tuple.tuple("Task", false, 0),
+						org.assertj.core.groups.Tuple.tuple("Subtask", true, -1),
+						org.assertj.core.groups.Tuple.tuple("Legacy", false, null));
+		server.verify();
+	}
+
+	@Test
+	void getIssueType_returnsTheIssuesCurrentTypeAndLevel() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issue/SAGA-7?fields=issuetype"))
+				.andRespond(withSuccess(
+						"""
+						{"fields":{"issuetype":{"id":"10003","name":"Subtask","subtask":true,"hierarchyLevel":-1}}}
+						""",
+						MediaType.APPLICATION_JSON));
+
+		JiraIssueWriteClient.IssueTypeOption type = client.getIssueType("token", "cloud-1", "SAGA-7");
+
+		assertThat(type.id()).isEqualTo("10003");
+		assertThat(type.subtask()).isTrue();
+		assertThat(type.hierarchyLevel()).isEqualTo(-1);
+		server.verify();
+	}
+
+	@Test
+	void getIssueType_withoutATypeInTheResponse_failsInsteadOfGuessing() {
+		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issue/SAGA-7?fields=issuetype"))
+				.andRespond(withSuccess("{\"fields\":{}}", MediaType.APPLICATION_JSON));
+
+		assertThatThrownBy(() -> client.getIssueType("token", "cloud-1", "SAGA-7"))
+				.isInstanceOf(com.saga.be.exception.IntegrationException.class);
+	}
+
+	@Test
 	void resolveStoryPointsFieldId_companyManaged_exactNameMatch() {
 		server.expect(requestTo("https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/field"))
 				.andRespond(withSuccess(

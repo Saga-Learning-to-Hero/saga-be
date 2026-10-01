@@ -30,6 +30,7 @@ public record GraphViewQuery(
 			"CONTAINS",
 			"ASSIGNED_TO",
 			"EVIDENCED_BY",
+			"DECOMPOSED_INTO",
 			"CLASSIFIED_AS",
 			"AUTHORED_BY",
 			"MAPS_TO",

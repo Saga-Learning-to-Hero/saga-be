@@ -21,6 +21,7 @@ import com.saga.be.integration.IntegrationErrorCode;
 import com.saga.be.integration.jira.JiraIssueWriteClient;
 import com.saga.be.integration.jira.JiraIssueWriteClient.CreatedIssue;
 import com.saga.be.integration.jira.JiraIssueWriteClient.EstimationInfo;
+import com.saga.be.integration.jira.JiraIssueWriteClient.IssueTypeOption;
 import com.saga.be.integration.jira.JiraIssueWriteClient.TransitionOption;
 import com.saga.be.integration.jira.JiraOAuthClient.IssueSummary;
 import com.saga.be.integration.jira.JiraTeamTokenService;
@@ -133,7 +134,13 @@ public class ProjectJiraTaskCommandService {
 		List<ProjectTaskOptionsResponse.IssueTypeOption> issueTypes = jiraWrite
 				.listProjectIssueTypes(access, integration.getCloudId(), integration.getJiraProjectId())
 				.stream()
-				.map(item -> new ProjectTaskOptionsResponse.IssueTypeOption(item.id(), item.name(), item.description()))
+				.map(item -> new ProjectTaskOptionsResponse.IssueTypeOption(
+						item.id(),
+						item.name(),
+						item.description(),
+						item.subtask(),
+						item.hierarchyLevel(),
+						TaskIssueTypePolicy.level(item).name()))
 				.toList();
 		List<ProjectTaskOptionsResponse.PriorityOption> priorities = jiraWrite
 				.listPriorities(access, integration.getCloudId())
@@ -172,19 +179,49 @@ public class ProjectJiraTaskCommandService {
 				? request.assigneeAccountId()
 				: memberSelfAssignee(userId, request.assigneeAccountId());
 		JiraIntegration integration = resolveJiraForCreate(projectId, request.jiraIntegrationId());
+		UUID nativeParentId = request.parentTaskId();
+		// Local checks first: a wrong-source parent is refused before any Jira call.
+		Task jiraParent = request.jiraParentTaskId() == null
+				? null
+				: requireJiraParent(projectId, integration, request.jiraParentTaskId());
+		boolean typeChosen = request.issueTypeId() != null && !request.issueTypeId().isBlank();
+		String access = typeChosen ? tokens.accessToken(integration) : null;
+		TaskIssueTypePolicy.Level level = typeChosen
+				? TaskIssueTypePolicy.level(requireProjectIssueType(access, integration, request.issueTypeId()))
+				: TaskIssueTypePolicy.Level.STANDARD;
+		boolean subtask = level == TaskIssueTypePolicy.Level.SUBTASK;
+		// The create form's "parent task" picker sends the native parentTaskId. A Jira Subtask cannot
+		// exist without a Jira parent, so for a Subtask that same task also becomes its Jira parent.
+		if (jiraParent == null && subtask && nativeParentId != null) {
+			jiraParent = requireJiraParent(projectId, integration, nativeParentId);
+		}
+		if (jiraParent != null && access == null) {
+			access = tokens.accessToken(integration);
+		}
+		TaskIssueTypePolicy.requireParent(
+				level,
+				jiraParent == null
+						? null
+						: TaskIssueTypePolicy.level(jiraWrite.getIssueType(access, integration.getCloudId(), jiraParent.getExternalId())));
+		// A Subtask always runs in its parent's sprint (Jira does not move subtasks on their own), so
+		// a sprint picked in the form is not applied to it and its dates are checked against the
+		// parent's sprint instead.
+		String sprintId = subtask ? null : request.resolvedSprintId();
 		if (request.startDate() != null || request.dueDate() != null) {
-			String sprintExternalId = request.resolvedSprintId();
-			Sprint targetSprint = sprintExternalId == null
-					? null
-					: sprints.findByJiraIntegration_IdAndExternalSprintId(integration.getId(), sprintExternalId).orElse(null);
+			Sprint targetSprint = subtask
+					? parentSprint(jiraParent)
+					: sprintId == null
+							? null
+							: sprints.findByJiraIntegration_IdAndExternalSprintId(integration.getId(), sprintId).orElse(null);
 			requireValidSchedule(request.startDate(), request.dueDate(), targetSprint);
 		}
-		UUID nativeParentId = request.parentTaskId();
 		if (nativeParentId != null) {
 			hierarchy.validateAssignable(projectId, null, nativeParentId);
 		}
-		String jiraParentIssueId = resolveJiraParentIssueId(projectId, integration, request.jiraParentTaskId());
-		String access = tokens.accessToken(integration);
+		String jiraParentIssueId = jiraParent == null ? null : jiraParent.getExternalId();
+		if (access == null) {
+			access = tokens.accessToken(integration);
+		}
 
 		CreatedIssue created = jiraParentIssueId == null ? jiraWrite.createIssue(
 				access,
@@ -216,7 +253,6 @@ public class ProjectJiraTaskCommandService {
 				secondaryFailed = true;
 			}
 		}
-		String sprintId = request.resolvedSprintId();
 		if (sprintId != null) {
 			try {
 				jiraWrite.moveIssuesToSprint(access, integration.getCloudId(), sprintId, List.of(created.id()));
@@ -304,7 +340,13 @@ public class ProjectJiraTaskCommandService {
 			fields.put("description", doc);
 		}
 		if (request.issueTypeId() != null && !request.issueTypeId().isBlank()) {
-			fields.put("issuetype", Map.of("id", request.issueTypeId()));
+			IssueTypeOption current = jiraWrite.getIssueType(access, integration.getCloudId(), issueRef);
+			// Re-sending the current type is not a change (the edit form may send it back unchanged).
+			if (!request.issueTypeId().equals(current.id())) {
+				TaskIssueTypePolicy.requireEditable(
+						current, requireProjectIssueType(access, integration, request.issueTypeId()));
+				fields.put("issuetype", Map.of("id", request.issueTypeId()));
+			}
 		}
 		if (Boolean.TRUE.equals(request.clearAssignee())) {
 			fields.put("assignee", null);
@@ -726,8 +768,24 @@ public class ProjectJiraTaskCommandService {
 						AcademicErrorCode.PROJECT_NOT_FOUND, HttpStatus.NOT_FOUND, "Task was not found for this project."));
 	}
 
-	private String resolveJiraParentIssueId(UUID projectId, JiraIntegration target, UUID jiraParentTaskId) {
-		if (jiraParentTaskId == null) return null;
+	/** Loaded by id: the parent's sprint is a lazy association and may be read outside a transaction. */
+	private Sprint parentSprint(Task parent) {
+		Sprint sprint = parent.getSprint();
+		return sprint == null || sprint.getId() == null ? null : sprints.findById(sprint.getId()).orElse(null);
+	}
+
+	/** The type from this Jira project's own issue types, else 400 TASK_ISSUE_TYPE_INVALID. */
+	private IssueTypeOption requireProjectIssueType(String access, JiraIntegration integration, String issueTypeId) {
+		return jiraWrite.listProjectIssueTypes(access, integration.getCloudId(), integration.getJiraProjectId()).stream()
+				.filter(type -> type != null && issueTypeId.equals(type.id()))
+				.findFirst()
+				.orElseThrow(() -> new IntegrationException(
+						IntegrationErrorCode.TASK_ISSUE_TYPE_INVALID,
+						HttpStatus.BAD_REQUEST,
+						"This issue type is not available in the task's Jira project."));
+	}
+
+	private Task requireJiraParent(UUID projectId, JiraIntegration target, UUID jiraParentTaskId) {
 		Task parent = tasks.findByIdAndProject_IdAndDeletedAtIsNull(jiraParentTaskId, projectId)
 				.orElseThrow(() -> new IntegrationException(IntegrationErrorCode.JIRA_PARENT_TASK_NOT_FOUND,
 						HttpStatus.NOT_FOUND, "Jira provider parent task was not found for this project."));
@@ -740,7 +798,7 @@ public class ProjectJiraTaskCommandService {
 			throw new IntegrationException(IntegrationErrorCode.JIRA_PARENT_PROVIDER_ID_MISSING, HttpStatus.BAD_REQUEST,
 					"Jira provider parent has no canonical Jira issue id.");
 		}
-		return parent.getExternalId();
+		return parent;
 	}
 
 	private ProjectTaskResponse toProjectedTask(UUID projectId, Task saved) {

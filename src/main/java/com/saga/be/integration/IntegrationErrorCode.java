@@ -95,6 +95,17 @@ public enum IntegrationErrorCode {
 	JIRA_PARENT_TASK_NOT_FOUND,
 	JIRA_PARENT_SOURCE_MISMATCH,
 	JIRA_PARENT_PROVIDER_ID_MISSING,
+	/** The requested issue type does not exist in the task's Jira project. */
+	TASK_ISSUE_TYPE_INVALID,
+	/**
+	 * An edit may only switch between same-level types (Task/Story/Feature/Bug...); an Epic or a
+	 * Subtask keeps its type, and nothing becomes an Epic or a Subtask by editing.
+	 */
+	TASK_ISSUE_TYPE_CHANGE_NOT_ALLOWED,
+	/** A Subtask must be created under a parent task. */
+	TASK_SUBTASK_PARENT_REQUIRED,
+	/** Wrong parent level: a Subtask goes under a normal task, a normal task only under an Epic. */
+	TASK_PARENT_TYPE_INVALID,
 	WEBHOOK_SIGNATURE_INVALID,
 	WEBHOOK_DUPLICATE,
 	INTEGRATION_REVOKED,

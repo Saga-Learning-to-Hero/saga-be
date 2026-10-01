@@ -177,6 +177,6 @@ class ProjectGraphProjectorTest {
 
 	private ProjectGraphSnapshot snapshot() {
 		return new ProjectGraphSnapshot(
-				projectId, "demo", null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+				projectId, "demo", null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
 	}
 }
