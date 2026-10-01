@@ -104,6 +104,11 @@ public enum IntegrationErrorCode {
 	TASK_ISSUE_TYPE_CHANGE_NOT_ALLOWED,
 	/** A Subtask must be created under a parent task. */
 	TASK_SUBTASK_PARENT_REQUIRED,
+	/**
+	 * Subtask story points are a 1–10 share of the parent (6 means 60%). Missing, out of range, or a
+	 * total above 100% across the parent's subtasks.
+	 */
+	TASK_SUBTASK_PERCENT_INVALID,
 	/** Wrong parent level: a Subtask goes under a normal task, a normal task only under an Epic. */
 	TASK_PARENT_TYPE_INVALID,
 	/** No delay case with this id in this project. */

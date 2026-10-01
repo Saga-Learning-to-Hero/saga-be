@@ -60,4 +60,14 @@ class SagaGraphRulesTest {
 		assertTrue(attrs.anomaly());
 		assertFalse(SagaGraphRules.classify(TaskStatus.DONE, List.of("saga:code", "saga:test"), false, 1).anomaly());
 	}
+
+	@Test
+	void parentWithSubtasksIsNotAnAnomalyForMissingProof() {
+		TaskGraphAttrs code = SagaGraphRules.classify(TaskStatus.DONE, List.of("saga:code"), false, 0, true);
+		assertEquals("CODE", code.weightType());
+		assertFalse(code.anomaly());
+		TaskGraphAttrs document = SagaGraphRules.classify(TaskStatus.DONE, List.of("saga:document"), false, 0, true);
+		assertEquals("DOCUMENT", document.weightType());
+		assertFalse(document.anomaly());
+	}
 }

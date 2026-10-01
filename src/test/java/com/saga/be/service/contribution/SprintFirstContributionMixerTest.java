@@ -87,7 +87,7 @@ class SprintFirstContributionMixerTest {
 
 	@Test
 	void backlogTaskWithoutSprintIsIgnored() {
-		List<TaskFact> tasks = List.of(new TaskFact(AN, null, null, TaskStatus.DONE, 8, ContributionCriterion.CODE));
+		List<TaskFact> tasks = List.of(new TaskFact(AN, null, null, TaskStatus.DONE, BigDecimal.valueOf(8), ContributionCriterion.CODE));
 		Result result = SprintFirstContributionMixer.mix(List.of(new Member(AN)), tasks, List.of(), WEIGHTS, List.of());
 		assertEquals(bd("0.00"), scale2(member(result, AN).sliceScore()));
 	}
@@ -208,7 +208,7 @@ class SprintFirstContributionMixerTest {
 	}
 
 	private static TaskFact task(UUID student, UUID sprint, ContributionCriterion criterion, int sp) {
-		return new TaskFact(student, sprint, sprint.toString(), TaskStatus.DONE, sp, criterion);
+		return new TaskFact(student, sprint, sprint.toString(), TaskStatus.DONE, BigDecimal.valueOf(sp), criterion);
 	}
 
 	private static MemberResult member(Result result, UUID id) {
