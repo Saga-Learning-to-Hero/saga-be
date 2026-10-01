@@ -7,6 +7,7 @@ import com.saga.be.dto.roster.CourseRosterResponse;
 import com.saga.be.dto.roster.RosterConfirmRequest;
 import com.saga.be.dto.roster.RosterConfirmResponse;
 import com.saga.be.dto.roster.RosterPreviewResponse;
+import com.saga.be.dto.roster.StudentRemovalRequest;
 import com.saga.be.entity.account.UserAccount;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
@@ -23,6 +24,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.io.IOException;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -54,10 +56,20 @@ public class AdminCourseRosterController {
 
 	private final CourseRosterService roster;
 	private final UserAccountRepository users;
+	private final boolean removalReasonRequired;
 
-	public AdminCourseRosterController(CourseRosterService roster, UserAccountRepository users) {
+	/**
+	 * {@code removalReasonRequired} (env SAGA_ROSTER_REMOVAL_REASON_REQUIRED) stays false only until
+	 * the FE sends {"reason"} on roster removal; while false, a DELETE with no body still withdraws
+	 * the student (the legacy FE call) and the student is notified without a reason.
+	 */
+	public AdminCourseRosterController(
+			CourseRosterService roster,
+			UserAccountRepository users,
+			@Value("${saga.roster.removal-reason-required:false}") boolean removalReasonRequired) {
 		this.roster = roster;
 		this.users = users;
+		this.removalReasonRequired = removalReasonRequired;
 	}
 
 	@GetMapping("/template")
@@ -131,14 +143,25 @@ public class AdminCourseRosterController {
 					ACTIVE Leader of a team in this course, this is refused with 409 \
 					TEAM_LEADER_REMOVAL_REQUIRES_REASSIGNMENT — reassign the team's Leader first, \
 					then retry. Repeating this call on an already-withdrawn enrollment returns 409 \
-					ROSTER_STUDENT_ALREADY_REMOVED.
+					ROSTER_STUDENT_ALREADY_REMOVED. Send JSON body {"reason": "..."} (1-500 chars, else \
+					400 REQUEST_INVALID); the student receives it by in-app notification and email. \
+					Transition: until saga.roster.removal-reason-required=true, a request with NO body \
+					is still accepted (student notified without a reason); afterwards it is 400.
 					""")
 	public CourseRosterEntryResponse removeEnrollment(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID courseId,
 			@PathVariable UUID enrollmentId,
+			@Valid @RequestBody(required = false) StudentRemovalRequest request,
 			HttpServletRequest http) {
-		return roster.removeEnrollment(courseId, enrollmentId, actor(principal), audit(http));
+		if (request == null) {
+			if (removalReasonRequired) {
+				throw new AcademicException(
+						AcademicErrorCode.REQUEST_INVALID, HttpStatus.BAD_REQUEST, "A reason is required to remove a student.");
+			}
+			return roster.removeEnrollmentWithoutReason(courseId, enrollmentId, actor(principal), audit(http));
+		}
+		return roster.removeEnrollment(courseId, enrollmentId, actor(principal), request.reason(), audit(http));
 	}
 
 	@DeleteMapping("/invitations/{invitationId}")

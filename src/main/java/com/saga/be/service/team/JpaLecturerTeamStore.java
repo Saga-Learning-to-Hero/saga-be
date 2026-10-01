@@ -112,4 +112,10 @@ public class JpaLecturerTeamStore implements LecturerTeamStore {
 	public TeamMember saveMember(TeamMember member) {
 		return members.save(member);
 	}
+
+	@Override
+	public void deleteMember(TeamMember member) {
+		members.delete(member);
+		members.flush();
+	}
 }

@@ -203,7 +203,7 @@ class RosterRemovalVsLeaderReassignmentConcurrencyTest {
 		Thread removeThread = Thread.ofVirtual().start(() -> {
 			try {
 				start.await();
-				rosterService.removeEnrollment(course.getId(), memberEnrollment.getId(), admin, auditReq());
+				rosterService.removeEnrollment(course.getId(), memberEnrollment.getId(), admin, "Transferred to another class.", auditReq());
 			} catch (AcademicException ex) {
 				removeFailure.set(ex);
 			} catch (InterruptedException ex) {

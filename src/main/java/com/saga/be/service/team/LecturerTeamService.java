@@ -29,6 +29,7 @@ import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.audit.AuditService;
 import com.saga.be.service.lecturer.LecturerCourseAuthorization;
 import com.saga.be.service.mail.EmailOutboxService;
+import com.saga.be.service.notification.StudentRemovalNotifier;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -62,6 +63,7 @@ public class LecturerTeamService {
 	public static final String TEAM_MEMBER_ASSIGNED = "TEAM_MEMBER_ASSIGNED";
 	public static final String TEAM_MEMBER_REASSIGNED = "TEAM_MEMBER_REASSIGNED";
 	public static final String TEAM_MEMBER_ROLE_CHANGED = "TEAM_MEMBER_ROLE_CHANGED";
+	public static final String TEAM_MEMBER_REMOVED = "TEAM_MEMBER_REMOVED";
 
 	private final LecturerCourseAuthorization authorization;
 	private final LecturerTeamStore store;
@@ -71,6 +73,7 @@ public class LecturerTeamService {
 	private final EmailTemplateService templates;
 	private final AuditService audit;
 	private final PlatformTransactionManager transactionManager;
+	private StudentRemovalNotifier removalNotifier;
 	private final SecureRandom random = new SecureRandom();
 
 	public LecturerTeamService(
@@ -212,6 +215,84 @@ public class LecturerTeamService {
 			return null;
 		});
 		return listTeams(actor, courseId);
+	}
+
+	/**
+	 * Takes a student off their team while they stay enrolled (they reappear in unassignedStudents).
+	 * A reason is mandatory and reaches the student by in-app notification and email, committed with
+	 * the removal. The team's Leader can only be removed once another Leader is assigned, unless they
+	 * are its last active member.
+	 */
+	public LecturerCourseTeamsResponse removeMember(
+			UserAccount actor, UUID courseId, UUID teamMemberId, String reason, AuditRequest auditRequest) {
+		String cleanReason = StudentRemovalNotifier.requireReason(reason);
+		authorization.requireCourse(actor, courseId);
+		writeAtomic(() -> {
+			applyRemoveMember(courseId, teamMemberId, cleanReason, actor, auditRequest);
+			return null;
+		});
+		return listTeams(actor, courseId);
+	}
+
+	/** Required in the running app; left null only by unit tests that build this service by hand. */
+	@Autowired
+	public void setRemovalNotifier(StudentRemovalNotifier removalNotifier) {
+		this.removalNotifier = removalNotifier;
+	}
+
+	private Void applyRemoveMember(
+			UUID courseId, UUID teamMemberId, String reason, UserAccount actor, AuditRequest auditRequest) {
+		TeamMember probe = store.findMemberById(teamMemberId)
+				.filter(row -> row.getCourse() != null && courseId.equals(row.getCourse().getId()))
+				.orElseThrow(() -> new AcademicException(
+						AcademicErrorCode.TEAM_NOT_FOUND, HttpStatus.NOT_FOUND, "Team member was not found in this course."));
+		if (probe.getTeam() == null || probe.getTeam().getId() == null) {
+			throw new AcademicException(AcademicErrorCode.TEAM_NOT_FOUND, HttpStatus.NOT_FOUND, "Team was not found.");
+		}
+		Team team = requireLockedTeam(courseId, probe.getTeam().getId());
+		TeamMember member = store.findMemberById(teamMemberId)
+				.filter(row -> row.getTeam() != null && team.getId().equals(row.getTeam().getId()))
+				.orElseThrow(() -> new AcademicException(
+						AcademicErrorCode.TEAM_NOT_FOUND, HttpStatus.NOT_FOUND, "Team member was not found on this team."));
+		List<TeamMember> teamMembers = store.listMembersByTeamId(team.getId());
+		if (member.getRoleInTeam() == RoleInTeam.LEADER) {
+			boolean othersRemain = teamMembers.stream()
+					.filter(this::isActiveMember)
+					.anyMatch(row -> !row.getId().equals(member.getId()));
+			if (othersRemain) {
+				throw new AcademicException(
+						AcademicErrorCode.TEAM_LEADER_INVALID,
+						HttpStatus.CONFLICT,
+						"This student is the team Leader. Assign another Leader before removing them from the team.");
+			}
+		}
+		CourseEnrollment enrollment = member.getCourseEnrollment();
+		Map<String, Object> before = new LinkedHashMap<>();
+		before.put("teamId", team.getId());
+		before.put("teamNo", team.getTeamNo());
+		before.put("role", member.getRoleInTeam() == null ? null : member.getRoleInTeam().name());
+		before.put("courseEnrollmentId", enrollment == null ? null : enrollment.getId());
+		store.deleteMember(member);
+		Map<UUID, TeamMember> remaining = new LinkedHashMap<>();
+		for (TeamMember row : teamMembers) {
+			if (!row.getId().equals(member.getId()) && row.getCourseEnrollment() != null) {
+				remaining.put(row.getCourseEnrollment().getId(), row);
+			}
+		}
+		assertLeadershipForOccupiedTeams(Set.of(team.getId()), remaining);
+		record(
+				actor,
+				team,
+				TEAM_MEMBER_REMOVED,
+				"team_member",
+				member.getId(),
+				before,
+				Map.of("reason", reason, "removedBy", StudentRemovalNotifier.removedBy(actor)),
+				auditRequest);
+		if (removalNotifier != null && enrollment != null) {
+			removalNotifier.teamRemoved(enrollment, team.getCourse(), team, reason, actor);
+		}
+		return null;
 	}
 
 	public LecturerCourseTeamsResponse moveMember(

@@ -15,6 +15,8 @@ public class EmailTemplateService {
 	public static final String TEAM_ASSIGNED = "team-assigned";
 	public static final String DEV_SMOKE = "dev-smoke";
 	public static final String SPRINT_PERIOD_OVERLAP = "sprint-period-overlap";
+	public static final String COURSE_WITHDRAWN = "course-withdrawn";
+	public static final String TEAM_REMOVED = "team-removed";
 
 	private final FrontendLinkResolver links;
 
@@ -273,6 +275,76 @@ public class EmailTemplateService {
 		payload.put("fullName", text(fullName));
 		payload.put("recipientEmail", text(recipientEmail));
 		payload.put("projectName", project);
+		payload.put("ctaUrl", cta);
+		return payload;
+	}
+
+	/**
+	 * Tells a student they were removed from a course (withdrawn from its roster) or only from their
+	 * team (still enrolled), with the staff-entered reason. The reason is user text: it is only ever
+	 * placed in the escaped info panel, never in raw HTML.
+	 *
+	 * @param model course/class/semester and, for a team removal, the team they left
+	 * @param teamOnly true = removed from the team but still in the course
+	 * @param removedBy "Lecturer" or "Admin"
+	 */
+	public Map<String, Object> studentRemovalPayload(
+			EmailTemplateModel model, boolean teamOnly, String reason, String removedBy) {
+		EmailTemplateModel safe = model == null ? EmailTemplateModel.course("", "", "", "", "", "", "", false) : model;
+		String code = displayCode(safe);
+		String subject = teamOnly ? "SAGA — You were removed from your team in " + code : "SAGA — You were removed from " + code;
+		String greeting = greeting(safe.fullName());
+		String courseLine = courseLine(safe);
+		String semester = semesterLine(safe);
+		String by = EmailHtml.blankTo(text(removedBy), "Course staff");
+		String why = EmailHtml.blankTo(text(reason), "Not provided");
+		String explain = teamOnly
+				? "You were removed from your team. You are still enrolled in the course; your lecturer may assign you to another team."
+				: "You were removed from the course roster and can no longer access this course in SAGA.";
+		String cta = links.dashboardUrl();
+		String text = greeting
+				+ "\n\n"
+				+ explain
+				+ "\n\nCourse: "
+				+ courseLine
+				+ "\nClass: "
+				+ displayClass(safe)
+				+ "\nSemester: "
+				+ semester
+				+ (teamOnly ? "\nTeam: " + teamLine(safe) : "")
+				+ "\nRemoved by: "
+				+ by
+				+ "\nReason: "
+				+ why
+				+ "\n\nOpen SAGA: "
+				+ cta
+				+ footerText();
+		String inner = """
+			<p style="margin:0 0 16px 0;">%s</p>
+			<h1 style="margin:0 0 12px 0;font-size:22px;line-height:28px;color:#0f172a;">%s</h1>
+			<p style="margin:0 0 20px 0;">%s</p>
+			"""
+				.formatted(
+						EmailHtml.escape(greeting),
+						teamOnly ? "You were removed from your team" : "You were removed from a course",
+						EmailHtml.escape(explain));
+		String panel = teamOnly
+				? SagaEmailLayout.infoPanel(
+						"Course", courseLine, "Class", displayClass(safe), "Semester", semester, "Team", teamLine(safe),
+						"Removed by", by, "Reason", why)
+				: SagaEmailLayout.infoPanel(
+						"Course", courseLine, "Class", displayClass(safe), "Semester", semester, "Removed by", by, "Reason", why);
+		String html = SagaEmailLayout.document(subject, inner, "Open SAGA", cta, panel);
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("subject", subject);
+		payload.put("textBody", text);
+		payload.put("htmlBody", html);
+		payload.put("fullName", text(safe.fullName()));
+		payload.put("recipientEmail", text(safe.recipientEmail()));
+		payload.put("courseCode", text(safe.courseCode()));
+		payload.put("classCode", text(safe.classCode()));
+		payload.put("reason", why);
+		payload.put("removedBy", by);
 		payload.put("ctaUrl", cta);
 		return payload;
 	}

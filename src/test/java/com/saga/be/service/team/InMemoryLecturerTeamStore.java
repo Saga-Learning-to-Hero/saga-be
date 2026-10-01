@@ -118,6 +118,11 @@ final class InMemoryLecturerTeamStore implements LecturerTeamStore {
 	}
 
 	@Override
+	public void deleteMember(TeamMember member) {
+		members.remove(member.getId());
+	}
+
+	@Override
 	public <T> T inTransaction(Supplier<T> action) {
 		Snapshot snapshot = snapshot();
 		try {

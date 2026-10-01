@@ -622,6 +622,79 @@ class LecturerTeamServiceTest {
 	}
 
 	@Test
+	void removingAMemberFromTheTeamKeepsThemInTheCourseAndTellsThem() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		Team teamA = store.teams.values().iterator().next();
+		com.saga.be.service.notification.StudentRemovalNotifier notifier =
+				org.mockito.Mockito.mock(com.saga.be.service.notification.StudentRemovalNotifier.class);
+		service.setRemovalNotifier(notifier);
+		TeamMember betaMember = store.findMemberByEnrollment(beta.getId()).orElseThrow();
+
+		LecturerCourseTeamsResponse after =
+				service.removeMember(lecturer, course.getId(), betaMember.getId(), "  Moved to a smaller team ", auditReq());
+
+		assertTrue(store.findMemberByEnrollment(beta.getId()).isEmpty());
+		assertEquals(List.of(beta.getId()), after.unassignedStudents().stream()
+				.map(row -> row.courseEnrollmentId())
+				.toList());
+		assertEquals(1, after.teams().getFirst().members().size());
+		verify(notifier).teamRemoved(eq(beta), eq(course), eq(teamA), eq("Moved to a smaller team"), eq(lecturer));
+		verify(audit).record(
+				eq(lecturer), any(), eq(teamA), eq(LecturerTeamService.TEAM_MEMBER_REMOVED), eq("team_member"),
+				eq(betaMember.getId()), any(),
+				org.mockito.ArgumentMatchers.argThat(after2 -> "Moved to a smaller team".equals(after2.get("reason"))),
+				any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void theLeaderCannotBeRemovedWhileOthersRemainButTheLastMemberCan() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		TeamMember leader = store.findMemberByEnrollment(alpha.getId()).orElseThrow();
+		TeamMember member = store.findMemberByEnrollment(beta.getId()).orElseThrow();
+
+		AcademicException blocked = assertThrows(
+				AcademicException.class,
+				() -> service.removeMember(lecturer, course.getId(), leader.getId(), "Leaving", auditReq()));
+		assertEquals(AcademicErrorCode.TEAM_LEADER_INVALID, blocked.getCode());
+		assertTrue(store.findMemberByEnrollment(alpha.getId()).isPresent());
+
+		service.removeMember(lecturer, course.getId(), member.getId(), "Leaving", auditReq());
+		service.removeMember(lecturer, course.getId(), leader.getId(), "Team dissolved", auditReq());
+
+		assertTrue(store.findMemberByEnrollment(alpha.getId()).isEmpty());
+		assertTrue(store.findMemberByEnrollment(beta.getId()).isEmpty());
+	}
+
+	@Test
+	void teamRemovalNeedsAReasonAndAMemberOfThisCourse() throws Exception {
+		service.confirm(lecturer, course.getId(), preview(validAssignment()).previewToken(), auditReq());
+		TeamMember member = store.findMemberByEnrollment(beta.getId()).orElseThrow();
+		com.saga.be.service.notification.StudentRemovalNotifier notifier =
+				org.mockito.Mockito.mock(com.saga.be.service.notification.StudentRemovalNotifier.class);
+		service.setRemovalNotifier(notifier);
+
+		assertEquals(
+				AcademicErrorCode.REQUEST_INVALID,
+				assertThrows(AcademicException.class,
+								() -> service.removeMember(lecturer, course.getId(), member.getId(), " ", auditReq()))
+						.getCode());
+		assertEquals(
+				AcademicErrorCode.TEAM_NOT_FOUND,
+				assertThrows(AcademicException.class,
+								() -> service.removeMember(lecturer, course.getId(), UUID.randomUUID(), "Leaving", auditReq()))
+						.getCode());
+		Course other = course("SE1706");
+		org.mockito.Mockito.lenient().when(authorization.requireCourse(any(), eq(other.getId()))).thenReturn(other);
+		assertEquals(
+				AcademicErrorCode.TEAM_NOT_FOUND,
+				assertThrows(AcademicException.class,
+								() -> service.removeMember(lecturer, other.getId(), member.getId(), "Leaving", auditReq()))
+						.getCode());
+		assertTrue(store.findMemberByEnrollment(beta.getId()).isPresent());
+		org.mockito.Mockito.verifyNoInteractions(notifier);
+	}
+
+	@Test
 	void unrelatedLecturerIsForbiddenByAuthorization() {
 		UserAccount other = account(AccountRole.LECTURER, "other@fe.edu.vn");
 		when(authorization.requireCourse(eq(other), eq(course.getId())))

@@ -35,6 +35,12 @@ public interface LecturerTeamStore {
 
 	TeamMember saveMember(TeamMember member);
 
+	/**
+	 * Removes a membership row. Nothing holds a foreign key to {@code team_member.id}; the (team,
+	 * role) fact survives in the caller's audit record.
+	 */
+	void deleteMember(TeamMember member);
+
 	default <T> T inTransaction(Supplier<T> action) {
 		return action.get();
 	}

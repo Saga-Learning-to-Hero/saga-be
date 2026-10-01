@@ -773,7 +773,7 @@ class CourseRosterServiceTest {
 	@Test
 	void adminRemovesActiveStudentSuccessfully() {
 		CourseEnrollment enrollment = enrollExisting("a@gmail.com", "SE00000A", "A");
-		var response = service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq());
+		var response = service.removeEnrollment(course.getId(), enrollment.getId(), admin, "Transferred to another class.", auditReq());
 		assertEquals("WITHDRAWN", response.enrollmentStatus());
 		assertEquals(EnrollmentStatus.WITHDRAWN, store.enrollments.get(enrollment.getId()).getEnrollmentStatus());
 		// Account/profile are untouched by removal — only the enrollment row's status changes.
@@ -782,12 +782,107 @@ class CourseRosterServiceTest {
 	}
 
 	@Test
+	void removalNeedsAReasonAndChangesNothingWithoutOne() {
+		CourseEnrollment enrollment = enrollExisting("a@gmail.com", "SE00000A", "A");
+		com.saga.be.service.notification.StudentRemovalNotifier notifier =
+				org.mockito.Mockito.mock(com.saga.be.service.notification.StudentRemovalNotifier.class);
+		service.setRemovalNotifier(notifier);
+
+		for (String reason : new String[] {null, "", "   ", "x".repeat(501)}) {
+			AcademicException ex = assertThrows(
+					AcademicException.class,
+					() -> service.removeEnrollment(course.getId(), enrollment.getId(), admin, reason, auditReq()));
+			assertEquals(AcademicErrorCode.REQUEST_INVALID, ex.getCode());
+		}
+		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.get(enrollment.getId()).getEnrollmentStatus());
+		org.mockito.Mockito.verifyNoInteractions(notifier);
+	}
+
+	@Test
+	void removalTellsTheStudentAndAuditsTheTrimmedReason() {
+		CourseEnrollment enrollment = enrollExisting("a@gmail.com", "SE00000A", "A");
+		com.saga.be.service.notification.StudentRemovalNotifier notifier =
+				org.mockito.Mockito.mock(com.saga.be.service.notification.StudentRemovalNotifier.class);
+		service.setRemovalNotifier(notifier);
+
+		service.removeEnrollment(course.getId(), enrollment.getId(), admin, "  Moved to SE1706  ", auditReq());
+
+		verify(notifier).courseWithdrawn(
+				org.mockito.ArgumentMatchers.argThat(row -> row.getId().equals(enrollment.getId())),
+				org.mockito.ArgumentMatchers.argThat(row -> row.getId().equals(course.getId())),
+				eq("Moved to SE1706"),
+				eq(admin));
+		verify(audit).record(
+				eq(admin),
+				any(),
+				any(),
+				eq(CourseRosterService.COURSE_ROSTER_STUDENT_REMOVED),
+				eq("course_enrollment"),
+				eq(enrollment.getId()),
+				any(),
+				any(),
+				org.mockito.ArgumentMatchers.argThat(meta -> "Moved to SE1706".equals(meta.get("reason"))
+						&& "Admin".equals(meta.get("removedBy"))),
+				any(),
+				any(),
+				any(),
+				any());
+	}
+
+	@Test
+	void legacyRemovalWithoutReasonStillWithdrawsAndNotifiesWithoutAReason() {
+		CourseEnrollment enrollment = enrollExisting("b@gmail.com", "SE00000B", "B");
+		com.saga.be.service.notification.StudentRemovalNotifier notifier =
+				org.mockito.Mockito.mock(com.saga.be.service.notification.StudentRemovalNotifier.class);
+		service.setRemovalNotifier(notifier);
+
+		service.removeEnrollmentWithoutReason(course.getId(), enrollment.getId(), admin, auditReq());
+
+		assertEquals(EnrollmentStatus.WITHDRAWN, enrollment.getEnrollmentStatus());
+		verify(notifier).courseWithdrawn(
+				org.mockito.ArgumentMatchers.argThat(row -> row.getId().equals(enrollment.getId())),
+				any(),
+				isNull(),
+				eq(admin));
+		verify(audit).record(
+				eq(admin),
+				any(),
+				any(),
+				eq(CourseRosterService.COURSE_ROSTER_STUDENT_REMOVED),
+				eq("course_enrollment"),
+				eq(enrollment.getId()),
+				any(),
+				any(),
+				org.mockito.ArgumentMatchers.argThat(meta -> !meta.containsKey("reason")
+						&& "Admin".equals(meta.get("removedBy"))),
+				any(),
+				any(),
+				any(),
+				any());
+	}
+
+	@Test
+	void blockedLeaderRemovalSendsNoNotification() {
+		CourseEnrollment enrollment = enrollExisting("leader@gmail.com", "SE00000L", "Leader");
+		teamWith(enrollment, RoleInTeam.LEADER);
+		com.saga.be.service.notification.StudentRemovalNotifier notifier =
+				org.mockito.Mockito.mock(com.saga.be.service.notification.StudentRemovalNotifier.class);
+		service.setRemovalNotifier(notifier);
+
+		assertThrows(
+				AcademicException.class,
+				() -> service.removeEnrollment(course.getId(), enrollment.getId(), admin, "Leaving", auditReq()));
+
+		org.mockito.Mockito.verifyNoInteractions(notifier);
+	}
+
+	@Test
 	void removingAlreadyWithdrawnEnrollmentIsConflict() {
 		CourseEnrollment enrollment = enrollExisting("a@gmail.com", "SE00000A", "A");
-		service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq());
+		service.removeEnrollment(course.getId(), enrollment.getId(), admin, "Transferred to another class.", auditReq());
 		AcademicException ex = assertThrows(
 				AcademicException.class,
-				() -> service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq()));
+				() -> service.removeEnrollment(course.getId(), enrollment.getId(), admin, "Transferred to another class.", auditReq()));
 		assertEquals(AcademicErrorCode.ROSTER_STUDENT_ALREADY_REMOVED, ex.getCode());
 	}
 
@@ -795,7 +890,7 @@ class CourseRosterServiceTest {
 	void removingUnknownEnrollmentIsNotFound() {
 		AcademicException ex = assertThrows(
 				AcademicException.class,
-				() -> service.removeEnrollment(course.getId(), UUID.randomUUID(), admin, auditReq()));
+				() -> service.removeEnrollment(course.getId(), UUID.randomUUID(), admin, "Transferred to another class.", auditReq()));
 		assertEquals(AcademicErrorCode.ROSTER_STUDENT_NOT_FOUND, ex.getCode());
 	}
 
@@ -805,7 +900,7 @@ class CourseRosterServiceTest {
 		CourseEnrollment enrollment = enrollExisting("a@gmail.com", "SE00000A", "A");
 		AcademicException ex = assertThrows(
 				AcademicException.class,
-				() -> service.removeEnrollment(otherCourse.getId(), enrollment.getId(), admin, auditReq()));
+				() -> service.removeEnrollment(otherCourse.getId(), enrollment.getId(), admin, "Transferred to another class.", auditReq()));
 		assertEquals(AcademicErrorCode.ROSTER_STUDENT_NOT_FOUND, ex.getCode());
 		assertEquals(
 				EnrollmentStatus.ACTIVE,
@@ -816,7 +911,7 @@ class CourseRosterServiceTest {
 	void removingNormalTeamMemberWithdrawsEnrollmentDeletesMembershipKeepsTeam() {
 		CourseEnrollment enrollment = enrollExisting("member@gmail.com", "SE00000M", "Member");
 		Team team = teamWith(enrollment, RoleInTeam.MEMBER);
-		var response = service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq());
+		var response = service.removeEnrollment(course.getId(), enrollment.getId(), admin, "Transferred to another class.", auditReq());
 		assertEquals("WITHDRAWN", response.enrollmentStatus());
 		// The TeamMember row is deleted (nothing references team_member.id, so no evidence is
 		// lost) — this is what stops a later re-add from silently resurrecting old team
@@ -831,7 +926,7 @@ class CourseRosterServiceTest {
 	void reAddingFormerTeamMemberDoesNotResurrectOldTeamMembership() {
 		CourseEnrollment enrollment = enrollExisting("member@gmail.com", "SE00000M", "Member");
 		teamWith(enrollment, RoleInTeam.MEMBER);
-		service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq());
+		service.removeEnrollment(course.getId(), enrollment.getId(), admin, "Transferred to another class.", auditReq());
 		service.addStudent(course.getId(), addRequest("Member", "SE00000M", "member@gmail.com"), admin, auditReq());
 		// Enrollment is reactivated (same row reused)...
 		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.get(enrollment.getId()).getEnrollmentStatus());
@@ -846,7 +941,7 @@ class CourseRosterServiceTest {
 		teamWith(enrollment, RoleInTeam.LEADER);
 		AcademicException ex = assertThrows(
 				AcademicException.class,
-				() -> service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq()));
+				() -> service.removeEnrollment(course.getId(), enrollment.getId(), admin, "Transferred to another class.", auditReq()));
 		assertEquals(AcademicErrorCode.TEAM_LEADER_REMOVAL_REQUIRES_REASSIGNMENT, ex.getCode());
 		assertEquals(
 				EnrollmentStatus.ACTIVE,
@@ -862,7 +957,7 @@ class CourseRosterServiceTest {
 		CourseEnrollment enrollmentA = enrollForCourse(profile, course);
 		Course courseB = course("SE1706");
 		CourseEnrollment enrollmentB = enrollForCourse(profile, courseB);
-		service.removeEnrollment(course.getId(), enrollmentA.getId(), admin, auditReq());
+		service.removeEnrollment(course.getId(), enrollmentA.getId(), admin, "Transferred to another class.", auditReq());
 		assertEquals(EnrollmentStatus.WITHDRAWN, store.enrollments.get(enrollmentA.getId()).getEnrollmentStatus());
 		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.get(enrollmentB.getId()).getEnrollmentStatus());
 	}
@@ -913,7 +1008,7 @@ class CourseRosterServiceTest {
 	@Test
 	void reAddingWithdrawnStudentReactivatesSameEnrollmentRow() {
 		CourseEnrollment enrollment = enrollExisting("a@gmail.com", "SE00000A", "A");
-		service.removeEnrollment(course.getId(), enrollment.getId(), admin, auditReq());
+		service.removeEnrollment(course.getId(), enrollment.getId(), admin, "Transferred to another class.", auditReq());
 		service.addStudent(course.getId(), addRequest("A", "SE00000A", "a@gmail.com"), admin, auditReq());
 		assertEquals(1, store.enrollments.size());
 		assertEquals(EnrollmentStatus.ACTIVE, store.enrollments.get(enrollment.getId()).getEnrollmentStatus());

@@ -32,6 +32,7 @@ import com.saga.be.service.audit.AuditService;
 import com.saga.be.mail.template.EmailTemplateModel;
 import com.saga.be.mail.template.EmailTemplateService;
 import com.saga.be.service.mail.EmailOutboxService;
+import com.saga.be.service.notification.StudentRemovalNotifier;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -73,6 +74,7 @@ public class CourseRosterService {
 	private final AuditService audit;
 	private final PlatformTransactionManager transactionManager;
 	private final SecureRandom random = new SecureRandom();
+	private StudentRemovalNotifier removalNotifier;
 
 	public CourseRosterService(
 			CourseRosterStore store,
@@ -287,9 +289,33 @@ public class CourseRosterService {
 	 * (see {@code TeamMemberRepository#existsActiveByProjectIdAndUserId}), so withdrawing the
 	 * enrollment alone is sufficient to revoke project access without deleting any history.
 	 */
+	/**
+	 * Withdraws an ACTIVE enrollment. {@code actor} is the ADMIN, or the course's lecturer (the caller
+	 * checks lecturer assignment). A reason is mandatory; the student is told by in-app notification
+	 * and email, committed atomically with the withdrawal.
+	 */
 	public CourseRosterEntryResponse removeEnrollment(
-			UUID courseId, UUID enrollmentId, UserAccount admin, AuditRequest auditRequest) {
-		return writeAtomic(() -> applyRemoveEnrollment(requireCourse(courseId), enrollmentId, admin, auditRequest));
+			UUID courseId, UUID enrollmentId, UserAccount actor, String reason, AuditRequest auditRequest) {
+		String cleanReason = StudentRemovalNotifier.requireReason(reason);
+		return writeAtomic(
+				() -> applyRemoveEnrollment(requireCourse(courseId), enrollmentId, actor, cleanReason, auditRequest));
+	}
+
+	/**
+	 * Transitional: the ADMIN roster DELETE sent with no body by the not-yet-updated FE. Same
+	 * withdrawal and notification, without a reason. Removed once
+	 * {@code saga.roster.removal-reason-required} is true everywhere.
+	 */
+	public CourseRosterEntryResponse removeEnrollmentWithoutReason(
+			UUID courseId, UUID enrollmentId, UserAccount actor, AuditRequest auditRequest) {
+		return writeAtomic(
+				() -> applyRemoveEnrollment(requireCourse(courseId), enrollmentId, actor, null, auditRequest));
+	}
+
+	/** Required in the running app; left null only by unit tests that build this service by hand. */
+	@Autowired
+	public void setRemovalNotifier(StudentRemovalNotifier removalNotifier) {
+		this.removalNotifier = removalNotifier;
 	}
 
 	/**
@@ -307,7 +333,7 @@ public class CourseRosterService {
 	}
 
 	private CourseRosterEntryResponse applyRemoveEnrollment(
-			Course course, UUID enrollmentId, UserAccount admin, AuditRequest auditRequest) {
+			Course course, UUID enrollmentId, UserAccount actor, String reason, AuditRequest auditRequest) {
 		CourseEnrollment enrollment = store.findEnrollmentById(enrollmentId)
 				.filter(row -> row.getCourse() != null && row.getCourse().getId().equals(course.getId()))
 				.orElseThrow(() -> new AcademicException(
@@ -352,7 +378,7 @@ public class CourseRosterService {
 		enrollment.setEnrollmentStatus(EnrollmentStatus.WITHDRAWN);
 		store.saveEnrollment(enrollment);
 		audit.record(
-				admin,
+				actor,
 				null,
 				null,
 				COURSE_ROSTER_STUDENT_REMOVED,
@@ -360,12 +386,25 @@ public class CourseRosterService {
 				enrollment.getId(),
 				before,
 				Map.of("enrollmentStatus", EnrollmentStatus.WITHDRAWN.name()),
-				Map.of("courseId", course.getId()),
+				removalMetadata(course, reason, actor),
 				AuditSource.API,
 				auditRequest == null ? null : auditRequest.requestId(),
 				auditRequest == null ? null : auditRequest.ip(),
 				auditRequest == null ? null : auditRequest.userAgent());
+		if (removalNotifier != null) {
+			removalNotifier.courseWithdrawn(enrollment, course, reason, actor);
+		}
 		return enrollmentEntry(enrollment);
+	}
+
+	private static Map<String, Object> removalMetadata(Course course, String reason, UserAccount actor) {
+		Map<String, Object> metadata = new LinkedHashMap<>();
+		metadata.put("courseId", course.getId());
+		if (reason != null) {
+			metadata.put("reason", reason);
+		}
+		metadata.put("removedBy", StudentRemovalNotifier.removedBy(actor));
+		return metadata;
 	}
 
 	private CourseRosterEntryResponse applyCancelInvitation(

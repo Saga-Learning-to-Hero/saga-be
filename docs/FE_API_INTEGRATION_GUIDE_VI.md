@@ -711,8 +711,14 @@ GET /api/admin/courses/{courseId}/roster
 ### Bước 2a: xoá ENROLLMENT (sinh viên đã có tài khoản)
 
 ```
-DELETE /api/admin/courses/{courseId}/roster/enrollments/{enrollmentId}
+DELETE /api/admin/courses/{courseId}/roster/enrollments/{enrollmentId}      (ADMIN)
+DELETE /api/lecturer/courses/{courseId}/roster/enrollments/{enrollmentId}   (giảng viên phụ trách lớp, hoặc ADMIN)
+Body (bắt buộc): { "reason": "Chuyển sang lớp SE1803" }
 ```
+- **Lý do bắt buộc**: 1–500 ký tự sau khi bỏ khoảng trắng đầu/cuối. Thiếu body, rỗng hoặc quá dài → **400 `REQUEST_INVALID`**, không có gì thay đổi. FE gửi bằng `apiClient.delete(url, { data: { reason } })`.
+- **Giai đoạn chuyển tiếp (chỉ API ADMIN)**: khi BE chưa bật `SAGA_ROSTER_REMOVAL_REASON_REQUIRED=true`, request DELETE của ADMIN **không có body** (FE cũ) vẫn rút được sinh viên. Sinh viên vẫn nhận thông báo và mail, chỉ là không có lý do (mail ghi "Reason: Not provided"). Khi FE đã gửi `reason` thì bật biến này, lúc đó không có body sẽ bị **400**. Hai API của giảng viên luôn bắt buộc lý do.
+- Sinh viên nhận **thông báo trong app** (loại `COURSE`, tiêu đề "Removed from {mã môn} · {mã lớp}", nội dung có lý do) **và email** (người rút: Admin/Lecturer + lý do). Thông báo/email chỉ phát sinh khi rút **thành công** (ghi cùng giao dịch).
+- Giảng viên không phụ trách lớp → **403 `LECTURER_COURSE_FORBIDDEN`**.
 - **Thành công (200)**: trả về `CourseRosterEntryResponse` với `enrollmentStatus: "WITHDRAWN"`. Đây **không phải** xoá cứng — bản ghi vẫn còn, chỉ đổi trạng thái. Tài khoản (`UserAccount`)/hồ sơ (`StudentProfile`) và toàn bộ lịch sử (task, commit, work session, contribution confirmation...) **không bị ảnh hưởng**.
 - **409 `TEAM_LEADER_REMOVAL_REQUIRES_REASSIGNMENT`**: sinh viên đang là **Trưởng nhóm (LEADER)** đang hoạt động của một Team trong course này. Backend **từ chối hoàn toàn thao tác** (không có gì bị thay đổi). FE nên hiển thị:
   > "Sinh viên đang là trưởng nhóm. Hãy chuyển quyền trưởng nhóm cho thành viên khác trước khi xóa sinh viên khỏi lớp."
@@ -771,6 +777,17 @@ Base: `/api/lecturer/courses/{courseId}` — role `LECTURER` hoặc `ADMIN`.
 - SV **đã ở đúng team đó** → không làm gì (200).
 - `courseEnrollmentId` không phải SV `ACTIVE` của lớp (đã rút, lớp khác, không tồn tại) → `404 ROSTER_STUDENT_NOT_FOUND`. `teamId` không thuộc lớp → `404 TEAM_NOT_FOUND`.
 - Hai request cùng lúc cho cùng 1 SV → request sau nhận `409 TEAM_CONFIRM_BLOCKED`, FE tải lại danh sách rồi thử lại.
+
+### Rút sinh viên khỏi NHÓM (vẫn ở lại lớp)
+
+```
+DELETE /api/lecturer/courses/{courseId}/team-members/{teamMemberId}   (giảng viên phụ trách lớp, hoặc ADMIN)
+Body (bắt buộc): { "reason": "Chuyển sang nhóm khác cho cân bằng" }
+```
+- Xoá thành viên khỏi nhóm; enrollment vẫn `ACTIVE`, sinh viên hiện lại trong `unassignedStudents[]` và có thể được thêm vào nhóm khác bằng `POST .../teams/{teamId}/members`. Response = danh sách team đã cập nhật.
+- **Lý do bắt buộc** (1–500 ký tự) → sai **400 `REQUEST_INVALID`**. Sinh viên nhận **thông báo trong app** (loại `TEAM`) **và email** kèm lý do.
+- Sinh viên là **Leader** mà nhóm còn thành viên khác → **409 `TEAM_LEADER_INVALID`** (đổi Leader trước). Leader là thành viên cuối cùng thì được rút.
+- `teamMemberId` không thuộc lớp → **404 `TEAM_NOT_FOUND`**; giảng viên không phụ trách → **403 `LECTURER_COURSE_FORBIDDEN`**.
 
 ### Bất biến bắt buộc: mỗi team đang hoạt động phải có đúng 1 LEADER
 
@@ -2238,7 +2255,9 @@ export function subscribeProjectEvents(
 | POST | `/api/admin/courses/{courseId}/roster/import/preview` | ADMIN |
 | POST | `/api/admin/courses/{courseId}/roster/import/confirm` | ADMIN |
 | POST | `/api/admin/courses/{courseId}/roster/students` | ADMIN |
-| DELETE | `/api/admin/courses/{courseId}/roster/enrollments/{enrollmentId}` | ADMIN |
+| DELETE | `/api/admin/courses/{courseId}/roster/enrollments/{enrollmentId}` (body `reason` bắt buộc) | ADMIN |
+| DELETE | `/api/lecturer/courses/{courseId}/roster/enrollments/{enrollmentId}` (body `reason` bắt buộc) | Giảng viên phụ trách / ADMIN |
+| DELETE | `/api/lecturer/courses/{courseId}/team-members/{teamMemberId}` (body `reason` bắt buộc) | Giảng viên phụ trách / ADMIN |
 | DELETE | `/api/admin/courses/{courseId}/roster/invitations/{invitationId}` | ADMIN |
 
 ### LECTURER / TEAM

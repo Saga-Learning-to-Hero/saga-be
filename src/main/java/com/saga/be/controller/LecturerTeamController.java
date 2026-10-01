@@ -1,5 +1,6 @@
 package com.saga.be.controller;
 
+import com.saga.be.dto.roster.StudentRemovalRequest;
 import com.saga.be.dto.team.AssignTeamMemberRequest;
 import com.saga.be.dto.team.LecturerCourseTeamsResponse;
 import com.saga.be.dto.team.MoveTeamMemberRequest;
@@ -30,6 +31,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -144,6 +146,28 @@ public class LecturerTeamController {
 			@Valid @RequestBody AssignTeamMemberRequest request,
 			HttpServletRequest http) {
 		return teams.assignStudent(actor(principal), courseId, teamId, request.courseEnrollmentId(), audit(http));
+	}
+
+	@DeleteMapping("/team-members/{teamMemberId}")
+	@Workload(WorkloadClass.INTERACTIVE_WRITE)
+	@ResponseStatus(HttpStatus.OK)
+	@Operation(
+			summary = "Remove a student from their team (they stay enrolled in the course)",
+			description =
+					"""
+					JSON body {"reason": "..."} is required (1-500 chars, else 400 REQUEST_INVALID); the \
+					student receives it by in-app notification and email. The student reappears in \
+					unassignedStudents and can be added to a team again. The team Leader can only be \
+					removed after another Leader is assigned (409 TEAM_LEADER_INVALID), unless they are \
+					the team's last active member. Returns the refreshed team list.
+					""")
+	public LecturerCourseTeamsResponse removeMember(
+			@AuthenticationPrincipal SagaUserPrincipal principal,
+			@PathVariable UUID courseId,
+			@PathVariable UUID teamMemberId,
+			@Valid @RequestBody StudentRemovalRequest request,
+			HttpServletRequest http) {
+		return teams.removeMember(actor(principal), courseId, teamMemberId, request.reason(), audit(http));
 	}
 
 	@PatchMapping("/team-members/{teamMemberId}/team")
