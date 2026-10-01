@@ -259,7 +259,7 @@ interface CytoscapeNodeData {
   role?: string;        // STUDENT: LEADER | MEMBER | …
   storyPoint?: number;  // TASK
   // ---- chỉ node TASK (node khác không có các field này) ----
-  issueTypeLevel?: "EPIC" | "STANDARD" | "SUBTASK" | "ABOVE_EPIC"; // cấp theo Jira — dùng để chọn kích thước; thiếu = chưa biết
+  issueTypeLevel?: "EPIC" | "STANDARD" | "SUBTASK" | "ABOVE_EPIC" | "UNKNOWN"; // cấp chuẩn hoá — dùng để chọn kích thước
   jiraHierarchyLevel?: number; // số thô của Jira: -1 / 0 / 1 / 2+ (xếp các cấp trên Epic)
   issueTypeId?: string;
   issueTypeName?: string;  // tên loại đúng như trên Jira, vd "Feature", "User Story"
@@ -306,6 +306,7 @@ Style CSS theo `node[type = "TASK"]` và `edge[label = "EVIDENCED_BY"]` — **đ
 - **Overview toàn project:** mọi `PARENT_OF` và `HAS_WORK_ITEM`.
 - **Overview theo sprint, Activity:** task của sprint + **toàn bộ chuỗi cha** (kể cả Epic/Initiative không thuộc sprint) + Subtask con + `HAS_WORK_ITEM` tới gốc mỗi chuỗi.
 - **Attribution:** commit → item nó chứng minh → chuỗi cha → Project. Drill-down (`focusNodeId` + `depth`) chạy trên dữ liệu của view nên cũng có các cạnh này.
+- **Item có cha chưa đồng bộ vẫn hiện trong graph** (overview lấy mọi task của project, không đi từ Project xuống), với `parentResolution = "UNRESOLVED"`, không có `HAS_WORK_ITEM` giả. Đã kiểm thử trên Neo4j thật (`ProjectGraphNeo4jLiveTest`, chạy khi đặt `SAGA_NEO4J_TEST_URI`).
 - Gợi ý kích thước theo `issueTypeLevel`: Project 1.5, Above-Epic 1.4, Epic 1.3, Standard 1.0, Subtask 0.78, Commit 0.72; `PARENT_OF` nét đứt. Chỉ là hiển thị — **không ảnh hưởng tính điểm**. Graph cũ tự dựng lại lần đầu được mở sau khi BE deploy.
 
 ### 5.1 `id` node (prefix)

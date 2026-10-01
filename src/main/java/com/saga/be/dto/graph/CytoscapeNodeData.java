@@ -20,7 +20,7 @@ public record CytoscapeNodeData(
 		/** The Jira type name, e.g. "Feature". */
 		String issueTypeName,
 		String issueTypeId,
-		/** SUBTASK / STANDARD / EPIC / ABOVE_EPIC; null = not known yet (sync the Jira source). */
+		/** SUBTASK / STANDARD / EPIC / ABOVE_EPIC / UNKNOWN (sync the Jira source). */
 		String issueTypeLevel,
 		/** Jira's raw hierarchyLevel (-1 / 0 / 1 / 2+), orders levels above Epic. */
 		Integer jiraHierarchyLevel,

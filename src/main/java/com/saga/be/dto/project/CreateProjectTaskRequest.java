@@ -28,7 +28,8 @@ public record CreateProjectTaskRequest(
 		 * start date set on create (Jira's own default).
 		 */
 		LocalDate startDate,
-		/** Optional native SAGA parent. Null = no native parent. Never written to Jira fields.parent. */
+		/** Deprecated alias of {@link #jiraParentTaskId()} (logged; to be removed). Must not disagree with it. */
+		@io.swagger.v3.oas.annotations.media.Schema(deprecated = true, description = "Deprecated: use jiraParentTaskId.")
 		UUID parentTaskId,
 		/** Optional local Task whose Jira issue is sent as {@code fields.parent} on create. */
 		UUID jiraParentTaskId,

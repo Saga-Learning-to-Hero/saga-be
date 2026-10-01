@@ -149,29 +149,8 @@ public class ProjectProjectionReadService {
 	@Transactional(readOnly = true)
 	public TaskParentOptionsResponse listParentOptions(
 			UUID userId, UUID projectId, String q, int page, int size, UUID excludeTaskId) {
-		return listParentOptions(userId, projectId, q, page, size, excludeTaskId, null, null);
-	}
-
-	/**
-	 * With {@code childLevel} (the level of the item being created/edited): Jira parent candidates of
-	 * the right level in that Jira source -- STANDARD child -> Epics, SUBTASK child -> standard items,
-	 * EPIC / ABOVE_EPIC child -> none. Without it: the legacy list of every task.
-	 */
-	@Transactional(readOnly = true)
-	public TaskParentOptionsResponse listParentOptions(
-			UUID userId,
-			UUID projectId,
-			String q,
-			int page,
-			int size,
-			UUID excludeTaskId,
-			String childLevel,
-			UUID jiraIntegrationId) {
 		authorization.requireReader(userId, projectId);
-		if (childLevel == null || childLevel.isBlank()) {
-			return hierarchy.listParentOptions(projectId, q, page, size, excludeTaskId);
-		}
-		return hierarchy.listJiraParentOptions(projectId, jiraIntegrationId, childLevel, q, page, size, excludeTaskId);
+		return hierarchy.listParentOptions(projectId, q, page, size, excludeTaskId);
 	}
 
 	@Transactional(readOnly = true)
@@ -427,7 +406,7 @@ public class ProjectProjectionReadService {
 				task.getJiraStatusName(),
 				task.getIssueTypeName(),
 				task.getIssueTypeId(),
-				task.getIssueTypeLevel(),
+				TaskIssueTypePolicy.apiValue(task.getIssueTypeLevel()),
 				task.getJiraHierarchyLevel(),
 				task.getAssigneeExternalId(),
 				assigneeDisplay,
@@ -508,7 +487,7 @@ public class ProjectProjectionReadService {
 					status == null ? null : status.name(),
 					(String) row[3],
 					(String) row[4],
-					(String) row[5]));
+					TaskIssueTypePolicy.apiValue((String) row[5])));
 		}
 		return children;
 	}

@@ -133,10 +133,12 @@ public class ProjectProjectionController {
 					"""
 					Local DB only. page default 0, size default 20, size max 50. page < 0 or size
 					outside 1..50 is 400 REQUEST_INVALID (not clamped). Order is title ASC, id ASC.
-					q is prefix search on title and externalKey. Jira parent picker: pass childLevel
-					(level of the item being created/edited, from /tasks/options) and jiraIntegrationId:
-					STANDARD -> Epics of that source, SUBTASK -> standard items, EPIC/ABOVE_EPIC -> none;
-					only tasks with a known level are offered. Without childLevel: legacy list.
+					q is prefix search on title and externalKey. Jira parent picker: pass
+					childIssueTypeId (the type being created, or the edited item's current issueTypeId)
+					and jiraIntegrationId. BE reads that type's level from Jira -- a client-declared level
+					is not accepted: STANDARD -> Epics of that source, SUBTASK -> standard items,
+					EPIC/ABOVE_EPIC -> none; only tasks with a known level are offered. Both params or
+					neither (400 REQUEST_INVALID). Without them: the legacy list (deprecated).
 					""")
 	public TaskParentOptionsResponse parentOptions(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
@@ -145,10 +147,13 @@ public class ProjectProjectionController {
 			@RequestParam(defaultValue = "0") int page,
 			@RequestParam(defaultValue = "20") int size,
 			@RequestParam(required = false) UUID excludeTaskId,
-			@RequestParam(required = false) String childLevel,
+			@RequestParam(required = false) String childIssueTypeId,
 			@RequestParam(required = false) UUID jiraIntegrationId) {
-		return projections.listParentOptions(
-				principal.getUserId(), projectId, q, page, size, excludeTaskId, childLevel, jiraIntegrationId);
+		if (childIssueTypeId != null || jiraIntegrationId != null) {
+			return taskCommands.jiraParentOptions(
+					principal.getUserId(), projectId, jiraIntegrationId, childIssueTypeId, q, page, size, excludeTaskId);
+		}
+		return projections.listParentOptions(principal.getUserId(), projectId, q, page, size, excludeTaskId);
 	}
 
 	@GetMapping("/tasks/{taskId}")

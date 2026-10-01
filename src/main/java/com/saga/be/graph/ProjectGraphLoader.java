@@ -170,7 +170,7 @@ public class ProjectGraphLoader {
 					task.getTaskType() == null ? null : task.getTaskType().name(),
 					task.getIssueTypeName(),
 					task.getIssueTypeId(),
-					task.getIssueTypeLevel(),
+					com.saga.be.service.projection.TaskIssueTypePolicy.apiValue(task.getIssueTypeLevel()),
 					task.getJiraHierarchyLevel(),
 					task.getJiraIntegration() == null ? null : task.getJiraIntegration().getId(),
 					task.getParentExternalId(),

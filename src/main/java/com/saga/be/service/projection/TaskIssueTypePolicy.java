@@ -77,6 +77,11 @@ public final class TaskIssueTypePolicy {
 		return level == null || level == Level.UNKNOWN ? null : level.name();
 	}
 
+	/** API value of a stored level: the stored name, or "UNKNOWN" when null (never null in responses). */
+	public static String apiValue(String storedLevel) {
+		return fromStored(storedLevel).name();
+	}
+
 	/** Reads the stored column; null / unrecognised -> UNKNOWN. */
 	public static Level fromStored(String value) {
 		if (value == null || value.isBlank()) {

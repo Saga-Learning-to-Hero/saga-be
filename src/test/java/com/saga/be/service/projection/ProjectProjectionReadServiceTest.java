@@ -1004,7 +1004,8 @@ class ProjectProjectionReadServiceTest {
 		assertThat(unresolved.parent().resolution()).isEqualTo("UNRESOLVED");
 		assertThat(unresolved.parent().resolutionReason()).isEqualTo("PARENT_NOT_SYNCED");
 		assertThat(unresolved.parent().taskId()).isNull();
-		assertThat(unresolved.issueTypeLevel()).isNull();
+		assertThat(unresolved.issueTypeLevel()).isEqualTo("UNKNOWN");
+		assertThat(unresolved.jiraHierarchyLevel()).isNull();
 	}
 
 	@Test

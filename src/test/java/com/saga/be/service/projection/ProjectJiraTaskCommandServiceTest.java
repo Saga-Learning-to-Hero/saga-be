@@ -1648,6 +1648,79 @@ class ProjectJiraTaskCommandServiceTest {
 	}
 
 	@Test
+	void parentOptions_levelComesFromJiraNotFromTheClient() {
+		stubReader();
+		JiraIntegration integration = activeJira();
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.listProjectIssueTypes("token", "cloud", "10067")).thenReturn(PROJECT_TYPES);
+		UUID epicId = UUID.randomUUID();
+		when(tasks.findJiraParentOptions(eq(projectId), eq(integration.getId()), eq("EPIC"), any(), eq(true), eq(""), any()))
+				.thenReturn(new org.springframework.data.domain.PageImpl<Object[]>(
+						List.<Object[]>of(new Object[] {epicId, "Auth", com.saga.be.entity.enums.TaskStatus.TODO, "SAGA-1", "Epic", "EPIC"})));
+		when(tasks.findJiraParentOptions(eq(projectId), eq(integration.getId()), eq("STANDARD"), any(), eq(true), eq(""), any()))
+				.thenReturn(new org.springframework.data.domain.PageImpl<Object[]>(List.of()));
+
+		// Feature (10005) is STANDARD in Jira -> Epics; Subtask (10003) -> standard items; Epic -> none.
+		assertThat(service.jiraParentOptions(userId, projectId, integration.getId(), "10005", null, 0, 20, null).items())
+				.extracting(com.saga.be.dto.project.TaskParentOptionItem::id)
+				.containsExactly(epicId);
+		assertThat(service.jiraParentOptions(userId, projectId, integration.getId(), "10003", null, 0, 20, null).items()).isEmpty();
+		assertThat(service.jiraParentOptions(userId, projectId, integration.getId(), "10000", null, 0, 20, null).items()).isEmpty();
+		verify(tasks).findJiraParentOptions(eq(projectId), eq(integration.getId()), eq("STANDARD"), any(), eq(true), eq(""), any());
+		verify(tasks, never()).findJiraParentOptions(any(), any(), eq("SUBTASK"), any(), org.mockito.ArgumentMatchers.anyBoolean(), any(), any());
+	}
+
+	@Test
+	void parentOptions_unknownTypeOrUnknownLevelOrMissingParamsAreRejected() {
+		stubReader();
+		JiraIntegration integration = activeJira();
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tokens.accessToken(integration)).thenReturn("token");
+		when(jiraWrite.listProjectIssueTypes("token", "cloud", "10067"))
+				.thenReturn(List.of(TYPE_TASK, new IssueTypeOption("10099", "Legacy", null)));
+
+		assertThatThrownBy(() -> service.jiraParentOptions(userId, projectId, integration.getId(), "99999", null, 0, 20, null))
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_ISSUE_TYPE_INVALID);
+		assertThatThrownBy(() -> service.jiraParentOptions(userId, projectId, integration.getId(), "10099", null, 0, 20, null))
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_ISSUE_TYPE_INVALID);
+		assertThatThrownBy(() -> service.jiraParentOptions(userId, projectId, null, "10001", null, 0, 20, null))
+				.extracting(ex -> ((AcademicException) ex).getCode())
+				.isEqualTo(AcademicErrorCode.REQUEST_INVALID);
+		verify(tasks, never()).findJiraParentOptions(any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any(), any());
+	}
+
+	@Test
+	void deprecatedParentFieldsThatDisagreeWithTheNewOnesAreRefused() {
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow(integration);
+		org.mockito.Mockito.lenient()
+				.when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+		when(jiraIntegrations.findAllByProject_Id(projectId)).thenReturn(List.of(integration));
+
+		assertThatThrownBy(() -> service.patch(userId, projectId, task.getId(), new PatchProjectTaskRequest(
+						null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+						UUID.randomUUID(), null, UUID.randomUUID(), null)))
+				.extracting(ex -> ((AcademicException) ex).getCode())
+				.isEqualTo(AcademicErrorCode.REQUEST_INVALID);
+		assertThatThrownBy(() -> service.patch(userId, projectId, task.getId(), new PatchProjectTaskRequest(
+						null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+						null, true, UUID.randomUUID(), null)))
+				.extracting(ex -> ((AcademicException) ex).getCode())
+				.isEqualTo(AcademicErrorCode.REQUEST_INVALID);
+		assertThatThrownBy(() -> service.create(userId, projectId, new CreateProjectTaskRequest(
+						"Login", null, null, null, null, null, null, null, null, null, null, UUID.randomUUID(),
+						UUID.randomUUID(), null)))
+				.extracting(ex -> ((AcademicException) ex).getCode())
+				.isEqualTo(AcademicErrorCode.REQUEST_INVALID);
+		verify(tokens, never()).accessToken(any());
+		verify(jiraWrite, never()).updateIssueFields(any(), any(), any(), any());
+	}
+
+	@Test
 	void delete_blockedWhileTheIssueStillHasJiraChildren() {
 		stubLeader();
 		JiraIntegration integration = activeJira();

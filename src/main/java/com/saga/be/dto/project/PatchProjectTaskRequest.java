@@ -37,9 +37,11 @@ public record PatchProjectTaskRequest(
 		 */
 		LocalDate startDate,
 		Boolean clearStartDate,
-		/** Deprecated name of {@link #jiraParentTaskId()}; read the same way (the Jira parent). */
+		/** Deprecated alias of {@link #jiraParentTaskId()} (logged; to be removed). Must not disagree with it. */
+		@io.swagger.v3.oas.annotations.media.Schema(deprecated = true, description = "Deprecated: use jiraParentTaskId.")
 		java.util.UUID parentTaskId,
-		/** Deprecated name of {@link #clearJiraParent()}. */
+		/** Deprecated alias of {@link #clearJiraParent()} (logged; to be removed). */
+		@io.swagger.v3.oas.annotations.media.Schema(deprecated = true, description = "Deprecated: use clearJiraParent.")
 		Boolean clearParent,
 		/**
 		 * The Epic to place this Task/Story/Feature/Bug under (a SAGA task id of the same Jira

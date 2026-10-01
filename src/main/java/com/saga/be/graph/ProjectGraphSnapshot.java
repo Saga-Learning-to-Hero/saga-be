@@ -39,7 +39,7 @@ public record ProjectGraphSnapshot(
 			/** The Jira type name as the team sees it, e.g. "Feature". */
 			String issueTypeName,
 			String issueTypeId,
-			/** SUBTASK / STANDARD / EPIC / ABOVE_EPIC as Jira reports it; null = not known yet. */
+			/** SUBTASK / STANDARD / EPIC / ABOVE_EPIC / UNKNOWN (not reported by Jira yet). */
 			String issueTypeLevel,
 			/** Jira's raw hierarchyLevel (-1 / 0 / 1 / 2+). */
 			Integer jiraHierarchyLevel,

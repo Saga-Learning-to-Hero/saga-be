@@ -20,11 +20,12 @@ public record ProjectTaskResponse(
 		/** Jira's issue type id. Compare this (not a display group) to detect a type change. Null until synced. */
 		String issueTypeId,
 		/**
-		 * SUBTASK / STANDARD / EPIC / ABOVE_EPIC as Jira reports it; null = not known yet (sync the
-		 * Jira source). While null, issue type and parent edits must stay locked.
+		 * Normalized level: SUBTASK (-1) / STANDARD (0) / EPIC (1) / ABOVE_EPIC (2+) / UNKNOWN (Jira has
+		 * not reported it yet -- sync the Jira source). Never null. While UNKNOWN, issue type and
+		 * parent edits stay locked.
 		 */
 		String issueTypeLevel,
-		/** Jira's raw hierarchyLevel (-1 / 0 / 1 / 2+); null until synced. */
+		/** Jira's raw hierarchyLevel, unchanged (-1 / 0 / 1 / 2+); null when unknown. */
 		Integer jiraHierarchyLevel,
 		/** Flat alias of {@link Assignee#accountId()} for existing clients. */
 		String assigneeExternalId,
@@ -145,7 +146,7 @@ public record ProjectTaskResponse(
 
 	public record ParentTask(UUID id, String title) {}
 
-	/** A direct Jira child (Epic -> its items, item -> its Subtasks). */
+	/** A direct Jira child (Epic -> its items, item -> its Subtasks). issueTypeLevel never null (UNKNOWN). */
 	public record Subtask(
 			UUID id, String title, String status, String externalKey, String issueTypeName, String issueTypeLevel) {}
 }

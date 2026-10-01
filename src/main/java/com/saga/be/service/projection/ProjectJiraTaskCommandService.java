@@ -170,6 +170,46 @@ public class ProjectJiraTaskCommandService {
 				SagaTaskLabelPolicy.ALLOWED);
 	}
 
+	/**
+	 * Jira parent candidates for an item of type {@code childIssueTypeId} (the type being created, or
+	 * the current type of the item being edited). The level comes from Jira's own issue-type metadata
+	 * -- a client-declared level is never trusted: STANDARD -> Epics, SUBTASK -> standard items,
+	 * EPIC / ABOVE_EPIC -> none. Same Jira source only.
+	 */
+	public com.saga.be.dto.project.TaskParentOptionsResponse jiraParentOptions(
+			UUID userId,
+			UUID projectId,
+			UUID jiraIntegrationId,
+			String childIssueTypeId,
+			String q,
+			int page,
+			int size,
+			UUID excludeTaskId) {
+		authorization.requireReader(userId, projectId);
+		if (jiraIntegrationId == null || childIssueTypeId == null || childIssueTypeId.isBlank()) {
+			throw new AcademicException(
+					AcademicErrorCode.REQUEST_INVALID,
+					HttpStatus.BAD_REQUEST,
+					"childIssueTypeId and jiraIntegrationId are required together.");
+		}
+		JiraIntegration integration = requireUsableJira(jiraIntegrations
+				.findByIdAndProject_Id(jiraIntegrationId, projectId)
+				.orElseThrow(() -> new IntegrationException(
+						IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
+						HttpStatus.NOT_FOUND,
+						"Jira source was not found for this project.")));
+		String access = tokens.accessToken(integration);
+		TaskIssueTypePolicy.Level level =
+				TaskIssueTypePolicy.level(requireProjectIssueType(access, integration, childIssueTypeId.trim()));
+		if (level == TaskIssueTypePolicy.Level.UNKNOWN) {
+			throw new IntegrationException(
+					IntegrationErrorCode.TASK_ISSUE_TYPE_INVALID,
+					HttpStatus.BAD_REQUEST,
+					"Jira did not report the hierarchy level of this issue type.");
+		}
+		return hierarchy.listJiraParentOptions(projectId, integration.getId(), level.name(), q, page, size, excludeTaskId);
+	}
+
 	public ProjectTaskResponse create(UUID userId, UUID projectId, CreateProjectTaskRequest request) {
 		RoleInTeam role = authorization.requireStudentTeamMember(userId, projectId);
 		List<String> labels = SagaTaskLabelPolicy.forCreate(request.labels());
@@ -180,7 +220,8 @@ public class ProjectJiraTaskCommandService {
 		JiraIntegration integration = resolveJiraForCreate(projectId, request.jiraIntegrationId());
 		// One parent relation only: the Jira parent. parentTaskId is the deprecated name of the same
 		// picker. Local checks first: a wrong-source parent is refused before any Jira call.
-		UUID parentRef = request.jiraParentTaskId() != null ? request.jiraParentTaskId() : request.parentTaskId();
+		UUID parentRef = DeprecatedParentFields.resolve(
+				request.jiraParentTaskId(), request.parentTaskId(), false, false, "POST /tasks");
 		Task jiraParent = parentRef == null ? null : requireJiraParent(projectId, integration, parentRef);
 		boolean typeChosen = request.issueTypeId() != null && !request.issueTypeId().isBlank();
 		String access = typeChosen || jiraParent != null ? tokens.accessToken(integration) : null;
@@ -272,12 +313,12 @@ public class ProjectJiraTaskCommandService {
 			requireMemberKeepsOwnership(userId, request);
 		}
 		requireLeaderOrAssignee(role, userId, projectId, taskId);
-		if (request.clearsJiraParent() && request.requestedJiraParentId() != null) {
-			throw new AcademicException(
-					AcademicErrorCode.REQUEST_INVALID,
-					HttpStatus.BAD_REQUEST,
-					"clearJiraParent cannot be combined with jiraParentTaskId.");
-		}
+		DeprecatedParentFields.resolve(
+				request.jiraParentTaskId(),
+				request.parentTaskId(),
+				Boolean.TRUE.equals(request.clearJiraParent()),
+				Boolean.TRUE.equals(request.clearParent()),
+				"PATCH /tasks/{taskId}");
 		Task task = requireTask(projectId, taskId);
 		// Local checks first: a parent of another project/source is refused before any Jira call.
 		UUID parentRef = request.requestedJiraParentId();
