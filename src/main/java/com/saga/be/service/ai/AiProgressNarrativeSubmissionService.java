@@ -82,7 +82,7 @@ public class AiProgressNarrativeSubmissionService {
 	private Submission submitCommon(Project project, Course course, AiArtifactType artifactType, UUID artifactId, List<AiEvidenceDraft> draft, AiModelProvider provider, AiCredentialResolver.Resolution resolution, AiInvocationOrigin origin) {
 		String evidenceHash = hashEvidence(draft);
 		String ownerKey = project != null ? project.getId().toString() : "course:" + course.getId();
-		String key = AiHashes.sha256(String.join("|", ownerKey, artifactType.name(), artifactId.toString(), evidenceHash, AiAnalysisType.PROGRESS_NARRATIVE.name(), evidenceHash, POLICY_VERSION, PROMPT_VERSION, SCHEMA_VERSION, provider.providerConfigHash(), resolution.outcome().name(), String.valueOf(resolution.identityFingerprint())));
+		String key = AiHashes.sha256(String.join("|", ownerKey, artifactType.name(), artifactId.toString(), evidenceHash, AiAnalysisType.PROGRESS_NARRATIVE.name(), evidenceHash, POLICY_VERSION, PROMPT_VERSION, com.saga.be.ai.AiSystemContract.OUTPUT_REVISION, SCHEMA_VERSION, provider.providerConfigHash(), resolution.outcome().name(), String.valueOf(resolution.identityFingerprint())));
 		try { return Objects.requireNonNull(tx.execute(status -> persist(project, course, artifactType, artifactId, evidenceHash, draft, evidenceHash, key, provider, resolution, origin))); }
 		catch (AiRetryLineage.RetryAttemptConflict ex) { AiAnalysisRun concurrent = ex.winner(runs); if (AiRetryLineage.shouldEnqueueExisting(concurrent)) after(concurrent.getId()); return new Submission(concurrent, false); }
 	}

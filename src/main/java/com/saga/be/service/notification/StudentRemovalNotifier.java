@@ -59,9 +59,14 @@ public class StudentRemovalNotifier {
 		return trimmed;
 	}
 
-	/** "Admin" or "Lecturer", as shown to the student. */
+	/** "Admin" or "Lecturer": the audit record; the email shows it as "Quản trị viên" / "Giảng viên". */
 	public static String removedBy(UserAccount actor) {
 		return actor != null && actor.getAccountRole() == AccountRole.ADMIN ? "Admin" : "Lecturer";
+	}
+
+	/** The in-app (Vietnamese) wording of who removed the student. */
+	private static String removedByVi(UserAccount actor) {
+		return actor != null && actor.getAccountRole() == AccountRole.ADMIN ? "quản trị viên" : "giảng viên";
 	}
 
 	public void courseWithdrawn(CourseEnrollment enrollment, Course course, String reason, UserAccount actor) {
@@ -74,8 +79,8 @@ public class StudentRemovalNotifier {
 		notifications.createNotification(
 				student.getId(),
 				NotificationType.COURSE,
-				truncate("Removed from " + code, 160),
-				truncate("You were removed from " + code + " by the " + by.toLowerCase() + "." + reasonSuffix(reason), 1000),
+				truncate("Bạn đã bị rút khỏi lớp " + code, 160),
+				truncate("Bạn đã bị " + removedByVi(actor) + " rút khỏi lớp " + code + "." + reasonSuffix(reason), 1000),
 				null,
 				"course-withdrawn:" + enrollment.getId() + ":" + UUID.randomUUID());
 		enqueue(student, COURSE_EMAIL_TYPE, EmailTemplateService.COURSE_WITHDRAWN, model(student, course, null), false, reason, by);
@@ -87,15 +92,15 @@ public class StudentRemovalNotifier {
 			return;
 		}
 		String code = courseLabel(course);
-		String teamName = team == null ? "your team" : teamLabel(team);
+		String teamName = team == null ? "nhóm" : teamLabel(team);
 		String by = removedBy(actor);
 		notifications.createNotification(
 				student.getId(),
 				NotificationType.TEAM,
-				truncate("Removed from " + teamName, 160),
+				truncate("Bạn đã bị rút khỏi " + teamName, 160),
 				truncate(
-						"You were removed from " + teamName + " in " + code + " by the " + by.toLowerCase()
-								+ ". You are still enrolled in the course." + reasonSuffix(reason),
+						"Bạn đã bị " + removedByVi(actor) + " rút khỏi " + teamName + " trong lớp " + code
+								+ ". Bạn vẫn còn trong lớp học phần." + reasonSuffix(reason),
 						1000),
 				null,
 				"team-removed:" + enrollment.getId() + ":" + UUID.randomUUID());
@@ -150,25 +155,25 @@ public class StudentRemovalNotifier {
 
 	private static String courseLabel(Course course) {
 		if (course == null) {
-			return "your course";
+			return "học phần";
 		}
 		String code = courseCode(course);
 		String classCode = course.getAcademicClass() == null ? null : course.getAcademicClass().getClassCode();
-		String base = StringUtils.hasText(code) ? code : StringUtils.hasText(course.getName()) ? course.getName() : "your course";
+		String base = StringUtils.hasText(code) ? code : StringUtils.hasText(course.getName()) ? course.getName() : "học phần";
 		return StringUtils.hasText(classCode) ? base + " · " + classCode : base;
 	}
 
 	private static String teamLabel(Team team) {
 		String name = StringUtils.hasText(team.getName()) ? team.getName() : null;
 		if (team.getTeamNo() != null) {
-			return "team " + team.getTeamNo() + (name == null ? "" : " — " + name);
+			return "nhóm " + team.getTeamNo() + (name == null ? "" : " — " + name);
 		}
-		return name == null ? "your team" : name;
+		return name == null ? "nhóm" : "nhóm " + name;
 	}
 
-	/** " Reason: ..." -- empty when no reason was given (legacy no-body ADMIN removal). */
+	/** " Lý do: ..." -- empty when no reason was given (legacy no-body ADMIN removal). */
 	private static String reasonSuffix(String reason) {
-		return StringUtils.hasText(reason) ? " Reason: " + reason.trim() : "";
+		return StringUtils.hasText(reason) ? " Lý do: " + reason.trim() : "";
 	}
 
 	private static String truncate(String value, int max) {

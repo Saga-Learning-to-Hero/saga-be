@@ -2,12 +2,14 @@ package com.saga.be.mail.template;
 
 final class SagaEmailLayout {
 
+	static final String AUTOMATED_NOTICE = "Đây là email tự động, vui lòng không trả lời.";
+
 	private SagaEmailLayout() {}
 
 	static String document(String pageTitle, String innerHtml, String ctaLabel, String ctaUrl, String secondaryPanel) {
 		String title = EmailHtml.escape(EmailHtml.blankTo(pageTitle, "SAGA"));
 		String href = EmailHtml.safeHttpUrl(ctaUrl);
-		String label = EmailHtml.escape(EmailHtml.blankTo(ctaLabel, "Open SAGA"));
+		String label = EmailHtml.escape(EmailHtml.blankTo(ctaLabel, "Mở SAGA"));
 		String button = href.isEmpty()
 				? ""
 				: """
@@ -23,7 +25,7 @@ final class SagaEmailLayout {
 		String panel = secondaryPanel == null ? "" : secondaryPanel;
 		return """
 			<!DOCTYPE html>
-			<html lang="en">
+			<html lang="vi">
 			<head>
 			  <meta charset="UTF-8">
 			  <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -51,7 +53,7 @@ final class SagaEmailLayout {
 			          <tr>
 			            <td style="padding:8px 28px 24px 28px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:18px;color:#64748b;border-top:1px solid #e2e8f0;">
 			              SAGA — Student Activity Graph Based Continuous Assessment<br>
-			              This is an automated email.
+			              %s
 			            </td>
 			          </tr>
 			        </table>
@@ -61,7 +63,7 @@ final class SagaEmailLayout {
 			</body>
 			</html>
 			"""
-				.formatted(title, innerHtml, button, panel);
+				.formatted(title, innerHtml, button, panel, EmailHtml.escape(AUTOMATED_NOTICE));
 	}
 
 	static String infoPanel(String... rows) {

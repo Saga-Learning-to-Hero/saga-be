@@ -201,13 +201,13 @@ public class SprintOverlapAlertService {
 
 	private void raise(
 			Project project, SprintPeriods.Overlap overlap, String eventKey, List<UserAccount> recipients) {
-		String first = describe(overlap.first());
-		String second = describe(overlap.second());
-		String projectName = StringUtils.hasText(project.getName()) ? project.getName() : "your project";
+		String first = describeVi(overlap.first());
+		String second = describeVi(overlap.second());
+		String projectName = StringUtils.hasText(project.getName()) ? project.getName() : "của bạn";
 		String summary = truncate(
-				"Sprints overlap in " + projectName + ": " + first + " and " + second
-						+ ". Contribution and peer review are scored per sprint, so sprints must run one after another"
-						+ " (even across Jira sites). Adjust the dates or close one sprint in Jira.",
+				"Các sprint bị chồng thời gian trong dự án " + projectName + ": " + first + " và " + second
+						+ ". Điểm đóng góp và đánh giá chéo được tính theo từng sprint, nên các sprint phải chạy nối tiếp"
+						+ " nhau (kể cả khi ở các Jira site khác nhau). Hãy chỉnh lại ngày hoặc đóng một sprint trên Jira.",
 				1000);
 
 		BusinessWarning warning = new BusinessWarning();
@@ -226,7 +226,7 @@ public class SprintOverlapAlertService {
 		String classCode = course == null || course.getAcademicClass() == null ? null : course.getAcademicClass().getClassCode();
 		for (UserAccount recipient : recipients) {
 			notifications.createNotification(
-					recipient.getId(), NotificationType.WARNING, "Sprints overlap", summary, null, eventKey);
+					recipient.getId(), NotificationType.WARNING, "Sprint bị chồng thời gian", summary, null, eventKey);
 			if (StringUtils.hasText(recipient.getEmail())) {
 				emails.enqueue(new EmailEnqueueRequest(
 						recipient.getEmail(),
@@ -273,21 +273,33 @@ public class SprintOverlapAlertService {
 		return new ArrayList<>(byId.values());
 	}
 
-	/** e.g. {@code "SAGA Sprint 5" — site-a (2026-09-20 → 2026-10-03, active)}. */
-	static String describe(Sprint sprint) {
+	private static final java.time.format.DateTimeFormatter VI_DATE = java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy");
+
+	/** e.g. {@code "SAGA Sprint 5" — site-a (20/09/2026 → 03/10/2026, đang chạy)}: notification, warning and email. */
+	static String describeVi(Sprint sprint) {
 		JiraIntegration source = sprint.getJiraIntegration();
 		String site = source == null ? null : StringUtils.hasText(source.getSiteName()) ? source.getSiteName() : source.getProjectKey();
 		LocalDateTime end = SprintPeriods.isClosed(sprint.getState()) && sprint.getCompleteDate() != null
 				? sprint.getCompleteDate()
 				: sprint.getEndDate();
-		String name = StringUtils.hasText(sprint.getName()) ? sprint.getName() : "Unnamed sprint";
+		String name = StringUtils.hasText(sprint.getName()) ? sprint.getName() : "Sprint chưa đặt tên";
 		return "\"" + name + "\""
 				+ (StringUtils.hasText(site) ? " — " + site : "")
-				+ " (" + date(sprint.getStartDate()) + " → " + date(end) + ", " + (sprint.getState() == null ? "?" : sprint.getState()) + ")";
+				+ " (" + dateVi(sprint.getStartDate()) + " → " + dateVi(end) + ", " + stateVi(sprint.getState()) + ")";
 	}
 
-	private static String date(LocalDateTime value) {
-		return value == null ? "?" : value.toLocalDate().toString();
+	private static String stateVi(String state) {
+		if (SprintPeriods.isClosed(state)) {
+			return "đã đóng";
+		}
+		if (SprintPeriods.isActive(state)) {
+			return "đang chạy";
+		}
+		return "future".equalsIgnoreCase(state == null ? null : state.trim()) ? "chưa bắt đầu" : state == null ? "?" : state;
+	}
+
+	private static String dateVi(LocalDateTime value) {
+		return value == null ? "?" : value.toLocalDate().format(VI_DATE);
 	}
 
 	private static String truncate(String value, int max) {

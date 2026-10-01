@@ -183,7 +183,7 @@ class ProviderWebhookGithubDeliveryIdWebTest {
 						.content(BODY))
 				.andExpect(status().isUnauthorized())
 				.andExpect(jsonPath("$.code").value("WEBHOOK_SIGNATURE_INVALID"));
-		verify(warnings).securityFailure(eq("github-sig:abc-123"), eq("Invalid GitHub webhook signature."));
+		verify(warnings).securityFailure(eq("github-sig:abc-123"), eq("Chữ ký webhook GitHub không hợp lệ."));
 		assertNoGithubSideEffects();
 	}
 

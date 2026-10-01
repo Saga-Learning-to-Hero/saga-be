@@ -199,7 +199,7 @@ class StudentRemovalPersistTest {
 		verify(emails).enqueue(mail.capture());
 		assertThat(mail.getValue().recipientUserId()).isEqualTo(memberAccount.getId());
 		assertThat(mail.getValue().emailType()).isEqualTo("TEAM_REMOVED");
-		assertThat(String.valueOf(mail.getValue().payload().get("textBody"))).contains("Reason: Moved to a smaller team");
+		assertThat(String.valueOf(mail.getValue().payload().get("textBody"))).contains("Lý do: Moved to a smaller team");
 	}
 
 	@Test
@@ -214,8 +214,8 @@ class StudentRemovalPersistTest {
 		verify(emails).enqueue(mail.capture());
 		assertThat(mail.getValue().emailType()).isEqualTo("COURSE_WITHDRAWN");
 		assertThat(String.valueOf(mail.getValue().payload().get("textBody")))
-				.contains("Removed by: Lecturer")
-				.contains("Reason: Transferred to SE1803");
+				.contains("Người thực hiện: Giảng viên")
+				.contains("Lý do: Transferred to SE1803");
 	}
 
 	@Test

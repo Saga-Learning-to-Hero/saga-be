@@ -116,7 +116,7 @@ class LecturerTeamServiceTest {
 		verify(emails, times(2)).enqueue(captor.capture());
 		assertEquals("TEAM_ASSIGNED", captor.getAllValues().getFirst().emailType());
 		assertEquals(EmailTemplateService.TEAM_ASSIGNED, captor.getAllValues().getFirst().templateKey());
-		assertTrue(String.valueOf(captor.getAllValues().getFirst().payload().get("htmlBody")).contains("assigned to a team"));
+		assertTrue(String.valueOf(captor.getAllValues().getFirst().payload().get("htmlBody")).contains("Bạn đã được xếp vào nhóm"));
 		assertTrue(previews.find(preview.previewToken()).isEmpty());
 	}
 

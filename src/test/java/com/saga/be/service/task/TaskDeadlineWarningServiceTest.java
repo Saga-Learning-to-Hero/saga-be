@@ -74,6 +74,29 @@ class TaskDeadlineWarningServiceTest {
 	}
 
 	@Test
+	void notificationAndWarningAreWrittenInVietnamese() {
+		UUID assignee = UUID.randomUUID();
+		Task overdue = task(TaskStatus.IN_PROGRESS, LocalDateTime.of(2026, 1, 9, 17, 30), assignee);
+		Task dueSoon = task(TaskStatus.IN_PROGRESS, LocalDateTime.of(2026, 1, 11, 9, 0), assignee);
+		dueSoon.setExternalKey("SAGA-2");
+		TaskDeadlineWarningService service = service();
+
+		service.raiseIfNew(overdue, TaskDeadlinePolicy.Status.OVERDUE, LocalDateTime.of(2026, 1, 10, 12, 0));
+		service.raiseIfNew(dueSoon, TaskDeadlinePolicy.Status.DUE_SOON, LocalDateTime.of(2026, 1, 10, 12, 0));
+
+		verify(notifications).createNotification(
+				eq(assignee), eq(NotificationType.TASK), eq("Task đã quá hạn"),
+				eq("Task SAGA-1 đã quá hạn (hạn chót 17:30 09/01/2026)."), isNull(), anyString());
+		verify(notifications).createNotification(
+				eq(assignee), eq(NotificationType.TASK), eq("Task sắp đến hạn"),
+				eq("Task SAGA-2 sắp đến hạn (hạn chót 09:00 11/01/2026)."), isNull(), anyString());
+		assertThat(savedByKey.values()).extracting(BusinessWarning::getEvidenceSummary)
+				.containsExactlyInAnyOrder(
+						"Task SAGA-1 đã quá hạn (hạn chót 17:30 09/01/2026).",
+						"Task SAGA-2 sắp đến hạn (hạn chót 09:00 11/01/2026).");
+	}
+
+	@Test
 	void secondCallForTheSameStatusOnALaterDayDoesNotNotifyAgain() {
 		UUID assignee = UUID.randomUUID();
 		Task task = task(TaskStatus.IN_PROGRESS, LocalDateTime.of(2026, 1, 9, 0, 0), assignee);

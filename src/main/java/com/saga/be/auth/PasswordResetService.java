@@ -159,7 +159,7 @@ public class PasswordResetService {
 				+ "Đặt lại mật khẩu: " + resetUrl + "\n\n"
 				+ "Liên kết này hết hạn sau " + minutes + " phút.\n\n"
 				+ "Nếu bạn không yêu cầu điều này, hãy bỏ qua email này — mật khẩu của bạn sẽ không đổi.\n\n"
-				+ "SAGA — Student Activity Graph Based Continuous Assessment\nThis is an automated email.";
+				+ "SAGA — Student Activity Graph Based Continuous Assessment\nĐây là email tự động, vui lòng không trả lời.";
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("subject", subject);
 		payload.put("textBody", textBody);

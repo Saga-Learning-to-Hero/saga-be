@@ -109,7 +109,7 @@ public class AiRiskAnalysisSubmissionService {
 
 	private Submission submitCommon(Project project, AiArtifactType artifactType, UUID artifactId, List<AiEvidenceDraft> draft, AiModelProvider provider, AiCredentialResolver.Resolution resolution, AiInvocationOrigin origin) {
 		String evidenceHash = hashEvidence(draft);
-		String key = AiHashes.sha256(String.join("|", project.getId().toString(), artifactType.name(), artifactId.toString(), evidenceHash, AiAnalysisType.RISK_ANALYSIS.name(), evidenceHash, POLICY_VERSION, PROMPT_VERSION, SCHEMA_VERSION, provider.providerConfigHash(), resolution.outcome().name(), String.valueOf(resolution.identityFingerprint())));
+		String key = AiHashes.sha256(String.join("|", project.getId().toString(), artifactType.name(), artifactId.toString(), evidenceHash, AiAnalysisType.RISK_ANALYSIS.name(), evidenceHash, POLICY_VERSION, PROMPT_VERSION, com.saga.be.ai.AiSystemContract.OUTPUT_REVISION, SCHEMA_VERSION, provider.providerConfigHash(), resolution.outcome().name(), String.valueOf(resolution.identityFingerprint())));
 		try { return Objects.requireNonNull(tx.execute(status -> persist(project, artifactType, artifactId, evidenceHash, draft, evidenceHash, key, provider, resolution, origin))); }
 		catch (AiRetryLineage.RetryAttemptConflict ex) { AiAnalysisRun concurrent = ex.winner(runs); if (AiRetryLineage.shouldEnqueueExisting(concurrent)) after(concurrent.getId()); return new Submission(concurrent, false); }
 	}

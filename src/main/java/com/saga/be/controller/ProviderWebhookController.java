@@ -82,7 +82,7 @@ public class ProviderWebhookController {
 			throws IOException {
 		byte[] body = request.getInputStream().readAllBytes();
 		if (!GitHubWebhookSignature.matches(body, properties.getGithub().getWebhookSecret(), signature)) {
-			warnings.securityFailure("github-sig:" + (delivery == null ? "none" : delivery), "Invalid GitHub webhook signature.");
+			warnings.securityFailure("github-sig:" + (delivery == null ? "none" : delivery), "Chữ ký webhook GitHub không hợp lệ.");
 			throw new IntegrationException(
 					IntegrationErrorCode.WEBHOOK_SIGNATURE_INVALID, HttpStatus.UNAUTHORIZED, "Invalid webhook signature.");
 		}
@@ -118,7 +118,7 @@ public class ProviderWebhookController {
 					delivery != null,
 					authorization != null);
 			warnings.securityFailure(
-					"jira-sig:" + (delivery == null ? "none" : delivery), "Invalid Jira webhook authentication.");
+					"jira-sig:" + (delivery == null ? "none" : delivery), "Xác thực webhook Jira không hợp lệ.");
 			throw new IntegrationException(
 					IntegrationErrorCode.WEBHOOK_SIGNATURE_INVALID,
 					HttpStatus.UNAUTHORIZED,

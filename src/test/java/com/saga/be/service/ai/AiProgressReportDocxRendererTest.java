@@ -43,13 +43,13 @@ class AiProgressReportDocxRendererTest {
 			for (XWPFParagraph p : doc.getParagraphs()) text.append(p.getText()).append('\n');
 		}
 		String content = text.toString();
-		assertThat(content).contains("SAGA Progress Report");
-		assertThat(content).contains("overdueCount: 2");
+		assertThat(content).contains("Báo cáo tiến độ SAGA").contains("Tổng quan").contains("Đề xuất");
+		assertThat(content).contains("Số task quá hạn: 2").contains("Số task sắp đến hạn: 1");
 		assertThat(content).contains("The student has completed most assigned tasks this sprint.");
 		assertThat(content).contains("Consistent recent commit activity");
 		assertThat(content).contains("2 tasks are overdue and 1 is due soon");
 		assertThat(content).contains("Check in about the overdue task");
-		assertThat(content).contains("Yes"); // humanReviewRecommended
+		assertThat(content).containsPattern("Cần giảng viên xem xét\\s+Có\\n"); // humanReviewRecommended
 		assertThat(content).doesNotContain("should-not-appear-in-the-document");
 	}
 

@@ -259,7 +259,7 @@ class CourseRosterServiceTest {
 		verify(emails).enqueue(captor.capture());
 		assertEquals("COURSE_ENROLLED", captor.getValue().emailType());
 		assertTrue(String.valueOf(captor.getValue().payload().get("textBody")).contains("SE1705"));
-		assertTrue(String.valueOf(captor.getValue().payload().get("htmlBody")).contains("You've been added to a course"));
+		assertTrue(String.valueOf(captor.getValue().payload().get("htmlBody")).contains("Bạn đã được thêm vào lớp học phần"));
 		assertTrue(String.valueOf(captor.getValue().payload().get("htmlBody")).contains("http://localhost:3000/dashboard"));
 		verify(audit)
 				.record(
@@ -299,8 +299,8 @@ class CourseRosterServiceTest {
 		verify(emails).enqueue(captor.capture());
 		assertEquals("COURSE_INVITATION", captor.getValue().emailType());
 		assertFalse(Boolean.TRUE.equals(captor.getValue().payload().get("institutionalGoogle")));
-		assertTrue(String.valueOf(captor.getValue().payload().get("textBody")).contains("Register"));
-		assertTrue(String.valueOf(captor.getValue().payload().get("htmlBody")).contains("You're invited to join SAGA"));
+		assertTrue(String.valueOf(captor.getValue().payload().get("textBody")).contains("Hãy đăng ký tài khoản sinh viên SAGA"));
+		assertTrue(String.valueOf(captor.getValue().payload().get("htmlBody")).contains("Bạn được mời tham gia SAGA"));
 		assertTrue(String.valueOf(captor.getValue().payload().get("htmlBody")).contains("http://localhost:3000/register"));
 		CourseRosterResponse roster = service.getRoster(course.getId());
 		assertEquals(1, roster.pendingInvitationCount());
@@ -318,8 +318,8 @@ class CourseRosterServiceTest {
 		assertEquals(Boolean.TRUE, captor.getValue().payload().get("institutionalGoogle"));
 		String text = String.valueOf(captor.getValue().payload().get("textBody"));
 		String html = String.valueOf(captor.getValue().payload().get("htmlBody"));
-		assertTrue(text.contains("institutional email"));
-		assertTrue(html.contains("Sign in with institutional Google"));
+		assertTrue(text.contains("Hãy đăng nhập bằng email trường này"));
+		assertTrue(html.contains("Đăng nhập bằng Google của trường"));
 		assertTrue(html.contains("anvse170102@fpt.edu.vn"));
 		assertFalse(text.toLowerCase(Locale.ROOT).contains("create a local password"));
 		assertFalse(html.toLowerCase(Locale.ROOT).contains("create a local password"));

@@ -91,9 +91,12 @@ public class TaskDeadlineWarningService {
 		warning.setProject(task.getProject());
 		if (task.getProject() != null) warning.setCourse(task.getProject().getCourse());
 		String taskLabel = task.getExternalKey() != null ? task.getExternalKey() : task.getId().toString();
+		String due = task.getDueDate() == null
+				? "?"
+				: task.getDueDate().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm dd/MM/yyyy"));
 		String summary = status == TaskDeadlinePolicy.Status.OVERDUE
-				? "Task " + taskLabel + " is overdue (due " + task.getDueDate() + ")."
-				: "Task " + taskLabel + " is due soon (due " + task.getDueDate() + ").";
+				? "Task " + taskLabel + " đã quá hạn (hạn chót " + due + ")."
+				: "Task " + taskLabel + " sắp đến hạn (hạn chót " + due + ").";
 		warning.setEvidenceSummary(summary);
 		warnings.save(warning);
 		UserAccount assignee = task.getAssigneeStudent() == null ? null : task.getAssigneeStudent().getUserAccount();
@@ -101,7 +104,7 @@ public class TaskDeadlineWarningService {
 			notifications.createNotification(
 					assignee.getId(),
 					NotificationType.TASK,
-					status == TaskDeadlinePolicy.Status.OVERDUE ? "Task overdue" : "Task due soon",
+					status == TaskDeadlinePolicy.Status.OVERDUE ? "Task đã quá hạn" : "Task sắp đến hạn",
 					summary,
 					null,
 					eventKey);

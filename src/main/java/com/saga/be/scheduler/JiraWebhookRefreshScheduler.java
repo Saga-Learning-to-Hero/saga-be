@@ -104,7 +104,7 @@ public class JiraWebhookRefreshScheduler {
 					if (row.getConsecutiveFailures() >= 3) {
 						warnings.securityFailure(
 								"jira-webhook-refresh:" + row.getId(),
-								"Jira webhook refresh failed repeatedly.");
+								"Làm mới webhook Jira thất bại nhiều lần liên tiếp.");
 					}
 				});
 				job.setStatus(SyncJobStatus.FAILED);

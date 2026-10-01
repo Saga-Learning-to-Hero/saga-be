@@ -17,6 +17,22 @@ class AiAnalysisFoundationContractTest {
 	}
 
 	@Test
+	void everyContractAsksForVietnameseFreeTextAndKeepsMachineValuesUntranslated() {
+		for (String contract : new String[] {
+			AiSystemContract.UNTRUSTED_ARTIFACT_DATA,
+			AiSystemContract.ACADEMIC_CLASSIFICATION_UNTRUSTED_DATA,
+			AiSystemContract.TASK_INTELLIGENCE_UNTRUSTED_DATA,
+			AiSystemContract.RISK_ANALYSIS_UNTRUSTED_DATA,
+			AiSystemContract.PROGRESS_NARRATIVE_UNTRUSTED_DATA
+		}) {
+			assertThat(contract).endsWith("Output only the strict structured schema. " + AiSystemContract.OUTPUT_LANGUAGE);
+		}
+		assertThat(AiSystemContract.OUTPUT_LANGUAGE)
+				.contains("in Vietnamese with full diacritics")
+				.contains("JSON keys", "enum values", "evidence IDs", "never translate them");
+	}
+
+	@Test
 	void fakeConfigurationHashIsStableAndDoesNotContainCredentials() {
 		assertThat(FakeAiModelProvider.CONFIG_HASH).hasSize(64).matches("[0-9a-f]{64}");
 	}

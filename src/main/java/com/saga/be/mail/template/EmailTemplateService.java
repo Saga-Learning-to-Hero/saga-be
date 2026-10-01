@@ -18,6 +18,9 @@ public class EmailTemplateService {
 	public static final String COURSE_WITHDRAWN = "course-withdrawn";
 	public static final String TEAM_REMOVED = "team-removed";
 
+	/** Label of the call-to-action button and of the plain-text link line. */
+	static final String OPEN_SAGA = "Mở SAGA";
+
 	private final FrontendLinkResolver links;
 
 	public EmailTemplateService(AuthProperties authProperties) {
@@ -75,72 +78,72 @@ public class EmailTemplateService {
 
 	private EmailTemplate enrolled(EmailTemplateModel model) {
 		String code = displayCode(model);
-		String subject = "SAGA — You were added to " + code;
+		String subject = "SAGA — Bạn đã được thêm vào lớp học phần " + code;
 		String greeting = greeting(model.fullName());
 		String courseLine = courseLine(model);
 		String semester = semesterLine(model);
 		String cta = links.dashboardUrl();
 		String text = greeting
-				+ "\n\nYou've been added to a course.\n\n"
-				+ "Course: "
+				+ "\n\nBạn đã được thêm vào một lớp học phần.\n\n"
+				+ "Học phần: "
 				+ courseLine
-				+ "\nClass: "
+				+ "\nLớp: "
 				+ displayClass(model)
-				+ "\nSemester: "
+				+ "\nHọc kỳ: "
 				+ semester
-				+ "\n\nOpen SAGA: "
+				+ "\n\n" + OPEN_SAGA + ": "
 				+ cta
 				+ footerText();
 		String inner = """
 			<p style="margin:0 0 16px 0;">%s</p>
-			<h1 style="margin:0 0 12px 0;font-size:22px;line-height:28px;color:#0f172a;">You've been added to a course</h1>
-			<p style="margin:0 0 20px 0;">You now have access to this SAGA course. Use the button below to open SAGA.</p>
+			<h1 style="margin:0 0 12px 0;font-size:22px;line-height:28px;color:#0f172a;">Bạn đã được thêm vào lớp học phần</h1>
+			<p style="margin:0 0 20px 0;">Bạn đã có quyền truy cập lớp học phần này trên SAGA. Bấm nút bên dưới để mở SAGA.</p>
 			"""
 				.formatted(EmailHtml.escape(greeting));
 		String html = SagaEmailLayout.document(
 				subject,
 				inner,
-				"Open SAGA",
+				OPEN_SAGA,
 				cta,
 				SagaEmailLayout.infoPanel(
-						"Course", courseLine, "Class", displayClass(model), "Semester", semester));
+						"Học phần", courseLine, "Lớp", displayClass(model), "Học kỳ", semester));
 		return new EmailTemplate(subject, text, html);
 	}
 
 	private EmailTemplate invitation(EmailTemplateModel model) {
 		String code = displayCode(model);
-		String subject = "SAGA — Course invitation for " + code;
+		String subject = "SAGA — Lời mời tham gia lớp học phần " + code;
 		String greeting = greeting(model.fullName());
 		String courseLine = courseLine(model);
 		String semester = semesterLine(model);
 		boolean institutional = model.institutional();
 		String cta = institutional ? links.loginUrl() : links.registerUrl();
-		String ctaLabel = institutional ? "Sign in with institutional Google" : "Create your SAGA student account";
+		String ctaLabel = institutional ? "Đăng nhập bằng Google của trường" : "Tạo tài khoản sinh viên SAGA";
 		String invitedEmail = text(model.recipientEmail());
 		String textExplain;
 		String htmlExplain;
 		if (institutional) {
-			textExplain = "Sign in using this institutional email"
+			textExplain = "Hãy đăng nhập bằng email trường này"
 					+ (invitedEmail.isEmpty() ? "" : " (" + invitedEmail + ")")
-					+ ". Your pending course invitation will be linked automatically after onboarding.";
-			htmlExplain = "Sign in using this institutional email"
+					+ ". Lời mời vào lớp sẽ được tự động liên kết sau khi bạn hoàn tất đăng nhập lần đầu.";
+			htmlExplain = "Hãy đăng nhập bằng email trường này"
 					+ (invitedEmail.isEmpty() ? "" : " (<strong>" + EmailHtml.escape(invitedEmail) + "</strong>)")
-					+ ". Your pending course invitation will be linked automatically after onboarding.";
+					+ ". Lời mời vào lớp sẽ được tự động liên kết sau khi bạn hoàn tất đăng nhập lần đầu.";
 		} else {
-			textExplain = "Register with this email using the public Student onboarding flow"
+			textExplain = "Hãy đăng ký tài khoản sinh viên SAGA bằng email này"
 					+ (invitedEmail.isEmpty() ? "" : " (" + invitedEmail + ")")
-					+ ". After you create your student account, your pending course invitation will be linked automatically.";
-			htmlExplain = "Register with this email using the public Student onboarding flow"
+					+ ". Sau khi bạn tạo tài khoản, lời mời vào lớp sẽ được tự động liên kết.";
+			htmlExplain = "Hãy đăng ký tài khoản sinh viên SAGA bằng email này"
 					+ (invitedEmail.isEmpty() ? "" : " (<strong>" + EmailHtml.escape(invitedEmail) + "</strong>)")
-					+ ". After you create your student account, your pending course invitation will be linked automatically.";
+					+ ". Sau khi bạn tạo tài khoản, lời mời vào lớp sẽ được tự động liên kết.";
 		}
 		String text = greeting
-				+ "\n\nYou're invited to join SAGA.\n\n"
-				+ "Course: "
+				+ "\n\nBạn được mời tham gia SAGA.\n\n"
+				+ "Học phần: "
 				+ courseLine
-				+ "\nClass: "
+				+ "\nLớp: "
 				+ displayClass(model)
-				+ "\nSemester: "
+				+ "\nHọc kỳ: "
 				+ semester
 				+ "\n\n"
 				+ textExplain
@@ -151,7 +154,7 @@ public class EmailTemplateService {
 				+ footerText();
 		String inner = """
 			<p style="margin:0 0 16px 0;">%s</p>
-			<h1 style="margin:0 0 12px 0;font-size:22px;line-height:28px;color:#0f172a;">You're invited to join SAGA</h1>
+			<h1 style="margin:0 0 12px 0;font-size:22px;line-height:28px;color:#0f172a;">Bạn được mời tham gia SAGA</h1>
 			<p style="margin:0 0 20px 0;">%s</p>
 			"""
 				.formatted(EmailHtml.escape(greeting), htmlExplain);
@@ -161,62 +164,62 @@ public class EmailTemplateService {
 				ctaLabel,
 				cta,
 				SagaEmailLayout.infoPanel(
-						"Invited student",
+						"Sinh viên được mời",
 						displayName(model),
-						"Course",
+						"Học phần",
 						courseLine,
-						"Class",
+						"Lớp",
 						displayClass(model),
-						"Semester",
+						"Học kỳ",
 						semester));
 		return new EmailTemplate(subject, text, html);
 	}
 
 	private EmailTemplate teamAssigned(EmailTemplateModel model) {
 		String code = displayCode(model);
-		String subject = "SAGA — Team assignment for " + code;
+		String subject = "SAGA — Bạn đã được xếp nhóm trong lớp học phần " + code;
 		String greeting = greeting(model.fullName());
 		String courseLine = courseLine(model);
 		String semester = semesterLine(model);
 		String teamLine = teamLine(model);
-		String role = EmailHtml.blankTo(model.teamRole(), "Member");
+		String role = roleVi(model.teamRole());
 		String cta = links.dashboardUrl();
 		String text = greeting
-				+ "\n\nYou were assigned to a course team.\n\n"
-				+ "Course: "
+				+ "\n\nBạn đã được xếp vào một nhóm của lớp học phần.\n\n"
+				+ "Học phần: "
 				+ courseLine
-				+ "\nClass: "
+				+ "\nLớp: "
 				+ displayClass(model)
-				+ "\nSemester: "
+				+ "\nHọc kỳ: "
 				+ semester
-				+ "\nTeam: "
+				+ "\nNhóm: "
 				+ teamLine
-				+ "\nRole: "
+				+ "\nVai trò: "
 				+ role
-				+ "\n\nOpen SAGA: "
+				+ "\n\n" + OPEN_SAGA + ": "
 				+ cta
 				+ footerText();
 		String inner = """
 			<p style="margin:0 0 16px 0;">%s</p>
-			<h1 style="margin:0 0 12px 0;font-size:22px;line-height:28px;color:#0f172a;">You were assigned to a team</h1>
-			<p style="margin:0 0 20px 0;">Your SAGA course team assignment is ready. Use the button below to open SAGA.</p>
+			<h1 style="margin:0 0 12px 0;font-size:22px;line-height:28px;color:#0f172a;">Bạn đã được xếp vào nhóm</h1>
+			<p style="margin:0 0 20px 0;">Thông tin nhóm của bạn trong lớp học phần đã sẵn sàng. Bấm nút bên dưới để mở SAGA.</p>
 			"""
 				.formatted(EmailHtml.escape(greeting));
 		String html = SagaEmailLayout.document(
 				subject,
 				inner,
-				"Open SAGA",
+				OPEN_SAGA,
 				cta,
 				SagaEmailLayout.infoPanel(
-						"Course",
+						"Học phần",
 						courseLine,
-						"Class",
+						"Lớp",
 						displayClass(model),
-						"Semester",
+						"Học kỳ",
 						semester,
-						"Team",
+						"Nhóm",
 						teamLine,
-						"Role",
+						"Vai trò",
 						role));
 		return new EmailTemplate(subject, text, html);
 	}
@@ -224,45 +227,45 @@ public class EmailTemplateService {
 	/**
 	 * Warning to a team Leader / course lecturer that two sprints of one project (possibly on
 	 * different Jira sites) run at the same time. Each sprint line is pre-formatted by the caller,
-	 * e.g. {@code "SAGA Sprint 5 — site-a (2026-09-20 → 2026-10-03)"}.
+	 * e.g. {@code "SAGA Sprint 5 — site-a (20/09/2026 → 03/10/2026, đang chạy)"}.
 	 */
 	public Map<String, Object> sprintPeriodOverlapPayload(
 			String fullName, String recipientEmail, String projectName, String classCode, String firstSprint, String secondSprint) {
-		String project = EmailHtml.blankTo(text(projectName), "your project");
-		String subject = "SAGA — Sprints overlap in " + project;
+		String project = EmailHtml.blankTo(text(projectName), "của bạn");
+		String subject = "SAGA — Sprint bị chồng thời gian trong dự án " + project;
 		String greeting = greeting(fullName);
 		String cta = links.dashboardUrl();
-		String explain = "Two sprints of this project run at the same time. SAGA scores contribution and peer review "
-				+ "per sprint, so sprints must run one after another, even when the team uses several Jira sites. "
-				+ "Please adjust the dates or close one of the sprints in Jira.";
+		String explain = "Hai sprint của dự án này đang chạy cùng thời gian. SAGA tính điểm đóng góp và đánh giá chéo "
+				+ "theo từng sprint, nên các sprint phải chạy nối tiếp nhau, kể cả khi nhóm dùng nhiều Jira site. "
+				+ "Hãy chỉnh lại ngày hoặc đóng một sprint trên Jira.";
 		String text = greeting
 				+ "\n\n"
 				+ explain
-				+ "\n\nProject: "
+				+ "\n\nDự án: "
 				+ project
-				+ (text(classCode).isEmpty() ? "" : "\nClass: " + text(classCode))
+				+ (text(classCode).isEmpty() ? "" : "\nLớp: " + text(classCode))
 				+ "\nSprint 1: "
 				+ text(firstSprint)
 				+ "\nSprint 2: "
 				+ text(secondSprint)
-				+ "\n\nOpen SAGA: "
+				+ "\n\n" + OPEN_SAGA + ": "
 				+ cta
 				+ footerText();
 		String inner = """
 			<p style="margin:0 0 16px 0;">%s</p>
-			<h1 style="margin:0 0 12px 0;font-size:22px;line-height:28px;color:#0f172a;">Sprints overlap</h1>
+			<h1 style="margin:0 0 12px 0;font-size:22px;line-height:28px;color:#0f172a;">Sprint bị chồng thời gian</h1>
 			<p style="margin:0 0 20px 0;">%s</p>
 			"""
 				.formatted(EmailHtml.escape(greeting), EmailHtml.escape(explain));
 		String html = SagaEmailLayout.document(
 				subject,
 				inner,
-				"Open SAGA",
+				OPEN_SAGA,
 				cta,
 				SagaEmailLayout.infoPanel(
-						"Project",
+						"Dự án",
 						project,
-						"Class",
+						"Lớp",
 						EmailHtml.blankTo(text(classCode), "—"),
 						"Sprint 1",
 						text(firstSprint),
@@ -286,37 +289,39 @@ public class EmailTemplateService {
 	 *
 	 * @param model course/class/semester and, for a team removal, the team they left
 	 * @param teamOnly true = removed from the team but still in the course
-	 * @param removedBy "Lecturer" or "Admin"
+	 * @param removedBy "Lecturer" or "Admin" (shown as "Giảng viên" / "Quản trị viên")
 	 */
 	public Map<String, Object> studentRemovalPayload(
 			EmailTemplateModel model, boolean teamOnly, String reason, String removedBy) {
 		EmailTemplateModel safe = model == null ? EmailTemplateModel.course("", "", "", "", "", "", "", false) : model;
 		String code = displayCode(safe);
-		String subject = teamOnly ? "SAGA — You were removed from your team in " + code : "SAGA — You were removed from " + code;
+		String subject = teamOnly
+				? "SAGA — Bạn đã bị rút khỏi nhóm trong lớp học phần " + code
+				: "SAGA — Bạn đã bị rút khỏi lớp học phần " + code;
 		String greeting = greeting(safe.fullName());
 		String courseLine = courseLine(safe);
 		String semester = semesterLine(safe);
-		String by = EmailHtml.blankTo(text(removedBy), "Course staff");
-		String why = EmailHtml.blankTo(text(reason), "Not provided");
+		String by = removedByVi(removedBy);
+		String why = EmailHtml.blankTo(text(reason), "Không có");
 		String explain = teamOnly
-				? "You were removed from your team. You are still enrolled in the course; your lecturer may assign you to another team."
-				: "You were removed from the course roster and can no longer access this course in SAGA.";
+				? "Bạn đã bị rút khỏi nhóm. Bạn vẫn còn trong lớp học phần; giảng viên có thể xếp bạn vào nhóm khác."
+				: "Bạn đã bị rút khỏi danh sách lớp học phần và không còn truy cập được lớp này trên SAGA.";
 		String cta = links.dashboardUrl();
 		String text = greeting
 				+ "\n\n"
 				+ explain
-				+ "\n\nCourse: "
+				+ "\n\nHọc phần: "
 				+ courseLine
-				+ "\nClass: "
+				+ "\nLớp: "
 				+ displayClass(safe)
-				+ "\nSemester: "
+				+ "\nHọc kỳ: "
 				+ semester
-				+ (teamOnly ? "\nTeam: " + teamLine(safe) : "")
-				+ "\nRemoved by: "
+				+ (teamOnly ? "\nNhóm: " + teamLine(safe) : "")
+				+ "\nNgười thực hiện: "
 				+ by
-				+ "\nReason: "
+				+ "\nLý do: "
 				+ why
-				+ "\n\nOpen SAGA: "
+				+ "\n\n" + OPEN_SAGA + ": "
 				+ cta
 				+ footerText();
 		String inner = """
@@ -326,15 +331,15 @@ public class EmailTemplateService {
 			"""
 				.formatted(
 						EmailHtml.escape(greeting),
-						teamOnly ? "You were removed from your team" : "You were removed from a course",
+						teamOnly ? "Bạn đã bị rút khỏi nhóm" : "Bạn đã bị rút khỏi lớp học phần",
 						EmailHtml.escape(explain));
 		String panel = teamOnly
 				? SagaEmailLayout.infoPanel(
-						"Course", courseLine, "Class", displayClass(safe), "Semester", semester, "Team", teamLine(safe),
-						"Removed by", by, "Reason", why)
+						"Học phần", courseLine, "Lớp", displayClass(safe), "Học kỳ", semester, "Nhóm", teamLine(safe),
+						"Người thực hiện", by, "Lý do", why)
 				: SagaEmailLayout.infoPanel(
-						"Course", courseLine, "Class", displayClass(safe), "Semester", semester, "Removed by", by, "Reason", why);
-		String html = SagaEmailLayout.document(subject, inner, "Open SAGA", cta, panel);
+						"Học phần", courseLine, "Lớp", displayClass(safe), "Học kỳ", semester, "Người thực hiện", by, "Lý do", why);
+		String html = SagaEmailLayout.document(subject, inner, OPEN_SAGA, cta, panel);
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("subject", subject);
 		payload.put("textBody", text);
@@ -350,20 +355,20 @@ public class EmailTemplateService {
 	}
 
 	private EmailTemplate smoke(EmailTemplateModel model) {
-		String subject = "SAGA — Mail delivery test";
+		String subject = "SAGA — Kiểm tra gửi email";
 		String cta = links.dashboardUrl();
-		String text = "This is a SAGA local/dev mail pipeline smoke test.\n\nOpen SAGA: " + cta + footerText();
+		String text = "Đây là email kiểm tra đường gửi mail của SAGA (local/dev).\n\n" + OPEN_SAGA + ": " + cta + footerText();
 		String inner = """
-			<p style="margin:0 0 16px 0;">Hello,</p>
-			<h1 style="margin:0 0 12px 0;font-size:22px;line-height:28px;color:#0f172a;">Mail delivery test</h1>
-			<p style="margin:0 0 20px 0;">This is a SAGA local/dev mail pipeline smoke test.</p>
+			<p style="margin:0 0 16px 0;">Xin chào,</p>
+			<h1 style="margin:0 0 12px 0;font-size:22px;line-height:28px;color:#0f172a;">Kiểm tra gửi email</h1>
+			<p style="margin:0 0 20px 0;">Đây là email kiểm tra đường gửi mail của SAGA (local/dev).</p>
 			""";
 		String html = SagaEmailLayout.document(
 				subject,
 				inner,
-				"Open SAGA",
+				OPEN_SAGA,
 				cta,
-				SagaEmailLayout.infoPanel("Recipient", text(model.recipientEmail())));
+				SagaEmailLayout.infoPanel("Người nhận", text(model.recipientEmail())));
 		return new EmailTemplate(subject, text, html);
 	}
 
@@ -377,7 +382,7 @@ public class EmailTemplateService {
 
 	private static String greeting(String fullName) {
 		String name = text(fullName);
-		return name.isEmpty() ? "Hello," : "Hello " + name + ",";
+		return name.isEmpty() ? "Xin chào," : "Xin chào " + name + ",";
 	}
 
 	private static String displayName(EmailTemplateModel model) {
@@ -386,7 +391,7 @@ public class EmailTemplateService {
 	}
 
 	private static String displayCode(EmailTemplateModel model) {
-		return EmailHtml.blankTo(model.courseCode(), "your course");
+		return EmailHtml.blankTo(model.courseCode(), "của bạn");
 	}
 
 	private static String displayClass(EmailTemplateModel model) {
@@ -405,7 +410,7 @@ public class EmailTemplateService {
 		if (!code.isEmpty()) {
 			return code;
 		}
-		return "SAGA course";
+		return "Lớp học phần SAGA";
 	}
 
 	private static String semesterLine(EmailTemplateModel model) {
@@ -421,16 +426,40 @@ public class EmailTemplateService {
 		String number = model.teamNo() == null ? "" : String.valueOf(model.teamNo());
 		String name = text(model.teamName());
 		if (!number.isEmpty() && !name.isEmpty()) {
-			return number + " — " + name;
+			return "Nhóm " + number + " — " + name;
 		}
 		if (!name.isEmpty()) {
 			return name;
 		}
-		return EmailHtml.blankTo(number, "—");
+		return number.isEmpty() ? "—" : "Nhóm " + number;
+	}
+
+	/** Team role as stored ("Leader"/"Member", or the enum name), shown in Vietnamese. */
+	static String roleVi(String role) {
+		String value = text(role);
+		if (value.equalsIgnoreCase("leader")) {
+			return "Trưởng nhóm";
+		}
+		if (value.isEmpty() || value.equalsIgnoreCase("member")) {
+			return "Thành viên";
+		}
+		return value;
+	}
+
+	/** "Admin"/"Lecturer" from StudentRemovalNotifier#removedBy, shown in Vietnamese. */
+	static String removedByVi(String removedBy) {
+		String value = text(removedBy);
+		if (value.equalsIgnoreCase("admin")) {
+			return "Quản trị viên";
+		}
+		if (value.equalsIgnoreCase("lecturer")) {
+			return "Giảng viên";
+		}
+		return value.isEmpty() ? "Giảng viên phụ trách lớp" : value;
 	}
 
 	private static String footerText() {
-		return "\n\nSAGA — Student Activity Graph Based Continuous Assessment\nThis is an automated email.";
+		return "\n\nSAGA — Student Activity Graph Based Continuous Assessment\n" + SagaEmailLayout.AUTOMATED_NOTICE;
 	}
 
 	private static String text(String value) {

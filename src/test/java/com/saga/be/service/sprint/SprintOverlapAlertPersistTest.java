@@ -188,7 +188,11 @@ class SprintOverlapAlertPersistTest {
 		List<BusinessWarning> saved = projectWarnings();
 		assertThat(saved).hasSize(1);
 		assertThat(saved.getFirst().getEventKey()).startsWith(SprintOverlapAlertService.EVENT_KEY_PREFIX);
-		assertThat(saved.getFirst().getEvidenceSummary()).contains("SAGA Sprint 5").contains("B Sprint 1");
+		assertThat(saved.getFirst().getEvidenceSummary())
+				.startsWith("Các sprint bị chồng thời gian trong dự án SAGA Project: ")
+				.contains("\"SAGA Sprint 5\" — site-a (01/09/2026 → 14/09/2026, đã đóng)")
+				.contains(" và \"B Sprint 1\" — site-b (10/09/2026 → 24/09/2026, đã đóng)")
+				.contains("Hãy chỉnh lại ngày hoặc đóng một sprint trên Jira.");
 		assertThat(notificationRows.countByRecipientUser_Id(leader.getId())).isEqualTo(1);
 		assertThat(notificationRows.countByRecipientUser_Id(lecturer.getId())).isEqualTo(1);
 		assertThat(notificationRows.countByRecipientUser_Id(member.getId())).isZero();

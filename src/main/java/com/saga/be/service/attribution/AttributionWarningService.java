@@ -43,7 +43,7 @@ public class AttributionWarningService {
 				WarningSeverity.HIGH,
 				null,
 				null,
-				"A provider identity is already linked to another SAGA user.",
+				"Tài khoản nhà cung cấp (GitHub/Jira) này đã được liên kết với một người dùng SAGA khác.",
 				actor,
 				null);
 	}
@@ -56,7 +56,7 @@ public class AttributionWarningService {
 				WarningSeverity.MEDIUM,
 				null,
 				null,
-				"A provider identity was linked or unlinked. Review nearby task deadlines.",
+				"Một tài khoản nhà cung cấp (GitHub/Jira) vừa được liên kết hoặc huỷ liên kết. Hãy kiểm tra các task sắp đến hạn.",
 				actor,
 				null);
 	}
@@ -93,7 +93,7 @@ public class AttributionWarningService {
 				notifications.createNotification(
 						lecturer.getId(),
 						NotificationType.WARNING,
-						"Potential contribution attribution issue",
+						"Có dấu hiệu bất thường trong ghi nhận đóng góp",
 						summary,
 						null,
 						eventKey);
@@ -106,7 +106,7 @@ public class AttributionWarningService {
 						"attribution-anomaly",
 						Map.of(
 								"subject",
-								"Potential contribution attribution issue",
+								"SAGA — Có dấu hiệu bất thường trong ghi nhận đóng góp",
 								"textBody",
 								summary,
 								"summary",

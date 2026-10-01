@@ -79,8 +79,9 @@ class StudentRemovalNotifierTest {
 		ArgumentCaptor<String> eventKey = ArgumentCaptor.forClass(String.class);
 		verify(notifications).createNotification(
 				eq(student.getId()), eq(NotificationType.COURSE), title.capture(), message.capture(), isNull(), eventKey.capture());
-		assertThat(title.getValue()).isEqualTo("Removed from SWR302 · SE1802");
-		assertThat(message.getValue()).contains("by the lecturer").endsWith("Reason: Transferred to SE1803");
+		assertThat(title.getValue()).isEqualTo("Bạn đã bị rút khỏi lớp SWR302 · SE1802");
+		assertThat(message.getValue())
+				.isEqualTo("Bạn đã bị giảng viên rút khỏi lớp SWR302 · SE1802. Lý do: Transferred to SE1803");
 		assertThat(eventKey.getValue()).startsWith("course-withdrawn:" + enrollment.getId() + ":");
 
 		ArgumentCaptor<EmailEnqueueRequest> mail = ArgumentCaptor.forClass(EmailEnqueueRequest.class);
@@ -88,10 +89,10 @@ class StudentRemovalNotifierTest {
 		assertThat(mail.getValue().recipientEmail()).isEqualTo("student@fpt.edu.vn");
 		assertThat(mail.getValue().emailType()).isEqualTo("COURSE_WITHDRAWN");
 		assertThat(mail.getValue().templateKey()).isEqualTo(EmailTemplateService.COURSE_WITHDRAWN);
-		assertThat(String.valueOf(mail.getValue().payload().get("subject"))).isEqualTo("SAGA — You were removed from SWR302");
+		assertThat(String.valueOf(mail.getValue().payload().get("subject"))).isEqualTo("SAGA — Bạn đã bị rút khỏi lớp học phần SWR302");
 		assertThat(String.valueOf(mail.getValue().payload().get("textBody")))
-				.contains("Reason: Transferred to SE1803")
-				.contains("Removed by: Lecturer");
+				.contains("Lý do: Transferred to SE1803")
+				.contains("Người thực hiện: Giảng viên");
 	}
 
 	@Test
@@ -104,13 +105,15 @@ class StudentRemovalNotifierTest {
 
 		ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
 		verify(notifications).createNotification(
-				eq(student.getId()), eq(NotificationType.TEAM), eq("Removed from team 1 — SAGA Team"), message.capture(),
+				eq(student.getId()), eq(NotificationType.TEAM), eq("Bạn đã bị rút khỏi nhóm 1 — SAGA Team"), message.capture(),
 				isNull(), any());
-		assertThat(message.getValue()).contains("still enrolled").contains("by the admin").contains("Moved to team 2");
+		assertThat(message.getValue())
+				.isEqualTo("Bạn đã bị quản trị viên rút khỏi nhóm 1 — SAGA Team trong lớp SWR302 · SE1802."
+						+ " Bạn vẫn còn trong lớp học phần. Lý do: Moved to team 2");
 		ArgumentCaptor<EmailEnqueueRequest> mail = ArgumentCaptor.forClass(EmailEnqueueRequest.class);
 		verify(emails).enqueue(mail.capture());
 		assertThat(mail.getValue().emailType()).isEqualTo("TEAM_REMOVED");
-		assertThat(String.valueOf(mail.getValue().payload().get("htmlBody"))).contains("1 — SAGA Team").contains("Moved to team 2");
+		assertThat(String.valueOf(mail.getValue().payload().get("htmlBody"))).contains("Nhóm 1 — SAGA Team").contains("Moved to team 2");
 	}
 
 	@Test
@@ -139,11 +142,11 @@ class StudentRemovalNotifierTest {
 
 		ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
 		verify(notifications).createNotification(any(), any(), any(), message.capture(), any(), any());
-		assertThat(message.getValue()).isEqualTo("You were removed from SWR302 · SE1802 by the admin.");
+		assertThat(message.getValue()).isEqualTo("Bạn đã bị quản trị viên rút khỏi lớp SWR302 · SE1802.");
 		ArgumentCaptor<EmailEnqueueRequest> mail = ArgumentCaptor.forClass(EmailEnqueueRequest.class);
 		verify(emails).enqueue(mail.capture());
 		assertThat(String.valueOf(mail.getValue().payload().get("textBody")))
-				.contains("Reason: Not provided")
+				.contains("Lý do: Không có")
 				.doesNotContain("null");
 	}
 

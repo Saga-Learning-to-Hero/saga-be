@@ -30,34 +30,34 @@ public class AiProgressReportDocxRenderer {
 
 	public byte[] render(AiAnalysisRun run, AiProgressNarrative narrative) {
 		try (XWPFDocument doc = new XWPFDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-			title(doc, "SAGA Progress Report");
-			paragraph(doc, "Generated: " + (run.getCompletedAt() == null ? "" : run.getCompletedAt().format(TIMESTAMP)) + " (UTC)");
-			paragraph(doc, "Scope: " + run.getArtifactType() + "  •  Subject ID: " + run.getArtifactId());
-			paragraph(doc, "Analysis ID: " + run.getId());
+			title(doc, "Báo cáo tiến độ SAGA");
+			paragraph(doc, "Thời điểm tạo: " + (run.getCompletedAt() == null ? "" : run.getCompletedAt().format(TIMESTAMP)) + " (UTC)");
+			paragraph(doc, "Phạm vi: " + run.getArtifactType() + "  •  Mã đối tượng: " + run.getArtifactId());
+			paragraph(doc, "Mã phân tích: " + run.getId());
 
-			heading(doc, "Deterministic Progress Facts");
-			for (Map.Entry<String, Object> entry : facts(narrative.getFactsJson()).entrySet()) bullet(doc, entry.getKey() + ": " + String.valueOf(entry.getValue()));
+			heading(doc, "Số liệu tiến độ (do hệ thống tính)");
+			for (Map.Entry<String, Object> entry : facts(narrative.getFactsJson()).entrySet()) bullet(doc, factLabel(entry.getKey()) + ": " + String.valueOf(entry.getValue()));
 
-			heading(doc, "Overview");
+			heading(doc, "Tổng quan");
 			paragraph(doc, narrative.getOverview());
 
-			heading(doc, "Due Soon / Overdue");
+			heading(doc, "Sắp đến hạn / Quá hạn");
 			paragraph(doc, narrative.getDueSoonOverdueNote());
 
-			heading(doc, "Highlights");
+			heading(doc, "Điểm nổi bật");
 			bulletsOrNone(doc, stringList(narrative.getHighlightsJson()));
 
-			heading(doc, "Concerns / Risks");
+			heading(doc, "Vấn đề / Rủi ro");
 			bulletsOrNone(doc, stringList(narrative.getConcernsJson()));
 
-			heading(doc, "Blockers");
+			heading(doc, "Trở ngại");
 			bulletsOrNone(doc, stringList(narrative.getBlockersJson()));
 
-			heading(doc, "Recommendations");
+			heading(doc, "Đề xuất");
 			bulletsOrNone(doc, stringList(narrative.getRecommendationsJson()));
 
-			heading(doc, "Human Review Recommended");
-			paragraph(doc, narrative.isHumanReviewRecommended() ? "Yes" : "No");
+			heading(doc, "Cần giảng viên xem xét");
+			paragraph(doc, narrative.isHumanReviewRecommended() ? "Có" : "Không");
 
 			doc.write(out);
 			return out.toByteArray();
@@ -69,6 +69,27 @@ public class AiProgressReportDocxRenderer {
 	/** Safe: no user input, no path traversal — a fixed prefix plus the run's own UUID only. */
 	public String filename(AiAnalysisRun run) {
 		return "saga-progress-report-" + run.getArtifactType().name().toLowerCase() + "-" + run.getId() + ".docx";
+	}
+
+	private static final Map<String, String> FACT_LABELS = Map.ofEntries(
+			Map.entry("scope", "Phạm vi"),
+			Map.entry("courseId", "Mã lớp học phần"),
+			Map.entry("projectId", "Mã dự án"),
+			Map.entry("teamId", "Mã nhóm"),
+			Map.entry("teamName", "Tên nhóm"),
+			Map.entry("studentId", "Mã sinh viên"),
+			Map.entry("teamCount", "Số nhóm"),
+			Map.entry("memberCount", "Số thành viên"),
+			Map.entry("taskStatusCounts", "Số task theo trạng thái"),
+			Map.entry("overdueCount", "Số task quá hạn"),
+			Map.entry("dueSoonCount", "Số task sắp đến hạn"),
+			Map.entry("nonDoneAttentionTaskCount", "Số task chưa xong cần chú ý"),
+			Map.entry("riskDistribution", "Phân bố mức rủi ro"),
+			Map.entry("taskIntelligenceEvidenceDistribution", "Phân bố mức bằng chứng của task"));
+
+	/** Vietnamese label for a known facts key; an unknown key is shown as-is. */
+	static String factLabel(String key) {
+		return FACT_LABELS.getOrDefault(key, key);
 	}
 
 	private Map<String, Object> facts(String factsJson) {
@@ -101,7 +122,7 @@ public class AiProgressReportDocxRenderer {
 		XWPFRun run = p.createRun(); run.setText("• " + text);
 	}
 	private static void bulletsOrNone(XWPFDocument doc, List<String> items) {
-		if (items.isEmpty()) { paragraph(doc, "None."); return; }
+		if (items.isEmpty()) { paragraph(doc, "Không có."); return; }
 		for (String item : items) bullet(doc, item);
 	}
 }
