@@ -28,7 +28,7 @@ public final class SprintFirstContributionMixer {
 			UUID sprintId,
 			String sprintName,
 			TaskStatus status,
-			Integer storyPoint,
+			BigDecimal storyPoint,
 			ContributionCriterion criterion) {}
 
 	public record PeerFact(UUID revieweeStudentId, UUID sprintId, int stars) {}
@@ -344,8 +344,8 @@ public final class SprintFirstContributionMixer {
 		return zero(part).divide(total, MATH).multiply(HUNDRED, MATH);
 	}
 
-	private static BigDecimal taskWeight(Integer storyPoint) {
-		return storyPoint == null ? BigDecimal.ONE : BigDecimal.valueOf(storyPoint.longValue());
+	private static BigDecimal taskWeight(BigDecimal storyPoint) {
+		return storyPoint == null ? BigDecimal.ONE : storyPoint;
 	}
 
 	private static BigDecimal zero(BigDecimal value) {

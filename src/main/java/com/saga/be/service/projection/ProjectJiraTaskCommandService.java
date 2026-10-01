@@ -234,6 +234,9 @@ public class ProjectJiraTaskCommandService {
 				jiraParent == null
 						? null
 						: TaskIssueTypePolicy.level(jiraWrite.getIssueType(access, integration.getCloudId(), jiraParent.getExternalId())));
+		if (subtask) {
+			requireSubtaskPercent(integration.getId(), jiraParent.getExternalId(), null, request.storyPoints());
+		}
 		// A Subtask always runs in its parent's sprint (Jira does not move subtasks on their own), so
 		// a sprint picked in the form is not applied to it and its dates are checked against the
 		// parent's sprint instead.
@@ -430,6 +433,10 @@ public class ProjectJiraTaskCommandService {
 			jiraWrite.updateIssueFields(access, integration.getCloudId(), issueRef, fields);
 		}
 		if (request.storyPoints() != null) {
+			if ("SUBTASK".equals(task.getIssueTypeLevel())) {
+				requireSubtaskPercent(
+						integration.getId(), task.getParentExternalId(), task.getId(), request.storyPoints());
+			}
 			jiraWrite.setIssueEstimation(
 					access, integration.getCloudId(), integration.getJiraBoardId(), issueRef, request.storyPoints());
 		}
@@ -664,6 +671,24 @@ public class ProjectJiraTaskCommandService {
 					HttpStatus.FORBIDDEN,
 					"Only the Team Leader can unassign a task or assign it to someone else.");
 		}
+	}
+
+	private void requireSubtaskPercent(
+			UUID jiraIntegrationId, String parentExternalId, UUID excludeTaskId, Integer storyPoints) {
+		int used = 0;
+		if (jiraIntegrationId != null && parentExternalId != null && !parentExternalId.isBlank()) {
+			for (Object[] row : tasks.findSubtaskStoryPoints(jiraIntegrationId, parentExternalId)) {
+				UUID id = (UUID) row[0];
+				if (excludeTaskId != null && excludeTaskId.equals(id)) {
+					continue;
+				}
+				Integer points = (Integer) row[1];
+				if (com.saga.be.service.contribution.SubtaskPercentPolicy.inRange(points)) {
+					used += com.saga.be.service.contribution.SubtaskPercentPolicy.percent(points);
+				}
+			}
+		}
+		com.saga.be.service.contribution.SubtaskPercentPolicy.requireRoom(storyPoints, used);
 	}
 
 	/**

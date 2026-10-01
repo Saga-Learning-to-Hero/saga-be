@@ -372,6 +372,48 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 	boolean existsByJiraIntegration_IdAndParentExternalIdAndDeletedAtIsNull(
 			UUID jiraIntegrationId, String parentExternalId);
 
+	/** Story points of active Subtasks under one Jira parent: {@code Object[]{UUID id, Integer storyPoint}}. */
+	@Query(
+			"""
+			select t.id, t.storyPoint from Task t
+			where t.jiraIntegration.id = :jiraIntegrationId
+			  and t.parentExternalId = :parentExternalId
+			  and t.issueTypeLevel = 'SUBTASK'
+			  and t.deletedAt is null
+			""")
+	List<Object[]> findSubtaskStoryPoints(
+			@Param("jiraIntegrationId") UUID jiraIntegrationId, @Param("parentExternalId") String parentExternalId);
+
+	@Query(
+			"""
+			select parent.id from Task parent
+			where parent.id in :ids
+			  and parent.deletedAt is null
+			  and exists (
+			    select 1 from Task child
+			    where child.deletedAt is null
+			      and child.issueTypeLevel = 'SUBTASK'
+			      and child.jiraIntegration = parent.jiraIntegration
+			      and parent.externalId is not null
+			      and child.parentExternalId = parent.externalId
+			  )
+			""")
+	List<UUID> findIdsWithSubtaskChildren(@Param("ids") Collection<UUID> ids);
+
+	/** {@code Object[]{UUID subtaskId, String parentLabelsJson}} for Subtasks in {@code ids}. */
+	@Query(
+			"""
+			select child.id, parent.labelsJson
+			from Task child, Task parent
+			where child.id in :ids
+			  and child.deletedAt is null
+			  and child.issueTypeLevel = 'SUBTASK'
+			  and parent.deletedAt is null
+			  and parent.jiraIntegration = child.jiraIntegration
+			  and parent.externalId = child.parentExternalId
+			""")
+	List<Object[]> findParentLabelsBySubtaskIds(@Param("ids") Collection<UUID> ids);
+
 	@Modifying(clearAutomatically = true, flushAutomatically = true)
 	@Query("update Task t set t.parentTask = null where t.project.id = :projectId")
 	int clearParentTaskReferencesByProjectId(@Param("projectId") UUID projectId);

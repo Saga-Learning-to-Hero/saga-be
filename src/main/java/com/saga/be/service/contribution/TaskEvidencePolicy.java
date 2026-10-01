@@ -19,6 +19,9 @@ import java.util.Set;
  * A task carrying several markers needs the union (code + document -> commit AND document). Only a
  * DONE task can be missing proof; a DONE task with no marker is {@link Status#UNLABELED}: SAGA cannot
  * tell what proof it needs, and it earns no criterion credit until labelled.
+ *
+ * <p>A Standard item that already has at least one Subtask does not need commit or document proof of
+ * its own. The Subtasks carry that proof, judged by the parent's labels.
  */
 public final class TaskEvidencePolicy {
 
@@ -66,10 +69,20 @@ public final class TaskEvidencePolicy {
 	 * @param documentEvidence uploaded files + web links + Jira attachments
 	 */
 	public static Result evaluate(TaskStatus status, List<String> labels, long commitEvidence, long documentEvidence) {
+		return evaluate(status, labels, commitEvidence, documentEvidence, false);
+	}
+
+	/**
+	 * @param proofOnSubtasks the task has at least one Subtask, so this task itself needs neither a
+	 *     commit nor a document
+	 */
+	public static Result evaluate(
+			TaskStatus status, List<String> labels, long commitEvidence, long documentEvidence, boolean proofOnSubtasks) {
 		Set<Outcome> markers = ReservedContributionMarkerClassifier.markers(labels);
 		List<String> categories = markers.stream().map(Outcome::name).toList();
-		boolean needsCommit = markers.contains(Outcome.CODE) || markers.contains(Outcome.TEST);
-		boolean needsDocument = markers.contains(Outcome.DOCUMENT) || markers.contains(Outcome.RESEARCH);
+		boolean needsCommit = !proofOnSubtasks && (markers.contains(Outcome.CODE) || markers.contains(Outcome.TEST));
+		boolean needsDocument =
+				!proofOnSubtasks && (markers.contains(Outcome.DOCUMENT) || markers.contains(Outcome.RESEARCH));
 		Status result;
 		if (status != TaskStatus.DONE) {
 			result = Status.NOT_DONE;

@@ -1435,6 +1435,8 @@ Vài lưu ý chính xác cần nhớ:
   | Gắn nhiều label | Hợp của các loại trên | VD code + document → cần **cả** commit **và** tài liệu |
 
   `status`: `NOT_DONE` (chưa xong, không cảnh báo) · `SATISFIED` (đủ) · `MISSING_COMMIT` · `MISSING_DOCUMENT` · `MISSING_COMMIT_AND_DOCUMENT` · `UNLABELED` (DONE nhưng chưa có label SAGA — SAGA không biết cần minh chứng gì, và task **không được tính điểm tiêu chí** cho tới khi gắn label). Gợi ý hiển thị: `MISSING_COMMIT` → "Thiếu commit" (đỏ); `MISSING_DOCUMENT` → "Thiếu tài liệu" (vàng); `MISSING_COMMIT_AND_DOCUMENT` → cả hai; `UNLABELED` → "Chưa gắn nhãn SAGA" (xám). Đếm "task hoàn thành chưa có commit" = số task có `status` là `MISSING_COMMIT` hoặc `MISSING_COMMIT_AND_DOCUMENT`.
+
+  Cha đã có ít nhất một Subtask thì `requiresCommit` và `requiresDocument` là `false`, `status` không còn `MISSING_COMMIT` / `MISSING_DOCUMENT`. File, link và commit nằm trên Subtask. Subtask được xét theo nhãn `saga:*` của cha. Story point của Subtask là thang 1–10: nhập `6` nghĩa là 60% story point của cha. Tổng các Subtask của cùng một cha không được vượt 100%; vượt thì `400 TASK_SUBTASK_PERCENT_INVALID`.
   `evidenceCheck` trên `GET /tasks` và `GET /tasks/{id}` là chuẩn; response của `POST`/`PATCH` là ước tính (đếm link thô, chưa gồm tệp Jira) — FE refetch danh sách sau khi ghi.
 
 ### Xoá task — chặn nếu đã có bằng chứng
