@@ -34,7 +34,6 @@ import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.repository.TeamRepository;
 import com.saga.be.service.academic.AcademicCatalogService.AuditRequest;
 import com.saga.be.service.audit.AuditService;
-import com.saga.be.service.contribution.ReservedContributionMarkerClassifier.Outcome;
 import com.saga.be.service.contribution.SprintFirstContributionMixer.MemberResult;
 import com.saga.be.service.contribution.SprintFirstContributionMixer.OverrideFact;
 import com.saga.be.service.contribution.SprintFirstContributionMixer.PeerFact;
@@ -209,25 +208,7 @@ public class TeamContributionService {
 				evidenced.add(file.getTask().getId());
 			}
 		}
-		List<TaskFact> facts = new ArrayList<>();
-		for (Task task : projectTasks) {
-			if (task.getAssigneeStudent() == null) {
-				continue;
-			}
-			Outcome outcome = ReservedContributionMarkerClassifier.classify(TaskLabelParser.parse(task.getLabelsJson()));
-			ContributionCriterion criterion = ReservedContributionMarkerClassifier.toCriterion(outcome);
-			if ((criterion == ContributionCriterion.DOCUMENT || criterion == ContributionCriterion.RESEARCH)
-					&& !evidenced.contains(task.getId())) {
-				criterion = null;
-			}
-			facts.add(new TaskFact(
-					task.getAssigneeStudent().getId(),
-					task.getSprint() == null ? null : task.getSprint().getId(),
-					task.getSprint() == null ? null : task.getSprint().getName(),
-					task.getStatus(),
-					task.getStoryPoint(),
-					criterion));
-		}
+		List<TaskFact> facts = ContributionTaskFacts.from(projectTasks, evidenced);
 		List<UUID> studentIds = new ArrayList<>(memberByStudent.keySet());
 		List<PeerFact> peers = new ArrayList<>();
 		if (!studentIds.isEmpty()) {

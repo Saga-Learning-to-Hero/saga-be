@@ -17,7 +17,7 @@ import org.springframework.http.HttpStatus;
  *       Epic; an Epic (or anything above it) takes no parent.
  * </ul>
  *
- * Contribution scoring never reads the issue type, so none of this changes how points are counted.
+ * Contribution scoring reads SUBTASK versus STANDARD when splitting a parent's story points.
  */
 public final class TaskIssueTypePolicy {
 

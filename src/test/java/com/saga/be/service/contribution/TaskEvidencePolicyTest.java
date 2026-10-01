@@ -56,6 +56,17 @@ class TaskEvidencePolicyTest {
 		assertThat(status(List.of("saga:code-extra"), 0, 0)).isEqualTo(Status.UNLABELED);
 	}
 
+	@Test
+	void parentWithSubtasksNeedsNeitherCommitNorDocument() {
+		TaskEvidencePolicy.Result result = TaskEvidencePolicy.evaluate(
+				TaskStatus.DONE, List.of("saga:code", "saga:document"), 0, 0, true);
+
+		assertThat(result.status()).isEqualTo(Status.SATISFIED);
+		assertThat(result.requiresCommit()).isFalse();
+		assertThat(result.requiresDocument()).isFalse();
+		assertThat(result.missingProof()).isFalse();
+	}
+
 	private static Status status(List<String> labels, long commits, long documents) {
 		return TaskEvidencePolicy.evaluate(TaskStatus.DONE, labels, commits, documents).status();
 	}

@@ -15,16 +15,25 @@ public final class SagaGraphRules {
 
 	public static TaskGraphAttrs classify(
 			TaskStatus status, List<String> labels, boolean hasFileEvidence, int linkedCommitCount) {
+		return classify(status, labels, hasFileEvidence, linkedCommitCount, false);
+	}
+
+	public static TaskGraphAttrs classify(
+			TaskStatus status,
+			List<String> labels,
+			boolean hasFileEvidence,
+			int linkedCommitCount,
+			boolean proofOnSubtasks) {
 		Outcome outcome = ReservedContributionMarkerClassifier.classify(labels);
 		ContributionCriterion criterion = ReservedContributionMarkerClassifier.toCriterion(outcome);
 		boolean classified = criterion != null;
-		if (criterion == ContributionCriterion.DOCUMENT || criterion == ContributionCriterion.RESEARCH) {
+		if (!proofOnSubtasks
+				&& (criterion == ContributionCriterion.DOCUMENT || criterion == ContributionCriterion.RESEARCH)) {
 			classified = hasFileEvidence;
 		}
 		String weightType = classified ? criterion.name() : null;
-		// Anomaly = a DONE task missing the proof its own labels require (commit for code/test,
-		// file/link/attachment for document/research) -- the same TaskEvidencePolicy the task list uses.
-		boolean anomaly = TaskEvidencePolicy.evaluate(status, labels, linkedCommitCount, hasFileEvidence ? 1 : 0)
+		boolean anomaly = TaskEvidencePolicy.evaluate(
+						status, labels, linkedCommitCount, hasFileEvidence ? 1 : 0, proofOnSubtasks)
 				.missingProof();
 		return new TaskGraphAttrs(weightType, classified && weightType != null, anomaly);
 	}

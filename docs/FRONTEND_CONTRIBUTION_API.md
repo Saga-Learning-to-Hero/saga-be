@@ -10,7 +10,7 @@ Lỗi luôn:
 { "code": "CONTRIBUTION_FORBIDDEN", "message": "..." }
 ```
 
-Công thức chi tiết: `docs/CONTRIBUTION_CALCULATION_SPEC.md`. Contract tổng: `docs/FRONTEND_API_INTEGRATION.md` §18.
+Công thức chi tiết: `docs/CONTRIBUTION_CALCULATION_SPEC.md`. Contract tổng: `docs/FRONTEND_API_INTEGRATION.md` §18. Subtask (story point 1–10 = % của cha, cảnh báo evidence): `docs/FRONTEND_SUBTASK_CONTRIBUTION_API.md`.
 
 ---
 
@@ -171,6 +171,7 @@ AND đúng một nhãn: saga:code | saga:test | saga:document | saga:research
 - `saga:document` / `saga:research` — cần **≥1** bằng chứng: file Jira, URL, hoặc file SAGA. Số lượng không tăng điểm.
 - Sai/thiếu/hai nhãn, chưa DONE, chưa gắn sprint → không vào tiêu chí.
 - `storyPoint` null → tính như `1`. Commit không cộng điểm.
+- Hạng mục Standard có Subtask: assignee của cha không nhận story point cha. Story point Subtask là thang 1–10 (`6` = 60% trần của cha). Share chỉ vào mixer khi cả cha và Subtask đó đều DONE. Sprint và nhãn lấy từ cha. Evidence DOCUMENT/RESEARCH xét trên Subtask. Cha có Subtask thì `evidenceCheck` không báo thiếu commit hay thiếu tài liệu.
 
 Nhãn **đúng chữ, phân biệt hoa thường**.
 

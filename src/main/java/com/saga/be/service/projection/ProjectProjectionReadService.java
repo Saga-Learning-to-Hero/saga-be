@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
 import org.springframework.data.domain.Page;
@@ -96,16 +97,47 @@ public class ProjectProjectionReadService {
 			}
 		}
 		ParentLookup lookup = (integrationId, externalId) -> bySourceAndJiraId.get(JiraParentResolution.key(integrationId, externalId));
+		Set<String> parentsOfSubtasks = new java.util.HashSet<>();
+		Map<String, String> labelsByKey = new HashMap<>();
+		for (Task row : rows) {
+			if (row.getJiraIntegration() == null) {
+				continue;
+			}
+			if (row.getExternalId() != null && !row.getExternalId().isBlank()) {
+				labelsByKey.put(JiraParentResolution.key(row.getJiraIntegration().getId(), row.getExternalId()), row.getLabelsJson());
+			}
+			if ("SUBTASK".equals(row.getIssueTypeLevel())
+					&& row.getParentExternalId() != null
+					&& !row.getParentExternalId().isBlank()) {
+				parentsOfSubtasks.add(JiraParentResolution.key(row.getJiraIntegration().getId(), row.getParentExternalId()));
+			}
+		}
 		return rows.stream()
-				.map(task -> toTask(
-						task,
-						counts.getOrDefault(task.getId(), 0L),
-						evidence.getOrDefault(task.getId(), 0L),
-						commitProof.getOrDefault(task.getId(), 0L),
-						documentProof.getOrDefault(task.getId(), 0L),
-						null,
-						migrations.getOrDefault(task.getId(), TaskMigrationSummary.none()),
-						lookup))
+				.map(task -> {
+					boolean subtask = "SUBTASK".equals(task.getIssueTypeLevel());
+					String ownKey = task.getJiraIntegration() == null || task.getExternalId() == null
+							? null
+							: JiraParentResolution.key(task.getJiraIntegration().getId(), task.getExternalId());
+					List<String> proofLabels = null;
+					if (subtask && task.getJiraIntegration() != null && task.getParentExternalId() != null) {
+						String parentLabels = labelsByKey.get(
+								JiraParentResolution.key(task.getJiraIntegration().getId(), task.getParentExternalId()));
+						if (parentLabels != null) {
+							proofLabels = com.saga.be.service.contribution.TaskLabelParser.parse(parentLabels);
+						}
+					}
+					return toTask(
+							task,
+							counts.getOrDefault(task.getId(), 0L),
+							evidence.getOrDefault(task.getId(), 0L),
+							commitProof.getOrDefault(task.getId(), 0L),
+							documentProof.getOrDefault(task.getId(), 0L),
+							(List<ProjectTaskResponse.Subtask>) null,
+							migrations.getOrDefault(task.getId(), TaskMigrationSummary.none()),
+							lookup,
+							proofLabels,
+							ownKey != null && parentsOfSubtasks.contains(ownKey));
+				})
 				.toList();
 	}
 
@@ -117,15 +149,35 @@ public class ProjectProjectionReadService {
 						AcademicErrorCode.PROJECT_NOT_FOUND, HttpStatus.NOT_FOUND, "Task was not found for this project."));
 		Map<UUID, Long> counts = linkCounts(projectId);
 		Map<UUID, Long> evidence = evidenceCounts(projectId);
+		List<ProjectTaskResponse.Subtask> children = jiraChildren(task);
+		boolean proofOnSubtasks = false;
+		for (ProjectTaskResponse.Subtask child : children) {
+			if ("SUBTASK".equals(child.issueTypeLevel())) {
+				proofOnSubtasks = true;
+				break;
+			}
+		}
+		List<String> proofLabels = null;
+		if ("SUBTASK".equals(task.getIssueTypeLevel())
+				&& task.getJiraIntegration() != null
+				&& task.getParentExternalId() != null) {
+			proofLabels = tasks.findByJiraIntegration_IdAndExternalId(
+							task.getJiraIntegration().getId(), task.getParentExternalId())
+					.filter(row -> row.getDeletedAt() == null)
+					.map(row -> com.saga.be.service.contribution.TaskLabelParser.parse(row.getLabelsJson()))
+					.orElse(null);
+		}
 		return toTask(
 				task,
 				counts.getOrDefault(task.getId(), 0L),
 				evidence.getOrDefault(task.getId(), 0L),
 				commitProofCounts(projectId).getOrDefault(task.getId(), 0L),
 				documentProofCounts(projectId, evidence).getOrDefault(task.getId(), 0L),
-				jiraChildren(task),
+				children,
 				migrations(List.of(task)).getOrDefault(task.getId(), TaskMigrationSummary.none()),
-				repositoryParentLookup(tasks, projectId));
+				repositoryParentLookup(tasks, projectId),
+				proofLabels,
+				proofOnSubtasks);
 	}
 
 	/**
@@ -315,7 +367,7 @@ public class ProjectProjectionReadService {
 			long documentProofCount,
 			List<ProjectTaskResponse.Subtask> subtasks,
 			TaskMigrationSummary migration) {
-		return toTask(task, linkedCommitCount, evidenceCount, commitProofCount, documentProofCount, subtasks, migration, null);
+		return toTask(task, linkedCommitCount, evidenceCount, commitProofCount, documentProofCount, subtasks, migration, null, null, false);
 	}
 
 	/** {@code parentLookup} null -> the Jira parent is echoed without resolution. */
@@ -328,6 +380,34 @@ public class ProjectProjectionReadService {
 			List<ProjectTaskResponse.Subtask> subtasks,
 			TaskMigrationSummary migration,
 			ParentLookup parentLookup) {
+		return toTask(
+				task,
+				linkedCommitCount,
+				evidenceCount,
+				commitProofCount,
+				documentProofCount,
+				subtasks,
+				migration,
+				parentLookup,
+				null,
+				false);
+	}
+
+	/**
+	 * {@code proofLabels} null uses this task's own labels. A Subtask passes its parent's labels.
+	 * {@code proofOnSubtasks} means this task already has Subtasks, so it needs no proof of its own.
+	 */
+	static ProjectTaskResponse toTask(
+			Task task,
+			long linkedCommitCount,
+			long evidenceCount,
+			long commitProofCount,
+			long documentProofCount,
+			List<ProjectTaskResponse.Subtask> subtasks,
+			TaskMigrationSummary migration,
+			ParentLookup parentLookup,
+			List<String> proofLabels,
+			boolean proofOnSubtasks) {
 		UserAccount assigneeUser =
 				task.getAssigneeStudent() == null ? null : task.getAssigneeStudent().getUserAccount();
 		String assigneeDisplay = null;
@@ -430,7 +510,12 @@ public class ProjectProjectionReadService {
 			source,
 			migration,
 			subtasks,
-			evidenceCheck(task, labels, commitProofCount, documentProofCount),
+			evidenceCheck(
+					task,
+					proofLabels == null ? labels : proofLabels,
+					commitProofCount,
+					documentProofCount,
+					proofOnSubtasks),
 			scheduleCheck(task, startDate, dueDate));
 	}
 
@@ -447,10 +532,10 @@ public class ProjectProjectionReadService {
 	}
 
 	private static ProjectTaskResponse.EvidenceCheck evidenceCheck(
-			Task task, List<String> labels, long commitProofCount, long documentProofCount) {
+			Task task, List<String> labels, long commitProofCount, long documentProofCount, boolean proofOnSubtasks) {
 		com.saga.be.service.contribution.TaskEvidencePolicy.Result result =
 				com.saga.be.service.contribution.TaskEvidencePolicy.evaluate(
-						task.getStatus(), labels, commitProofCount, documentProofCount);
+						task.getStatus(), labels, commitProofCount, documentProofCount, proofOnSubtasks);
 		return new ProjectTaskResponse.EvidenceCheck(
 				result.categories(),
 				result.requiresCommit(),
