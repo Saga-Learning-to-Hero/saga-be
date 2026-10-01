@@ -1859,6 +1859,52 @@ Không có endpoint tính điểm đóng góp (contribution scoring) trong nhóm
 
 ---
 
+## 28b. Hồ sơ trễ hạn (Delay cases) & Tỷ lệ đúng hạn
+
+Khi một task **trễ hạn chót**, BE tự mở **hồ sơ trễ hạn**: hệ thống gom dấu hiệu từ dữ liệu thật, người làm **giải trình**, **trưởng nhóm xác nhận**, và **giảng viên** quyết định những hồ sơ cần duyệt. **Không dùng AI.** **% đóng góp không đổi**; kết quả chỉ ảnh hưởng chỉ số riêng **"Tỷ lệ đúng hạn"**.
+
+**Khi nào mở hồ sơ:** task có người được giao, có hạn chót, và **trễ** = chưa DONE khi ngày hạn chót đã qua, hoặc DONE vào một ngày sau ngày hạn chót (tính theo giờ Việt Nam: task hạn 04/10 chỉ trễ khi hết ngày 04/10). Job chạy mỗi giờ, chỉ xét hạn chót trong **7 ngày** gần nhất. Mỗi (task, hạn chót) có tối đa 1 hồ sơ; task bị dời hạn rồi lại trễ thì có hồ sơ mới. Người làm nhận thông báo "Cần giải trình lý do trễ hạn".
+
+**Trạng thái:** `OPEN` (chờ giải trình, hạn `explanationDueAt` = mở + 3 ngày) → `AWAITING_LEADER` → `AWAITING_LECTURER` → `CLOSED_OBJECTIVE` | `CLOSED_SUBJECTIVE`.
+- Người làm là **trưởng nhóm** → bỏ qua bước trưởng nhóm, lên thẳng giảng viên.
+- Trưởng nhóm **đồng ý** + nguyên nhân **chủ quan** + hệ thống **không thấy mâu thuẫn** → đóng `CLOSED_SUBJECTIVE` (không lên giảng viên).
+- Còn lại (nguyên nhân khách quan, `OTHER`, trưởng nhóm phản đối, hệ thống thấy mâu thuẫn) → giảng viên quyết định `OBJECTIVE` / `SUBJECTIVE`.
+- Hết hạn giải trình → tự đóng `CLOSED_SUBJECTIVE` (`closeReason = EXPLANATION_EXPIRED`). Giảng viên **mở lại** được: hồ sơ hết hạn quay về `OPEN` với hạn mới 3 ngày; hồ sơ khác quay về `AWAITING_LECTURER`.
+
+**Danh mục nguyên nhân (`category`)** — nhóm (`categoryGroup`) do BE trả:
+| category | Nhóm | Bắt buộc thêm |
+|---|---|---|
+| `BLOCKED_BY_TASK` | OBJECTIVE | `blockingTaskId` (task khác cùng project) |
+| `SCOPE_CHANGED`, `REASSIGNED_LATE`, `SCHEDULE_CHANGED` | OBJECTIVE | — |
+| `TECHNICAL_ISSUE`, `PERSONAL_EMERGENCY` | OBJECTIVE | `note` |
+| `STARTED_LATE`, `UNDERESTIMATED`, `NO_PROGRESS` | SUBJECTIVE | — |
+| `OTHER` | OTHER (luôn lên giảng viên) | `note` |
+
+**Đối chiếu tự động (`verification`):** `CONSISTENT` (dữ liệu khớp, vd task chặn thật sự xong muộn), `MISMATCH` (dữ liệu mâu thuẫn, vd task chặn đã xong trước hạn chót → luôn lên giảng viên), `UNVERIFIABLE` (hệ thống không tự kiểm được, người duyệt xem minh chứng). `verificationNote` là câu giải thích tiếng Việt để hiển thị.
+
+**Dấu hiệu hệ thống (`signals`):** `commitCount/firstCommitAt/lastCommitAt` (commit không tính merge), `workSessionCount/firstWorkAt/lastWorkAt`, `evidenceCount` (file + link + đính kèm Jira), `currentlyBlocked` (trạng thái BLOCKED), `dueDateChanged`, `storyPointIncreased`, `reassignedNearDue` (giao cho người này trong 3 ngày trước hạn), `otherOpenTasksNearDue` (số task chưa xong khác của người này hạn trong ±7 ngày). Lịch sử dời hạn / đổi story point / đổi người làm chỉ có **từ khi tính năng được bật**.
+
+**API** (gốc `/api/projects/{projectId}`):
+```
+GET  /delay-cases?status=&taskId=                 -> DelayCaseResponse[]   (thành viên nhóm + giảng viên phụ trách)
+GET  /delay-cases/{caseId}                        -> DelayCaseResponse
+POST /delay-cases/{caseId}/explanation            { category, note?, blockingTaskId?, evidenceUrl? }   (người làm, khi OPEN)
+POST /delay-cases/{caseId}/leader-review          { decision: "AGREE"|"DISAGREE", comment? }           (trưởng nhóm; DISAGREE bắt buộc comment)
+POST /delay-cases/{caseId}/lecturer-review        { outcome: "OBJECTIVE"|"SUBJECTIVE", comment? }      (giảng viên phụ trách)
+POST /delay-cases/{caseId}/reopen                                                                    (giảng viên, hồ sơ đã đóng)
+GET  /on-time-rate                                -> { projectId, asOf, members: [...] }
+GET  /api/lecturer/delay-cases?status=...         -> hàng chờ của giảng viên (mặc định AWAITING_LECTURER, cũ nhất trước)
+```
+- `permissions` trong mỗi hồ sơ: `{ canExplain, canLeaderReview, canLecturerReview, canReopen }` — **FE chỉ hiện nút theo các cờ này**, không tự suy.
+- **Quyền riêng tư:** `explanationNote`, `evidenceUrl`, `leaderComment`, `lecturerComment` chỉ trả cho người làm, trưởng nhóm và giảng viên; thành viên khác nhận `null` (vẫn thấy trạng thái và loại nguyên nhân).
+- `evidenceUrl` là link http(s) tới minh chứng (vd giấy khám bệnh trên Drive) — chưa hỗ trợ upload file trực tiếp.
+- **Lỗi:** `DELAY_CASE_NOT_FOUND` (404), `DELAY_CASE_STATE_CONFLICT` (409 — sai bước, đã hết hạn giải trình, đã đóng), `DELAY_CASE_INPUT_INVALID` (400 — thiếu note/blockingTaskId, link sai...), `DELAY_CASE_FORBIDDEN` (403 — không phải người làm / trưởng nhóm / giảng viên của bước đó; trưởng nhóm không tự duyệt hồ sơ của mình), `REQUEST_INVALID` (400 — thiếu `category` / `decision` / `outcome`).
+- Thông báo trong app (loại `TASK`) ở mỗi bước: mở hồ sơ → người làm; giải trình → trưởng nhóm (hoặc giảng viên); cần giảng viên → giảng viên; đóng / hết hạn / mở lại → người làm. Sau khi gọi API thay đổi, FE refetch danh sách hồ sơ và `/on-time-rate`.
+
+**Tỷ lệ đúng hạn (`/on-time-rate`)** — mỗi thành viên ACTIVE: `evaluatedTasks` (task có hạn, đã DONE hoặc đã qua ngày hạn), `onTimeTasks`, `lateTasks` (trễ, không được miễn), `excusedLateTasks` (trễ nhưng hồ sơ được chấp nhận là khách quan — tính như đúng hạn), `onTimeRate` = (evaluated − late) / evaluated × 100, 1 chữ số thập phân; `null` khi chưa có task nào để tính. Dành cho lecturer/leader xem trong báo cáo; **không** thay đổi `/contribution-evaluation`.
+
+Xoá / thay nguồn Jira bằng reset: project có hồ sơ trễ hạn được coi như có **bằng chứng cần bảo vệ** (giống phiên làm việc) → không reset được; dùng failover.
+
 ## 29. Error Handling
 
 Mọi lỗi domain (không phải lỗi mạng) trả về đúng 1 khuôn dạng:

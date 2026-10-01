@@ -81,4 +81,13 @@ public interface TaskWorkSessionRepository extends JpaRepository<TaskWorkSession
 			where s.id in :ids
 			""")
 	List<TaskWorkSession> findFetchedByIdIn(@Param("ids") Collection<UUID> ids);
+
+	/** [count, first start, last end-or-start] of a task's work sessions (delay case evidence). */
+	@Query(
+			"""
+			select count(w), min(w.startedAt), max(coalesce(w.endedAt, w.startedAt))
+			from TaskWorkSession w
+			where w.task.id = :taskId
+			""")
+	List<Object[]> summarizeByTask(@Param("taskId") UUID taskId);
 }

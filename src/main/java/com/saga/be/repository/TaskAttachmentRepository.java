@@ -40,4 +40,6 @@ public interface TaskAttachmentRepository extends JpaRepository<TaskAttachment, 
 			  and t.assigneeStudent is not null
 			""")
 	List<Object[]> findAssigneeAndCreatedAtByProject(@Param("projectId") UUID projectId);
+
+	long countByTask_Id(UUID taskId);
 }

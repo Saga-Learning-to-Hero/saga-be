@@ -969,6 +969,53 @@ class JiraTaskProjectionServiceTest {
 		assertThat(savedLegacy.getIssueTypeLevel()).isNull();
 	}
 
+	@Test
+	void upsertBatch_recordsDueDateAndStoryPointChangesOfAnExistingTask() {
+		com.saga.be.repository.TaskChangeLogRepository changeLogs =
+				org.mockito.Mockito.mock(com.saga.be.repository.TaskChangeLogRepository.class);
+		service.setChangeLogs(changeLogs);
+		Task existing = new Task();
+		existing.setId(UUID.randomUUID());
+		existing.setExternalId("10001");
+		existing.setExternalKey("SAGA-1");
+		existing.setJiraIntegration(integration);
+		existing.setProject(project);
+		existing.setStoryPoint(3);
+		existing.setDueDate(LocalDateTime.of(2026, 10, 4, 0, 0));
+		existing.setExternalUpdatedAt(LocalDateTime.of(2026, 10, 1, 9, 0));
+		when(tasks.findByJiraIntegration_IdAndExternalIdIn(eq(integration.getId()), any())).thenReturn(List.of(existing));
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+		IssueSummary changed = new IssueSummary(
+				"10001", "SAGA-1", "Login", "1", "To Do", "new", "Task", "10001", null, null, null, null, 5,
+				null, null, null, null, null, "2026-10-02T10:00:00Z", true, true, null, null, true, List.of(), true,
+				java.time.LocalDate.of(2026, 10, 8), true, null, true, Boolean.FALSE, 0);
+
+		service.upsertBatch(integration, "SAGA", List.of(changed));
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<com.saga.be.entity.delay.TaskChangeLog>> captor = ArgumentCaptor.forClass(List.class);
+		verify(changeLogs).saveAll(captor.capture());
+		assertThat(captor.getValue())
+				.extracting(com.saga.be.entity.delay.TaskChangeLog::getField)
+				.containsExactlyInAnyOrder(
+						com.saga.be.entity.enums.DelayCaseEnums.TaskChangeField.DUE_DATE,
+						com.saga.be.entity.enums.DelayCaseEnums.TaskChangeField.STORY_POINT);
+		assertThat(captor.getValue()).allMatch(log -> log.getTask() == existing);
+	}
+
+	@Test
+	void upsertBatch_newTasksRecordNoChanges() {
+		com.saga.be.repository.TaskChangeLogRepository changeLogs =
+				org.mockito.Mockito.mock(com.saga.be.repository.TaskChangeLogRepository.class);
+		service.setChangeLogs(changeLogs);
+		when(tasks.findByJiraIntegration_IdAndExternalIdIn(eq(integration.getId()), any())).thenReturn(List.of());
+		when(tasks.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		service.upsertBatch(integration, "SAGA", List.of(issue("10009", "SAGA-9", "New", "2026-10-02T10:00:00Z")));
+
+		verify(changeLogs, org.mockito.Mockito.never()).saveAll(any());
+	}
+
 	private static IssueSummary issue(String id, String key, String summary, String updated) {
 		return new IssueSummary(
 				id, key, summary, "1", "To Do", "new", "Task", "10001", null, null, null, null, null, null, null, null,

@@ -479,4 +479,14 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			  and (c.parentCount is null or c.parentCount <= 1)
 			""")
 	List<Object[]> findLinkedCommitAndTaskIdsBySprintIds(@Param("sprintIds") Collection<UUID> sprintIds);
+
+	/** [count, first, last] committedAt of a task's linked non-merge commits (delay case evidence). */
+	@Query(
+			"""
+			select count(c), min(c.committedAt), max(c.committedAt)
+			from TaskGitCommitLink l join l.gitCommit c
+			where l.task.id = :taskId
+			  and (c.parentCount is null or c.parentCount <= 1)
+			""")
+	List<Object[]> summarizeNonMergeCommitsByTask(@Param("taskId") UUID taskId);
 }

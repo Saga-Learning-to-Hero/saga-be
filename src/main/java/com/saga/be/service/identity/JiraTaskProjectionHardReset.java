@@ -22,6 +22,7 @@ public class JiraTaskProjectionHardReset {
 	private final TaskWorkSessionRepository workSessions;
 	private final ContributionConfirmationRepository confirmations;
 	private final SprintRepository sprints;
+	private com.saga.be.repository.TaskDelayCaseRepository delayCases;
 
 	public JiraTaskProjectionHardReset(
 			TaskRepository tasks,
@@ -34,8 +35,15 @@ public class JiraTaskProjectionHardReset {
 		this.sprints = sprints;
 	}
 
+	/** Delay cases (explanations, lecturer decisions) are protected evidence too; optional for hand-built tests. */
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	public void setDelayCases(com.saga.be.repository.TaskDelayCaseRepository delayCases) {
+		this.delayCases = delayCases;
+	}
+
 	public boolean protectedEvidenceExists(UUID projectId) {
-		return workSessions.existsByProject_Id(projectId)
+		return (delayCases != null && delayCases.existsByProject_Id(projectId))
+				|| workSessions.existsByProject_Id(projectId)
 				|| workSessions.existsByTask_Project_Id(projectId)
 				|| confirmations.existsByProject_Id(projectId)
 				|| confirmations.existsByTask_Project_Id(projectId);

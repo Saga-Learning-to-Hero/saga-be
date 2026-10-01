@@ -48,6 +48,7 @@ public class JiraTaskProjectionService {
 	private final SprintRepository sprints;
 	private final ObjectMapper mapper;
 	private final com.saga.be.service.ai.AiTaskAutomationTrigger aiAutomation;
+	private com.saga.be.repository.TaskChangeLogRepository changeLogs;
 
 	public JiraTaskProjectionService(
 			TaskRepository tasks,
@@ -64,6 +65,12 @@ public class JiraTaskProjectionService {
 		this.sprints = sprints;
 		this.mapper = mapper;
 		this.aiAutomation = aiAutomation;
+	}
+
+	/** Records due-date / story-point / assignee changes; optional so hand-built test instances need not wire it. */
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	public void setChangeLogs(com.saga.be.repository.TaskChangeLogRepository changeLogs) {
+		this.changeLogs = changeLogs;
 	}
 
 	/**
@@ -101,6 +108,7 @@ public class JiraTaskProjectionService {
 		Map<String, StudentProfile> assignees = resolveJiraAssignees(valid);
 		Map<String, Sprint> sprintByExternalId = resolveSprints(integration, valid);
 		List<Task> toSave = new ArrayList<>();
+		List<com.saga.be.entity.delay.TaskChangeLog> changes = new ArrayList<>();
 		Set<String> reverseLinkExternalIds = new HashSet<>();
 		for (IssueSummary issue : valid) {
 			Task task = existing.getOrDefault(issue.id(), new Task());
@@ -115,8 +123,13 @@ public class JiraTaskProjectionService {
 				task.setJiraIntegration(integration);
 				task.setExternalId(issue.id());
 			}
+			com.saga.be.service.delay.TaskChangeRecorder.Snapshot before =
+					newlyCreated ? null : com.saga.be.service.delay.TaskChangeRecorder.snapshot(task);
 			applyIssueFields(task, issue, assignees, sprintByExternalId);
 			assertTaskProvenance(task, integration);
+			if (before != null) {
+				changes.addAll(com.saga.be.service.delay.TaskChangeRecorder.diff(task, before, incoming));
+			}
 			toSave.add(task);
 			if (newlyCreated || externalKeyChanged(previousKey, issue.key())) {
 				reverseLinkExternalIds.add(issue.id());
@@ -126,6 +139,9 @@ public class JiraTaskProjectionService {
 			return List.of();
 		}
 		List<Task> persisted = saveAllConflictSafe(integration.getId(), toSave);
+		if (changeLogs != null && !changes.isEmpty()) {
+			changeLogs.saveAll(changes);
+		}
 		List<Task> forReverseLink = persisted.stream()
 				.filter(task -> reverseLinkExternalIds.contains(task.getExternalId()))
 				.toList();

@@ -661,4 +661,63 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			  and t.deletedAt is null
 			""")
 	List<Object[]> findProjectIdAndCreatedAtByProjectIds(@Param("projectIds") Collection<UUID> projectIds);
+
+	/**
+	 * Delay-case scan: assigned, not-done tasks whose due day is over (due date before today's start)
+	 * and recent enough (due on or after {@code windowStart}). Superseded failover sources excluded.
+	 */
+	@Query(
+			"""
+			select t from Task t
+			where t.deletedAt is null
+			  and t.status <> com.saga.be.entity.enums.TaskStatus.DONE
+			  and t.assigneeStudent is not null
+			  and t.dueDate is not null
+			  and t.dueDate < :startOfToday
+			  and t.dueDate >= :windowStart
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
+			order by t.dueDate asc, t.id asc
+			""")
+	Page<Task> findDelayCaseOverdueCandidates(
+			@Param("startOfToday") LocalDateTime startOfToday,
+			@Param("windowStart") LocalDateTime windowStart,
+			Pageable pageable);
+
+	/**
+	 * Delay-case scan: assigned DONE tasks completed after their due date's start (the caller keeps
+	 * only those finished on a later calendar day), due on or after {@code windowStart}.
+	 */
+	@Query(
+			"""
+			select t from Task t
+			where t.deletedAt is null
+			  and t.status = com.saga.be.entity.enums.TaskStatus.DONE
+			  and t.assigneeStudent is not null
+			  and t.dueDate is not null
+			  and t.completedAt is not null
+			  and t.completedAt > t.dueDate
+			  and t.dueDate >= :windowStart
+			  and not exists (select 1 from JiraTaskFailoverItem fi where fi.sourceTask = t and fi.status = com.saga.be.entity.enums.JiraFailoverItemStatus.SUCCEEDED and fi.targetTask is not null)
+			order by t.dueDate asc, t.id asc
+			""")
+	Page<Task> findDelayCaseCompletedLateCandidates(@Param("windowStart") LocalDateTime windowStart, Pageable pageable);
+
+	/** Other not-done tasks of the same assignee in the project due within [from, to] (load signal). */
+	@Query(
+			"""
+			select count(t) from Task t
+			where t.project.id = :projectId
+			  and t.assigneeStudent.id = :studentId
+			  and t.id <> :excludeTaskId
+			  and t.deletedAt is null
+			  and t.status <> com.saga.be.entity.enums.TaskStatus.DONE
+			  and t.dueDate is not null
+			  and t.dueDate between :from and :to
+			""")
+	long countOpenTasksOfAssigneeDueBetween(
+			@Param("projectId") UUID projectId,
+			@Param("studentId") UUID studentId,
+			@Param("excludeTaskId") UUID excludeTaskId,
+			@Param("from") LocalDateTime from,
+			@Param("to") LocalDateTime to);
 }

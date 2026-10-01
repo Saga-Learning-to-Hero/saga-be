@@ -106,6 +106,14 @@ public enum IntegrationErrorCode {
 	TASK_SUBTASK_PARENT_REQUIRED,
 	/** Wrong parent level: a Subtask goes under a normal task, a normal task only under an Epic. */
 	TASK_PARENT_TYPE_INVALID,
+	/** No delay case with this id in this project. */
+	DELAY_CASE_NOT_FOUND,
+	/** The delay case is not in the step this action belongs to (e.g. already explained or closed). */
+	DELAY_CASE_STATE_CONFLICT,
+	/** The explanation or review is incomplete or invalid (missing note, wrong blocking task...). */
+	DELAY_CASE_INPUT_INVALID,
+	/** The caller is not the person this step belongs to (assignee, team leader or lecturer). */
+	DELAY_CASE_FORBIDDEN,
 	WEBHOOK_SIGNATURE_INVALID,
 	WEBHOOK_DUPLICATE,
 	INTEGRATION_REVOKED,
