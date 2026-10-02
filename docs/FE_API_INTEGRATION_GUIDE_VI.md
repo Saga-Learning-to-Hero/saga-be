@@ -1946,6 +1946,60 @@ GET  /api/lecturer/delay-cases?status=...         -> hàng chờ của giảng v
 
 Xoá / thay nguồn Jira bằng reset: project có hồ sơ trễ hạn được coi như có **bằng chứng cần bảo vệ** (giống phiên làm việc) → không reset được; dùng failover.
 
+## 28c. Trợ lý hỏi đáp dự án (Chatbox AI)
+
+Hỏi đáp **chỉ đọc** về **một dự án**: tiến độ sprint, task trễ / sắp đến hạn, hồ sơ trễ hạn, hoạt động của một thành viên, chi tiết một task (gõ mã như `SAGA-12`). **Không** chấm điểm, **không** sửa task, **không** quyết định hồ sơ trễ hạn.
+
+**Ai dùng:** thành viên nhóm (MEMBER / LEADER) và giảng viên phụ trách lớp. Admin không. Danh tính lấy từ phiên đăng nhập; mỗi cuộc trò chuyện **riêng của người tạo** (giảng viên cũng không đọc được chat của sinh viên).
+
+**Dữ liệu:** BE tự chọn dữ kiện qua đúng các API màn hình đang dùng, với quyền của người hỏi (task board, commit, hồ sơ trễ hạn với quy tắc ẩn ghi chú, tỷ lệ đúng hạn) — AI không thấy gì hơn những gì người hỏi mở được. AI chỉ diễn đạt lại và phải **trích dẫn**; BE kiểm từng trích dẫn với dữ kiện đã gửi.
+
+**Key AI:** key của lớp (giảng viên nhập ở cài đặt AI của lớp) → nếu lớp không có key và giảng viên bật "cho dùng key hệ thống" (`PATCH /api/lecturer/courses/{courseId}/ai-settings`, `allowPlatformFallback=true`) thì dùng key hệ thống → không có cả hai: vẫn trả lời bằng **tóm tắt dữ liệu do BE tạo** (`answerSource = FALLBACK`). Mặc định lớp **chưa** bật key hệ thống.
+
+**API** (gốc `/api/projects/{projectId}/assistant`, POST cần CSRF):
+```
+GET  /status                                      -> { enabled, aiConfigured, keySource, dailyLimit, usedToday, remainingToday }
+POST /conversations                               -> 201 { id, projectId, title, createdAt, lastMessageAt }
+GET  /conversations                               -> cuộc trò chuyện của tôi trong dự án, mới dùng nhất trước (tối đa 20)
+GET  /conversations/{conversationId}/messages     -> MessageResponse[] (cũ nhất trước)
+POST /conversations/{conversationId}/messages     { question }  -> { question: MessageResponse, answer: MessageResponse }
+POST /messages/{messageId}/feedback               { helpful: true|false, comment? }  -> MessageResponse
+```
+- `keySource`: `COURSE` (key lớp) / `PLATFORM` (key hệ thống) / `UNAVAILABLE` (chỉ trả lời bằng tóm tắt dữ liệu) — hiện nhãn nhỏ cạnh ô chat.
+- `question`: 1–1000 ký tự. Gửi câu hỏi có thể mất vài giây (gọi AI) → hiện trạng thái "đang trả lời", khoá nút gửi.
+- Giới hạn `dailyLimit` câu hỏi / người / 24 giờ (mặc định 50, cộng mọi dự án).
+
+**MessageResponse:**
+```ts
+interface AssistantMessage {
+  id: string; conversationId: string;
+  role: "USER" | "ASSISTANT";
+  content: string;                 // câu hỏi, hoặc câu trả lời (tiếng Việt, có thể nhiều dòng "- ...")
+  createdAt: string;               // "2026-10-03T10:00:00+07:00"
+  // các field dưới chỉ có ở ASSISTANT (USER: null)
+  answerSource: "AI" | "FALLBACK" | null;
+  insufficientData: boolean | null;  // AI nói không đủ dữ liệu để trả lời
+  outOfScope: boolean | null;        // câu hỏi ngoài phạm vi (viết code, hỏi điểm, nhóm khác...) → AI từ chối
+  verified: boolean | null;          // mọi trích dẫn khớp dữ kiện BE gửi → hiện "Đã kiểm chứng nguồn"
+  removedCitationCount: number | null; // số trích dẫn AI bịa bị BE loại
+  citations: Array<{
+    kind: "PROJECT" | "SPRINT" | "TASK" | "MEMBER" | "DELAY_CASE" | "COMMIT";
+    id: string;                    // TASK: taskId; MEMBER: studentProfileId; COMMIT: gitCommitId; DELAY_CASE: caseId
+    label: string;                 // "SAGA-12 · Đăng nhập", "Trần Minh", "a1b2c3d · feat: login"...
+    taskId: string | null;         // DELAY_CASE: task của hồ sơ
+    sha: string | null;            // COMMIT: sha đầy đủ
+  }> | null;
+  followUpQuestions: string[] | null;  // tối đa 3 gợi ý → hiện thành chip bấm để hỏi tiếp
+  fallbackReason: string | null;       // FALLBACK: AI_CREDENTIAL_UNAVAILABLE, AI_RUNTIME_NOT_CONFIGURED, AI_PROVIDER_QUOTA_EXHAUSTED, AI_PROVIDER_TIMEOUT...
+  feedback: { helpful: boolean; comment: string | null; at: string } | null;
+}
+```
+- Bấm trích dẫn: TASK → mở chi tiết task; DELAY_CASE → `GET /delay-cases/{id}`; COMMIT → `GET /commits/{id}`; MEMBER → trang tiến độ thành viên; SPRINT / PROJECT → màn sprint / tổng quan.
+- `verified=false` → hiện cảnh báo nhỏ "Chưa kiểm chứng được nguồn — hãy đối chiếu dữ liệu".
+- `FALLBACK` → hiện nhãn "Tóm tắt tự động (AI chưa khả dụng)"; nội dung đã có lý do bằng tiếng Việt.
+
+**Lỗi:** `ASSISTANT_INPUT_INVALID` (400), `REQUEST_INVALID` (400 — thiếu `question` / `helpful`), `ASSISTANT_CONVERSATION_NOT_FOUND` / `ASSISTANT_MESSAGE_NOT_FOUND` (404 — không phải của mình), `ASSISTANT_RATE_LIMITED` (429), `ASSISTANT_DISABLED` (503, `SAGA_ASSISTANT_ENABLED=false`), 403 khi không thuộc nhóm / không phụ trách lớp. Lỗi AI **không** trả 5xx — luôn có câu trả lời FALLBACK.
+
 ## 29. Error Handling
 
 Mọi lỗi domain (không phải lỗi mạng) trả về đúng 1 khuôn dạng:

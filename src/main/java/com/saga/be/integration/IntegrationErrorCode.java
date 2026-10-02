@@ -119,6 +119,16 @@ public enum IntegrationErrorCode {
 	DELAY_CASE_INPUT_INVALID,
 	/** The caller is not the person this step belongs to (assignee, team leader or lecturer). */
 	DELAY_CASE_FORBIDDEN,
+	/** The project assistant is switched off on this deployment (saga.assistant.enabled=false). */
+	ASSISTANT_DISABLED,
+	/** No assistant conversation with this id belongs to the caller in this project. */
+	ASSISTANT_CONVERSATION_NOT_FOUND,
+	/** No assistant answer with this id belongs to the caller in this project. */
+	ASSISTANT_MESSAGE_NOT_FOUND,
+	/** The question is empty or longer than allowed. */
+	ASSISTANT_INPUT_INVALID,
+	/** The caller asked more questions in the last 24 hours than saga.assistant.daily-limit. */
+	ASSISTANT_RATE_LIMITED,
 	WEBHOOK_SIGNATURE_INVALID,
 	WEBHOOK_DUPLICATE,
 	INTEGRATION_REVOKED,
