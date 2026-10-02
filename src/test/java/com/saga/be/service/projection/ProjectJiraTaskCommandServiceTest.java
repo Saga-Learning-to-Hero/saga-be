@@ -2274,8 +2274,13 @@ class ProjectJiraTaskCommandServiceTest {
 
 	private static CreateProjectTaskRequest createRequest(
 			String issueTypeId, String sprintExternalId, UUID parentTaskId, UUID jiraParentTaskId) {
+		return createRequest(issueTypeId, sprintExternalId, parentTaskId, jiraParentTaskId, null);
+	}
+
+	private static CreateProjectTaskRequest createRequest(
+			String issueTypeId, String sprintExternalId, UUID parentTaskId, UUID jiraParentTaskId, Integer storyPoints) {
 		return new CreateProjectTaskRequest(
-				"Login", null, issueTypeId, null, null, null, null, sprintExternalId, null, null, null, parentTaskId,
+				"Login", null, issueTypeId, null, null, storyPoints, null, sprintExternalId, null, null, null, parentTaskId,
 				jiraParentTaskId, null);
 	}
 
@@ -2320,7 +2325,7 @@ class ProjectJiraTaskCommandServiceTest {
 		when(jiraWrite.getIssue("token", "cloud", "10101")).thenReturn(canonical);
 		when(projection.upsertOne(integration, "SAGA", canonical)).thenReturn(saved);
 
-		service.create(userId, projectId, createRequest("10003", "5", parentId, null));
+		service.create(userId, projectId, createRequest("10003", "5", parentId, null, 6));
 
 		verify(jiraWrite).createIssue(eq("token"), eq("cloud"), eq("10067"), eq("Login"), any(), eq("10003"), any(), any(),
 				any(), any(), any(), any(), eq("10049"));
