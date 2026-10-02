@@ -68,7 +68,8 @@ class StudentDashboardFetchQueryTest {
 		String links = Files.readString(Path.of("src/main/java/com/saga/be/repository/TaskGitCommitLinkRepository.java"));
 		assertTrue(links.contains("countDistinctLinkedAuthoredV23"));
 		assertTrue(links.contains("count(distinct c.id)"));
-		assertTrue(links.contains("countRawAndV23LinksByTaskIds"));
+		assertTrue(links.contains("findLinkedCommitRowsByTaskIds"));
+		assertFalse(links.contains("countRawAndV23LinksByTaskIds"));
 		assertTrue(links.contains("findExternalKeysByCommitIds"));
 
 		String reviews = Files.readString(Path.of("src/main/java/com/saga/be/repository/PeerReviewRepository.java"));

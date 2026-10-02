@@ -225,10 +225,26 @@ public class ProjectProjectionReadService {
 		return listCommits(userId, projectId, page, size, null);
 	}
 
-	/** {@code authorStudentId} (optional) keeps only commits attributed to that student profile. */
 	@Transactional(readOnly = true)
 	public ProjectCommitPageResponse listCommits(
 			UUID userId, UUID projectId, Integer page, Integer size, UUID authorStudentId) {
+		return listCommits(userId, projectId, page, size, authorStudentId, null, null);
+	}
+
+	/**
+	 * Optional filters (null = all): {@code authorStudentId} keeps commits attributed to that student
+	 * profile; {@code jiraIntegrationId} / {@code sprintId} keep commits linked to a task of that Jira
+	 * source / sprint. Ids from another project simply match nothing.
+	 */
+	@Transactional(readOnly = true)
+	public ProjectCommitPageResponse listCommits(
+			UUID userId,
+			UUID projectId,
+			Integer page,
+			Integer size,
+			UUID authorStudentId,
+			UUID jiraIntegrationId,
+			UUID sprintId) {
 		authorization.requireReader(userId, projectId);
 		int pageNumber = page == null ? DEFAULT_PAGE : page;
 		int pageSize = size == null ? DEFAULT_SIZE : size;
@@ -239,9 +255,9 @@ public class ProjectProjectionReadService {
 					"page must be >= 0 and size must be between 1 and " + MAX_SIZE + ".");
 		}
 		PageRequest pageable = PageRequest.of(pageNumber, pageSize);
-		Page<UUID> idPage = authorStudentId == null
+		Page<UUID> idPage = authorStudentId == null && jiraIntegrationId == null && sprintId == null
 				? commits.findPageIdsByProject(projectId, pageable)
-				: commits.findPageIdsByProjectAndAuthorStudent(projectId, authorStudentId, pageable);
+				: commits.findPageIdsByProjectFiltered(projectId, authorStudentId, jiraIntegrationId, sprintId, pageable);
 		List<UUID> orderedIds = idPage.getContent();
 		List<ProjectCommitResponse> items = List.of();
 		if (!orderedIds.isEmpty()) {
@@ -264,6 +280,13 @@ public class ProjectProjectionReadService {
 	@Transactional(readOnly = true)
 	public ProjectCommitPageResponse listTaskCommits(
 			UUID userId, UUID projectId, UUID taskId, Integer page, Integer size) {
+		return listTaskCommits(userId, projectId, taskId, page, size, false);
+	}
+
+	/** {@code includeMerges} also returns known merge commits, so total matches the task's linkedCommitCount. */
+	@Transactional(readOnly = true)
+	public ProjectCommitPageResponse listTaskCommits(
+			UUID userId, UUID projectId, UUID taskId, Integer page, Integer size, boolean includeMerges) {
 		authorization.requireReader(userId, projectId);
 		int pageNumber = page == null ? DEFAULT_PAGE : page;
 		int pageSize = size == null ? DEFAULT_SIZE : size;
@@ -276,7 +299,10 @@ public class ProjectProjectionReadService {
 		tasks.findByIdAndProject_IdAndDeletedAtIsNull(taskId, projectId)
 				.orElseThrow(() -> new AcademicException(
 						AcademicErrorCode.PROJECT_NOT_FOUND, HttpStatus.NOT_FOUND, "Task was not found for this project."));
-		Page<UUID> idPage = links.findPageIdsByProjectAndTask(projectId, taskId, PageRequest.of(pageNumber, pageSize));
+		PageRequest pageable = PageRequest.of(pageNumber, pageSize);
+		Page<UUID> idPage = includeMerges
+				? links.findPageIdsByProjectAndTaskIncludingMerges(projectId, taskId, pageable)
+				: links.findPageIdsByProjectAndTask(projectId, taskId, pageable);
 		List<UUID> orderedIds = idPage.getContent();
 		List<ProjectCommitResponse> items = List.of();
 		if (!orderedIds.isEmpty()) {

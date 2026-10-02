@@ -122,7 +122,8 @@ class StudentDashboardControllerWebTest {
 								LocalDateTime.of(2026, 9, 10, 0, 0),
 								2,
 								1,
-								false)),
+								false,
+								List.of())),
 						List.of(new StudentDashboardRecentCommitResponse(
 								"abcdef123456",
 								"abcdef1",

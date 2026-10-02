@@ -567,10 +567,17 @@ class StudentDashboardServiceTest {
 				.thenReturn(List.of(open));
 		when(tasks.findDoneWithoutV23EvidenceCandidates(projectId, profile.getId()))
 				.thenReturn(List.of(candidate(anomaly), candidate(ambiguous)));
-		when(commitLinks.countRawAndV23LinksByTaskIds(any()))
+		UUID normalCommit = UUID.randomUUID();
+		UUID mergeCommit = UUID.randomUUID();
+		UUID anomalyMerge = UUID.randomUUID();
+		when(commitLinks.findLinkedCommitRowsByTaskIds(any()))
 				.thenReturn(List.of(
-						new Object[] {open.getId(), 2L, 1L},
-						new Object[] {anomaly.getId(), 1L, 0L}));
+						new Object[] {open.getId(), normalCommit, "aaa111", "feat: login", LocalDateTime.of(2026, 9, 19, 9, 0),
+							"org/saga-be", profile.getId(), "gh-1", 1},
+						new Object[] {open.getId(), mergeCommit, "bbb222", "Merge branch 'dev'", LocalDateTime.of(2026, 9, 18, 9, 0),
+							"org/saga-be", null, "gh-9", 2},
+						new Object[] {anomaly.getId(), anomalyMerge, "ccc333", "Merge pull request #3", null,
+							"org/saga-fe", profile.getId(), "gh-1", 2}));
 
 		var response = service.get(account.getId(), course.getId());
 		var preview = response.myActiveTasks();
@@ -581,6 +588,20 @@ class StudentDashboardServiceTest {
 		assertEquals(0L, preview.getFirst().evidenceCommitCount());
 		assertEquals(open.getId(), preview.get(1).id());
 		assertFalse(preview.get(1).hasAnomaly());
+		assertEquals(2L, preview.get(1).linkedCommitCount());
+		assertEquals(1L, preview.get(1).evidenceCommitCount());
+		assertEquals(List.of(normalCommit, mergeCommit),
+				preview.get(1).linkedCommits().stream().map(c -> c.id()).toList());
+		var first = preview.get(1).linkedCommits().getFirst();
+		assertEquals("aaa111", first.sha());
+		assertEquals("feat: login", first.message());
+		assertEquals("org/saga-be", first.repositoryFullName());
+		assertEquals(profile.getId(), first.authorStudentId());
+		assertEquals(Boolean.FALSE, first.isMerge());
+		var merge = preview.get(1).linkedCommits().get(1);
+		assertEquals(Boolean.TRUE, merge.isMerge());
+		assertNull(merge.authorStudentId());
+		assertEquals(1, preview.getFirst().linkedCommits().size());
 		assertEquals(1, response.actionableAlerts().size());
 		assertEquals("MSR:" + anomaly.getId(), response.actionableAlerts().getFirst().id());
 		assertEquals("MSR_ANOMALY", response.actionableAlerts().getFirst().type());

@@ -319,6 +319,29 @@ class TaskCommitListQueryCountTest {
 	}
 
 	@Test
+	void listTaskCommits_includeMergesReturnsEveryLinkedCommitMatchingLinkedCommitCount() {
+		tx.executeWithoutResult(status -> {
+			persistLinked("A", null, LocalDateTime.of(2026, 6, 5, 0, 0), null, "init");
+			persistLinked("B", 0, LocalDateTime.of(2026, 6, 4, 0, 0), null, "root");
+			persistLinked("C", 1, LocalDateTime.of(2026, 6, 3, 0, 0), null, "Merge branch main");
+			persistLinked("D", 2, LocalDateTime.of(2026, 6, 2, 0, 0), null, "custom message");
+			persistLinked("E", 3, LocalDateTime.of(2026, 6, 1, 0, 0), null, "octopus");
+			persistCommit("U", 1, LocalDateTime.of(2026, 6, 6, 0, 0), null, "unlinked");
+		});
+
+		ProjectCommitPageResponse all = tx.execute(status ->
+				readService.listTaskCommits(student.getId(), project.getId(), task.getId(), 0, 50, true));
+
+		assertThat(all.items()).extracting(ProjectCommitResponse::sha).containsExactly("A", "B", "C", "D", "E");
+		assertThat(all.items()).extracting(ProjectCommitResponse::isMerge).containsExactly(null, false, false, true, true);
+		assertThat(all.total()).isEqualTo(5).isEqualTo(listedTask().linkedCommitCount());
+		ProjectCommitPageResponse secondPage = tx.execute(status ->
+				readService.listTaskCommits(student.getId(), project.getId(), task.getId(), 1, 2, true));
+		assertThat(secondPage.items()).extracting(ProjectCommitResponse::sha).containsExactly("C", "D");
+		assertThat(list(0, 50).total()).isEqualTo(3);
+	}
+
+	@Test
 	void listTaskCommits_evidenceCommitTotalMatchesUnderSameV23Predicate() {
 		tx.executeWithoutResult(status -> {
 			persistLinked("A", null, LocalDateTime.of(2026, 6, 5, 0, 0), null, "init");

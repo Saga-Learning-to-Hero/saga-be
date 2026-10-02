@@ -3,6 +3,7 @@ package com.saga.be.service.student;
 import com.saga.be.dto.student.dashboard.StudentDashboardActiveTaskResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardAlertResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardAlertTargetIds;
+import com.saga.be.dto.student.dashboard.StudentDashboardLinkedCommitResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardCommitMetricsResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardCourseResponse;
 import com.saga.be.dto.student.dashboard.StudentDashboardGithubIntegrationResponse;
@@ -80,6 +81,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class StudentDashboardService {
 
 	static final int ACTIVE_TASK_PREVIEW_LIMIT = 10;
+	static final int LINKED_COMMIT_PREVIEW_LIMIT = 20;
 	static final int RECENT_COMMIT_LIMIT = 5;
 	static final int WEEKLY_COMMIT_WEEKS = 3;
 	static final int MAX_SPRINT_TIMELINE_DAYS = 62;
@@ -583,10 +585,10 @@ public class StudentDashboardService {
 		if (preview.isEmpty()) {
 			return List.of();
 		}
-		Map<UUID, long[]> counts = linkCounts(preview.stream().map(AttentionRow::id).toList());
+		Map<UUID, LinkedCommits> linked = linkedCommits(preview.stream().map(AttentionRow::id).toList());
 		List<StudentDashboardActiveTaskResponse> rows = new ArrayList<>(preview.size());
 		for (AttentionRow row : preview) {
-			long[] pair = counts.getOrDefault(row.id(), new long[] {0L, 0L});
+			LinkedCommits commitsOfTask = linked.getOrDefault(row.id(), LinkedCommits.NONE);
 			rows.add(new StudentDashboardActiveTaskResponse(
 					row.id(),
 					row.externalKey(),
@@ -595,9 +597,10 @@ public class StudentDashboardService {
 					row.priority() == null ? null : row.priority().name(),
 					row.storyPoints(),
 					row.dueDate(),
-					pair[0],
-					pair[1],
-					row.anomaly()));
+					commitsOfTask.raw(),
+					commitsOfTask.v23(),
+					row.anomaly(),
+					commitsOfTask.preview()));
 		}
 		return rows;
 	}
@@ -740,15 +743,39 @@ public class StudentDashboardService {
 		return "You still have " + remaining + " " + noun + " to complete for " + name + ".";
 	}
 
-	private Map<UUID, long[]> linkCounts(List<UUID> taskIds) {
+	/** Link counts and the newest linked commits per task, from one query (counts cover every link). */
+	private Map<UUID, LinkedCommits> linkedCommits(List<UUID> taskIds) {
 		Map<UUID, long[]> counts = new HashMap<>();
-		for (Object[] row : commitLinks.countRawAndV23LinksByTaskIds(taskIds)) {
+		Map<UUID, List<StudentDashboardLinkedCommitResponse>> previews = new HashMap<>();
+		for (Object[] row : commitLinks.findLinkedCommitRowsByTaskIds(taskIds)) {
 			UUID taskId = (UUID) row[0];
-			long raw = row[1] == null ? 0L : ((Number) row[1]).longValue();
-			long v23 = row[2] == null ? 0L : ((Number) row[2]).longValue();
-			counts.put(taskId, new long[] {raw, v23});
+			Integer parentCount = row[8] == null ? null : ((Number) row[8]).intValue();
+			long[] pair = counts.computeIfAbsent(taskId, id -> new long[2]);
+			pair[0]++;
+			if (parentCount == null || parentCount <= 1) {
+				pair[1]++;
+			}
+			List<StudentDashboardLinkedCommitResponse> preview = previews.computeIfAbsent(taskId, id -> new ArrayList<>());
+			if (preview.size() < LINKED_COMMIT_PREVIEW_LIMIT) {
+				preview.add(new StudentDashboardLinkedCommitResponse(
+						(UUID) row[1],
+						(String) row[2],
+						(String) row[3],
+						(String) row[5],
+						(LocalDateTime) row[4],
+						(UUID) row[6],
+						(String) row[7],
+						parentCount == null ? null : parentCount > 1));
+			}
 		}
-		return counts;
+		Map<UUID, LinkedCommits> out = new HashMap<>();
+		counts.forEach((taskId, pair) ->
+				out.put(taskId, new LinkedCommits(pair[0], pair[1], List.copyOf(previews.get(taskId)))));
+		return out;
+	}
+
+	private record LinkedCommits(long raw, long v23, List<StudentDashboardLinkedCommitResponse> preview) {
+		static final LinkedCommits NONE = new LinkedCommits(0L, 0L, List.of());
 	}
 
 	/** With a sprint window, only commits whose raw {@code committedAt} falls inside it. */

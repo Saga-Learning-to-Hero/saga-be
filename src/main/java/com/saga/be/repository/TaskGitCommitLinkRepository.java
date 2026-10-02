@@ -122,6 +122,32 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 	Page<UUID> findPageIdsByProjectAndTask(
 			@Param("projectId") UUID projectId, @Param("taskId") UUID taskId, Pageable pageable);
 
+	/** {@link #findPageIdsByProjectAndTask} with known merges too: total equals linkedCommitCount. */
+	@Query(
+			value =
+					"""
+					select c.id
+					from TaskGitCommitLink l
+					join l.gitCommit c
+					join l.task t
+					where t.id = :taskId
+					  and t.project.id = :projectId
+					  and t.deletedAt is null
+					order by coalesce(c.committedAt, c.createdAt) desc, c.id desc
+					""",
+			countQuery =
+					"""
+					select count(distinct c.id)
+					from TaskGitCommitLink l
+					join l.gitCommit c
+					join l.task t
+					where t.id = :taskId
+					  and t.project.id = :projectId
+					  and t.deletedAt is null
+					""")
+	Page<UUID> findPageIdsByProjectAndTaskIncludingMerges(
+			@Param("projectId") UUID projectId, @Param("taskId") UUID taskId, Pageable pageable);
+
 	/**
 	 * V23 task-link page for the work-session timeline. Same coding predicate and coalesce sort as
 	 * {@link #findPageIdsByProjectAndTask}, but returns {@code TaskGitCommitLink.id} so callers can
@@ -435,20 +461,23 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			@Param("rangeEndExclusive") LocalDateTime rangeEndExclusive);
 
 	/**
-	 * Preview link counts for a bounded task-id set —
-	 * {@code Object[]{UUID taskId, Long rawLinks, Long v23Links}}.
+	 * Student dashboard preview: every link of these tasks with its commit, newest first per task --
+	 * {@code Object[]{UUID taskId, UUID commitId, String sha, String message, LocalDateTime committedAt,
+	 * String repoFullName, UUID authorStudentId, String authorExternalId, Integer parentCount}}.
+	 * Merges included, so the row count per task equals the raw link count.
 	 */
 	@Query(
 			"""
-			select l.task.id,
-			       count(l),
-			       sum(case when c.parentCount is null or c.parentCount <= 1 then 1 else 0 end)
+			select t.id, c.id, c.shaHash, c.message, c.committedAt, r.fullName, a.id, c.authorExternalId, c.parentCount
 			from TaskGitCommitLink l
+			join l.task t
 			join l.gitCommit c
-			where l.task.id in :taskIds
-			group by l.task.id
+			join c.repo r
+			left join c.authorStudent a
+			where t.id in :taskIds
+			order by t.id asc, coalesce(c.committedAt, c.createdAt) desc, c.id desc
 			""")
-	List<Object[]> countRawAndV23LinksByTaskIds(@Param("taskIds") Collection<UUID> taskIds);
+	List<Object[]> findLinkedCommitRowsByTaskIds(@Param("taskIds") Collection<UUID> taskIds);
 
 	/**
 	 * Bulk linkedTaskKeys for recent commits —

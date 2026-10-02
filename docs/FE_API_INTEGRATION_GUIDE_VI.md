@@ -855,6 +855,19 @@ Xác định "task của tôi" (quyền sửa / kéo trạng thái / dời sprin
 
 Personal cockpit của **chính** sinh viên đang gọi API. **MEMBER / LEADER / MENTOR** đều gọi được — không dùng gate của `/progress` (leader-only).
 
+**Cá nhân hay nhóm** — chỉ đúng 3 số trong `currentSprint` là của **cả nhóm**; mọi số liệu còn lại lọc theo đúng sinh viên đang gọi:
+
+| Field | Phạm vi |
+|---|---|
+| `currentSprint.totalTasks` / `completedTasks` / `completionPercent` | **Cả nhóm** — mọi task của sprint (ngữ cảnh "nhóm đang tới đâu"). Hiện phải ghi rõ "Tiến độ nhóm" |
+| `sprintMetrics.tasks` | **Cá nhân** — task giao cho mình trong sprint đó → dùng cho "Tiến độ của bạn trong sprint" |
+| `myMetrics`, `sprintMetrics.commits`, `recentCommits`, `weeklyCommits` | **Cá nhân** — task giao cho mình / commit do mình là tác giả |
+| `myActiveTasks` | **Cá nhân** — task giao cho mình. Riêng `linkedCommitCount` / `linkedCommits` là commit gắn vào task đó, **mọi tác giả** (so `authorStudentId` để đánh dấu commit của người khác) |
+| `actionableAlerts` | **Cá nhân** (MSR trên task của mình, ghosting theo commit của mình, peer review mình còn nợ) |
+| `team`, `integrations` | Thông tin nhóm / kết nối, không phải số liệu đánh giá |
+
+Tab "Nhóm" (leader) dùng `GET /api/projects/{projectId}/progress` — số liệu cả nhóm, tách khỏi phần cá nhân.
+
 Không team / không project **không** phải 404: trả **200** với `team` / `integrations` / `currentSprint` / `myMetrics` / `sprintMetrics` = `null`, `myActiveTasks` = `[]`, `recentCommits` = `[]`, `weeklyCommits` = `[]`, `actionableAlerts` = `[]`. Không bịa personal metrics khi chưa có Project.
 
 ```json
@@ -915,7 +928,19 @@ Không team / không project **không** phải 404: trả **200** với `team` /
       "dueDate": "2026-09-10T00:00:00",
       "linkedCommitCount": 2,
       "evidenceCommitCount": 1,
-      "hasAnomaly": false
+      "hasAnomaly": false,
+      "linkedCommits": [
+        {
+          "id": "uuid-git-commit",
+          "sha": "abcdef123456",
+          "message": "feat: login form",
+          "repositoryFullName": "org/saga-fe",
+          "committedAt": "2026-09-04T09:00:00",
+          "authorStudentId": "uuid-student-profile",
+          "authorExternalId": "12345",
+          "isMerge": false
+        }
+      ]
     }
   ],
   "recentCommits": [
@@ -1019,6 +1044,7 @@ Quy tắc Phase B1:
 | `commits.lastCommittedAt` | `MAX(COALESCE(committedAt, createdAt))` — timestamp hoạt động, **có** fallback `createdAt`. Khác `recentCommits[].committedAt` |
 | `myActiveTasks` | Preview **cần chú ý**, **không** phải full list. Cap **10** đúng top 10 theo rule cuối. Gồm mọi task cá nhân `status != DONE` **cộng** task `DONE` có label **`saga:code` hoặc `saga:test`** (kể cả khi gắn kèm label SAGA khác) và `evidenceCommitCount = 0`. Task chỉ có label tài liệu/nghiên cứu, hoặc không có label SAGA, không vào preview vì thiếu commit (tài liệu được chứng minh bằng tệp/link, xem `evidenceCheck` ở mục 19). Ứng viên DONE được classify đủ, không cắt 50 row thô |
 | `linkedCommitCount` | Số link raw (kể cả merge) |
+| `linkedCommits` | Mảng commit đứng sau `linkedCommitCount`: mọi tác giả (commit của bạn khác gắn vào task của mình vẫn hiện, xem `authorStudentId`), **kể cả merge** (`isMerge`), mới nhất trước (`coalesce(committedAt, createdAt) DESC, id DESC`). Tối đa **20**; `linkedCommitCount` vẫn là tổng đầy đủ — nhiều hơn 20 thì gọi `GET /tasks/{taskId}/commits?includeMerges=true`. Chi tiết commit: `GET /api/projects/{projectId}/commits/{id}`. Không tốn thêm query |
 | `evidenceCommitCount` | Số link tới commit V23 (`parentCount` null/0/1) |
 | `hasAnomaly` | `true` khi DONE CODE/TEST và `evidenceCommitCount = 0` (kể cả chỉ link merge) |
 | Thứ tự preview | `hasAnomaly` DESC, `dueDate` ASC (null last), priority HIGHEST→LOWEST, `id` ASC |
@@ -1423,7 +1449,7 @@ Vài lưu ý chính xác cần nhớ:
 - `priorityDetail.id` **luôn là `null`** trong implementation hiện tại — chỉ `priorityDetail.name` có giá trị thật.
 - `assignee` là `null` nếu task chưa gán ai.
 - `sprint` là `null` nếu task đang ở backlog.
-- `linkedCommitCount` được tính lại mỗi lần đọc (không phải cột lưu sẵn).
+- `linkedCommitCount` được tính lại mỗi lần đọc (không phải cột lưu sẵn). Đếm **cả merge**. Muốn sổ ra đúng danh sách khớp số này: `GET /api/projects/{projectId}/tasks/{taskId}/commits?includeMerges=true` (mặc định `includeMerges=false` bỏ merge nên `total` có thể nhỏ hơn `linkedCommitCount`).
 - `evidenceCount` = số `task_file` + `task_web_link` (không gồm commit). `hasEvidence` = `evidenceCount > 0`. Chỉ count, không trả payload file/link.
 - **`scheduleCheck`** — cảnh báo ngày của task (không bao giờ `null`). `issues` rỗng = ổn; có thể chứa `START_AFTER_DUE`, `START_BEFORE_SPRINT`, `START_AFTER_SPRINT`, `DUE_BEFORE_SPRINT`, `DUE_AFTER_SPRINT`. `sprintStartDate`/`sprintEndDate` = khung ngày của sprint hiện tại của task (`null` khi backlog). FE hiện nhãn "Lệch lịch sprint" khi `issues` khác rỗng để Leader sửa lại ngày.
 - **`evidenceCheck` — dùng field này cho mọi cảnh báo "thiếu commit" / "thiếu minh chứng"**, không đoán theo tiêu đề task. Minh chứng cần có **theo label SAGA**:
@@ -1697,8 +1723,12 @@ Hai endpoint **không cùng semantics**. Đừng dùng lẫn contract:
 | `size` | default `50`, min `1`, max `200` | default `50`, min `1`, max `200` |
 | Invalid `page`/`size` | `400 REQUEST_INVALID` | `400 REQUEST_INVALID` |
 | Lọc theo thành viên | `authorStudentId` (tuỳ chọn) = `studentProfileId` của thành viên; `total` đếm sau khi lọc | — |
+| Lọc theo site / sprint | `jiraIntegrationId`, `sprintId` (tuỳ chọn) — commit đã liên kết với task của site/sprint đó | — |
+| `includeMerges` | — | `true` = trả cả merge, `total` = `linkedCommitCount` của task (mặc định `false`) |
 | HTTP provider | Local DB only | Local DB only (commit **detail** mới gọi GitHub) |
 | Order | `coalesce(committedAt, createdAt) DESC, id DESC` | `coalesce(committedAt, createdAt) DESC, id DESC` |
+
+**Lọc theo site (nguồn Jira) và sprint:** `GET /api/projects/{projectId}/commits?jiraIntegrationId={id}&sprintId={id}`. Commit "thuộc" site/sprint = commit **đã liên kết** (`task_git_commit_link`) với một task chưa xoá của site/sprint đó; cho cả hai thì phải **cùng một task** khớp cả hai. Commit chưa liên kết task nào không thuộc site/sprint nào. Dropdown sprint phụ thuộc site như màn Sprint. Kết hợp được với `authorStudentId` (AND). Id của project khác → rỗng.
 
 **Lọc commit theo thành viên:** `GET /api/projects/{projectId}/commits?authorStudentId={studentProfileId}&page=0&size=50`. Dropdown lấy danh sách thành viên nhóm (tên + `studentProfileId`); bỏ trống = tất cả. Chỉ khớp commit đã gắn được với sinh viên (`authorStudentId` khác null, tức tài khoản GitHub đã liên kết); commit của tài khoản GitHub chưa liên kết không thuộc thành viên nào. Lọc ở BE nên phân trang và `total` đúng — đừng lọc phía client trên trang đã tải.
 

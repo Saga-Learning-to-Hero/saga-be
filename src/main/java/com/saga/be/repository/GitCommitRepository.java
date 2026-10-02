@@ -78,14 +78,28 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 					""")
 	Page<UUID> findPageIdsByProject(@Param("projectId") UUID projectId, Pageable pageable);
 
-	/** Same order as {@link #findPageIdsByProject}, only commits mapped to this team member. */
+	/**
+	 * Same order as {@link #findPageIdsByProject}, narrowed by optional filters (null = no filter):
+	 * {@code authorStudentId} keeps commits mapped to that team member; {@code jiraIntegrationId}
+	 * and {@code sprintId} keep commits linked (task_git_commit_link) to a live task of that Jira
+	 * source / sprint -- both on the same task when both are given.
+	 */
 	@Query(
 			value =
 					"""
 					select c.id
 					from GitCommit c
 					where c.repo.project.id = :projectId
-					  and c.authorStudent.id = :authorStudentId
+					  and (:authorStudentId is null or c.authorStudent.id = :authorStudentId)
+					  and ((:jiraIntegrationId is null and :sprintId is null) or exists (
+					    select 1
+					    from TaskGitCommitLink l
+					    join l.task t
+					    where l.gitCommit = c
+					      and t.project.id = :projectId
+					      and t.deletedAt is null
+					      and (:jiraIntegrationId is null or t.jiraIntegration.id = :jiraIntegrationId)
+					      and (:sprintId is null or t.sprint.id = :sprintId)))
 					order by coalesce(c.committedAt, c.createdAt) desc, c.id desc
 					""",
 			countQuery =
@@ -93,10 +107,23 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 					select count(c.id)
 					from GitCommit c
 					where c.repo.project.id = :projectId
-					  and c.authorStudent.id = :authorStudentId
+					  and (:authorStudentId is null or c.authorStudent.id = :authorStudentId)
+					  and ((:jiraIntegrationId is null and :sprintId is null) or exists (
+					    select 1
+					    from TaskGitCommitLink l
+					    join l.task t
+					    where l.gitCommit = c
+					      and t.project.id = :projectId
+					      and t.deletedAt is null
+					      and (:jiraIntegrationId is null or t.jiraIntegration.id = :jiraIntegrationId)
+					      and (:sprintId is null or t.sprint.id = :sprintId)))
 					""")
-	Page<UUID> findPageIdsByProjectAndAuthorStudent(
-			@Param("projectId") UUID projectId, @Param("authorStudentId") UUID authorStudentId, Pageable pageable);
+	Page<UUID> findPageIdsByProjectFiltered(
+			@Param("projectId") UUID projectId,
+			@Param("authorStudentId") UUID authorStudentId,
+			@Param("jiraIntegrationId") UUID jiraIntegrationId,
+			@Param("sprintId") UUID sprintId,
+			Pageable pageable);
 
 	@Query(
 			"""

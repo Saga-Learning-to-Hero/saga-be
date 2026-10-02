@@ -285,14 +285,16 @@ public class ProjectProjectionController {
 					(parent_count > 1); UNKNOWN, root, and normal remain. Distinct from GET /commits,
 					which is raw project history and includes known merges. page default 0, size
 					default 50, size max 200. Breaking wrapper: items/page/size/total.
+					includeMerges=true also returns known merges, so total equals the task's linkedCommitCount.
 					""")
 	public ProjectCommitPageResponse taskCommits(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
 			@PathVariable UUID taskId,
 			@RequestParam(required = false) Integer page,
-			@RequestParam(required = false) Integer size) {
-		return projections.listTaskCommits(principal.getUserId(), projectId, taskId, page, size);
+			@RequestParam(required = false) Integer size,
+			@RequestParam(defaultValue = "false") boolean includeMerges) {
+		return projections.listTaskCommits(principal.getUserId(), projectId, taskId, page, size, includeMerges);
 	}
 
 	@GetMapping("/sprints")
@@ -360,14 +362,20 @@ public class ProjectProjectionController {
 					page default 0, size default 50, size max 200. Breaking wrapper: items/page/size/total.
 					Optional authorStudentId (a team member's studentProfileId) keeps only commits attributed
 					to that member; total counts the filtered rows. Unmapped GitHub authors never match.
+					Optional jiraIntegrationId (Jira source / site) and sprintId keep only commits linked to a
+					live task of that source / sprint (the same task when both are given); unlinked commits
+					never match. Filters combine with AND.
 					""")
 	public ProjectCommitPageResponse commits(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
 			@RequestParam(required = false) Integer page,
 			@RequestParam(required = false) Integer size,
-			@RequestParam(required = false) UUID authorStudentId) {
-		return projections.listCommits(principal.getUserId(), projectId, page, size, authorStudentId);
+			@RequestParam(required = false) UUID authorStudentId,
+			@RequestParam(required = false) UUID jiraIntegrationId,
+			@RequestParam(required = false) UUID sprintId) {
+		return projections.listCommits(
+				principal.getUserId(), projectId, page, size, authorStudentId, jiraIntegrationId, sprintId);
 	}
 
 	@GetMapping("/commits/{gitCommitId}")

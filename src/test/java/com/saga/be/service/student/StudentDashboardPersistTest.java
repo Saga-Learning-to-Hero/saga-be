@@ -634,6 +634,16 @@ class StudentDashboardPersistTest {
 		assertThat(response.myActiveTasks().get(0).hasAnomaly()).isTrue();
 		assertThat(response.myActiveTasks().get(0).linkedCommitCount()).isEqualTo(1);
 		assertThat(response.myActiveTasks().get(0).evidenceCommitCount()).isZero();
+		assertThat(response.myActiveTasks().get(0).linkedCommits())
+				.singleElement()
+				.satisfies(commit -> {
+					assertThat(commit.sha()).isEqualTo("ee00002");
+					assertThat(commit.message()).isEqualTo("merge");
+					assertThat(commit.repositoryFullName()).isEqualTo("org/preview");
+					assertThat(commit.isMerge()).isTrue();
+					assertThat(commit.authorStudentId()).isNotNull();
+				});
+		assertThat(response.myActiveTasks().get(1).linkedCommits()).isEmpty();
 		assertThat(response.myActiveTasks().get(1).externalKey()).isEqualTo("SAGA-ANOM");
 		assertThat(response.myActiveTasks().get(1).hasAnomaly()).isTrue();
 		assertThat(response.myActiveTasks().get(2).externalKey()).isEqualTo("SAGA-IP");

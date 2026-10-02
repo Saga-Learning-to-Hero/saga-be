@@ -21,11 +21,17 @@ import com.saga.be.entity.enums.IntegrationStatus;
 import com.saga.be.entity.enums.RoleInTeam;
 import com.saga.be.entity.enums.SubjectStatus;
 import com.saga.be.entity.enums.SyllabusStatus;
+import com.saga.be.entity.enums.TaskStatus;
+import com.saga.be.entity.enums.TraceLinkSource;
 import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.github.GitRepo;
+import com.saga.be.entity.jira.JiraIntegration;
+import com.saga.be.entity.jira.Sprint;
+import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
 import com.saga.be.entity.project.Team;
 import com.saga.be.entity.project.TeamMember;
+import com.saga.be.entity.traceability.TaskGitCommitLink;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.repository.AcademicClassRepository;
@@ -335,6 +341,86 @@ class ProjectCommitListQueryCountTest {
 	}
 
 	@Test
+	void listCommits_filtersBySiteAndSprintThroughLinkedTasks() {
+		UUID[] ids = tx.execute(status -> {
+			JiraIntegration siteA = persistJira("A");
+			JiraIntegration siteB = persistJira("B");
+			Sprint sprintA1 = persistSprint(siteA, "A1");
+			Sprint sprintA2 = persistSprint(siteA, "A2");
+			Sprint sprintB1 = persistSprint(siteB, "B1");
+			Task taskA1 = persistTask(siteA, sprintA1, "A-1", false);
+			Task taskA2 = persistTask(siteA, sprintA2, "A-2", false);
+			Task taskB1 = persistTask(siteB, sprintB1, "B-1", false);
+			Task deletedA1 = persistTask(siteA, sprintA1, "A-9", true);
+			linkTo(persistCommit("C1", 1, LocalDateTime.of(2026, 6, 1, 0, 0), null), taskA1);
+			linkTo(persistCommit("C2", 1, LocalDateTime.of(2026, 6, 2, 0, 0), null), taskA2);
+			GitCommit unmapped = persistCommit("C3", 1, LocalDateTime.of(2026, 6, 3, 0, 0), null);
+			unmapped.setAuthorStudent(null);
+			linkTo(unmapped, taskB1);
+			GitCommit both = persistCommit("C4", 1, LocalDateTime.of(2026, 6, 4, 0, 0), null);
+			linkTo(both, taskA1);
+			linkTo(both, taskB1);
+			persistCommit("C5", 1, LocalDateTime.of(2026, 6, 5, 0, 0), null);
+			linkTo(persistCommit("C6", 1, LocalDateTime.of(2026, 6, 6, 0, 0), null), deletedA1);
+			entityManager.flush();
+			return new UUID[] {siteA.getId(), siteB.getId(), sprintA1.getId(), sprintB1.getId()};
+		});
+		UUID siteA = ids[0];
+		UUID siteB = ids[1];
+		UUID sprintA1 = ids[2];
+		UUID sprintB1 = ids[3];
+
+		// a commit on a deleted task, or on no task, belongs to no site
+		assertThat(filtered(0, 50, null, siteA, null).items()).extracting(ProjectCommitResponse::sha)
+				.containsExactly("C4", "C2", "C1");
+		// an unmapped GitHub author does not hide a commit when no author filter is set
+		assertThat(filtered(0, 50, null, siteB, null).items()).extracting(ProjectCommitResponse::sha)
+				.containsExactly("C4", "C3");
+		assertThat(filtered(0, 50, null, null, sprintA1).items()).extracting(ProjectCommitResponse::sha)
+				.containsExactly("C4", "C1");
+		// site and sprint must hold on the same task: C4's site-A task is not in sprint B1
+		assertThat(filtered(0, 50, null, siteA, sprintB1).items()).isEmpty();
+		assertThat(filtered(0, 50, null, siteB, sprintB1).items()).extracting(ProjectCommitResponse::sha)
+				.containsExactly("C4", "C3");
+		assertThat(filtered(0, 50, author.getId(), siteB, null).items()).extracting(ProjectCommitResponse::sha)
+				.containsExactly("C4");
+		ProjectCommitPageResponse firstOfSiteA = filtered(0, 1, null, siteA, null);
+		assertThat(firstOfSiteA.items()).extracting(ProjectCommitResponse::sha).containsExactly("C4");
+		assertThat(firstOfSiteA.total()).isEqualTo(3);
+		assertThat(filtered(0, 50, null, UUID.randomUUID(), null).total()).isZero();
+		assertThat(filtered(0, 50, null, null, UUID.randomUUID()).total()).isZero();
+		assertThat(list(0, 50).total()).isEqualTo(6);
+	}
+
+	@Test
+	void linkedCommitRowsComeNewestFirstPerTaskIncludingMergesAndUnmappedAuthors() {
+		UUID[] ids = tx.execute(status -> {
+			JiraIntegration site = persistJira("L");
+			Task first = persistTask(site, null, "L-1", false);
+			Task second = persistTask(site, null, "L-2", false);
+			linkTo(persistCommit("OLD", 1, LocalDateTime.of(2026, 6, 1, 0, 0), null), first);
+			GitCommit merge = persistCommit("MERGE", 2, LocalDateTime.of(2026, 6, 3, 0, 0), null);
+			merge.setAuthorStudent(null);
+			linkTo(merge, first);
+			linkTo(persistCommit("NODATE", 1, null, LocalDateTime.of(2026, 6, 2, 0, 0)), first);
+			linkTo(persistCommit("OTHER", 1, LocalDateTime.of(2026, 6, 9, 0, 0), null), second);
+			entityManager.flush();
+			return new UUID[] {first.getId(), second.getId()};
+		});
+
+		List<Object[]> rows = tx.execute(status -> links.findLinkedCommitRowsByTaskIds(List.of(ids[0])));
+
+		assertThat(rows).extracting(row -> (String) row[2]).containsExactly("MERGE", "NODATE", "OLD");
+		assertThat(rows).allMatch(row -> ids[0].equals(row[0]));
+		assertThat(rows.getFirst()[5]).isEqualTo("org/demo");
+		assertThat(rows.getFirst()[6]).isNull();
+		assertThat(((Number) rows.getFirst()[8]).intValue()).isEqualTo(2);
+		assertThat(rows.get(2)[6]).isEqualTo(author.getId());
+		List<Object[]> bothTasks = tx.execute(status -> links.findLinkedCommitRowsByTaskIds(List.of(ids[0], ids[1])));
+		assertThat(bothTasks).hasSize(4);
+	}
+
+	@Test
 	void listCommits_rejectsInvalidPaging() {
 		assertThatThrownBy(() -> list(-1, 50))
 				.isInstanceOf(AcademicException.class)
@@ -358,6 +444,58 @@ class ProjectCommitListQueryCountTest {
 		stats.clear();
 		ProjectCommitPageResponse response = list(page, size);
 		return new Measured(response, stats.getPrepareStatementCount());
+	}
+
+	private ProjectCommitPageResponse filtered(
+			Integer page, Integer size, UUID authorStudentId, UUID jiraIntegrationId, UUID sprintId) {
+		return tx.execute(status -> readService.listCommits(
+				student.getId(), project.getId(), page, size, authorStudentId, jiraIntegrationId, sprintId));
+	}
+
+	private JiraIntegration persistJira(String key) {
+		JiraIntegration integration = new JiraIntegration();
+		integration.setProject(project);
+		integration.setCloudId("cloud-" + key + "-" + UUID.randomUUID());
+		integration.setJiraProjectId("100" + key);
+		integration.setProjectKey("K" + key);
+		integration.setConnectionStatus(IntegrationStatus.ACTIVE);
+		integration.setConsecutiveFailures(0);
+		integration.setVersion(0L);
+		entityManager.persist(integration);
+		return integration;
+	}
+
+	private Sprint persistSprint(JiraIntegration jira, String name) {
+		Sprint sprint = new Sprint();
+		sprint.setJiraIntegration(jira);
+		sprint.setExternalSprintId(name + "-" + UUID.randomUUID());
+		sprint.setName(name);
+		sprint.setState("active");
+		entityManager.persist(sprint);
+		return sprint;
+	}
+
+	private Task persistTask(JiraIntegration jira, Sprint sprint, String key, boolean deleted) {
+		Task task = new Task();
+		task.setProject(project);
+		task.setJiraIntegration(jira);
+		task.setSprint(sprint);
+		task.setExternalId("ext-" + key + "-" + UUID.randomUUID());
+		task.setExternalKey(key);
+		task.setTitle(key);
+		task.setStatus(TaskStatus.IN_PROGRESS);
+		if (deleted) {
+			task.setDeletedAt(LocalDateTime.of(2026, 6, 10, 0, 0));
+		}
+		return tasks.save(task);
+	}
+
+	private void linkTo(GitCommit commit, Task task) {
+		TaskGitCommitLink link = new TaskGitCommitLink();
+		link.setTask(task);
+		link.setGitCommit(commit);
+		link.setLinkSource(TraceLinkSource.COMMIT_MESSAGE);
+		links.save(link);
 	}
 
 	private ProjectCommitPageResponse list(Integer page, Integer size) {
