@@ -38,7 +38,6 @@ public class ProjectGraphProjector {
 			ProjectRealtimeEventType.COMMITS_CHANGED,
 			ProjectRealtimeEventType.TASK_LINKS_CHANGED,
 			ProjectRealtimeEventType.TASK_EVIDENCE_CHANGED,
-			ProjectRealtimeEventType.PEER_REVIEW_CHANGED,
 			ProjectRealtimeEventType.PROJECT_METADATA_CHANGED);
 
 	private final ProjectGraphLoader loader;

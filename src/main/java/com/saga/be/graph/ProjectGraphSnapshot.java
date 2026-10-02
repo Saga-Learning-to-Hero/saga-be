@@ -12,7 +12,6 @@ public record ProjectGraphSnapshot(
 		List<TaskNode> tasks,
 		List<CommitNode> commits,
 		List<TaskCommitLink> links,
-		List<ReviewEdge> reviews,
 		List<TaskHierarchyLink> hierarchy) {
 
 	public record TeamNode(UUID id, String name) {}
@@ -65,6 +64,4 @@ public record ProjectGraphSnapshot(
 
 	/** Jira parent -> child (Epic -> Story/Task/Bug, Task -> Subtask), both tasks of this project. */
 	public record TaskHierarchyLink(UUID parentTaskId, UUID childTaskId) {}
-
-	public record ReviewEdge(UUID reviewerStudentId, UUID revieweeStudentId, UUID sprintId, int stars) {}
 }

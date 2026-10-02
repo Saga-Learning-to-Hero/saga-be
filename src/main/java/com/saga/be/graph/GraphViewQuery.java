@@ -34,8 +34,7 @@ public record GraphViewQuery(
 			"HAS_WORK_ITEM",
 			"CLASSIFIED_AS",
 			"AUTHORED_BY",
-			"MAPS_TO",
-			"REVIEWED");
+			"MAPS_TO");
 	static final Set<String> OVERVIEW_COMPACT_TYPES =
 			Set.of("STUDENT", "TEAM", "PROJECT", "SPRINT", "TASK");
 	static final Set<String> ACTIVITY_COMPACT_TYPES =

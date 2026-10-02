@@ -85,12 +85,6 @@ public class ProjectGraphService {
 		return read(projectId, scope("attribution", sprintId, null), view, () -> reader.attribution(projectId, sprintId));
 	}
 
-	public GraphRead peerReview(UUID userId, UUID projectId, UUID sprintId, GraphViewQuery view) {
-		authorization.requireReader(userId, projectId);
-		requireSprint(projectId, sprintId);
-		return read(projectId, scope("peer-review", sprintId, null), view, () -> reader.peerReview(projectId, sprintId));
-	}
-
 	private GraphRead read(
 			UUID projectId, String scope, GraphViewQuery view, Supplier<CytoscapeGraphResponse> load) {
 		GraphViewQuery query = view == null ? GraphViewQuery.none() : view;

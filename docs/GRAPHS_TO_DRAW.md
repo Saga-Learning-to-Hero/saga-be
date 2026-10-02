@@ -15,7 +15,6 @@ Tài liệu `SAGA_GRAPHS_TO_DRAW.md` có tính định hướng và thực tiễ
    - **Graph 2 (Contribution Path)**: Giải thích nguồn gốc điểm số (Traceability / XAI) cho từng sinh viên.
    - **Graph 3 (Sprint Activity)**: Minh chứng cho tính chất "Continuous Assessment" (Đánh giá liên tục qua các giai đoạn).
    - **Graph 4 (Attribution)**: Minh chứng tính toàn vẹn dữ liệu, chống gian lận gán bừa commit.
-   - **Graph 5 (Peer Review)**: Giải thích hệ số đồng đẳng $P$ trong công thức đóng góp Slicing Pie.
 3. **Nguyên tắc tính điểm đúng đắn**: Task Jira là **nguồn điểm**, Commit/PR là **bằng chứng đối soát** (không coi commit là điểm để tránh tình trạng sinh viên spam commit rác).
 
 ---
@@ -33,7 +32,6 @@ Trong tài liệu `SAGA_GRAPHS_TO_DRAW.md` có một số tên quan hệ đang h
 | `EVIDENCED_BY` | `[:IMPLEMENTS]` | `(Commit) ➔ (Task)` | Trong kỹ nghệ phần mềm (MSR), Commit sinh ra để hiện thực hóa Task (`Commit -> Task`). FE hoàn toàn có thể hiển thị nhãn `EVIDENCED_BY` trên UI cho người xem dễ hiểu. |
 | `AUTHORED_BY` | `[:AUTHORED]` | `(Identity) ➔ (Commit)` hoặc `(Student) ➔ (Commit)` | Chuẩn ngữ nghĩa tác giả mã nguồn Git. |
 | `CLASSIFIED_AS` | `[:CLASSIFIED_AS]` | `(Task) ➔ (Criterion)` | Giữ nguyên như tài liệu. |
-| `REVIEWS` | `[:REVIEWED]` | `(Student) ➔ (Student)` | Đi kèm thuộc tính `{ stars: 5, sprintId: "..." }`. |
 
 👉 **Câu hỏi cho BE**: BE hiện đang đặt tên các nhãn quan hệ này trong Cypher thế nào để FE cấu hình Cytoscape CSS styles cho khớp 100%?
 
@@ -123,9 +121,6 @@ interface CytoscapeGraphResponse {
 4. **Graph 4 — Attribution / Identity (Kiểm tra gán định danh)**:
    - `GET /api/projects/{projectId}/graph/attribution`
    - *Phạm vi:* Danh sách Commit, Identity và Student (nổi bật các commit chưa map thành công).
-5. **Graph 5 — Peer Review (Mạng lưới đánh giá đồng đẳng)**:
-   - `GET /api/projects/{projectId}/sprints/{sprintId}/graph/peer-review`
-   - *Phạm vi:* Đồ thị mạng lưới giữa các sinh viên trong nhóm, nhãn cạnh là số sao đánh giá chéo.
 
 ---
 
@@ -146,7 +141,7 @@ Ngôn ngữ đồ thị khóa tại [`docs/SAGA_GRAPHS_TO_DRAW.md`](./SAGA_GRAPH
 
 ### 1. Tên cạnh — trả lời câu hỏi Cypher
 
-Hiện Cypher **đang chạy** khi FE gọi 5 GET graph (rebuild + query Neo4j). Tên cạnh Cytoscape CSS:
+Hiện Cypher **đang chạy** khi FE gọi 4 GET graph (rebuild + query Neo4j). Tên cạnh Cytoscape CSS:
 
 | Cạnh chốt | Chiều | FE đề xuất | Quyết định |
 | --- | --- | --- | --- |
@@ -154,11 +149,12 @@ Hiện Cypher **đang chạy** khi FE gọi 5 GET graph (rebuild + query Neo4j).
 | `EVIDENCED_BY` | `(Task) → (Commit)` | `IMPLEMENTS` Commit → Task | **Giữ `EVIDENCED_BY`.** Task là nguồn điểm; commit là bằng chứng. Đảo mũi tên dễ hiểu nhầm commit mint điểm. FE gắn nhãn UI `EVIDENCED_BY`. |
 | `AUTHORED_BY` | `(Commit) → (Identity)` | `AUTHORED` Identity → Commit | **Giữ `AUTHORED_BY`.** Graph 4 đọc trái → phải: commit thuộc identity nào, identity đã map student chưa. |
 | `CLASSIFIED_AS` | `(Task) → (Criterion)` | giữ | **Nhận.** |
-| `REVIEWED` | `(Student) → (Student)` `{stars, sprintId}` | `REVIEWED` | **Nhận.** |
 | `MEMBER_OF` | `(Student) → (Team)` `{role}` | (không đổi) | Giữ. |
 | `OWNS` | `(Team) → (Project)` | (không đổi) | Giữ. |
 | `HAS_SPRINT` | `(Project) → (Sprint)` | (không đổi) | Giữ. |
-| `CONTAINS` | `(Sprint) → (Task)` | (không đổi) | Giữ. |
+| `CONTAINS` | `(Sprint) → (Task)` | (không đổi) | Giữ. Sprint là kế hoạch, không phải cha của task. |
+| `HAS_WORK_ITEM` | `(Project) → (Task)` | — | Project nối item không có cha trên Jira (Epic, Standard không Epic, cấp trên Epic không cha). |
+| `PARENT_OF` | `(Task) → (Task)` | — | Cha → con theo Jira. Không dùng `DECOMPOSED_INTO`. |
 | `MAPS_TO` | `(Identity) → (Student)` | (không đổi) | Giữ. |
 
 `label` trên edge DTO = đúng tên cạnh chốt ở cột trái. FE style CSS theo các string này.
@@ -187,9 +183,9 @@ Webhook GitHub hiện **chỉ xử lý `push`** → upsert Commit + link Task qu
 
 **Demo / Graph 1–4: evidence chỉ `COMMIT`.** Không vẽ `PullRequest` cho đến khi webhook PR ship. `type` DTO không gồm `PULL_REQUEST` ở phase này.
 
-### 5. Năm endpoint — nhận contract, chỉnh DTO
+### 5. Bốn endpoint — nhận contract, chỉnh DTO
 
-Đồng ý 5 path FE đề xuất. BE sẽ trả **một** `CytoscapeGraphResponse` / request, không để FE tự nối đỉnh.
+BE trả **một** `CytoscapeGraphResponse` / request, không để FE tự nối đỉnh. Không còn graph peer review.
 
 Chỉnh so với bản FE:
 
@@ -206,21 +202,19 @@ Chỉnh so với bản FE:
 | Task CODE/TEST DONE, 0 commit link | Cảnh báo evidence yếu (vẫn có điểm Task) |
 | Task DOCUMENT/RESEARCH không đủ file/link | Không có cạnh `CLASSIFIED_AS` |
 | Commit/Identity không `MAPS_TO` Student | Graph 4 |
-| Peer `stars` thiếu / không đối xứng | Graph 5 (tuỳ FE highlight) |
 
 **Phạm vi endpoint**
 
 | Graph | Path | Node có mặt | Cạnh có mặt |
 | --- | --- | --- | --- |
-| 1 Overview | `GET /api/projects/{projectId}/graph/overview?sprintId=` | STUDENT, TEAM, PROJECT, SPRINT, TASK, COMMIT | MEMBER_OF, OWNS, HAS_SPRINT, CONTAINS, ASSIGNED_TO, EVIDENCED_BY |
+| 1 Overview | `GET /api/projects/{projectId}/graph/overview?sprintId=` | STUDENT, TEAM, PROJECT, SPRINT, TASK, COMMIT | MEMBER_OF, OWNS, HAS_SPRINT, HAS_WORK_ITEM, CONTAINS, PARENT_OF, ASSIGNED_TO, EVIDENCED_BY |
 | 2 Contribution | `GET /api/projects/{projectId}/students/{studentId}/graph/contribution?sprintId=` | STUDENT, TASK, CRITERION, COMMIT | ASSIGNED_TO, CLASSIFIED_AS, EVIDENCED_BY |
-| 3 Sprint | `GET /api/projects/{projectId}/sprints/{sprintId}/graph/activity` | STUDENT, SPRINT, TASK, CRITERION, COMMIT | CONTAINS, ASSIGNED_TO, CLASSIFIED_AS, EVIDENCED_BY |
-| 4 Attribution | `GET /api/projects/{projectId}/graph/attribution?sprintId=` | COMMIT, IDENTITY, STUDENT, TASK (nếu đã link) | AUTHORED_BY, MAPS_TO, EVIDENCED_BY, ASSIGNED_TO |
-| 5 Peer | `GET /api/projects/{projectId}/sprints/{sprintId}/graph/peer-review` | STUDENT | REVIEWED `{weight: stars}` |
+| 3 Sprint | `GET /api/projects/{projectId}/sprints/{sprintId}/graph/activity` | STUDENT, PROJECT, SPRINT, TASK, CRITERION, COMMIT | CONTAINS, PARENT_OF, HAS_WORK_ITEM, ASSIGNED_TO, CLASSIFIED_AS, EVIDENCED_BY |
+| 4 Attribution | `GET /api/projects/{projectId}/graph/attribution?sprintId=` | COMMIT, IDENTITY, STUDENT, PROJECT, TASK (nếu đã link) | AUTHORED_BY, MAPS_TO, EVIDENCED_BY, ASSIGNED_TO, PARENT_OF, HAS_WORK_ITEM |
 
-`sprintId` trên Graph 1, 2, 4 là **optional**. Bỏ query = cả project. Có `sprintId` = chỉ sprint đó (Graph 1 không gồm task backlog; Graph 4 chỉ commit gắn task trong sprint). Graph 3 và 5 luôn theo sprint trên path.
+`sprintId` trên Graph 1, 2, 4 là **optional**. Bỏ query = cả project. Có `sprintId` = chỉ sprint đó (Graph 1 không gồm task backlog; Graph 4 chỉ commit gắn task trong sprint). Graph 3 luôn theo sprint trên path.
 
-Graph 1 **không** trả Criterion / Identity / REVIEWED. Graph 5 **chỉ** Student + REVIEWED.
+Graph 1 **không** trả Criterion / Identity. Không còn graph peer review và cạnh `REVIEWED`.
 
 Quyền đọc: cùng `ProjectDataAuthorization.requireReader` với Task/Commit list (ACTIVE member của team, lecturer phụ trách course). ADMIN bị deny giống các projection read khác.
 
@@ -228,4 +222,4 @@ Payload: `{ nodes: [{ data: { id, label, type, ... } }], edges: [{ data: { id, s
 
 ### Việc FE làm với API đã ship
 
-Cytoscape CSS lock theo tên cạnh cột “Cạnh chốt”. Gọi 5 GET trên. Đổi sprint/mode chỉ đọc projection; cập nhật canvas khi SSE `GRAPH_CHANGED` (`docs/FRONTEND_GRAPH_API.md`).
+Cytoscape CSS lock theo tên cạnh cột “Cạnh chốt”. Gọi 4 GET trên. Đổi sprint/mode chỉ đọc projection; cập nhật canvas khi SSE `GRAPH_CHANGED` (`docs/FRONTEND_GRAPH_API.md`).
