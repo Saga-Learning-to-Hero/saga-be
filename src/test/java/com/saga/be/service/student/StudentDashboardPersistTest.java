@@ -840,7 +840,8 @@ class StudentDashboardPersistTest {
 		assertThat(response.myActiveTasks()).allMatch(row -> row.hasAnomaly());
 		// +1 over the pre-sprint-filter 16: sprintMetrics' per-sprint task count (the sprint commit window
 		// replaces the ISO-week query; the linked-in-range count is skipped with zero window commits).
-		assertThat(stats.getPrepareStatementCount()).isEqualTo(17L);
+		// +2 when DONE candidates exist: which of them already have Subtasks, and those Subtasks' parent labels.
+		assertThat(stats.getPrepareStatementCount()).isEqualTo(19L);
 		assertThat(response.actionableAlerts()).hasSize(13);
 		assertThat(response.actionableAlerts().subList(0, 12))
 				.allMatch(alert -> "MSR_ANOMALY".equals(alert.type()));
@@ -874,8 +875,9 @@ class StudentDashboardPersistTest {
 		stats.clear();
 		tx.execute(status -> service.get(fixture.memberId, fixture.courseId));
 		long first = stats.getPrepareStatementCount();
-		// Includes the selected-sprint personal task count.
-		assertThat(first).as("Phase A+B1+B2+D1 with 10 coarse DONE candidates stays bounded").isEqualTo(17L);
+		// Includes the selected-sprint personal task count, plus the two Subtask lookups
+		// (parents that already have children, and parent labels) once DONE candidates exist.
+		assertThat(first).as("Phase A+B1+B2+D1 with 10 coarse DONE candidates stays bounded").isEqualTo(19L);
 
 		tx.executeWithoutResult(status -> {
 			Project project = projects.findById(fixture.projectId).orElseThrow();
