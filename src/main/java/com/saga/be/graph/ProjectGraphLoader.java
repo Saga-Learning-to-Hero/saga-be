@@ -2,7 +2,6 @@ package com.saga.be.graph;
 
 import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.account.UserAccount;
-import com.saga.be.entity.assessment.PeerReview;
 import com.saga.be.entity.enums.EnrollmentStatus;
 import com.saga.be.entity.github.GitCommit;
 import com.saga.be.entity.jira.Task;
@@ -16,7 +15,6 @@ import com.saga.be.entity.traceability.TaskGitCommitLink;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.graph.ProjectGraphSnapshot.CommitNode;
-import com.saga.be.graph.ProjectGraphSnapshot.ReviewEdge;
 import com.saga.be.graph.ProjectGraphSnapshot.SprintNode;
 import com.saga.be.graph.ProjectGraphSnapshot.StudentNode;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskCommitLink;
@@ -25,7 +23,6 @@ import com.saga.be.graph.ProjectGraphSnapshot.TaskNode;
 import com.saga.be.graph.ProjectGraphSnapshot.TeamNode;
 import com.saga.be.graph.SagaGraphRules.TaskGraphAttrs;
 import com.saga.be.repository.GitCommitRepository;
-import com.saga.be.repository.PeerReviewRepository;
 import com.saga.be.repository.ProjectRepository;
 import com.saga.be.repository.SprintRepository;
 import com.saga.be.repository.TaskAttachmentRepository;
@@ -63,7 +60,6 @@ public class ProjectGraphLoader {
 	private final TaskAttachmentRepository attachments;
 	private final TaskWebLinkRepository webLinks;
 	private final TaskFileRepository files;
-	private final PeerReviewRepository peerReviews;
 
 	public ProjectGraphLoader(
 			ProjectRepository projects,
@@ -75,8 +71,7 @@ public class ProjectGraphLoader {
 			TaskGitCommitLinkRepository links,
 			TaskAttachmentRepository attachments,
 			TaskWebLinkRepository webLinks,
-			TaskFileRepository files,
-			PeerReviewRepository peerReviews) {
+			TaskFileRepository files) {
 		this.projects = projects;
 		this.teams = teams;
 		this.members = members;
@@ -87,7 +82,6 @@ public class ProjectGraphLoader {
 		this.attachments = attachments;
 		this.webLinks = webLinks;
 		this.files = files;
-		this.peerReviews = peerReviews;
 	}
 
 	@Transactional(readOnly = true)
@@ -98,7 +92,6 @@ public class ProjectGraphLoader {
 						AcademicErrorCode.PROJECT_NOT_FOUND, HttpStatus.NOT_FOUND, "Project was not found."));
 		Team team = teams.findByProject_Id(projectId).orElse(null);
 		List<StudentNode> students = new ArrayList<>();
-		List<UUID> studentIds = new ArrayList<>();
 		if (team != null) {
 			for (TeamMember member : members.findFetchedByTeam_Id(team.getId())) {
 				if (member.getCourseEnrollment().getEnrollmentStatus() != EnrollmentStatus.ACTIVE) {
@@ -112,7 +105,6 @@ public class ProjectGraphLoader {
 						profile.getStudentCode(),
 						account.getAvatarUrl(),
 						member.getRoleInTeam() == null ? null : member.getRoleInTeam().name()));
-				studentIds.add(profile.getId());
 			}
 		}
 		List<SprintNode> sprintNodes = sprints.findActiveByProject_Id(projectId).stream()
@@ -208,19 +200,6 @@ public class ProjectGraphLoader {
 					authorStudentId,
 					authorStudentId == null));
 		}
-		List<ReviewEdge> reviews = new ArrayList<>();
-		if (!studentIds.isEmpty()) {
-			for (PeerReview review : peerReviews.findFetchedByProjectAndReviewees(projectId, studentIds)) {
-				if (review.getStarRating() == null || review.getSprint() == null) {
-					continue;
-				}
-				reviews.add(new ReviewEdge(
-						review.getReviewerStudent().getId(),
-						review.getRevieweeStudent().getId(),
-						review.getSprint().getId(),
-						review.getStarRating()));
-			}
-		}
 		return new ProjectGraphSnapshot(
 				project.getId(),
 				project.getName(),
@@ -230,7 +209,6 @@ public class ProjectGraphLoader {
 				taskNodes,
 				commitNodes,
 				linkNodes,
-				reviews,
 				hierarchyLinks(projectTasks));
 	}
 

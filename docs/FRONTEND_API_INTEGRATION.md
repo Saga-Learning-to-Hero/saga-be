@@ -18,7 +18,7 @@ docs/FRONTEND_API_INTEGRATION.md
 docs/FRONTEND_CONTRIBUTION_API.md      (playbook luồng % đóng góp)
 docs/FRONTEND_TASK_EVIDENCE_API.md     (playbook gắn URL + file vào task)
 docs/FRONTEND_PEER_REVIEW_API.md       (playbook chấm đồng đội theo sprint)
-docs/FRONTEND_GRAPH_API.md             (playbook 5 graph Cytoscape)
+docs/FRONTEND_GRAPH_API.md             (playbook 4 graph Cytoscape)
 docs/FRONTEND_HEATMAP_BURNDOWN_API.md   (playbook heatmap ngày + burndown sprint)
 ```
 
@@ -399,7 +399,7 @@ Năm endpoint Cytoscape dưới đây **đã chốt**, luôn scoped 1 project / 
 Quyền: `ProjectDataAuthorization.requireReader` (ACTIVE team member hoặc lecturer phụ trách course). ADMIN bị deny.
 
 `type` node: `STUDENT | TEAM | PROJECT | SPRINT | TASK | COMMIT | CRITERION | IDENTITY`  
-`label` cạnh: `MEMBER_OF | OWNS | HAS_SPRINT | HAS_WORK_ITEM | CONTAINS | PARENT_OF | ASSIGNED_TO | EVIDENCED_BY | CLASSIFIED_AS | AUTHORED_BY | MAPS_TO | REVIEWED` (`HAS_WORK_ITEM` = Project → item không có cha trên Jira; `PARENT_OF` = cha → con theo Jira; node TASK có thêm `issueTypeLevel`, `jiraHierarchyLevel`, `issueTypeId`, `issueTypeName`, `parentResolution`… — xem FRONTEND_GRAPH_API.md)
+`label` cạnh: `MEMBER_OF | OWNS | HAS_SPRINT | HAS_WORK_ITEM | CONTAINS | PARENT_OF | ASSIGNED_TO | EVIDENCED_BY | CLASSIFIED_AS | AUTHORED_BY | MAPS_TO` (`HAS_WORK_ITEM` = Project → item không có cha trên Jira; `PARENT_OF` = cha → con theo Jira; node TASK có thêm `issueTypeLevel`, `jiraHierarchyLevel`, `issueTypeId`, `issueTypeName`, `parentResolution`… — xem FRONTEND_GRAPH_API.md)
 
 | Method | Path | Graph |
 | --- | --- | --- |
@@ -407,7 +407,6 @@ Quyền: `ProjectDataAuthorization.requireReader` (ACTIVE team member hoặc lec
 | GET | `/api/projects/{projectId}/students/{studentId}/graph/contribution?sprintId=` | 2 Contribution path (`sprintId` optional) |
 | GET | `/api/projects/{projectId}/sprints/{sprintId}/graph/activity` | 3 Sprint activity |
 | GET | `/api/projects/{projectId}/graph/attribution?sprintId=` | 4 Attribution / identity (`sprintId` optional) |
-| GET | `/api/projects/{projectId}/sprints/{sprintId}/graph/peer-review` | 5 Peer review |
 
 Chi tiết node/cạnh từng graph: `docs/GRAPHS_TO_DRAW.md`.
 
@@ -536,7 +535,6 @@ Breaking change phải được nêu rõ.
 | GET | `/api/projects/{projectId}/students/{studentId}/graph/contribution` | Session | Team member or assigned lecturer | Graph V1 (Neo4j); `sprintId` optional | `ProjectGraphController` |
 | GET | `/api/projects/{projectId}/sprints/{sprintId}/graph/activity` | Session | Team member or assigned lecturer | Graph V1 (Neo4j) | `ProjectGraphController` |
 | GET | `/api/projects/{projectId}/graph/attribution` | Session | Team member or assigned lecturer | Graph V1 (Neo4j); `sprintId` optional | `ProjectGraphController` |
-| GET | `/api/projects/{projectId}/sprints/{sprintId}/graph/peer-review` | Session | Team member or assigned lecturer | Graph V1 (Neo4j) | `ProjectGraphController` |
 | GET | `/api/courses/{courseId}/teams/{teamId}/heatmap` | Session | Team member or assigned lecturer | Heatmap V1; `startDate`/`endDate` required, `studentId` optional | `TeamActivityAnalyticsController` |
 | GET | `/api/courses/{courseId}/teams/{teamId}/sprints/{sprintId}/burndown` | Session | Team member or assigned lecturer | Burndown V1 + `idealRemaining` | `TeamActivityAnalyticsController` |
 | GET | `/api/tasks/{taskId}/web-links` | Session | Team member | Task evidence V1 | `TaskEvidenceController` |
