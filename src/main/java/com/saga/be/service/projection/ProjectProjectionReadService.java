@@ -222,6 +222,13 @@ public class ProjectProjectionReadService {
 
 	@Transactional(readOnly = true)
 	public ProjectCommitPageResponse listCommits(UUID userId, UUID projectId, Integer page, Integer size) {
+		return listCommits(userId, projectId, page, size, null);
+	}
+
+	/** {@code authorStudentId} (optional) keeps only commits attributed to that student profile. */
+	@Transactional(readOnly = true)
+	public ProjectCommitPageResponse listCommits(
+			UUID userId, UUID projectId, Integer page, Integer size, UUID authorStudentId) {
 		authorization.requireReader(userId, projectId);
 		int pageNumber = page == null ? DEFAULT_PAGE : page;
 		int pageSize = size == null ? DEFAULT_SIZE : size;
@@ -231,7 +238,10 @@ public class ProjectProjectionReadService {
 					HttpStatus.BAD_REQUEST,
 					"page must be >= 0 and size must be between 1 and " + MAX_SIZE + ".");
 		}
-		Page<UUID> idPage = commits.findPageIdsByProject(projectId, PageRequest.of(pageNumber, pageSize));
+		PageRequest pageable = PageRequest.of(pageNumber, pageSize);
+		Page<UUID> idPage = authorStudentId == null
+				? commits.findPageIdsByProject(projectId, pageable)
+				: commits.findPageIdsByProjectAndAuthorStudent(projectId, authorStudentId, pageable);
 		List<UUID> orderedIds = idPage.getContent();
 		List<ProjectCommitResponse> items = List.of();
 		if (!orderedIds.isEmpty()) {

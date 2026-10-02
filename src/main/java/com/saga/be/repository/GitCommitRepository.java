@@ -78,6 +78,26 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 					""")
 	Page<UUID> findPageIdsByProject(@Param("projectId") UUID projectId, Pageable pageable);
 
+	/** Same order as {@link #findPageIdsByProject}, only commits mapped to this team member. */
+	@Query(
+			value =
+					"""
+					select c.id
+					from GitCommit c
+					where c.repo.project.id = :projectId
+					  and c.authorStudent.id = :authorStudentId
+					order by coalesce(c.committedAt, c.createdAt) desc, c.id desc
+					""",
+			countQuery =
+					"""
+					select count(c.id)
+					from GitCommit c
+					where c.repo.project.id = :projectId
+					  and c.authorStudent.id = :authorStudentId
+					""")
+	Page<UUID> findPageIdsByProjectAndAuthorStudent(
+			@Param("projectId") UUID projectId, @Param("authorStudentId") UUID authorStudentId, Pageable pageable);
+
 	@Query(
 			"""
 			select count(c)

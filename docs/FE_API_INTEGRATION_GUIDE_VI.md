@@ -1696,8 +1696,11 @@ Hai endpoint **không cùng semantics**. Đừng dùng lẫn contract:
 | `page` | default `0`, min `0` | default `0`, min `0` |
 | `size` | default `50`, min `1`, max `200` | default `50`, min `1`, max `200` |
 | Invalid `page`/`size` | `400 REQUEST_INVALID` | `400 REQUEST_INVALID` |
+| Lọc theo thành viên | `authorStudentId` (tuỳ chọn) = `studentProfileId` của thành viên; `total` đếm sau khi lọc | — |
 | HTTP provider | Local DB only | Local DB only (commit **detail** mới gọi GitHub) |
 | Order | `coalesce(committedAt, createdAt) DESC, id DESC` | `coalesce(committedAt, createdAt) DESC, id DESC` |
+
+**Lọc commit theo thành viên:** `GET /api/projects/{projectId}/commits?authorStudentId={studentProfileId}&page=0&size=50`. Dropdown lấy danh sách thành viên nhóm (tên + `studentProfileId`); bỏ trống = tất cả. Chỉ khớp commit đã gắn được với sinh viên (`authorStudentId` khác null, tức tài khoản GitHub đã liên kết); commit của tài khoản GitHub chưa liên kết không thuộc thành viên nào. Lọc ở BE nên phân trang và `total` đúng — đừng lọc phía client trên trang đã tải.
 
 Task-commit `total` = số **distinct** commit canonical đã link, sau V23 filter. Cùng predicate với Task Evidence `COMMIT` total (Evidence implementation không đổi trong slice này).
 

@@ -288,6 +288,53 @@ class ProjectCommitListQueryCountTest {
 	}
 
 	@Test
+	void listCommits_filtersByAuthorStudentWithFilteredTotalAndSameOrder() {
+		StudentProfile other = tx.execute(status -> {
+			UserAccount account = new UserAccount();
+			account.setEmail("other-" + UUID.randomUUID() + "@fe.edu.vn");
+			account.setFullName("Other");
+			account.setAccountRole(AccountRole.STUDENT);
+			account.setAccountStatus(AccountStatus.ACTIVE);
+			account = users.save(account);
+			StudentProfile profile = new StudentProfile();
+			profile.setUserAccount(account);
+			profile.setStudentCode("SE" + UUID.randomUUID().toString().replace("-", "").substring(0, 8));
+			profile.setVersion(0L);
+			return students.save(profile);
+		});
+		tx.executeWithoutResult(status -> {
+			persistCommit("MINE-OLD", 1, LocalDateTime.of(2026, 6, 1, 0, 0), null);
+			persistCommit("MINE-NEW", 1, LocalDateTime.of(2026, 6, 5, 0, 0), null);
+			GitCommit theirs = persistCommit("THEIRS", 1, LocalDateTime.of(2026, 6, 3, 0, 0), null);
+			theirs.setAuthorStudent(other);
+			GitCommit unmapped = persistCommit("UNMAPPED", 1, LocalDateTime.of(2026, 6, 4, 0, 0), null);
+			unmapped.setAuthorStudent(null);
+			entityManager.flush();
+		});
+
+		ProjectCommitPageResponse mine = tx.execute(
+				status -> readService.listCommits(student.getId(), project.getId(), 0, 50, author.getId()));
+		assertThat(mine.items()).extracting(ProjectCommitResponse::sha).containsExactly("MINE-NEW", "MINE-OLD");
+		assertThat(mine.total()).isEqualTo(2);
+
+		ProjectCommitPageResponse firstOfMine = tx.execute(
+				status -> readService.listCommits(student.getId(), project.getId(), 0, 1, author.getId()));
+		assertThat(firstOfMine.items()).extracting(ProjectCommitResponse::sha).containsExactly("MINE-NEW");
+		assertThat(firstOfMine.total()).isEqualTo(2);
+
+		ProjectCommitPageResponse theirs = tx.execute(
+				status -> readService.listCommits(student.getId(), project.getId(), 0, 50, other.getId()));
+		assertThat(theirs.items()).extracting(ProjectCommitResponse::sha).containsExactly("THEIRS");
+
+		ProjectCommitPageResponse nobody = tx.execute(
+				status -> readService.listCommits(student.getId(), project.getId(), 0, 50, UUID.randomUUID()));
+		assertThat(nobody.items()).isEmpty();
+		assertThat(nobody.total()).isZero();
+
+		assertThat(list(0, 50).total()).isEqualTo(4);
+	}
+
+	@Test
 	void listCommits_rejectsInvalidPaging() {
 		assertThatThrownBy(() -> list(-1, 50))
 				.isInstanceOf(AcademicException.class)

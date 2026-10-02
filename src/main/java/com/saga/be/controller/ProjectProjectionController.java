@@ -358,13 +358,16 @@ public class ProjectProjectionController {
 					"""
 					Local DB only. Includes normal, root, known-merge, and UNKNOWN parentCount rows.
 					page default 0, size default 50, size max 200. Breaking wrapper: items/page/size/total.
+					Optional authorStudentId (a team member's studentProfileId) keeps only commits attributed
+					to that member; total counts the filtered rows. Unmapped GitHub authors never match.
 					""")
 	public ProjectCommitPageResponse commits(
 			@AuthenticationPrincipal SagaUserPrincipal principal,
 			@PathVariable UUID projectId,
 			@RequestParam(required = false) Integer page,
-			@RequestParam(required = false) Integer size) {
-		return projections.listCommits(principal.getUserId(), projectId, page, size);
+			@RequestParam(required = false) Integer size,
+			@RequestParam(required = false) UUID authorStudentId) {
+		return projections.listCommits(principal.getUserId(), projectId, page, size, authorStudentId);
 	}
 
 	@GetMapping("/commits/{gitCommitId}")
