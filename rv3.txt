@@ -1,0 +1,69 @@
+﻿BIÊN BẢN REVIEW KHÓA LUẬN CỦA HỘI ĐỒNG KHOA/BỘ MÔN
+MINUTES OF THE FACULTY/DEPARTMENT THESIS REVIEW COUNCIL
+Học kỳ / Trimester Summer Năm / Year 2026
+1. Thành phần Hội đồng số/ Members of the Council No SE141A1:
+Chủ tịch hội đồng / Chairperson: Nguyễn Thị Cẩm Hương
+Thư ký / Secretary: Lê Thị Quỳnh Chi
+Ủy viên / Member: Nguyễn Ngọc Lâm
+2. Thời gian, địa điểm / Time and venue:
+Thời gian: 8 giờ 00 phút, ngày 17 tháng 08 năm 2026
+Time:  8h00’, 17 / 08 / 2026
+Địa điểm / Venue: P.004-Campus Khu CNC, FPT University
+3. Diễn biến của quá trình bảo vệ khóa luận (Tên khóa luận) / Progress of the thesis defense (Name of the thesis): SAGA: Student Activity Graph-Based Continuous Assessment for Software Engineering PBL - SAGA: Hệ thống đánh giá liên tục dựa trên Đồ thị Hoạt động Sinh viên cho học phần Kỹ thuật Phần mềm theo PBL
+Thời gian bắt đầu / Starting time: 8 giờ
+Thời gian kết thúc / Ending time: 9 giờ
+Tóm tắt phần trình bày của nhóm/sinh viên / Summarize the presentation of the group/student:
+• Nhóm trình bày hệ thống quản lý dự án sinh viên, đồng bộ hai chiều với Jira để theo dõi task, sprint, timeline và thay đổi công việc.
+• Hệ thống dự kiến tích hợp dữ liệu Git, báo cáo tiến độ, phân quyền, đánh giá chéo thành viên và cảnh báo trễ hạn qua email.
+• Nhóm đề xuất dùng AI hỗ trợ phân tích tình trạng bất thường, tổng hợp dữ liệu và hỗ trợ hỏi đáp; đồng thời trình bày hướng tổ chức dữ liệu theo đồ thị.
+        Ghi lại tóm tắt các câu hỏi của các thành viên hội đồng và phần trả lời của nhóm/ sinh viên đối với từng câu hỏi / Summary of questions from the council’s members and the group / student responses:
+•        Cô Hương yêu cầu làm rõ việc tạo và đồng bộ dữ liệu với Jira; Nhóm SV cho biết dữ liệu được cập nhật hai chiều giữa Jira và hệ thống, nhưng phần demo tạo dữ liệu phát sinh lỗi và chưa nêu rõ nguyên nhân.
+•        Yêu cầu chứng minh năng lực AI bằng tình huống có ngữ cảnh cụ thể; Nhóm SV mới mô tả AI hỗ trợ phân tích và cảnh báo, chưa làm rõ đầy đủ đầu vào, cách vận hành và cơ chế kiểm chứng kết quả.
+•        Mô hình lưu trữ dữ liệu đồ thị là gì? 🡪 SV cho biết dùng MySQL để tổng hợp dữ liệu sinh viên và chuyển dữ liệu JSON phục vụ xử lý. Hội đồng yêu cầu đánh giá giải pháp cơ sở dữ liệu đồ thị phù hợp hơn với đề tài.
+•        Yêu cầu làm rõ cách phát hiện, đánh giá chậm tiến độ 🡪 hệ thống gửi email khi trễ deadline hoặc quá hạn task và lưu lịch sử. Hội đồng kết luận phải phân biệt nguyên nhân chậm tiến độ, không giao hoàn toàn cho AI và cần cơ chế kiểm chứng.
+•        Hỏi cơ chế duy trì ngữ cảnh, nhận diện người hỏi và phạm vi dữ liệu AI 🡪 dùng mã số sinh viên làm đầu vào. Hội đồng nhận xét chưa làm rõ cơ chế nhận diện, bảo vệ ngữ cảnh và thiết kế dữ liệu dùng chung/riêng.
+•        Cô Hương yêu cầu xác định nút gốc và logic đồ thị; Nhóm SV trả lời quản lý theo dự án nhóm/chủ đề. Hội đồng nhận xét chưa xác định rõ đặc tả đầu vào, mô tả khởi tạo dự án và quan hệ giữa yêu cầu, task, thành viên, Jira và Git.
+•        Căn cứ chia task và tính tỷ lệ đóng góp? 🡪 Nhóm chưa thực hiện. Hội đồng kết luận phải dựa trên user story/use case cùng điểm ước lượng hoặc mức độ công việc.
+4. Nhận xét, đánh giá 
+4.1 – Bố cục, phương pháp trình bày 
+•        Rút gọn phần slide, tập trung demo theo một kịch bản cụ thể để chứng minh năng lực hệ thống.
+•        Chuẩn hóa tiêu đề, đánh số trang, thuật ngữ, ký hiệu và phong cách trình bày.
+•        Vẽ lại sơ đồ đúng chuẩn; phân biệt sơ đồ vật lý, đặc tả yêu cầu và mức lập trình; không đưa chi tiết browser/controller vào tài liệu yêu cầu chức năng.
+•        Trình bày rõ quy trình từ yêu cầu ban đầu, phân rã task, theo dõi tiến độ, liên kết Jira/Git đến báo cáo cho giảng viên.
+4.2- Cơ sở lý luận 
+•        Đánh giá liên tục hoạt động sinh viên trong học phần Kỹ thuật Phần mềm theo mô hình học tập dựa trên dự án (PBL).
+•        Quản lý tiến độ dự án từ yêu cầu/đặc tả ban đầu, phân rã user story/use case thành task, sprint và xác định mức độ công việc bằng point.
+•        Mô hình hóa dữ liệu theo đồ thị, trong đó cần xác định nút gốc theo dự án/chủ đề và quan hệ giữa yêu cầu, task, thành viên, Jira, Git và commit.
+•        Đồng bộ dữ liệu Jira và Git để theo dõi công việc, tiến độ, chất lượng mã nguồn và báo cáo cho giảng viên.
+•        AI chỉ đóng vai trò hỗ trợ phát hiện bất thường, tổng hợp và hỏi đáp; kết quả cần có dữ liệu ngữ cảnh, cơ chế kiểm chứng và đánh giá chất lượng.
+4.3- Nội dung đã đạt được: 
+•        Xây dựng được các chức năng nền tảng quản lý dự án, đồng bộ Jira, theo dõi task/sprint/timeline, báo cáo và đánh giá chéo.
+•        Có đề xuất tích hợp dữ liệu Git, cảnh báo email và AI hỗ trợ phân tích.
+•        Tuy nhiên, các chức năng cốt lõi và mô hình đồ thị chưa được thể hiện, kiểm chứng đầy đủ.
+4.4 - Các hướng nghiên cứu 
+•        Hoàn thiện lại hệ thống để bảo vệ lần 2 sau 5 tuần, giảm phụ thuộc vào AI và tập trung giải quyết bài toán quản lý, kiểm soát, đánh giá tiến độ dự án.
+•        Làm rõ logic đồ thị, đặc tả đầu vào dự án, nút gốc và các quan hệ dữ liệu; nghiên cứu giải pháp cơ sở dữ liệu đồ thị phù hợp thay vì chỉ dùng cơ sở dữ liệu quan hệ.
+•        Hoàn thiện cơ chế đánh giá đóng góp theo user story/use case và mức độ công việc; kiểm soát task, commit, test case, tiến độ và nguyên nhân chậm hạn.
+•        Hoàn thiện tích hợp Jira–Git, báo cáo cho giảng viên, cảnh báo trễ hạn và cơ chế duy trì ngữ cảnh/định danh người dùng khi dùng AI.
+•        Chuẩn hóa, vẽ lại tài liệu và các sơ đồ theo đúng mức đặc tả, ký hiệu và logic xử lý hệ thống.
+5. Kết luận của hội đồng 
+•        Hệ thống chưa hoàn thiện, chưa đáp ứng yêu cầu báo cáo/bảo vệ ở lần 1.
+•        Chưa thể hiện rõ luồng dữ liệu, logic nghiệp vụ, nút gốc đồ thị và quan hệ giữa dự án, yêu cầu, task, thành viên, Jira và Git.
+•        Phụ thuộc nhiều vào AI nhưng chưa giải quyết đầy đủ bài toán quản lý, kiểm soát và đánh giá tiến độ.
+•        Cơ chế đánh giá đóng góp, kiểm soát commit, chất lượng mã nguồn và kiểm chứng AI chưa đầy đủ.
+•        Tài liệu, sơ đồ, thuật ngữ và cách đặt tên còn nhiều lỗi, thiếu nhất quán.
+•        Nhóm phải làm lại, chỉnh sửa toàn diện hệ thống, tài liệu và sơ đồ theo góp ý của hội đồng.
+•        Hoàn thiện logic đồ thị, luồng dữ liệu, tích hợp Jira/Git, cơ chế đánh giá tiến độ/đóng góp và kiểm chứng AI.
+• Được bảo vệ lần 1/ Approved for the 1st defense
+• Được bảo vệ lần 1 (chỉnh sửa gửi lại muộn nhất trong vòng … ngày)/ Approved for the 1st defense (revisions to be resubmitted within … days)
+☒ Sửa lại để bảo vệ lần 2 / Revised for the 2nd defense
+• Không đạt (làm lại khóa luận) / Fail (redo thesis)
+Nghĩa vụ của sinh viên: 
+Chỉnh sửa theo góp ý của hội đồng, nộp bản khóa luận đã chỉnh sửa và thực hiện bảo vệ lần 2 theo hướng dẫn, thời hạn của bộ phận Khảo thí.
+* Trường hợp sinh viên (hoặc nhóm sinh viên) được hội đồng đánh giá ở mức Được bảo vệ lần 1 (chỉnh sửa gửi lại gửi lại muộn nhất trong vòng … ngày), sinh viên (hoặc nhóm sinh viên) phải hoàn thiện các nội dung chỉnh sửa theo góp ý của Hội đồng và nộp bản KLTN đã chỉnh sửa trong thời hạn … ngày kể từ ngày nhận được thông báo của Hội đồng. Quá thời hạn trên, nếu sinh viên (hoặc nhóm sinh viên) không nộp hoặc nộp nhưng chưa đạt yêu cầu chỉnh sửa, kết quả được xem là Không đạt (làm lại khóa luận). 
+* Trường hợp sinh viên (hoặc nhóm sinh viên) được Hội đồng đánh giá ở mức Sửa lại để bảo vệ lần 2, sinh viên (hoặc nhóm sinh viên) phải chỉnh sửa theo góp ý của Hội đồng, nộp bản KLTN được chỉnh sửa, thực hiện bảo vệ KLTN lần 2 theo hướng dẫn và thời hạn quy định của bộ phận Khảo thí. 
+Biên bản kết thúc vào lúc 09 giờ 05 phút  ngày 17/08/2026
+The meeting end at 09h……’ on ……./……../……………..
+Chủ tịch hội đồng
+Chairperson
+                                                                           /

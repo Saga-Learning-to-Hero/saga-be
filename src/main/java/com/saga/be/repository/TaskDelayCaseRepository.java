@@ -24,7 +24,9 @@ public interface TaskDelayCaseRepository extends JpaRepository<TaskDelayCase, UU
 			join fetch c.studentProfile sp
 			join fetch sp.userAccount
 			left join fetch c.blockingTask
-			where c.project.id = :projectId
+			join fetch c.project p
+			join fetch p.course
+			where p.id = :projectId
 			order by c.openedAt desc, c.id desc
 			""")
 	List<TaskDelayCase> findFetchedByProject(@Param("projectId") UUID projectId);
@@ -37,6 +39,7 @@ public interface TaskDelayCaseRepository extends JpaRepository<TaskDelayCase, UU
 			join fetch sp.userAccount
 			left join fetch c.blockingTask
 			join fetch c.project p
+			join fetch p.course
 			where c.id = :id and p.id = :projectId
 			""")
 	Optional<TaskDelayCase> findFetchedByIdAndProject(@Param("id") UUID id, @Param("projectId") UUID projectId);
@@ -50,7 +53,7 @@ public interface TaskDelayCaseRepository extends JpaRepository<TaskDelayCase, UU
 			join fetch sp.userAccount
 			left join fetch c.blockingTask
 			join fetch c.project p
-			join p.course course
+			join fetch p.course course
 			join course.instructor instructor
 			where instructor.userAccount.id = :lecturerUserId
 			  and c.status in :statuses

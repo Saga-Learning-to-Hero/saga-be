@@ -9,7 +9,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -38,22 +38,34 @@ public final class DelayCaseDtos {
 
 	public record StudentRef(UUID studentProfileId, UUID userId, String fullName, String studentCode) {}
 
+	/** Where the case belongs, so a cross-course list (the lecturer queue) can label each row. */
+	public record ProjectContext(
+			String projectName,
+			UUID teamId,
+			Integer teamNo,
+			String teamName,
+			UUID courseId,
+			String courseCode,
+			String courseName) {}
+
 	/** What the viewer may do now; the FE shows only the matching buttons. */
 	public record Permissions(boolean canExplain, boolean canLeaderReview, boolean canLecturerReview, boolean canReopen) {}
 
 	/**
 	 * One delay case. {@code explanationNote}, {@code evidenceUrl} and the reviewers' comments are
 	 * returned only to the assignee, the team leader and the lecturer (null for other members).
+	 * Timestamps carry the Vietnam offset ({@code +07:00}); {@code dueDate} is a calendar day.
 	 */
 	@JsonInclude(JsonInclude.Include.ALWAYS)
 	public record DelayCaseResponse(
 			UUID id,
 			UUID projectId,
+			ProjectContext context,
 			TaskRef task,
 			StudentRef student,
 			LocalDate dueDate,
-			LocalDateTime openedAt,
-			LocalDateTime explanationDueAt,
+			OffsetDateTime openedAt,
+			OffsetDateTime explanationDueAt,
 			String status,
 			String category,
 			/** OBJECTIVE / SUBJECTIVE / OTHER, from the category. */
@@ -61,17 +73,17 @@ public final class DelayCaseDtos {
 			String explanationNote,
 			TaskRef blockingTask,
 			String evidenceUrl,
-			LocalDateTime explainedAt,
+			OffsetDateTime explainedAt,
 			DelaySignals signals,
 			String verification,
 			String verificationNote,
 			String leaderDecision,
 			String leaderComment,
-			LocalDateTime leaderReviewedAt,
+			OffsetDateTime leaderReviewedAt,
 			String lecturerOutcome,
 			String lecturerComment,
-			LocalDateTime lecturerReviewedAt,
-			LocalDateTime closedAt,
+			OffsetDateTime lecturerReviewedAt,
+			OffsetDateTime closedAt,
 			String closeReason,
 			Permissions permissions) {}
 

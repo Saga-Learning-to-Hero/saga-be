@@ -14,6 +14,7 @@ import com.saga.be.dto.delay.DelayCaseDtos.ExplainRequest;
 import com.saga.be.dto.delay.DelayCaseDtos.LecturerReviewRequest;
 import com.saga.be.dto.delay.DelayCaseDtos.LeaderReviewRequest;
 import com.saga.be.dto.delay.DelayCaseDtos.MemberOnTimeRate;
+import com.saga.be.dto.delay.DelayCaseDtos.ProjectContext;
 import com.saga.be.entity.academic.Course;
 import com.saga.be.entity.academic.CourseEnrollment;
 import com.saga.be.entity.account.LecturerProfile;
@@ -50,6 +51,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -103,10 +105,14 @@ class TaskDelayCaseServiceTest {
 		LecturerProfile lecturerProfile = new LecturerProfile();
 		lecturerProfile.setUserAccount(lecturer);
 		Course course = new Course();
+		course.setId(UUID.randomUUID());
+		course.setCourseCode("SWP391-SE1801");
+		course.setName("Software Project");
 		course.setInstructor(lecturerProfile);
 		project = new Project();
 		project.setId(UUID.randomUUID());
 		project.setCourse(course);
+		project.setName("Smart Library");
 		assigneeProfile = profile(assignee, "SE001");
 		leaderProfile = profile(leader, "SE002");
 		task = task("SAGA-1", TaskStatus.IN_PROGRESS, DUE, null, assigneeProfile);
@@ -145,9 +151,13 @@ class TaskDelayCaseServiceTest {
 		assertThat(opened.getExplanationDueAt()).isEqualTo(NOW_UTC.plusDays(3));
 		assertThat(opened.getSignalsJson()).contains("\"commitCount\":2");
 		ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<String> url = ArgumentCaptor.forClass(String.class);
 		verify(notifications).createNotification(eq(assignee.getId()), eq(NotificationType.TASK),
-				eq("Cần giải trình lý do trễ hạn"), message.capture(), any(), anyString());
-		assertThat(message.getValue()).contains("SAGA-1").contains("04/10/2026").contains("chủ quan");
+				eq("Cần giải trình lý do trễ hạn"), message.capture(), url.capture(), anyString());
+		// stored in server (UTC) wall-clock, told to the student in Vietnam time: 03:00Z + 3 days = 10:00 09/10
+		assertThat(message.getValue()).contains("SAGA-1").contains("04/10/2026").contains("10:00 09/10/2026").contains("chủ quan");
+		assertThat(url.getValue()).isEqualTo("/student/sprint-progress?courseId=" + project.getCourse().getId()
+				+ "&projectId=" + project.getId() + "&view=delay-cases&caseId=" + opened.getId());
 	}
 
 	@Test
@@ -243,7 +253,8 @@ class TaskDelayCaseServiceTest {
 
 		assertThat(response.status()).isEqualTo("AWAITING_LECTURER");
 		verify(notifications).createNotification(eq(lecturer.getId()), eq(NotificationType.TASK),
-				eq("Hồ sơ trễ hạn chờ duyệt"), anyString(), any(), anyString());
+				eq("Hồ sơ trễ hạn chờ duyệt"), anyString(),
+				eq("/lecturer/delay-cases?projectId=" + project.getId() + "&caseId=" + delay.getId()), anyString());
 	}
 
 	@Test
@@ -336,7 +347,7 @@ class TaskDelayCaseServiceTest {
 
 		DelayCaseResponse reopened = service.reopen(lecturer.getId(), project.getId(), expired.getId());
 		assertThat(reopened.status()).isEqualTo("OPEN");
-		assertThat(reopened.explanationDueAt()).isEqualTo(NOW_UTC.plusDays(3));
+		assertThat(reopened.explanationDueAt()).isEqualTo(OffsetDateTime.parse("2026-10-09T10:00:00+07:00"));
 		assertThat(reopened.closeReason()).isNull();
 		expectCode(() -> service.reopen(lecturer.getId(), project.getId(), expired.getId()), IntegrationErrorCode.DELAY_CASE_STATE_CONFLICT);
 
@@ -394,6 +405,28 @@ class TaskDelayCaseServiceTest {
 
 		assertThat(service.lecturerQueue(lecturer.getId(), null)).isEmpty();
 		verify(cases).findFetchedForLecturer(lecturer.getId(), List.of(DelayCaseStatus.AWAITING_LECTURER));
+	}
+
+	@Test
+	void theLecturerQueueLabelsEachCaseWithItsCourseTeamAndProjectInVietnamTime() {
+		TaskDelayCase delay = explainedCase(DelayCauseCategory.OTHER, Verification.UNVERIFIABLE);
+		delay.setStatus(DelayCaseStatus.AWAITING_LECTURER);
+		Team team = new Team();
+		team.setId(UUID.randomUUID());
+		team.setTeamNo(3);
+		team.setName("Nhóm 3");
+		team.setProject(project);
+		when(teams.findWithProjectByProject_IdIn(java.util.Set.of(project.getId()))).thenReturn(List.of(team));
+		when(cases.findFetchedForLecturer(lecturer.getId(), List.of(DelayCaseStatus.AWAITING_LECTURER))).thenReturn(List.of(delay));
+
+		DelayCaseResponse row = service.lecturerQueue(lecturer.getId(), null).getFirst();
+
+		assertThat(row.context()).isEqualTo(new ProjectContext("Smart Library", team.getId(), 3, "Nhóm 3",
+				project.getCourse().getId(), "SWP391-SE1801", "Software Project"));
+		// opened 05/10 03:00 UTC on the server clock = 10:00 in Vietnam
+		assertThat(row.openedAt()).isEqualTo(OffsetDateTime.parse("2026-10-05T10:00:00+07:00"));
+		assertThat(row.openedAt().getOffset()).isEqualTo(ZoneOffset.ofHours(7));
+		verify(teams, org.mockito.Mockito.times(1)).findWithProjectByProject_IdIn(any());
 	}
 
 	@Test

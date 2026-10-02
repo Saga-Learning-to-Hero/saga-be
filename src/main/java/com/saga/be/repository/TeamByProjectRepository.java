@@ -1,6 +1,8 @@
 package com.saga.be.repository;
 
 import com.saga.be.entity.project.Team;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -16,4 +18,12 @@ public interface TeamByProjectRepository extends JpaRepository<Team, UUID> {
 			WHERE t.project.id = :projectId
 			""")
 	Optional<Team> findByProject_Id(@Param("projectId") UUID projectId);
+
+	@Query(
+			"""
+			SELECT t FROM Team t
+			JOIN FETCH t.project
+			WHERE t.project.id IN :projectIds
+			""")
+	List<Team> findWithProjectByProject_IdIn(@Param("projectIds") Collection<UUID> projectIds);
 }

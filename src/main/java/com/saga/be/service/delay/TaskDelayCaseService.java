@@ -10,10 +10,12 @@ import com.saga.be.dto.delay.DelayCaseDtos.LeaderReviewRequest;
 import com.saga.be.dto.delay.DelayCaseDtos.MemberOnTimeRate;
 import com.saga.be.dto.delay.DelayCaseDtos.OnTimeRateResponse;
 import com.saga.be.dto.delay.DelayCaseDtos.Permissions;
+import com.saga.be.dto.delay.DelayCaseDtos.ProjectContext;
 import com.saga.be.dto.delay.DelayCaseDtos.StudentRef;
 import com.saga.be.dto.delay.DelayCaseDtos.TaskRef;
 import com.saga.be.entity.account.StudentProfile;
 import com.saga.be.entity.account.UserAccount;
+import com.saga.be.entity.academic.Course;
 import com.saga.be.entity.delay.TaskDelayCase;
 import com.saga.be.entity.enums.AccountRole;
 import com.saga.be.entity.enums.DelayCaseEnums.CloseReason;
@@ -44,9 +46,12 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -70,7 +75,8 @@ import org.springframework.transaction.annotation.Transactional;
  * is decided by AI, and contribution scoring is untouched: a closed case only feeds the on-time rate.
  *
  * <p>Deadlines are calendar days in {@code saga.delay-cases.zone} (the students' day): a task due on
- * 04/10 is late only once 04/10 is over there.
+ * 04/10 is late only once 04/10 is over there. Case timestamps are stored as wall-clock time of the
+ * server clock (like the rest of the schema) and shown in that zone with its offset.
  */
 @Service
 @Profile("!test")
@@ -147,6 +153,11 @@ public class TaskDelayCaseService {
 		return LocalDateTime.now(clock);
 	}
 
+	/** A stored server wall-clock time as the same instant in the students' zone, with its offset. */
+	private OffsetDateTime display(LocalDateTime stored) {
+		return stored == null ? null : stored.atZone(clock.getZone()).withZoneSameInstant(zone).toOffsetDateTime();
+	}
+
 	// ------------------------------------------------------------------ opening & expiry (scanner)
 
 	/** Late = finished after the due day, or still open once the due day is over. */
@@ -192,10 +203,11 @@ public class TaskDelayCaseService {
 				assigneeUserId(saved),
 				"Cần giải trình lý do trễ hạn",
 				"Task " + label(task) + " đã trễ hạn chót " + task.getDueDate().format(DAY)
-						+ ". Hãy giải trình lý do trước " + saved.getExplanationDueAt().format(MINUTE_DAY)
+						+ ". Hãy giải trình lý do trước " + display(saved.getExplanationDueAt()).format(MINUTE_DAY)
 						+ ", nếu không lần trễ này được ghi nhận là chủ quan.",
 				saved,
-				"opened");
+				"opened",
+				studentUrl(saved));
 		return true;
 	}
 
@@ -215,7 +227,8 @@ public class TaskDelayCaseService {
 					"Hết hạn giải trình cho task " + label(delay.getTask())
 							+ ", lần trễ này được ghi nhận là chủ quan. Giảng viên có thể mở lại hồ sơ.",
 					delay,
-					"expired");
+					"expired",
+					studentUrl(delay));
 			closed++;
 		}
 		return closed;
@@ -226,11 +239,12 @@ public class TaskDelayCaseService {
 	@Transactional(readOnly = true)
 	public List<DelayCaseResponse> list(UUID userId, UUID projectId, DelayCaseStatus status, UUID taskId) {
 		Viewer viewer = viewer(userId, projectId);
-		return cases.findFetchedByProject(projectId).stream()
+		List<TaskDelayCase> found = cases.findFetchedByProject(projectId).stream()
 				.filter(delay -> status == null || delay.getStatus() == status)
 				.filter(delay -> taskId == null || taskId.equals(delay.getTask().getId()))
-				.map(delay -> toResponse(delay, viewer))
 				.toList();
+		Map<UUID, ProjectContext> contexts = contexts(found);
+		return found.stream().map(delay -> toResponse(delay, viewer, contexts)).toList();
 	}
 
 	@Transactional(readOnly = true)
@@ -250,7 +264,9 @@ public class TaskDelayCaseService {
 				? List.of(DelayCaseStatus.AWAITING_LECTURER)
 				: statuses;
 		Viewer viewer = new Viewer(userId, true, false);
-		return cases.findFetchedForLecturer(userId, wanted).stream().map(delay -> toResponse(delay, viewer)).toList();
+		List<TaskDelayCase> found = cases.findFetchedForLecturer(userId, wanted);
+		Map<UUID, ProjectContext> contexts = contexts(found);
+		return found.stream().map(delay -> toResponse(delay, viewer, contexts)).toList();
 	}
 
 	// ------------------------------------------------------------------ actions
@@ -320,7 +336,8 @@ public class TaskDelayCaseService {
 			for (UUID leader : leaderUserIds(projectId)) {
 				if (!leader.equals(userId)) {
 					notifyUser(leader, "Hồ sơ trễ hạn chờ bạn xác nhận",
-							studentName(saved) + " đã giải trình lý do trễ của task " + label(saved.getTask()) + ".", saved, "awaiting-leader");
+							studentName(saved) + " đã giải trình lý do trễ của task " + label(saved.getTask()) + ".", saved, "awaiting-leader",
+								studentUrl(saved));
 				}
 			}
 		} else {
@@ -431,8 +448,8 @@ public class TaskDelayCaseService {
 		if (expired) {
 			notifyUser(assigneeUserId(saved), "Hồ sơ trễ hạn được mở lại",
 					"Giảng viên đã mở lại hồ sơ trễ của task " + label(saved.getTask())
-							+ ". Hãy giải trình trước " + saved.getExplanationDueAt().format(MINUTE_DAY) + ".",
-					saved, "reopened");
+							+ ". Hãy giải trình trước " + display(saved.getExplanationDueAt()).format(MINUTE_DAY) + ".",
+					saved, "reopened", studentUrl(saved));
 		}
 		return toResponse(saved, viewer);
 	}
@@ -517,6 +534,10 @@ public class TaskDelayCaseService {
 	}
 
 	private DelayCaseResponse toResponse(TaskDelayCase delay, Viewer viewer) {
+		return toResponse(delay, viewer, contexts(List.of(delay)));
+	}
+
+	private DelayCaseResponse toResponse(TaskDelayCase delay, Viewer viewer, Map<UUID, ProjectContext> contexts) {
 		UUID assignee = assigneeUserId(delay);
 		boolean isAssignee = Objects.equals(viewer.userId(), assignee);
 		boolean seesDetails = isAssignee || viewer.leader() || viewer.lecturer();
@@ -532,33 +553,87 @@ public class TaskDelayCaseService {
 		return new DelayCaseResponse(
 				delay.getId(),
 				delay.getProject() == null ? null : delay.getProject().getId(),
+				delay.getProject() == null ? null : contexts.get(delay.getProject().getId()),
 				taskRef(delay.getTask()),
 				student == null
 						? null
 						: new StudentRef(student.getId(), account == null ? null : account.getId(),
 								account == null ? null : account.getFullName(), student.getStudentCode()),
 				delay.getDueDate() == null ? null : delay.getDueDate().toLocalDate(),
-				delay.getOpenedAt(),
-				delay.getExplanationDueAt(),
+				display(delay.getOpenedAt()),
+				display(delay.getExplanationDueAt()),
 				status.name(),
 				category == null ? null : category.name(),
 				category == null ? null : category.group().name(),
 				seesDetails ? delay.getExplanationNote() : null,
 				taskRef(delay.getBlockingTask()),
 				seesDetails ? delay.getEvidenceUrl() : null,
-				delay.getExplainedAt(),
+				display(delay.getExplainedAt()),
 				readSignals(delay.getSignalsJson()),
 				delay.getVerification() == null ? null : delay.getVerification().name(),
 				delay.getVerificationNote(),
 				delay.getLeaderDecision() == null ? null : delay.getLeaderDecision().name(),
 				seesDetails ? delay.getLeaderComment() : null,
-				delay.getLeaderReviewedAt(),
+				display(delay.getLeaderReviewedAt()),
 				delay.getLecturerOutcome() == null ? null : delay.getLecturerOutcome().name(),
 				seesDetails ? delay.getLecturerComment() : null,
-				delay.getLecturerReviewedAt(),
-				delay.getClosedAt(),
+				display(delay.getLecturerReviewedAt()),
+				display(delay.getClosedAt()),
 				delay.getCloseReason() == null ? null : delay.getCloseReason().name(),
 				permissions);
+	}
+
+	/** Project, team and course labels of the cases' projects, with one team query for all of them. */
+	private Map<UUID, ProjectContext> contexts(Collection<TaskDelayCase> delays) {
+		Map<UUID, Project> projects = new LinkedHashMap<>();
+		for (TaskDelayCase delay : delays) {
+			if (delay.getProject() != null) {
+				projects.putIfAbsent(delay.getProject().getId(), delay.getProject());
+			}
+		}
+		if (projects.isEmpty()) {
+			return Map.of();
+		}
+		Map<UUID, Team> teamByProject = new HashMap<>();
+		for (Team team : teams.findWithProjectByProject_IdIn(projects.keySet())) {
+			teamByProject.putIfAbsent(team.getProject().getId(), team);
+		}
+		Map<UUID, ProjectContext> out = new HashMap<>();
+		projects.forEach((id, project) -> {
+			Team team = teamByProject.get(id);
+			Course course = project.getCourse();
+			out.put(id, new ProjectContext(
+					project.getName(),
+					team == null ? null : team.getId(),
+					team == null ? null : team.getTeamNo(),
+					team == null ? null : team.getName(),
+					course == null ? null : course.getId(),
+					course == null ? null : course.getCourseCode(),
+					course == null ? null : course.getName()));
+		});
+		return out;
+	}
+
+	/** Where a student (assignee or leader) opens the case in the FE. */
+	private static String studentUrl(TaskDelayCase delay) {
+		StringBuilder url = new StringBuilder("/student/sprint-progress?");
+		Project project = delay.getProject();
+		if (project != null && project.getCourse() != null && project.getCourse().getId() != null) {
+			url.append("courseId=").append(project.getCourse().getId()).append('&');
+		}
+		if (project != null) {
+			url.append("projectId=").append(project.getId()).append('&');
+		}
+		return url.append("view=delay-cases&caseId=").append(delay.getId()).toString();
+	}
+
+	/** Where the lecturer opens the case in the FE. */
+	private static String lecturerUrl(TaskDelayCase delay) {
+		StringBuilder url = new StringBuilder("/lecturer/delay-cases?");
+		if (delay.getProject() != null) {
+			url.append("projectId=").append(delay.getProject().getId()).append('&');
+		}
+		return url.append("caseId=").append(delay.getId()).toString();
 	}
 
 	private static TaskRef taskRef(Task task) {
@@ -630,7 +705,7 @@ public class TaskDelayCaseService {
 		if (lecturer != null) {
 			notifyUser(lecturer.getId(), "Hồ sơ trễ hạn chờ duyệt",
 					"Hồ sơ trễ của task " + label(delay.getTask()) + " (" + studentName(delay) + ") cần giảng viên quyết định.",
-					delay, "awaiting-lecturer");
+					delay, "awaiting-lecturer", lecturerUrl(delay));
 		}
 	}
 
@@ -639,10 +714,11 @@ public class TaskDelayCaseService {
 				? "khách quan, không tính là trễ"
 				: "chủ quan, được tính là trễ";
 		notifyUser(assigneeUserId(delay), "Hồ sơ trễ hạn đã có kết quả",
-				"Lần trễ của task " + label(delay.getTask()) + " được ghi nhận là " + outcome + ".", delay, "closed");
+				"Lần trễ của task " + label(delay.getTask()) + " được ghi nhận là " + outcome + ".", delay, "closed",
+				studentUrl(delay));
 	}
 
-	private void notifyUser(UUID userId, String title, String message, TaskDelayCase delay, String step) {
+	private void notifyUser(UUID userId, String title, String message, TaskDelayCase delay, String step, String actionUrl) {
 		if (userId == null) {
 			return;
 		}
@@ -652,7 +728,7 @@ public class TaskDelayCaseService {
 					NotificationType.TASK,
 					title,
 					message.length() > 1000 ? message.substring(0, 999) + "…" : message,
-					null,
+					actionUrl,
 					"delay-case:" + delay.getId() + ":" + step + ":" + UUID.randomUUID());
 		} catch (RuntimeException ex) {
 			// A notification failure must not undo the case change.

@@ -27,6 +27,7 @@ import com.saga.be.entity.github.GitRepo;
 import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.project.Project;
+import com.saga.be.entity.project.Team;
 import com.saga.be.entity.traceability.TaskGitCommitLink;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -99,6 +100,7 @@ class TaskDelayCaseQueryTest {
 	@Autowired private GitCommitRepository commits;
 	@Autowired private TaskGitCommitLinkRepository links;
 	@Autowired private TaskWorkSessionRepository workSessions;
+	@Autowired private TeamByProjectRepository teamsByProject;
 
 	private Project project;
 	private JiraIntegration source;
@@ -238,6 +240,22 @@ class TaskDelayCaseQueryTest {
 		assertThat(dues.getFirst()[1]).isEqualTo(START_OF_TODAY.minusDays(4));
 		assertThat(cases.existsByTask_IdAndDueDate(overdue.getId(), overdue.getDueDate())).isTrue();
 		assertThat(cases.existsByProject_Id(project.getId())).isTrue();
+	}
+
+	@Test
+	void teamsOfSeveralProjectsComeBackInOneQueryWithTheirProject() {
+		Team team = new Team();
+		team.setCourse(project.getCourse());
+		team.setProject(project);
+		team.setTeamNo(3);
+		team.setName("Nhóm 3");
+		team = teamsByProject.save(team);
+
+		List<Team> found = teamsByProject.findWithProjectByProject_IdIn(List.of(project.getId(), UUID.randomUUID()));
+
+		assertThat(found).extracting(Team::getId).containsExactly(team.getId());
+		assertThat(found.getFirst().getProject().getId()).isEqualTo(project.getId());
+		assertThat(found.getFirst().getProject().getCourse().getName()).isEqualTo("Course");
 	}
 
 	@Test

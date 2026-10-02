@@ -1899,9 +1899,15 @@ GET  /api/lecturer/delay-cases?status=...         -> hàng chờ của giảng v
 ```
 - `permissions` trong mỗi hồ sơ: `{ canExplain, canLeaderReview, canLecturerReview, canReopen }` — **FE chỉ hiện nút theo các cờ này**, không tự suy.
 - **Quyền riêng tư:** `explanationNote`, `evidenceUrl`, `leaderComment`, `lecturerComment` chỉ trả cho người làm, trưởng nhóm và giảng viên; thành viên khác nhận `null` (vẫn thấy trạng thái và loại nguyên nhân).
+- **`context`** (mọi response hồ sơ, kể cả hàng chờ giảng viên): `{ projectName, teamId, teamNo, teamName, courseId, courseCode, courseName }` — dùng để hiện "lớp / nhóm / dự án" mà không phải gọi thêm API. `team*` là `null` nếu project chưa gắn nhóm.
+- **Thời gian:** `openedAt`, `explanationDueAt`, `explainedAt`, `leaderReviewedAt`, `lecturerReviewedAt`, `closedAt` là ISO có offset giờ Việt Nam, vd `"2026-10-09T10:00:00+07:00"` → `new Date(...)` đếm ngược đúng ở mọi múi giờ. `dueDate` là ngày (`"2026-10-04"`). Thời điểm trong `signals` vẫn là giờ không offset (giờ hệ thống), chỉ để tham khảo.
 - `evidenceUrl` là link http(s) tới minh chứng (vd giấy khám bệnh trên Drive) — chưa hỗ trợ upload file trực tiếp.
 - **Lỗi:** `DELAY_CASE_NOT_FOUND` (404), `DELAY_CASE_STATE_CONFLICT` (409 — sai bước, đã hết hạn giải trình, đã đóng), `DELAY_CASE_INPUT_INVALID` (400 — thiếu note/blockingTaskId, link sai...), `DELAY_CASE_FORBIDDEN` (403 — không phải người làm / trưởng nhóm / giảng viên của bước đó; trưởng nhóm không tự duyệt hồ sơ của mình), `REQUEST_INVALID` (400 — thiếu `category` / `decision` / `outcome`).
 - Thông báo trong app (loại `TASK`) ở mỗi bước: mở hồ sơ → người làm; giải trình → trưởng nhóm (hoặc giảng viên); cần giảng viên → giảng viên; đóng / hết hạn / mở lại → người làm. Sau khi gọi API thay đổi, FE refetch danh sách hồ sơ và `/on-time-rate`.
+- `actionUrl` của các thông báo này:
+  - sinh viên (người làm, trưởng nhóm): `/student/sprint-progress?courseId={courseId}&projectId={projectId}&view=delay-cases&caseId={caseId}`
+  - giảng viên: `/lecturer/delay-cases?projectId={projectId}&caseId={caseId}`
+  - FE mở hồ sơ bằng `GET /api/projects/{projectId}/delay-cases/{caseId}` (hồ sơ có thể đã đóng nên không chắc còn trong hàng chờ mặc định).
 
 **Tỷ lệ đúng hạn (`/on-time-rate`)** — mỗi thành viên ACTIVE: `evaluatedTasks` (task có hạn, đã DONE hoặc đã qua ngày hạn), `onTimeTasks`, `lateTasks` (trễ, không được miễn), `excusedLateTasks` (trễ nhưng hồ sơ được chấp nhận là khách quan — tính như đúng hạn), `onTimeRate` = (evaluated − late) / evaluated × 100, 1 chữ số thập phân; `null` khi chưa có task nào để tính. Dành cho lecturer/leader xem trong báo cáo; **không** thay đổi `/contribution-evaluation`.
 
