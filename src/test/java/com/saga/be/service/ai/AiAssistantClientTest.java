@@ -141,6 +141,74 @@ class AiAssistantClientTest {
 	}
 
 	@Test
+	void anExhaustedCourseModelFallsBackDownTheCoursesOwnChainWithEachProvidersKey() throws Exception {
+		UUID openRouterKey = UUID.fromString("44444444-4444-4444-4444-444444444444");
+		AiProviderBinding gemini = new AiProviderBinding(AiProvider.GEMINI, "gemini-3.6-flash");
+		AiProviderBinding cohere = new AiProviderBinding(AiProvider.COHERE, "command-a-03-2025");
+		AiProviderBinding openRouter = new AiProviderBinding(AiProvider.OPENROUTER, "openrouter/free");
+		resolvesTo(new AiCredentialResolver.Resolution(AiCredentialResolver.Outcome.COURSE, CREDENTIAL, "fp", gemini));
+		// the primary repeated in the chain is not retried; a provider without a course key is skipped
+		when(credentials.primaryFallbackChain(COURSE)).thenReturn(List.of(gemini, cohere, openRouter));
+		when(credentials.usableCourseCredential(COURSE, AiProviderRole.PRIMARY, AiProvider.COHERE)).thenReturn(java.util.Optional.empty());
+		when(credentials.usableCourseCredential(COURSE, AiProviderRole.PRIMARY, AiProvider.OPENROUTER))
+				.thenReturn(java.util.Optional.of(new AiCredentialResolver.CourseCredentialRef(openRouterKey, "fp2")));
+		when(credentials.buildEnvelope(any(), any(), any())).thenReturn(new AiCredentialEnvelope(1, "AES-256-GCM", "n", "c"));
+		List<String> sent = new java.util.ArrayList<>();
+		server.expect(requestTo(URL))
+				.andExpect(request -> sent.add(((org.springframework.mock.http.client.MockClientHttpRequest) request).getBodyAsString()))
+				.andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS).contentType(MediaType.APPLICATION_JSON)
+						.body("{\"code\":\"AI_PROVIDER_QUOTA_EXHAUSTED\",\"message\":\"x\"}"));
+		server.expect(requestTo(URL))
+				.andExpect(request -> sent.add(((org.springframework.mock.http.client.MockClientHttpRequest) request).getBodyAsString()))
+				.andRespond(withSuccess(response("chat:20", "Đã trả lời.", "[]", true, false), MediaType.APPLICATION_JSON));
+
+		AiAssistantClient.Answer answer = client.ask("chat:20", COURSE, List.of(evidence()), context());
+
+		assertThat(answer.answer()).isEqualTo("Đã trả lời.");
+		assertThat(sent).hasSize(2);
+		assertThat(mapper.readTree(sent.get(0)).path("provider").path("name").asText()).isEqualTo("GEMINI");
+		assertThat(mapper.readTree(sent.get(1)).path("provider").path("name").asText()).isEqualTo("OPENROUTER");
+		assertThat(mapper.readTree(sent.get(1)).path("provider").path("model").asText()).isEqualTo("openrouter/free");
+		assertThat(mapper.readTree(sent.get(1)).path("credentialSource").asText()).isEqualTo("COURSE");
+		verify(credentials).markDegraded(CREDENTIAL);
+		verify(credentials).buildEnvelope(openRouterKey, AiProviderRole.PRIMARY, COURSE);
+		verify(credentials).markSuccessful(openRouterKey);
+		server.verify();
+	}
+
+	@Test
+	void aRejectedKeyDoesNotFallBackAndAnExhaustedChainReportsTheLastFailure() {
+		AiProviderBinding gemini = new AiProviderBinding(AiProvider.GEMINI, "gemini-3.6-flash");
+		AiProviderBinding openRouter = new AiProviderBinding(AiProvider.OPENROUTER, "openrouter/free");
+		resolvesTo(new AiCredentialResolver.Resolution(AiCredentialResolver.Outcome.COURSE, CREDENTIAL, "fp", gemini));
+		when(credentials.primaryFallbackChain(COURSE)).thenReturn(List.of(openRouter));
+		when(credentials.usableCourseCredential(COURSE, AiProviderRole.PRIMARY, AiProvider.OPENROUTER))
+				.thenReturn(java.util.Optional.of(new AiCredentialResolver.CourseCredentialRef(UUID.randomUUID(), "fp2")));
+		when(credentials.buildEnvelope(any(), any(), any())).thenReturn(new AiCredentialEnvelope(1, "AES-256-GCM", "n", "c"));
+		// 1st ask: auth failure stops at once
+		server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.BAD_GATEWAY).contentType(MediaType.APPLICATION_JSON)
+				.body("{\"code\":\"AI_PROVIDER_AUTH_FAILED\",\"message\":\"x\"}"));
+		// 2nd ask: both models exhausted
+		server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS).contentType(MediaType.APPLICATION_JSON)
+				.body("{\"code\":\"AI_PROVIDER_QUOTA_EXHAUSTED\",\"message\":\"x\"}"));
+		server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.GATEWAY_TIMEOUT).contentType(MediaType.APPLICATION_JSON)
+				.body("{\"code\":\"AI_PROVIDER_TIMEOUT\",\"message\":\"x\"}"));
+
+		expectUnavailable(() -> client.ask("chat:21", COURSE, List.of(evidence()), context()), "AI_PROVIDER_AUTH_FAILED");
+		expectUnavailable(() -> client.ask("chat:22", COURSE, List.of(evidence()), context()), "AI_PROVIDER_TIMEOUT");
+		server.verify();
+	}
+
+	@Test
+	void anOutdatedRuntimeRejectingTheContractIsReportedAsSuch() {
+		resolvesTo(AiCredentialResolver.Resolution.PLATFORM);
+		server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.UNPROCESSABLE_CONTENT).contentType(MediaType.APPLICATION_JSON)
+				.body("{\"code\":\"INVALID_REQUEST\",\"message\":\"Invalid inference request.\"}"));
+
+		expectUnavailable(() -> client.ask("chat:23", COURSE, List.of(evidence()), context()), "AI_RUNTIME_OUTDATED");
+	}
+
+	@Test
 	void withoutARuntimeOrAKeyNothingIsSent() {
 		props.getRuntime().setEnabled(false);
 		expectUnavailable(() -> client.ask("chat:5", COURSE, List.of(), context()), "AI_RUNTIME_NOT_CONFIGURED");

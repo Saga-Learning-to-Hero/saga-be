@@ -72,6 +72,7 @@ class AssistantServiceTest {
 	private final UUID projectId = UUID.randomUUID();
 	private final UUID courseId = UUID.randomUUID();
 	private final UUID sprintId = UUID.randomUUID();
+	private final UUID emptySprintId = UUID.randomUUID();
 	private final UUID overdueTaskId = UUID.randomUUID();
 	private final UUID namedTaskId = UUID.randomUUID();
 	private final UUID memberId = UUID.randomUUID();
@@ -230,7 +231,9 @@ class AssistantServiceTest {
 				.contains("Sprint 4: 1/2 task đã hoàn thành")
 				.contains("SAGA-7 · Search: đang làm, người làm Trần Minh, hạn 06/10/2026")
 				.contains("Trần Minh: 2 task chưa xong, 1 task trễ hạn, 5 commit")
-				.contains("SAGA-1 · Login API: bị chặn, người làm chưa giao, hạn 01/10/2026");
+				.contains("\n- Task trễ hạn:\n  - SAGA-1 · Login API: bị chặn, người làm chưa giao, hạn 01/10/2026.")
+				// an active sprint without tasks is left out of the summary
+				.doesNotContain("Sprint trống");
 		assertThat(answer.citations()).extracting(Citation::kind).containsExactly("PROJECT", "SPRINT", "TASK", "MEMBER", "TASK");
 	}
 
@@ -239,6 +242,9 @@ class AssistantServiceTest {
 		assertThat(AssistantService.reasonText("AI_RUNTIME_NOT_CONFIGURED")).isEqualTo("hệ thống chưa bật AI");
 		assertThat(AssistantService.reasonText("AI_PROVIDER_QUOTA_EXHAUSTED")).contains("hết hạn mức");
 		assertThat(AssistantService.reasonText("AI_PROVIDER_TIMEOUT")).isEqualTo("AI phản hồi quá lâu");
+		assertThat(AssistantService.reasonText("AI_RUNTIME_OUTDATED")).contains("chưa được cập nhật");
+		assertThat(AssistantService.reasonText("AI_PROVIDER_MODEL_NOT_FOUND")).contains("không còn được hỗ trợ");
+		assertThat(AssistantService.reasonText("AI_PROVIDER_UNAVAILABLE")).contains("tạm ngừng");
 		assertThat(AssistantService.reasonText("SOMETHING_NEW")).isEqualTo("AI đang gặp lỗi");
 		assertThat(AssistantService.reasonText(null)).isEqualTo("AI đang gặp lỗi");
 	}
@@ -341,6 +347,8 @@ class AssistantServiceTest {
 				map("taskCount", 3, "overdueTaskCount", 1L, "dueSoonTaskCount", 1L)));
 		items.add(new Fact("SPRINT", sprintId, "Sprint 4", null, null,
 				map("taskCount", 2, "taskStatusCounts", map("DONE", 1L, "IN_PROGRESS", 1L))));
+		items.add(new Fact("SPRINT", emptySprintId, "Sprint trống", null, null,
+				map("taskCount", 0, "taskStatusCounts", map())));
 		items.add(new Fact("TASK", overdueTaskId, "SAGA-1 · Login API", overdueTaskId, null,
 				map("status", "BLOCKED", "assignee", null, "dueDate", "2026-10-01")));
 		items.add(new Fact("TASK", namedTaskId, "SAGA-7 · Search", namedTaskId, null,
@@ -351,7 +359,7 @@ class AssistantServiceTest {
 		return new AssistantFacts(items,
 				new AssistantFacts.Viewer(userId, "STUDENT", "MEMBER", "Nguyễn A", UUID.randomUUID()),
 				LocalDate.of(2026, 10, 3),
-				new AssistantFacts.Hints(projectId, List.of(sprintId), List.of(overdueTaskId), List.of(namedTaskId), List.of(memberId)));
+				new AssistantFacts.Hints(projectId, List.of(sprintId, emptySprintId), List.of(overdueTaskId), List.of(namedTaskId), List.of(memberId)));
 	}
 
 	private static Map<String, Object> map(Object... pairs) {

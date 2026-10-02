@@ -2,15 +2,18 @@ package com.saga.be.service.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.saga.be.ai.AiProviderBinding;
 import com.saga.be.config.AiAnalysisProperties;
 import com.saga.be.entity.enums.AiAnalysisType;
 import com.saga.be.entity.enums.AiCredentialSource;
 import com.saga.be.entity.enums.AiInvocationOrigin;
 import com.saga.be.entity.enums.AiProviderRole;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -112,6 +115,11 @@ public class AiAssistantClient {
 		}
 	}
 
+	/**
+	 * One answer. With a course binding the course's own fallback chain is followed exactly like the
+	 * analysis pipeline: only after a quota / rate-limit / timeout / unavailable failure, each model at
+	 * most once, each with the course's own key for that provider -- never the platform key.
+	 */
 	public Answer ask(String requestId, UUID courseId, List<Evidence> evidence, Map<String, Object> context) {
 		if (!runtimeConfigured()) {
 			throw new Unavailable("AI_RUNTIME_NOT_CONFIGURED");
@@ -125,26 +133,62 @@ public class AiAssistantClient {
 		if (resolution.outcome() == AiCredentialResolver.Outcome.UNAVAILABLE) {
 			throw new Unavailable("AI_CREDENTIAL_UNAVAILABLE");
 		}
-		boolean course = resolution.outcome() == AiCredentialResolver.Outcome.COURSE;
+		List<Object> items = new ArrayList<>();
+		for (Evidence item : evidence) {
+			items.add(Map.of("id", item.id().toString(), "type", item.type(), "sourceRef", item.sourceRef(),
+					"payload", item.payload(), "metadata", Map.of()));
+		}
+		if (resolution.outcome() == AiCredentialResolver.Outcome.PLATFORM) {
+			return send(requestId, courseId, items, context, null, null);
+		}
+		List<Attempt> attempts = new ArrayList<>();
+		attempts.add(new Attempt(resolution.binding(), resolution.courseCredentialId()));
+		if (resolution.binding() != null) {
+			Set<AiProviderBinding> tried = new HashSet<>();
+			tried.add(resolution.binding());
+			for (AiProviderBinding binding : credentials.primaryFallbackChain(courseId)) {
+				if (tried.add(binding)) {
+					credentials.usableCourseCredential(courseId, AiProviderRole.PRIMARY, binding.provider())
+							.ifPresent(credential -> attempts.add(new Attempt(binding, credential.id())));
+				}
+			}
+		}
+		Unavailable last = null;
+		for (Attempt attempt : attempts) {
+			try {
+				return send(requestId, courseId, items, context, attempt.binding(), attempt.credentialId());
+			} catch (Unavailable ex) {
+				last = ex;
+				if (!AiAnalysisExecutionService.FALLBACK_ELIGIBLE_CODES.contains(ex.code())) {
+					break;
+				}
+				log.info("assistant course fallback requestId={} fromProvider={} code={}", requestId,
+						attempt.binding() == null ? null : attempt.binding().provider(), ex.code());
+			}
+		}
+		throw last;
+	}
+
+	/** One model and one key; a null credential means the platform key. */
+	private record Attempt(AiProviderBinding binding, UUID credentialId) {}
+
+	private Answer send(
+			String requestId, UUID courseId, List<Object> items, Map<String, Object> context, AiProviderBinding binding, UUID credentialId) {
+		boolean course = credentialId != null;
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("requestId", requestId);
 		body.put("analysisType", ANALYSIS_TYPE);
 		body.put("contractVersion", CONTRACT);
 		body.put("promptVersion", PROMPT_VERSION);
 		body.put("taxonomyVersion", null);
-		body.put("provider", providerBody(resolution));
+		body.put("provider", providerBody(binding));
 		body.put("credentialSource", (course ? AiCredentialSource.COURSE : AiCredentialSource.PLATFORM).name());
-		List<Object> items = new ArrayList<>();
-		for (Evidence item : evidence) {
-			items.add(Map.of("id", item.id().toString(), "type", item.type(), "sourceRef", item.sourceRef(),
-					"payload", item.payload(), "metadata", Map.of()));
-		}
 		body.put("evidence", items);
 		body.put("context", context);
 		try {
 			if (course) {
-				// Decrypt-and-reseal exactly here, right before the one dispatch.
-				AiCredentialEnvelope envelope = credentials.buildEnvelope(resolution.courseCredentialId(), AiProviderRole.PRIMARY, courseId);
+				// Decrypt-and-reseal exactly here, right before this one dispatch.
+				AiCredentialEnvelope envelope = credentials.buildEnvelope(credentialId, AiProviderRole.PRIMARY, courseId);
 				body.put("credentialEnvelope", Map.of("version", envelope.version(), "algorithm", envelope.algorithm(),
 						"nonce", envelope.nonce(), "ciphertext", envelope.ciphertext()));
 			}
@@ -157,7 +201,7 @@ public class AiAssistantClient {
 					.body(String.class);
 			Answer answer = parse(requestId, raw, course);
 			if (course) {
-				credentials.markSuccessful(resolution.courseCredentialId());
+				credentials.markSuccessful(credentialId);
 			}
 			return answer;
 		} catch (Unavailable ex) {
@@ -165,15 +209,17 @@ public class AiAssistantClient {
 		} catch (AiCredentialCryptoException ex) {
 			throw new Unavailable(ex.safeCode());
 		} catch (RestClientResponseException ex) {
-			String code = RemoteAiErrorCodes.from(mapper, ex);
+			// 422 = saga-ai rejected the request shape: a runtime older than the CHAT_ANSWER contract.
+			String code = ex.getStatusCode().value() == 422 ? "AI_RUNTIME_OUTDATED" : RemoteAiErrorCodes.from(mapper, ex);
 			if (course) {
 				if (AiAnalysisExecutionService.CREDENTIAL_INVALID_CODES.contains(code)) {
-					credentials.markInvalid(resolution.courseCredentialId());
+					credentials.markInvalid(credentialId);
 				} else if (AiAnalysisExecutionService.CREDENTIAL_DEGRADED_CODES.contains(code)) {
-					credentials.markDegraded(resolution.courseCredentialId());
+					credentials.markDegraded(credentialId);
 				}
 			}
-			log.warn("assistant answer failed requestId={} code={}", requestId, code);
+			log.warn("assistant answer failed requestId={} provider={} code={}", requestId,
+					binding == null ? null : binding.provider(), code);
 			throw new Unavailable(code);
 		} catch (RestClientException ex) {
 			log.warn("assistant answer failed requestId={} code=AI_PROVIDER_TIMEOUT", requestId);
@@ -189,14 +235,14 @@ public class AiAssistantClient {
 		return credentials.resolve(courseId, AiAnalysisType.PROGRESS_NARRATIVE, AiProviderRole.PRIMARY, AiInvocationOrigin.USER_REQUEST);
 	}
 
-	private Map<String, Object> providerBody(AiCredentialResolver.Resolution resolution) {
+	private Map<String, Object> providerBody(AiProviderBinding binding) {
 		Map<String, Object> provider = new LinkedHashMap<>();
 		provider.put("role", AiProviderRole.PRIMARY.name());
-		if (resolution.binding() == null) {
+		if (binding == null) {
 			provider.put("model", props.getOpenai().getModel());
 		} else {
-			provider.put("model", resolution.binding().modelId());
-			provider.put("name", resolution.binding().provider().name());
+			provider.put("model", binding.modelId());
+			provider.put("name", binding.provider().name());
 		}
 		provider.put("reasoningEffort", props.getOpenai().getReasoningEffort());
 		return provider;

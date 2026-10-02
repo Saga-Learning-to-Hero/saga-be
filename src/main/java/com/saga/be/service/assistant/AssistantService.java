@@ -335,6 +335,9 @@ public class AssistantService {
 		for (UUID sprintId : hints.sprintIds()) {
 			facts.find(AssistantFacts.SPRINT, sprintId).ifPresent(sprint -> {
 				Map<String, Object> p = sprint.payload();
+				if (p.get("taskCount") instanceof Number total && total.longValue() == 0) {
+					return; // an active sprint with no task says nothing useful
+				}
 				text.append("\n- ").append(sprint.label()).append(": ")
 						.append(count(p.get("taskStatusCounts"), "DONE")).append("/").append(p.get("taskCount"))
 						.append(" task đã hoàn thành.");
@@ -366,7 +369,7 @@ public class AssistantService {
 		if (!overdue.isEmpty()) {
 			text.append("\n- Task trễ hạn:");
 			for (Fact task : overdue) {
-				text.append("\n  • ").append(taskLine(task));
+				text.append("\n  - ").append(taskLine(task));
 				citations.add(citation(task));
 			}
 		}
@@ -384,6 +387,12 @@ public class AssistantService {
 			case "AI_PROVIDER_AUTH_FAILED" -> "key AI của lớp không hợp lệ";
 			case "AI_PROVIDER_QUOTA_EXHAUSTED", "AI_PROVIDER_RATE_LIMITED" -> "key AI đã hết hạn mức hoặc đang bị giới hạn";
 			case "AI_PROVIDER_TIMEOUT" -> "AI phản hồi quá lâu";
+			case "AI_PROVIDER_UNAVAILABLE" -> "nhà cung cấp AI đang tạm ngừng phản hồi";
+			case "AI_PROVIDER_MODEL_NOT_FOUND", "AI_MODEL_NOT_SUPPORTED", "AI_MODEL_CAPABILITY_UNSUPPORTED", "AI_PROVIDER_NOT_SUPPORTED" ->
+					"model AI đang cấu hình cho lớp không còn được hỗ trợ";
+			case "AI_RUNTIME_OUTDATED", "AI_CONTRACT_VERSION_UNSUPPORTED" -> "máy chủ AI chưa được cập nhật để hỗ trợ trợ lý";
+			case "AI_CREDENTIAL_ENVELOPE_INVALID", "AI_CREDENTIAL_TRANSPORT_NOT_CONFIGURED", "AI_CREDENTIAL_ENVELOPE_SOURCE_MISSING" ->
+					"cấu hình mã hoá key AI giữa hai máy chủ chưa khớp";
 			case "AI_PROVIDER_RESULT_INVALID" -> "AI trả kết quả không hợp lệ";
 			default -> "AI đang gặp lỗi";
 		};
