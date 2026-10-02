@@ -10,7 +10,6 @@ import org.neo4j.driver.Record;
 import org.neo4j.driver.Value;
 import org.neo4j.driver.types.Node;
 import org.neo4j.driver.types.Path;
-import org.neo4j.driver.types.Relationship;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
@@ -324,39 +323,6 @@ public class ProjectGraphReader {
 					projectId,
 					Map.of("sprintId", SagaGraphIds.sprint(sprintId)),
 					false);
-		}
-		return builder.build();
-	}
-
-	public CytoscapeGraphResponse peerReview(UUID projectId, UUID sprintId) {
-		CytoscapeGraphBuilder builder = new CytoscapeGraphBuilder();
-		for (Record record : graph.read(
-				"""
-				MATCH (s:Student)-[:MEMBER_OF]->(:Team {projectId: $projectId})
-				RETURN s
-				""",
-				Map.of("projectId", projectId.toString()))) {
-			addNode(builder, record, "s");
-		}
-		for (Record record : graph.read(
-				"""
-				MATCH (a:Student)-[r:REVIEWED {sprintId: $sprintId, projectId: $projectId}]->(b:Student)
-				RETURN a, r, b
-				""",
-				Map.of("projectId", projectId.toString(), "sprintId", sprintId.toString()))) {
-			addNode(builder, record, "a");
-			addNode(builder, record, "b");
-			Relationship rel = record.get("r").asRelationship();
-			Node a = record.get("a").asNode();
-			Node b = record.get("b").asNode();
-			Integer stars = rel.containsKey("stars") ? rel.get("stars").asInt() : null;
-			builder.edge(edgeData(
-					SagaGraphIds.reviewedEdge(a.get("id").asString(), b.get("id").asString(), sprintId),
-					a.get("id").asString(),
-					b.get("id").asString(),
-					"REVIEWED",
-					stars,
-					null));
 		}
 		return builder.build();
 	}

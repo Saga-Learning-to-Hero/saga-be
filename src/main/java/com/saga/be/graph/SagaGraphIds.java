@@ -47,8 +47,4 @@ public final class SagaGraphIds {
 	public static String edge(String type, String source, String target) {
 		return type + ":" + source + ":" + target;
 	}
-
-	public static String reviewedEdge(String source, String target, UUID sprintId) {
-		return "REVIEWED:" + source + ":" + target + ":" + sprintId;
-	}
 }

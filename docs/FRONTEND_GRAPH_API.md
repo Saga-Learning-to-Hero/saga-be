@@ -23,9 +23,9 @@ Mọi request cần session (`POST /api/auth/login` hoặc Google).
 | Session | `SAGA_SESSION` (HttpOnly) | Browser tự gửi |
 | CSRF | `XSRF-TOKEN` | Đọc được từ JS |
 
-**GET không CSRF.** Năm endpoint graph đều GET.
+**GET không CSRF.** Bốn endpoint graph đều GET.
 
-GET **không** rebuild Neo4j mỗi lần. Mutation Jira/GitHub/evidence/peer-review đánh dấu project dirty → debounce ~400ms → **một** rebuild → SSE `GRAPH_CHANGED`. Đổi sprint / đổi loại graph chỉ đọc projection đã có.
+GET **không** rebuild Neo4j mỗi lần. Mutation Jira/GitHub/evidence đánh dấu project dirty → debounce ~400ms → **một** rebuild → SSE `GRAPH_CHANGED`. Đổi sprint / đổi loại graph chỉ đọc projection đã có. Nộp peer review không dựng lại graph.
 
 Gọi GET khi mở màn. Đổi sprint/mode: gọi lại GET (nhẹ). Cập nhật realtime: nghe `GRAPH_CHANGED` rồi GET lại. Có `If-None-Match` / `304`.
 
@@ -80,9 +80,8 @@ ADMIN **không** gọi được (403) — cùng policy đọc Task/Commit.
 | Lát cắt sprint (Graph 3) | `GET /api/projects/{projectId}/sprints/{sprintId}/graph/activity` |
 | Attribution / commit mồ côi (Graph 4) | `GET /api/projects/{projectId}/graph/attribution` |
 | Graph 4 theo sprint | thêm `?sprintId={sprintId}` |
-| Mạng peer review (Graph 5) | `GET /api/projects/{projectId}/sprints/{sprintId}/graph/peer-review` |
 
-Graph 3 và 5 **bắt buộc** `sprintId` trên path. Không có query “cả project”.
+Graph 3 **bắt buộc** `sprintId` trên path. Không có query “cả project”. Không còn graph peer review.
 
 ---
 
@@ -118,8 +117,6 @@ GET /api/projects/{projectId}/sprints/{sprintId}/graph/activity
 
 GET /api/projects/{projectId}/graph/attribution
 GET /api/projects/{projectId}/graph/attribution?sprintId={uuid}
-
-GET /api/projects/{projectId}/sprints/{sprintId}/graph/peer-review
 ```
 
 Không CSRF. Không body.
@@ -141,11 +138,11 @@ Response headers: `ETag`, `X-Graph-Revision`. Cùng revision **và cùng query**
 | `focusNodeId` | không | — | `task:{id}`, `student:{id}`, … đúng prefix mục 5.1. Phải nằm **trong** graph đã scoped (project + `sprintId` nếu có). Sai scope → `400 REQUEST_INVALID`. |
 | `depth` | không | `1` | Neighborhood vô hướng từ `focusNodeId` (hoặc từ anomaly). Chỉ `1`–`3`. **Chỉ có `depth` thì bị bỏ qua** — phải kèm focus / type / paging. |
 | `nodeTypes` | không | Overview/Activity: không COMMIT. Graph khác: mọi type | CSV enum canonical: `STUDENT,TEAM,PROJECT,SPRINT,TASK,COMMIT,CRITERION,IDENTITY`. Sai enum → 400. |
-| `edgeTypes` | không | mọi label | CSV: `MEMBER_OF,OWNS,HAS_SPRINT,HAS_WORK_ITEM,CONTAINS,PARENT_OF,ASSIGNED_TO,EVIDENCED_BY,CLASSIFIED_AS,AUTHORED_BY,MAPS_TO,REVIEWED`. |
+| `edgeTypes` | không | mọi label | CSV: `MEMBER_OF,OWNS,HAS_SPRINT,HAS_WORK_ITEM,CONTAINS,PARENT_OF,ASSIGNED_TO,EVIDENCED_BY,CLASSIFIED_AS,AUTHORED_BY,MAPS_TO`. |
 | `anomaliesOnly` | không | `false` | `true` = anomaly **kèm neighborhood** (không trả node cô lập nếu chúng còn cạnh). |
 | `maxNodes` | không | — | `1`–`2000`. Cắt theo thứ tự ổn định trong cùng revision. |
 | `cursor` | không | — | Token `revision:lastNodeId` từ `meta.nextCursor`. Alias: `continuationToken`. Sai revision → 400. |
-| `includeCommits` | không | `false` trên Graph 1 và 3 | `true` = vẽ đủ SHA như trước (mạng nhện). Graph 2/4/5 không dùng default compact. |
+| `includeCommits` | không | `false` trên Graph 1 và 3 | `true` = vẽ đủ SHA như trước (mạng nhện). Graph 2/4 không dùng default compact. |
 | `usedCriteriaOnly` | không | `false` | Graph 2: `true` = chỉ Criterion có cạnh `CLASSIFIED_AS`. Mặc định vẫn đủ 4 CODE/TEST/DOCUMENT/RESEARCH. |
 
 Ví dụ overview (mặc định đã gọn) + drill-down task:
@@ -205,7 +202,7 @@ Quy tắc:
 
 Chỉ phát **sau** khi Neo4j rebuild xong. `reason` có thể gộp nhiều mutation. **Không** chứa nodes/edges.
 
-Peer review nộp xong còn có `PEER_REVIEW_CHANGED` (list/form). Graph 5: nghe `GRAPH_CHANGED` rồi GET graph.
+Peer review nộp xong phát `PEER_REVIEW_CHANGED` cho list/form chấm điểm. Sự kiện đó không dựng lại graph.
 
 Luồng FE:
 
@@ -286,9 +283,8 @@ interface CytoscapeEdgeData {
     | "PARENT_OF"         // cha → con theo Jira: Initiative → Epic → Task/Story/Bug → Subtask
     | "CLASSIFIED_AS"
     | "AUTHORED_BY"
-    | "MAPS_TO"
-    | "REVIEWED";
-  weight?: number;      // Graph 5: số sao
+    | "MAPS_TO";
+  weight?: number;
   isAnomaly?: boolean;  // hiện không set trên cạnh; anomaly nằm ở node
 }
 ```
@@ -307,7 +303,7 @@ Style CSS theo `node[type = "TASK"]` và `edge[label = "EVIDENCED_BY"]` — **đ
 - **Overview theo sprint, Activity:** task của sprint + **toàn bộ chuỗi cha** (kể cả Epic/Initiative không thuộc sprint) + Subtask con + `HAS_WORK_ITEM` tới gốc mỗi chuỗi.
 - **Attribution:** commit → item nó chứng minh → chuỗi cha → Project. Drill-down (`focusNodeId` + `depth`) chạy trên dữ liệu của view nên cũng có các cạnh này.
 - **Item có cha chưa đồng bộ vẫn hiện trong graph** (overview lấy mọi task của project, không đi từ Project xuống), với `parentResolution = "UNRESOLVED"`, không có `HAS_WORK_ITEM` giả. Đã kiểm thử trên Neo4j thật (`ProjectGraphNeo4jLiveTest`, chạy khi đặt `SAGA_NEO4J_TEST_URI`).
-- Gợi ý kích thước theo `issueTypeLevel`: Project 1.5, Above-Epic 1.4, Epic 1.3, Standard 1.0, Subtask 0.78, Commit 0.72; `PARENT_OF` nét đứt. Chỉ là hiển thị — **không ảnh hưởng tính điểm**. Graph cũ tự dựng lại lần đầu được mở sau khi BE deploy.
+- Gợi ý kích thước theo `issueTypeLevel`: Project 1.5, Above-Epic 1.4, Epic 1.3, Standard 1.0, Subtask 0.78, Commit 0.72; `PARENT_OF` nét đứt. Chỉ là hiển thị — **không ảnh hưởng tính điểm**. `graphVersion` hiện là 4. Graph lưu ở version cũ tự dựng lại lần đầu được mở sau khi BE deploy. Không còn cạnh `REVIEWED`.
 
 ### 5.1 `id` node (prefix)
 
@@ -331,15 +327,16 @@ Label hiển thị: TASK = Jira key; COMMIT = SHA 7 ký tự; CRITERION = `CODE`
 | `MEMBER_OF` | Student → Team | 1 |
 | `OWNS` | Team → Project | 1 |
 | `HAS_SPRINT` | Project → Sprint | 1 |
+| `HAS_WORK_ITEM` | Project → Task | 1, 3, 4 |
 | `CONTAINS` | Sprint → Task | 1, 3 |
+| `PARENT_OF` | Task → Task | 1, 3, 4 |
 | `ASSIGNED_TO` | Student → Task | 1–4 |
 | `EVIDENCED_BY` | **Task → Commit** | 1–4 |
 | `CLASSIFIED_AS` | Task → Criterion | 2, 3 |
 | `AUTHORED_BY` | Commit → Identity | 4 |
 | `MAPS_TO` | Identity → Student | 4 |
-| `REVIEWED` | Student → Student | 5 |
 
-Không đảo `EVIDENCED_BY`. Task là nguồn điểm; commit là bằng chứng.
+Không đảo `EVIDENCED_BY`. Task là nguồn điểm; commit là bằng chứng. Không có cạnh `REVIEWED`.
 
 Phase này **không** có node `PULL_REQUEST`.
 
@@ -349,7 +346,7 @@ Phase này **không** có node `PULL_REQUEST`.
 
 ### Graph 1 — Overview
 
-Không Criterion, không Identity, không `REVIEWED`.
+Không Criterion, không Identity.
 
 Không `sprintId`: cả project, **gồm task backlog** (task không nằm sprint). Có `sprintId`: chỉ sprint đó, **không** backlog.
 
@@ -387,14 +384,6 @@ Highlight: node IDENTITY/COMMIT `isAnomaly`, hoặc Identity không có cạnh `
 
 Ưu tiên anomaly + context: `anomaliesOnly=true` (Identity chưa map, commit mồ côi — **kèm** student/task/commit kề, không chỉ chấm đỏ đơn lẻ).
 
-### Graph 5 — Peer review
-
-Chỉ STUDENT + `REVIEWED`. `edge.data.weight` = tổng sao. Mọi member ACTIVE vẫn là node dù chưa ai chấm (cạnh `[]`).
-
-Team nhỏ: **không cần** `maxNodes`/`cursor`. Filter vẫn dùng được nếu cần.
-
-BE **không** set `isAnomaly` trên cạnh REVIEWED. FE tự highlight nếu thiếu chiều ngược / `weight` thấp — không đổi % đóng góp.
-
 ---
 
 ## 7. `isAnomaly` (XAI)
@@ -413,10 +402,9 @@ Nhấp nháy đỏ: `data.isAnomaly === true`.
 ## 8. Gợi ý UI
 
 1. Mở project → Graph 1 (không sprint) làm “bản đồ nhóm”.
-2. Dropdown sprint = `GET /api/projects/{projectId}/sprints` → gọi lại Graph 1 kèm `sprintId`, hoặc Graph 3 / 5.
+2. Dropdown sprint = `GET /api/projects/{projectId}/sprints` → gọi lại Graph 1 kèm `sprintId`, hoặc Graph 3.
 3. Click STUDENT → Graph 2 với UUID sau `student:`.
 4. Tab “Attribution” → Graph 4 (cùng `sprintId` nếu đang filter).
-5. Tab “Peer review” → Graph 5 (cần sprint).
 
 Layout: `breadthfirst` / `cose` / `concentric` / `circle` là việc FE. Click node → **GET lại** với `focusNodeId` + `depth=1` (đừng layout full 800 node). Neighborhood dimming local: `cy.$id(id).neighborhood()` chỉ khi payload đã nhỏ.
 

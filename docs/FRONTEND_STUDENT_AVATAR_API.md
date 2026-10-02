@@ -9,7 +9,7 @@ Hai chỗ **đã có từ trước**, tên field là `avatar` (không phải `av
 | API | Field |
 | --- | --- |
 | `GET /api/courses/{courseId}/teams/{teamId}/heatmap` | `students[].avatar`, `days[].actors[].avatar` |
-| Graph node `STUDENT` (`/graph/overview`, `/graph/activity`, `/graph/attribution`, `/graph/peer-review`, `/students/{studentId}/graph/contribution`) | `data.avatar` |
+| Graph node `STUDENT` (`/graph/overview`, `/graph/activity`, `/graph/attribution`, `/students/{studentId}/graph/contribution`) | `data.avatar` |
 
 `GET /api/admin/users` đã có `items[].avatarUrl`. Work-session trong timeline đã có `workSessions.sessions[].avatarUrl` và `workSessions.openSessions[].avatarUrl`.
 

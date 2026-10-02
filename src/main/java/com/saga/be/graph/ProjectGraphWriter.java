@@ -1,7 +1,6 @@
 package com.saga.be.graph;
 
 import com.saga.be.graph.ProjectGraphSnapshot.CommitNode;
-import com.saga.be.graph.ProjectGraphSnapshot.ReviewEdge;
 import com.saga.be.graph.ProjectGraphSnapshot.SprintNode;
 import com.saga.be.graph.ProjectGraphSnapshot.StudentNode;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskCommitLink;
@@ -28,10 +27,10 @@ public class ProjectGraphWriter {
 	/**
 	 * Shape of what {@link #rebuild} writes. Bump it whenever nodes, properties or edges change:
 	 * a project graph stored under an older version counts as missing and is rebuilt on its next
-	 * read. 2 = task issue-type metadata + PARENT_OF (Jira parent -> child) + HAS_WORK_ITEM
-	 * (Project -> item with no Jira parent).
+	 * read. 4 = same shape as 3, without the peer-review REVIEWED edges. 3 would not rebuild a
+	 * graph that already stored those edges.
 	 */
-	public static final int GRAPH_VERSION = 2;
+	public static final int GRAPH_VERSION = 4;
 
 	private final SagaGraphClient graph;
 
@@ -281,26 +280,6 @@ public class ProjectGraphWriter {
 						MERGE (t)-[:EVIDENCED_BY]->(c)
 						""",
 						Map.of("rows", rows));
-			}
-			if (!snapshot.reviews().isEmpty()) {
-				List<Map<String, Object>> rows = new ArrayList<>();
-				for (ReviewEdge review : snapshot.reviews()) {
-					Map<String, Object> row = new HashMap<>();
-					row.put("source", SagaGraphIds.student(review.reviewerStudentId()));
-					row.put("target", SagaGraphIds.student(review.revieweeStudentId()));
-					row.put("stars", review.stars());
-					row.put("sprintId", review.sprintId().toString());
-					rows.add(row);
-				}
-				tx.run(
-						"""
-						UNWIND $rows AS row
-						MATCH (a:Student {id: row.source})
-						MATCH (b:Student {id: row.target})
-						MERGE (a)-[r:REVIEWED {sprintId: row.sprintId}]->(b)
-						SET r.stars = row.stars, r.projectId = $projectId
-						""",
-						Map.of("rows", rows, "projectId", projectId.toString()));
 			}
 		});
 	}

@@ -158,7 +158,6 @@ class ProjectGraphNeo4jLiveTest {
 						task(LOOSE, null, "SAGA-7", "UNKNOWN", null, null, null, true)),
 				List.of(new CommitNode(COMMIT, "a1b2c3d4", "Login API", "github:trung", null, true)),
 				List.of(new TaskCommitLink(SUBTASK, COMMIT)),
-				List.of(),
 				List.of(
 						new TaskHierarchyLink(INITIATIVE, EPIC),
 						new TaskHierarchyLink(EPIC, STORY),

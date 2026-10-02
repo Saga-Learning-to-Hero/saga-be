@@ -169,31 +169,6 @@ public class ProjectGraphController {
 						view(focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken)));
 	}
 
-	@GetMapping("/sprints/{sprintId}/graph/peer-review")
-	@Operation(summary = "Graph 5 - Peer-review network for one sprint.")
-	public ResponseEntity<CytoscapeGraphResponse> peerReview(
-			@AuthenticationPrincipal SagaUserPrincipal principal,
-			@PathVariable UUID projectId,
-			@PathVariable UUID sprintId,
-			@RequestParam(required = false) String focusNodeId,
-			@RequestParam(required = false) Integer depth,
-			@RequestParam(required = false) String nodeTypes,
-			@RequestParam(required = false) String edgeTypes,
-			@RequestParam(required = false) Boolean anomaliesOnly,
-			@RequestParam(required = false) Integer maxNodes,
-			@RequestParam(required = false) String cursor,
-			@RequestParam(required = false) String continuationToken,
-			@RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
-		return respond(
-				ifNoneMatch,
-				projectId,
-				graphs.peerReview(
-						principal.getUserId(),
-						projectId,
-						sprintId,
-						view(focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken)));
-	}
-
 	private static GraphViewQuery view(
 			String focusNodeId,
 			Integer depth,
