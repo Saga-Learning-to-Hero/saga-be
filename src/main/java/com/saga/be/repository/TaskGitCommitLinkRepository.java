@@ -453,12 +453,19 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			  and c.committedAt is not null
 			  and c.committedAt >= :rangeStart
 			  and c.committedAt < :rangeEndExclusive
+			  and (exists (
+			    select 1 from TaskGitCommitLink sl join sl.task st
+			    where sl.gitCommit = c and st.deletedAt is null and st.jiraIntegration.id = :jiraIntegrationId)
+			  or not exists (
+			    select 1 from TaskGitCommitLink ol join ol.task ot
+			    where ol.gitCommit = c and ot.deletedAt is null and ot.jiraIntegration.id <> :jiraIntegrationId))
 			""")
 	long countDistinctLinkedAuthoredV23InRange(
 			@Param("projectId") UUID projectId,
 			@Param("studentId") UUID studentId,
 			@Param("rangeStart") LocalDateTime rangeStart,
-			@Param("rangeEndExclusive") LocalDateTime rangeEndExclusive);
+			@Param("rangeEndExclusive") LocalDateTime rangeEndExclusive,
+			@Param("jiraIntegrationId") UUID jiraIntegrationId);
 
 	/**
 	 * Student dashboard preview: every link of these tasks with its commit, newest first per task --

@@ -733,15 +733,17 @@ class StudentDashboardServiceTest {
 				.thenReturn(List.<Object[]>of(new Object[] {TaskStatus.DONE, 10L, 61L}, new Object[] {TaskStatus.IN_PROGRESS, 5L, 28L}));
 		when(tasks.countStatusAndStoryPointsForAssigneeAndSprint(projectId, profile.getId(), closed.getId()))
 				.thenReturn(List.<Object[]>of(new Object[] {TaskStatus.DONE, 3L, 8L}));
-		when(commits.findWeeklyCommittedAtByProjectAndAuthor(
-						projectId, profile.getId(), LocalDateTime.of(2026, 9, 6, 0, 0), LocalDateTime.of(2026, 9, 13, 0, 0)))
+		when(commits.findSprintCommittedAtByProjectAndAuthor(
+						projectId, profile.getId(), LocalDateTime.of(2026, 9, 6, 0, 0), LocalDateTime.of(2026, 9, 13, 0, 0),
+						SPRINT_SOURCE))
 				.thenReturn(List.of(
 						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 9, 6, 0, 0)},
 						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 9, 8, 10, 0)},
 						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 9, 8, 23, 59)},
 						new Object[] {UUID.randomUUID(), LocalDateTime.of(2026, 9, 12, 23, 59, 59)}));
 		when(commitLinks.countDistinctLinkedAuthoredV23InRange(
-						projectId, profile.getId(), LocalDateTime.of(2026, 9, 6, 0, 0), LocalDateTime.of(2026, 9, 13, 0, 0)))
+						projectId, profile.getId(), LocalDateTime.of(2026, 9, 6, 0, 0), LocalDateTime.of(2026, 9, 13, 0, 0),
+						SPRINT_SOURCE))
 				.thenReturn(3L);
 
 		StudentDashboardResponse response = service.get(account.getId(), course.getId(), closed.getId());
@@ -809,6 +811,7 @@ class StudentDashboardServiceTest {
 						eq(profile.getId()),
 						eq(LocalDateTime.of(2026, 9, 6, 0, 0)),
 						eq(LocalDateTime.of(2026, 9, 20, 0, 0)),
+						eq(SPRINT_SOURCE),
 						any(Pageable.class)))
 				.thenReturn(List.of(inSprint));
 
@@ -851,7 +854,7 @@ class StudentDashboardServiceTest {
 		assertEquals(LocalDate.of(2026, 9, 29), current.sprintMetrics().endDate());
 		assertEquals(0L, current.sprintMetrics().commits().totalCommits());
 		assertNull(current.sprintMetrics().commits().traceabilityPercent());
-		verify(commitLinks, never()).countDistinctLinkedAuthoredV23InRange(any(), any(), any(), any());
+		verify(commitLinks, never()).countDistinctLinkedAuthoredV23InRange(any(), any(), any(), any(), any());
 
 		var upcoming = service.get(account.getId(), course.getId(), future.getId());
 		assertTrue(upcoming.weeklyCommits().isEmpty());
@@ -1366,9 +1369,15 @@ class StudentDashboardServiceTest {
 		return member;
 	}
 
+	/** The Jira source every test sprint belongs to. */
+	private static final UUID SPRINT_SOURCE = UUID.fromString("5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a");
+
 	private static Sprint sprint(String state) {
 		Sprint sprint = new Sprint();
 		sprint.setId(UUID.randomUUID());
+		JiraIntegration source = new JiraIntegration();
+		source.setId(SPRINT_SOURCE);
+		sprint.setJiraIntegration(source);
 		sprint.setExternalSprintId("ext-" + state);
 		sprint.setName("Sprint " + state);
 		sprint.setState(state);

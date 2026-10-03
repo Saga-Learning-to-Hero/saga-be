@@ -296,6 +296,12 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			  and c.committedAt is not null
 			  and c.committedAt >= :rangeStart
 			  and c.committedAt < :rangeEndExclusive
+			  and (exists (
+			    select 1 from TaskGitCommitLink sl join sl.task st
+			    where sl.gitCommit = c and st.deletedAt is null and st.jiraIntegration.id = :jiraIntegrationId)
+			  or not exists (
+			    select 1 from TaskGitCommitLink ol join ol.task ot
+			    where ol.gitCommit = c and ot.deletedAt is null and ot.jiraIntegration.id <> :jiraIntegrationId))
 			order by c.committedAt desc, c.id desc
 			""")
 	List<GitCommit> findRecentAuthoredV23ByProjectInRange(
@@ -303,7 +309,37 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			@Param("studentId") UUID studentId,
 			@Param("rangeStart") LocalDateTime rangeStart,
 			@Param("rangeEndExclusive") LocalDateTime rangeEndExclusive,
+			@Param("jiraIntegrationId") UUID jiraIntegrationId,
 			Pageable pageable);
+
+	/**
+	 * A selected sprint's commits: {@code Object[]{UUID id, LocalDateTime committedAt}} in the window,
+	 * leaving out commits linked only to tasks of another Jira source (a project may have several, and
+	 * their sprints may share dates). Commits linked to nothing stay: they belong to no source.
+	 */
+	@Query(
+			"""
+			select c.id, c.committedAt
+			from GitCommit c
+			where c.repo.project.id = :projectId
+			  and c.authorStudent.id = :studentId
+			  and (c.parentCount is null or c.parentCount <= 1)
+			  and c.committedAt is not null
+			  and c.committedAt >= :rangeStart
+			  and c.committedAt < :rangeEndExclusive
+			  and (exists (
+			    select 1 from TaskGitCommitLink sl join sl.task st
+			    where sl.gitCommit = c and st.deletedAt is null and st.jiraIntegration.id = :jiraIntegrationId)
+			  or not exists (
+			    select 1 from TaskGitCommitLink ol join ol.task ot
+			    where ol.gitCommit = c and ot.deletedAt is null and ot.jiraIntegration.id <> :jiraIntegrationId))
+			""")
+	List<Object[]> findSprintCommittedAtByProjectAndAuthor(
+			@Param("projectId") UUID projectId,
+			@Param("studentId") UUID studentId,
+			@Param("rangeStart") LocalDateTime rangeStart,
+			@Param("rangeEndExclusive") LocalDateTime rangeEndExclusive,
+			@Param("jiraIntegrationId") UUID jiraIntegrationId);
 
 	/**
 	 * Student dashboard weekly commits — {@code Object[]{UUID id, LocalDateTime committedAt}}.

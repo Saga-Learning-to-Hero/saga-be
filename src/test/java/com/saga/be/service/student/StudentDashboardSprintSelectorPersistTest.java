@@ -28,9 +28,15 @@ import com.saga.be.entity.project.Team;
 import com.saga.be.entity.project.TeamMember;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
+import com.saga.be.entity.github.GitCommit;
+import com.saga.be.entity.github.GitRepo;
+import com.saga.be.entity.traceability.TaskGitCommitLink;
+import com.saga.be.entity.enums.TraceLinkSource;
+import com.saga.be.entity.enums.GitProvider;
 import com.saga.be.repository.AcademicClassRepository;
 import com.saga.be.repository.CourseEnrollmentRepository;
 import com.saga.be.repository.CourseRepository;
+import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.GitRepoRepository;
 import com.saga.be.repository.JiraIntegrationRepository;
 import com.saga.be.repository.ProjectRepository;
@@ -38,6 +44,7 @@ import com.saga.be.repository.SemesterRepository;
 import com.saga.be.repository.SprintRepository;
 import com.saga.be.repository.StudentProfileRepository;
 import com.saga.be.repository.SubjectRepository;
+import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
 import com.saga.be.repository.TeamMemberRepository;
 import com.saga.be.repository.TeamRepository;
@@ -143,6 +150,9 @@ class StudentDashboardSprintSelectorPersistTest {
 	@Autowired private JiraIntegrationRepository jiraIntegrations;
 	@Autowired private SprintRepository sprints;
 	@Autowired private TaskRepository tasks;
+	@Autowired private GitRepoRepository gitRepos;
+	@Autowired private GitCommitRepository gitCommits;
+	@Autowired private TaskGitCommitLinkRepository commitLinks;
 
 	private TransactionTemplate tx;
 	private Fixture fixture;
@@ -222,6 +232,76 @@ class StudentDashboardSprintSelectorPersistTest {
 		// Same externalSprintId string, but genuinely different local sprints with different task counts.
 		assertThat(viaA.currentSprint().totalTasks()).isNotEqualTo(viaB.currentSprint().totalTasks());
 		assertThat(viaB.currentSprint().totalTasks()).isEqualTo(2);
+	}
+
+	@Test
+	void aSprintOfOneJiraSourceNeverShowsCommitsLinkedOnlyToAnotherSourcesTasks() {
+		UUID[] sprintIds = tx.execute(status -> {
+			StudentProfile me = students.findById(fixture.studentId).orElseThrow();
+			Project project = projects.findById(fixture.projectId).orElseThrow();
+			Sprint sprintA = sprints.findById(fixture.activeSprintId).orElseThrow();
+			JiraIntegration sourceB = jiraIntegrations.save(jiraB(project));
+			// the new source's sprint is set up on the same dates as the old one
+			Sprint sprintB = sprints.save(sprintWithExternalId(sourceB, "b-sprint-1", "active"));
+			Task taskA = tasks.save(task(project, sprintA, TaskStatus.IN_PROGRESS));
+			Task taskB = tasks.save(task(project, sprintB, TaskStatus.IN_PROGRESS));
+			Task deletedA = task(project, sprintA, TaskStatus.TODO);
+			deletedA.setDeletedAt(LocalDateTime.of(2026, 9, 3, 0, 0));
+			deletedA = tasks.save(deletedA);
+			GitRepo repo = new GitRepo();
+			repo.setProject(project);
+			repo.setProvider(GitProvider.GITHUB);
+			repo.setRepositoryId(System.nanoTime());
+			repo.setOwnerLogin("org");
+			repo.setName("saga");
+			repo.setFullName("org/saga");
+			repo.setConnectionStatus(IntegrationStatus.ACTIVE);
+			repo.setConsecutiveFailures(0);
+			repo = gitRepos.save(repo);
+			linkTo(commit(repo, me, "a000001", 1), taskA);
+			linkTo(commit(repo, me, "b000002", 2), taskB);
+			GitCommit both = commit(repo, me, "c000003", 3);
+			linkTo(both, taskA);
+			linkTo(both, taskB);
+			commit(repo, me, "d000004", 4);
+			linkTo(commit(repo, me, "e000005", 5), deletedA);
+			entityManager.flush();
+			return new UUID[] {sprintA.getId(), sprintB.getId()};
+		});
+
+		StudentDashboardResponse viaA = tx.execute(status -> service.get(fixture.memberId, fixture.courseId, sprintIds[0]));
+		StudentDashboardResponse viaB = tx.execute(status -> service.get(fixture.memberId, fixture.courseId, sprintIds[1]));
+
+		// B never shows A's commit; a commit on tasks of both, a commit on no task and a commit whose
+		// only task is deleted belong to no other source and stay in both
+		assertThat(viaB.recentCommits()).extracting(c -> c.sha()).containsExactly("e000005", "d000004", "c000003", "b000002");
+		assertThat(viaA.recentCommits()).extracting(c -> c.sha()).containsExactly("e000005", "d000004", "c000003", "a000001");
+		assertThat(viaB.sprintMetrics().commits().totalCommits()).isEqualTo(4);
+		assertThat(viaB.sprintMetrics().commits().linkedCommits()).isEqualTo(2);
+		assertThat(viaA.sprintMetrics().commits().totalCommits()).isEqualTo(4);
+		assertThat(viaA.sprintMetrics().commits().linkedCommits()).isEqualTo(2);
+		assertThat(viaB.weeklyCommits().stream().mapToLong(day -> day.commits()).sum()).isEqualTo(4);
+		// the project-wide figures are not sprint- or source-scoped
+		assertThat(viaB.myMetrics().commits().totalCommits()).isEqualTo(5);
+	}
+
+	private GitCommit commit(GitRepo repo, StudentProfile author, String sha, int minute) {
+		GitCommit commit = new GitCommit();
+		commit.setRepo(repo);
+		commit.setAuthorStudent(author);
+		commit.setShaHash(sha);
+		commit.setMessage("work " + sha);
+		commit.setParentCount(1);
+		commit.setCommittedAt(LocalDateTime.of(2026, 9, 5, 10, minute));
+		return gitCommits.save(commit);
+	}
+
+	private void linkTo(GitCommit commit, Task task) {
+		TaskGitCommitLink link = new TaskGitCommitLink();
+		link.setTask(task);
+		link.setGitCommit(commit);
+		link.setLinkSource(TraceLinkSource.COMMIT_MESSAGE);
+		commitLinks.save(link);
 	}
 
 	@Test

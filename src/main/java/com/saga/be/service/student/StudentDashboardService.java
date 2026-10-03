@@ -167,7 +167,8 @@ public class StudentDashboardService {
 	 * {@code externalSprintId}, name, or any Jira-source inference). The selected sprint (explicit,
 	 * else current) populates {@code currentSprint}, {@code sprintMetrics}, the daily
 	 * {@code weeklyCommits} timeline, {@code myActiveTasks} (that sprint's tasks) and
-	 * {@code recentCommits} (that sprint's date window). Actionable alerts (MSR, ghosting,
+	 * {@code recentCommits} (that sprint's date window, without commits linked only to another Jira
+	 * source's tasks). Actionable alerts (MSR, ghosting,
 	 * peer-review-pending) and {@code myMetrics} are current/project-wide by
 	 * contract and are computed against the project's real current sprint / all-time data exactly
 	 * as before, regardless of {@code sprintId} -- selecting an old sprint must never fabricate a
@@ -226,8 +227,9 @@ public class StudentDashboardService {
 		SprintWindow window = selectedSprint == null ? null : sprintWindow(selectedSprint);
 		List<Object[]> windowCommits = window == null
 				? List.of()
-				: commits.findWeeklyCommittedAtByProjectAndAuthor(
-						projectId, studentId, window.start().atStartOfDay(), window.endInclusive().plusDays(1).atStartOfDay());
+				: commits.findSprintCommittedAtByProjectAndAuthor(
+						projectId, studentId, window.start().atStartOfDay(), window.endInclusive().plusDays(1).atStartOfDay(),
+						window.jiraIntegrationId());
 		return new StudentDashboardResponse(
 				student,
 				courseDto,
@@ -474,7 +476,8 @@ public class StudentDashboardService {
 		long linked = total == 0
 				? 0L
 				: commitLinks.countDistinctLinkedAuthoredV23InRange(
-						projectId, studentId, window.start().atStartOfDay(), window.endInclusive().plusDays(1).atStartOfDay());
+						projectId, studentId, window.start().atStartOfDay(), window.endInclusive().plusDays(1).atStartOfDay(),
+						window.jiraIntegrationId());
 		Double traceability = total == 0 ? null : (linked * 100.0) / total;
 		return new StudentDashboardSprintMetricsResponse(
 				sprint.getId(),
@@ -495,7 +498,8 @@ public class StudentDashboardService {
 		LocalDate start = sprint.getStartDate().toLocalDate();
 		LocalDateTime rawEnd = sprint.getEndDate() != null ? sprint.getEndDate() : sprint.getCompleteDate();
 		LocalDate end = rawEnd == null ? LocalDate.now(clock) : rawEnd.toLocalDate();
-		return new SprintWindow(start, end.isBefore(start) ? start : end);
+		return new SprintWindow(start, end.isBefore(start) ? start : end,
+				sprint.getJiraIntegration() == null ? null : sprint.getJiraIntegration().getId());
 	}
 
 	/**
@@ -778,7 +782,10 @@ public class StudentDashboardService {
 		static final LinkedCommits NONE = new LinkedCommits(0L, 0L, List.of());
 	}
 
-	/** With a sprint window, only commits whose raw {@code committedAt} falls inside it. */
+	/**
+	 * With a sprint window, only commits whose raw {@code committedAt} falls inside it and that are not
+	 * linked only to tasks of another Jira source than the sprint's.
+	 */
 	private List<StudentDashboardRecentCommitResponse> recentCommits(
 			UUID projectId, UUID studentId, SprintWindow window) {
 		PageRequest top = PageRequest.of(0, RECENT_COMMIT_LIMIT);
@@ -789,6 +796,7 @@ public class StudentDashboardService {
 						studentId,
 						window.start().atStartOfDay(),
 						window.endInclusive().plusDays(1).atStartOfDay(),
+						window.jiraIntegrationId(),
 						top);
 		if (rows.isEmpty()) {
 			return List.of();
@@ -900,7 +908,8 @@ public class StudentDashboardService {
 	private static final Comparator<AttentionRow> ATTENTION_ORDER =
 			Comparator.comparing((AttentionRow row) -> row.anomaly() ? 0 : 1).thenComparing(ANOMALY_ORDER);
 
-	private record SprintWindow(LocalDate start, LocalDate endInclusive) {}
+	/** {@code jiraIntegrationId}: the sprint's Jira source; commits linked only to another source's tasks are left out. */
+	private record SprintWindow(LocalDate start, LocalDate endInclusive, UUID jiraIntegrationId) {}
 
 	private record GithubProjection(
 			StudentDashboardGithubIntegrationResponse dto, LocalDateTime maxActiveCreatedAt) {}
