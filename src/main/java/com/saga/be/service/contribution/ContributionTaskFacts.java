@@ -18,8 +18,9 @@ import java.util.UUID;
  * Turns project tasks into mixer facts. A Standard item with no Subtask is unchanged. A Standard
  * item with Subtasks does not award its own story points: each Subtask receives
  * {@code parentStoryPoint × (entered / 10)} when both the parent and that Subtask are DONE.
- * Sprint and {@code saga:*} labels come from the parent. DOCUMENT/RESEARCH evidence is the
- * Subtask's. An Epic awards nothing.
+ * Sprint comes from the parent. The {@code saga:*} label is the Subtask's own, so a test
+ * Subtask under a code parent scores as test. DOCUMENT/RESEARCH evidence is the Subtask's.
+ * An Epic awards nothing.
  */
 public final class ContributionTaskFacts {
 
@@ -80,7 +81,7 @@ public final class ContributionTaskFacts {
 	}
 
 	private static TaskFact subtask(Task parent, Task child, Set<UUID> evidenced) {
-		Outcome outcome = ReservedContributionMarkerClassifier.classify(TaskLabelParser.parse(parent.getLabelsJson()));
+		Outcome outcome = ReservedContributionMarkerClassifier.classify(TaskLabelParser.parse(child.getLabelsJson()));
 		ContributionCriterion criterion = ReservedContributionMarkerClassifier.toCriterion(outcome);
 		if (needsDocument(criterion) && !evidenced.contains(child.getId())) {
 			criterion = null;
