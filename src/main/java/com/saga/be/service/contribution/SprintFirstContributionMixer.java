@@ -41,6 +41,7 @@ public final class SprintFirstContributionMixer {
 			BigDecimal sliceScore,
 			BigDecimal sliceContributionPercentage,
 			BigDecimal contributionPercentage,
+			BigDecimal peerReviewScore,
 			BigDecimal adjustedTaskScore) {}
 
 	public record MemberResult(
@@ -179,9 +180,11 @@ public final class SprintFirstContributionMixer {
 				sprintStarTotal += stars;
 			}
 			Map<UUID, BigDecimal> adjustByStudent = new LinkedHashMap<>();
+			Map<UUID, BigDecimal> peerByStudent = new LinkedHashMap<>();
 			BigDecimal sprintAdjustTotal = BigDecimal.ZERO;
 			for (UUID studentId : memberIds) {
 				BigDecimal peer = peerShare(sprintStars.getOrDefault(studentId, 0), sprintStarTotal);
+				peerByStudent.put(studentId, peer);
 				BigDecimal adjust = sliceByStudent.get(studentId).multiply(peer, MATH);
 				adjustByStudent.put(studentId, adjust);
 				sprintAdjustTotal = sprintAdjustTotal.add(adjust, MATH);
@@ -198,7 +201,8 @@ public final class SprintFirstContributionMixer {
 								sliceByStudent.get(studentId),
 								ratioPercent(sliceByStudent.get(studentId), sprintSliceTotal),
 								ratioPercent(adjustByStudent.get(studentId), sprintAdjustTotal),
-								taskByStudent.get(studentId).multiply(peerShare(sprintStars.getOrDefault(studentId, 0), sprintStarTotal), MATH)));
+								peerByStudent.get(studentId),
+								taskByStudent.get(studentId).multiply(peerByStudent.get(studentId), MATH)));
 			}
 		}
 

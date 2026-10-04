@@ -109,7 +109,8 @@ Không CSRF. Tính **live**, không ghi snapshot `assessment_run`. Gọi lại m
           "sprintName": "Sprint 1",
           "sliceScore": 12.5000,
           "sliceContributionPercentage": 43.1600,
-          "contributionPercentage": 43.1600
+          "contributionPercentage": 43.1600,
+          "peerReviewScore": 1.0000
         }
       ],
       "warnings": []
@@ -130,7 +131,8 @@ Không CSRF. Tính **live**, không ghi snapshot `assessment_run`. Gọi lại m
 | Cột / bar **trước peer** | `sliceContributionPercentage` | % theo task + trọng số, tổng team = 100 |
 | Cột / bar **sau peer (điểm cuối)** | `finalContributionPercentage` | Đã nhân peer (+ override nếu có), tổng team = 100 |
 | Tooltip điểm thô | `sliceScore` | Σ slice, chưa nhân P |
-| Sao peer (0–1) | `peerReviewScore` | Chỉ hiển thị. `1` = chưa có peer hoặc mẫu số 0 |
+| Sao peer cả dự án (0–1) | `peerReviewScore` | Chỉ hiển thị. `1` = chưa có peer hoặc mẫu số 0 |
+| Sao peer từng sprint (0–1) | `sprintBreakdowns[].peerReviewScore` | `sao thành viên trong sprint / tổng sao sprint`. Sprint chưa ai chấm = `1`. Không nhân vào % |
 | Radar 4 tiêu chí | `code/test/document/researchContributionPercentage` | Tỷ lệ trong từng tiêu chí cả project, **không** phải slice mix |
 | Từng sprint | `sprintBreakdowns[]` | Cùng cặp: `sliceContributionPercentage` (trước peer sprint) và `contributionPercentage` (sau peer sprint) |
 | Cảnh báo | `warnings[]` | String code, xem mục 2.1 |

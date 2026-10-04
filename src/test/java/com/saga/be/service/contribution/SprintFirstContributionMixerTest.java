@@ -60,6 +60,11 @@ class SprintFirstContributionMixerTest {
 		assertPercent(15.51, chi.finalContributionPercentage());
 		assertPercent(9.17, dung.finalContributionPercentage());
 
+		assertEquals(bd("0.40"), scale2(sprint(an, S1).peerReviewScore()));
+		assertEquals(bd("0.30"), scale2(sprint(binh, S1).peerReviewScore()));
+		assertEquals(bd("0.20"), scale2(sprint(chi, S1).peerReviewScore()));
+		assertEquals(bd("0.10"), scale2(sprint(dung, S1).peerReviewScore()));
+
 		assertPercent(52.53, sprint(an, S1).contributionPercentage());
 		assertPercent(19.70, sprint(binh, S1).contributionPercentage());
 		assertPercent(18.69, sprint(chi, S1).contributionPercentage());
@@ -82,6 +87,7 @@ class SprintFirstContributionMixerTest {
 		assertEquals(bd("1.20"), scale2(member(result, AN).sliceScore()));
 		assertEquals(bd("0.00"), scale2(member(result, BINH).sliceScore()));
 		assertPercent(100, member(result, AN).finalContributionPercentage());
+		assertEquals(bd("1.00"), scale2(sprint(member(result, AN), S1).peerReviewScore()));
 		assertPercent(0, member(result, BINH).finalContributionPercentage());
 	}
 
