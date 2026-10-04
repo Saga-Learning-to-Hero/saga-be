@@ -302,17 +302,21 @@ class GithubWebhookProjectionTransactionTest {
 
 	private static String push(long repositoryId, String sha) {
 		return """
-				{"ref":"refs/heads/main","repository":{"id":%d},"commits":[{"id":"%s","message":"feat: webhook","timestamp":"2026-09-24T10:00:00Z","author":{"username":"alice"}}]}
-				""".formatted(repositoryId, sha);
+				{"ref":"refs/heads/main","repository":{"id":%d},"commits":[{"id":"%s","message":"feat: webhook","timestamp":"%s","author":{"username":"alice"}}]}
+				""".formatted(repositoryId, sha, RECENT);
 	}
 
 	/** A push whose branch ref cannot be stored ({@code git_commit.head_ref} is 255 chars): a
 	 * genuine, non-mocked fatal projection error that must roll the whole projection back. */
 	private static String fatalPush(long repositoryId, String sha) {
 		return """
-				{"ref":"refs/heads/%s","repository":{"id":%d},"commits":[{"id":"%s","message":"feat: webhook","timestamp":"2026-09-24T10:00:00Z","author":{"username":"alice"}}]}
-				""".formatted("x".repeat(300), repositoryId, sha);
+				{"ref":"refs/heads/%s","repository":{"id":%d},"commits":[{"id":"%s","message":"feat: webhook","timestamp":"%s","author":{"username":"alice"}}]}
+				""".formatted("x".repeat(300), repositoryId, sha, RECENT);
 	}
+
+	/** A push from an hour ago: only recently pushed commits are reviewed automatically. */
+	private static final String RECENT = java.time.Instant.now().minus(java.time.Duration.ofHours(1))
+			.truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString();
 
 	private static String sha() {
 		return (UUID.randomUUID().toString() + UUID.randomUUID()).replace("-", "").substring(0, 40);

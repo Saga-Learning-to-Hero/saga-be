@@ -46,6 +46,7 @@ public class AiAcademicSubmissionService {
   auth.requireReader(user,projectId);
   GitCommit commit=commits.findAnalysisTargetById(gitCommitId).orElseThrow(()->notFound("Commit was not found."));
   if (!commit.getRepo().getProject().getId().equals(projectId)) throw new IntegrationException(IntegrationErrorCode.AI_ANALYSIS_TARGET_PROJECT_MISMATCH,HttpStatus.NOT_FOUND,"Commit does not belong to this project.");
+  AiAnalysisSubmissionService.requireNotMerge(commit);
   var resolution=requireCredential(commit.getRepo().getProject());
   AiModelProvider provider=primaryProvider();
   String sha=commit.getShaHash(); if (sha==null || sha.isBlank()) throw notFound("Commit does not have a persisted SHA.");

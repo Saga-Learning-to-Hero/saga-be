@@ -459,6 +459,49 @@ class ProjectProjectionReadServiceTest {
 	}
 
 	@Test
+	void listCommits_carriesTheAiReviewBadgeOfEachCommit() {
+		stubStudent(RoleInTeam.MEMBER);
+		GitRepo repo = new GitRepo();
+		repo.setId(UUID.randomUUID());
+		repo.setFullName("org/saga");
+		GitCommit first = commit(repo, "aaa", "first", 1);
+		GitCommit merge = commit(repo, "bbb", "Merge pull request #2", 2);
+		List<UUID> ordered = List.of(first.getId(), merge.getId());
+		when(commits.findPageIdsByProject(eq(projectId), eq(PageRequest.of(0, 50))))
+				.thenReturn(new PageImpl<>(ordered, PageRequest.of(0, 50), 2));
+		when(commits.findFetchedByIdIn(ordered)).thenReturn(List.of(merge, first));
+		com.saga.be.service.ai.CommitAiReviewService reviews = org.mockito.Mockito.mock(com.saga.be.service.ai.CommitAiReviewService.class);
+		var warning = new com.saga.be.dto.ai.CommitAiReviewDtos.Summary("WARNING", "Cảnh báo", List.of(new com.saga.be.dto.ai.CommitAiReviewDtos.Reason("NO_TASK", "Chưa gắn task")), false);
+		var skipped = new com.saga.be.dto.ai.CommitAiReviewDtos.Summary("SKIPPED_MERGE", "Merge – không đánh giá", List.of(), false);
+		when(reviews.summaries(eq(projectId), any(), any())).thenReturn(java.util.Map.of(first.getId(), warning, merge.getId(), skipped));
+		service.setCommitReviews(reviews);
+
+		ProjectCommitPageResponse page = service.listCommits(userId, projectId, 0, 50);
+
+		assertThat(page.items()).extracting(ProjectCommitResponse::id).containsExactly(first.getId(), merge.getId());
+		assertThat(page.items()).extracting(item -> item.aiReview().status()).containsExactly("WARNING", "SKIPPED_MERGE");
+		verify(reviews, org.mockito.Mockito.times(1)).summaries(eq(projectId), any(), any());
+	}
+
+	@Test
+	void listCommits_stillAnswersWhenTheAiReviewReadFails() {
+		stubStudent(RoleInTeam.MEMBER);
+		GitRepo repo = new GitRepo();
+		repo.setId(UUID.randomUUID());
+		GitCommit first = commit(repo, "aaa", "first", 1);
+		when(commits.findPageIdsByProject(eq(projectId), eq(PageRequest.of(0, 50))))
+				.thenReturn(new PageImpl<>(List.of(first.getId()), PageRequest.of(0, 50), 1));
+		when(commits.findFetchedByIdIn(List.of(first.getId()))).thenReturn(List.of(first));
+		com.saga.be.service.ai.CommitAiReviewService reviews = org.mockito.Mockito.mock(com.saga.be.service.ai.CommitAiReviewService.class);
+		when(reviews.summaries(any(), any(), any())).thenThrow(new RuntimeException("db hiccup"));
+		service.setCommitReviews(reviews);
+
+		ProjectCommitPageResponse page = service.listCommits(userId, projectId, 0, 50);
+
+		assertThat(page.items()).singleElement().satisfies(item -> assertThat(item.aiReview()).isNull());
+	}
+
+	@Test
 	void listCommits_pageBeyondLast_returnsEmptyItemsWithRequestedPage() {
 		stubStudent(RoleInTeam.MEMBER);
 		when(commits.findPageIdsByProject(eq(projectId), eq(PageRequest.of(9, 50))))

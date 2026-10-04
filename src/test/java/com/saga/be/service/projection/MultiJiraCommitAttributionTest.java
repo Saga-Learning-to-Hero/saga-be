@@ -371,9 +371,9 @@ class MultiJiraCommitAttributionTest {
 
 		assertThat(commitIds(seed, sha)).containsExactly(commitId);
 		assertThat(links(seed)).hasSize(1);
-		// Both paths hand the SAME canonical commit id to automation; de-duplication of the
-		// semantic analysis itself stays with the submission service's idempotency key.
-		verify(aiSubmissions, times(2)).submitAutomatic(seed.projectId(), commitId);
+		// Only the first path that inserts the commit hands it to automation: re-upserting a known
+		// commit never re-triggers an AI review.
+		verify(aiSubmissions, times(1)).submitAutomatic(seed.projectId(), commitId);
 	}
 
 	@Test
@@ -388,7 +388,7 @@ class MultiJiraCommitAttributionTest {
 
 		assertThat(commitIds(seed, sha)).containsExactly(commitId);
 		assertThat(links(seed)).hasSize(1);
-		verify(aiSubmissions, times(2)).submitAutomatic(seed.projectId(), commitId);
+		verify(aiSubmissions, times(1)).submitAutomatic(seed.projectId(), commitId);
 	}
 
 	// ---- query bound ----
@@ -444,7 +444,7 @@ class MultiJiraCommitAttributionTest {
 	private void syncOnce(Seed seed, String sha, String message) {
 		when(github.listCommits(anyString(), anyString(), anyString(), eq("main"), anyInt(), anyInt())).thenAnswer(call -> {
 			int page = call.getArgument(4);
-			return page == 1 ? List.of(new CommitSummary(sha, message, "2026-09-24T10:00:00Z", null, "alice", 1)) : List.of();
+			return page == 1 ? List.of(new CommitSummary(sha, message, RECENT, null, "alice", 1)) : List.of();
 		});
 		var job = sync.initialSync(seed.projectId());
 		assertThat(job.getErrorCategory()).as("manual sync must succeed").isNull();
@@ -452,9 +452,13 @@ class MultiJiraCommitAttributionTest {
 
 	private static String push(long repositoryId, String sha, String message) {
 		return """
-				{"ref":"refs/heads/main","repository":{"id":%d},"commits":[{"id":"%s","message":"%s","timestamp":"2026-09-24T10:00:00Z","author":{"username":"alice"}}]}
-				""".formatted(repositoryId, sha, message);
+				{"ref":"refs/heads/main","repository":{"id":%d},"commits":[{"id":"%s","message":"%s","timestamp":"%s","author":{"username":"alice"}}]}
+				""".formatted(repositoryId, sha, message, RECENT);
 	}
+
+	/** A push from an hour ago: only recently pushed commits are reviewed automatically. */
+	private static final String RECENT = java.time.Instant.now().minus(java.time.Duration.ofHours(1))
+			.truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString();
 
 	private static String sha() {
 		return (UUID.randomUUID().toString() + UUID.randomUUID()).replace("-", "").substring(0, 40);

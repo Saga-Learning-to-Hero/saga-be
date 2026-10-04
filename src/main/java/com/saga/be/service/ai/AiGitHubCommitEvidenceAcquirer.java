@@ -16,6 +16,10 @@ import org.springframework.stereotype.Component;
 @Profile("!test")
 public class AiGitHubCommitEvidenceAcquirer {
 	private static final Pattern HUNK = Pattern.compile("(?m)(?=^@@ )");
+	/** saga-ai accepts at most 100 evidence items per request; message, tasks and syllabus need room too. */
+	static final int MAX_HUNKS = 60;
+	/** saga-ai rejects any evidence item over 64 KB; one giant hunk is cut, never sent whole. */
+	static final int MAX_HUNK_CHARS = 16_000;
 	private final GitHubOAuthClient github; private final GitHubAppJwtService jwt; private final AiAnalysisProperties properties; private final ObjectMapper mapper;
 	public AiGitHubCommitEvidenceAcquirer(GitHubOAuthClient github, GitHubAppJwtService jwt, AiAnalysisProperties properties, ObjectMapper mapper) { this.github = github; this.jwt = jwt; this.properties = properties; this.mapper = mapper; }
 
@@ -31,24 +35,32 @@ public class AiGitHubCommitEvidenceAcquirer {
 
 	private List<AiEvidenceDraft> bounded(Target target, GitHubOAuthClient.CommitDetail detail) {
 		List<AiEvidenceDraft> result = new ArrayList<>(); List<Map<String, Object>> files = new ArrayList<>();
-		int includedBytes = 0, eligible = 0, analyzed = 0, omitted = 0, totalPatchBytes = 0;
+		int includedBytes = 0, eligible = 0, analyzed = 0, omitted = 0, totalPatchBytes = 0, hunksIncluded = 0; boolean anyTruncated = false;
 		for (GitHubOAuthClient.CommitFileChange file : detail.files() == null ? List.<GitHubOAuthClient.CommitFileChange>of() : detail.files()) {
 			String path = file.filename(); String patch = file.patch(); String reason = exclusion(path, patch);
 			int bytes = patch == null ? 0 : patch.getBytes(StandardCharsets.UTF_8).length; totalPatchBytes += bytes;
-			if (reason == null) { eligible++; if (eligible > properties.getMaxChangedFiles()) reason = "FILE_LIMIT"; else if (includedBytes + bytes > properties.getMaxPatchBytes()) reason = "BYTE_LIMIT"; }
+			List<String> fileHunks = reason == null ? hunks(patch) : List.of();
+			if (reason == null) { eligible++; if (eligible > properties.getMaxChangedFiles()) reason = "FILE_LIMIT"; else if (includedBytes + bytes > properties.getMaxPatchBytes()) reason = "BYTE_LIMIT"; else if (hunksIncluded + fileHunks.size() > MAX_HUNKS) reason = "HUNK_LIMIT"; }
 			Map<String, Object> item = new LinkedHashMap<>(); item.put("path", path); item.put("previousPath", file.previousFilename()); item.put("status", file.status()); item.put("additions", file.additions()); item.put("deletions", file.deletions()); item.put("changes", file.changes()); item.put("patchAvailable", patch != null); item.put("exclusionReason", reason); files.add(item);
 			if (reason != null) { omitted++; continue; }
 			includedBytes += bytes; analyzed++; int hunk = 0;
-			for (String text : HUNK.split(patch)) { if (text == null || text.isBlank()) continue; hunk++; String hunkId = "H" + hunk;
-				Map<String, Object> hunkPayload = new LinkedHashMap<>(); hunkPayload.put("path", path); hunkPayload.put("hunkId", hunkId); hunkPayload.put("patch", text);
+			for (String text : fileHunks) { hunk++; hunksIncluded++; String hunkId = "H" + hunk;
+				boolean truncated = text.length() > MAX_HUNK_CHARS; if (truncated) { anyTruncated = true; text = text.substring(0, MAX_HUNK_CHARS); }
+				Map<String, Object> hunkPayload = new LinkedHashMap<>(); hunkPayload.put("path", path); hunkPayload.put("hunkId", hunkId); hunkPayload.put("patch", text); if (truncated) hunkPayload.put("truncated", true);
 				Map<String, Object> meta = new LinkedHashMap<>(); meta.put("repositoryId", target.repositoryId()); meta.put("commitSha", target.sha()); meta.put("path", path); meta.put("hunkId", hunkId);
 				result.add(new AiEvidenceDraft(AiEvidenceType.DIFF_HUNK, "repo:" + target.repositoryId() + ":sha:" + target.sha() + ":path:" + path + ":hunk:" + hunkId, json(hunkPayload), json(meta)));
 			}
 		}
-		Map<String, Object> manifest = new LinkedHashMap<>(); manifest.put("providerEvidenceStatus", "AVAILABLE"); manifest.put("filesTotal", files.size()); manifest.put("filesAnalyzed", analyzed); manifest.put("filesOmitted", omitted); manifest.put("totalAvailablePatchBytes", totalPatchBytes); manifest.put("patchBytesIncluded", includedBytes); manifest.put("coverage", omitted == 0 && !detail.filesTruncated() ? "COMPLETE" : "PARTIAL"); manifest.put("providerFilesTruncated", detail.filesTruncated()); manifest.put("files", files);
+		Map<String, Object> manifest = new LinkedHashMap<>(); manifest.put("providerEvidenceStatus", "AVAILABLE"); manifest.put("filesTotal", files.size()); manifest.put("filesAnalyzed", analyzed); manifest.put("filesOmitted", omitted); manifest.put("totalAvailablePatchBytes", totalPatchBytes); manifest.put("patchBytesIncluded", includedBytes); manifest.put("coverage", omitted == 0 && !anyTruncated && !detail.filesTruncated() ? "COMPLETE" : "PARTIAL"); manifest.put("providerFilesTruncated", detail.filesTruncated()); manifest.put("files", files);
 		result.add(0, new AiEvidenceDraft(AiEvidenceType.CHANGED_FILE_MANIFEST, "github-commit-manifest:" + target.sha(), json(manifest), null));
 		result.add(1, new AiEvidenceDraft(AiEvidenceType.PROVIDER_EVIDENCE_STATUS, "github-commit-status:" + target.sha(), json(Map.of("providerEvidenceStatus", "AVAILABLE", "codeDiffAvailable", !result.isEmpty())), null));
 		return List.copyOf(result);
+	}
+
+	private static List<String> hunks(String patch) {
+		List<String> out = new ArrayList<>();
+		for (String text : HUNK.split(patch)) if (text != null && !text.isBlank()) out.add(text);
+		return out;
 	}
 
 	private List<AiEvidenceDraft> unavailable(String reason) {

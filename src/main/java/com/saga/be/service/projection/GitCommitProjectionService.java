@@ -59,6 +59,15 @@ public class GitCommitProjectionService {
 	private final StudentProfileRepository students;
 	private final CommitTaskAutoLinkService autoLink;
 	private final com.saga.be.service.ai.AiCommitAutomationTrigger aiAutomation;
+	private UnlinkedCommitNotifier unlinkedNotifier;
+	/** Only commits pushed this recently are reviewed / checked automatically; older history (a first
+	 * backfill, a resync) never spends AI quota or sends notifications on its own. */
+	static final java.time.Duration AUTO_WINDOW = java.time.Duration.ofHours(72);
+
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	public void setUnlinkedNotifier(UnlinkedCommitNotifier unlinkedNotifier) {
+		this.unlinkedNotifier = unlinkedNotifier;
+	}
 
 	public GitCommitProjectionService(
 			GitCommitRepository commits,
@@ -109,6 +118,8 @@ public class GitCommitProjectionService {
 		Set<String> shas = valid.stream().map(CommitDraft::sha).collect(Collectors.toCollection(HashSet::new));
 		Map<String, GitCommit> existing = commits.findByRepo_IdAndShaHashIn(repo.getId(), shas).stream()
 				.collect(Collectors.toMap(GitCommit::getShaHash, Function.identity(), (a, b) -> a));
+		Set<String> newShas = new HashSet<>(shas);
+		newShas.removeAll(existing.keySet());
 		Map<String, StudentProfile> authors = resolveAuthors(valid);
 		List<GitCommit> saved = new ArrayList<>(valid.size());
 		for (CommitDraft draft : valid) {
@@ -136,6 +147,8 @@ public class GitCommitProjectionService {
 		} catch (DataIntegrityViolationException ex) {
 			Map<String, GitCommit> reloaded = commits.findByRepo_IdAndShaHashIn(repo.getId(), shas).stream()
 					.collect(Collectors.toMap(GitCommit::getShaHash, Function.identity(), (a, b) -> a));
+			// Rows another writer inserted first are not "new" here: that writer handled them.
+			newShas.removeAll(reloaded.keySet());
 			List<GitCommit> merged = new ArrayList<>();
 			for (GitCommit candidate : saved) {
 				GitCommit row = reloaded.getOrDefault(candidate.getShaHash(), candidate);
@@ -157,7 +170,14 @@ public class GitCommitProjectionService {
 		// Optional task attribution against the project's ACTIVE Jira sources (any number of them);
 		// an unresolvable or ambiguous key is skipped, never a reason to reject the commits.
 		int links = autoLink.linkCommits(repo.getProject().getId(), persisted);
-		aiAutomation.afterCommitsPersisted(repo.getProject().getId(), persisted.stream().map(GitCommit::getId).toList());
+		// Only commits first seen now and pushed recently: re-upserting known commits on every sync
+		// (and a first backfill of old history) must never re-trigger AI reviews or notifications.
+		java.time.LocalDateTime recentFrom = java.time.LocalDateTime.now().minus(AUTO_WINDOW);
+		List<GitCommit> fresh = persisted.stream()
+				.filter(c -> newShas.contains(c.getShaHash()) && c.getCommittedAt() != null && c.getCommittedAt().isAfter(recentFrom))
+				.toList();
+		aiAutomation.afterCommitsPersisted(repo.getProject().getId(), fresh.stream().map(GitCommit::getId).toList());
+		if (unlinkedNotifier != null) unlinkedNotifier.afterNewCommits(repo.getProject().getId(), fresh);
 		return new UpsertOutcome(persisted.size(), links);
 	}
 

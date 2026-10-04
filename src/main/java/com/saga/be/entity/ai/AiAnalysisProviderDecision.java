@@ -17,6 +17,8 @@ public class AiAnalysisProviderDecision extends BaseEntity {
 	@Column(name = "provider_config_hash", length = 64, nullable = false) private String providerConfigHash;
 	@Enumerated(EnumType.STRING) @Column(name = "credential_source", length = 16) private AiCredentialSource credentialSource;
 	@org.hibernate.annotations.JdbcTypeCode(java.sql.Types.CHAR) @Column(name = "course_credential_id", columnDefinition = "char(36)") private java.util.UUID courseCredentialId;
+	/** Set when a team key (not a course key) served this run; credentialSource then stays COURSE. */
+	@org.hibernate.annotations.JdbcTypeCode(java.sql.Types.CHAR) @Column(name = "team_credential_id", columnDefinition = "char(36)") private java.util.UUID teamCredentialId;
 	@Column(name = "credential_fingerprint", length = 64) private String credentialFingerprint;
 	/** Provider actually used (after any course fallback); NULL on legacy/platform-era rows. */
 	@Enumerated(EnumType.STRING) @Column(name = "ai_provider", length = 32) private com.saga.be.entity.enums.AiProvider aiProvider;

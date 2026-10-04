@@ -243,13 +243,15 @@ public class ProjectProjectionReadService {
 				byId.put(commit.getId(), commit);
 			}
 			List<ProjectCommitResponse> reconstructed = new ArrayList<>(orderedIds.size());
+			List<GitCommit> ordered = new ArrayList<>(orderedIds.size());
 			for (UUID id : orderedIds) {
 				GitCommit commit = byId.get(id);
 				if (commit != null) {
 					reconstructed.add(toCommit(commit));
+					ordered.add(commit);
 				}
 			}
-			items = reconstructed;
+			items = withAiReview(projectId, ordered, reconstructed);
 		}
 		return new ProjectCommitPageResponse(items, pageNumber, pageSize, idPage.getTotalElements());
 	}
@@ -288,13 +290,15 @@ public class ProjectProjectionReadService {
 				byId.put(commit.getId(), commit);
 			}
 			List<ProjectCommitResponse> reconstructed = new ArrayList<>(orderedIds.size());
+			List<GitCommit> ordered = new ArrayList<>(orderedIds.size());
 			for (UUID id : orderedIds) {
 				GitCommit commit = byId.get(id);
 				if (commit != null) {
 					reconstructed.add(toCommit(commit));
+					ordered.add(commit);
 				}
 			}
-			items = reconstructed;
+			items = withAiReview(projectId, ordered, reconstructed);
 		}
 		return new ProjectCommitPageResponse(items, pageNumber, pageSize, idPage.getTotalElements());
 	}
@@ -621,6 +625,36 @@ public class ProjectProjectionReadService {
 			return null;
 		}
 		return commit.getAuthorStudent().getUserAccount().getAvatarUrl();
+	}
+
+	private com.saga.be.service.ai.CommitAiReviewService commitReviews;
+
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	public void setCommitReviews(com.saga.be.service.ai.CommitAiReviewService commitReviews) {
+		this.commitReviews = commitReviews;
+	}
+
+	/** Adds the AI review badge; a review read failure never breaks the commit list. */
+	private List<ProjectCommitResponse> withAiReview(UUID projectId, List<GitCommit> ordered, List<ProjectCommitResponse> items) {
+		if (commitReviews == null || ordered.isEmpty()) {
+			return items;
+		}
+		try {
+			GitCommit first = ordered.getFirst();
+			UUID courseId = first.getRepo() == null || first.getRepo().getProject() == null || first.getRepo().getProject().getCourse() == null
+					? null
+					: first.getRepo().getProject().getCourse().getId();
+			var summaries = commitReviews.summaries(projectId, courseId, ordered);
+			List<ProjectCommitResponse> out = new ArrayList<>(items.size());
+			for (ProjectCommitResponse item : items) {
+				out.add(item.withAiReview(summaries.get(item.id())));
+			}
+			return out;
+		} catch (RuntimeException ex) {
+			org.slf4j.LoggerFactory.getLogger(ProjectProjectionReadService.class)
+					.warn("commit ai review badges skipped projectId={} type={}", projectId, ex.getClass().getSimpleName());
+			return items;
+		}
 	}
 
 	private ProjectCommitResponse toCommit(GitCommit commit) {

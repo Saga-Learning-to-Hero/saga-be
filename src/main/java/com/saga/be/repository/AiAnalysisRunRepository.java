@@ -5,6 +5,7 @@ import com.saga.be.entity.enums.AiAnalysisStatus;
 import com.saga.be.entity.enums.AiAnalysisType;
 import com.saga.be.entity.enums.AiArtifactType;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -61,6 +62,17 @@ public interface AiAnalysisRunRepository extends JpaRepository<AiAnalysisRun, UU
 	List<UUID> findStaleRunningIds(@Param("cutoff") LocalDateTime cutoff);
 
 	/** Lecturer drill-down: latest run for one artifact within a project, any status. */
+	/** Every COMMIT_INTELLIGENCE run of these commits, newest first (the caller keeps the first per commit). */
+	@Query("""
+			select r from AiAnalysisRun r
+			where r.project.id = :projectId
+			  and r.artifactType = com.saga.be.entity.enums.AiArtifactType.COMMIT
+			  and r.analysisType = com.saga.be.entity.enums.AiAnalysisType.COMMIT_INTELLIGENCE
+			  and r.artifactId in :commitIds
+			order by r.createdAt desc
+			""")
+	List<AiAnalysisRun> findCommitReviewRuns(@Param("projectId") UUID projectId, @Param("commitIds") Collection<UUID> commitIds);
+
 	Optional<AiAnalysisRun> findTopByProject_IdAndArtifactTypeAndArtifactIdAndAnalysisTypeOrderByCreatedAtDesc(UUID projectId, AiArtifactType artifactType, UUID artifactId, AiAnalysisType analysisType);
 
 	/** Lecturer drill-down: latest COURSE-scope run. */

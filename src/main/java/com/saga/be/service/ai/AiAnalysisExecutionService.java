@@ -21,6 +21,9 @@ public class AiAnalysisExecutionService {
 	static final Set<String> CREDENTIAL_DEGRADED_CODES = Set.of("AI_PROVIDER_QUOTA_EXHAUSTED", "AI_PROVIDER_RATE_LIMITED");
 	private final AiAnalysisStateService state; private final List<AiModelProvider> providers; private final AiStructuredResultValidator validator; private final ObjectMapper mapper; private final AiAcademicResultValidator academicValidator; private final AiAcademicProposalFinalizationService academicFinalizer; private final AiTaskIntelligenceResultValidator taskValidator; private final AiTaskIntelligenceFinalizationService taskFinalizer; private final AiRiskAnalysisResultValidator riskValidator; private final AiRiskAnalysisFinalizationService riskFinalizer; private final AiProgressNarrativeResultValidator progressValidator; private final AiProgressNarrativeFinalizationService progressFinalizer; private final AiSecondaryBrainService secondaryBrain; private final AiAdjudicationService adjudication; private final AiCredentialResolver credentialResolver;
 	@Autowired public AiAnalysisExecutionService(AiAnalysisStateService state, List<AiModelProvider> providers, AiStructuredResultValidator validator, ObjectMapper mapper, AiAcademicResultValidator academicValidator, AiAcademicProposalFinalizationService academicFinalizer, AiTaskIntelligenceResultValidator taskValidator, AiTaskIntelligenceFinalizationService taskFinalizer, AiRiskAnalysisResultValidator riskValidator, AiRiskAnalysisFinalizationService riskFinalizer, AiProgressNarrativeResultValidator progressValidator, AiProgressNarrativeFinalizationService progressFinalizer, AiSecondaryBrainService secondaryBrain, AiAdjudicationService adjudication, AiCredentialResolver credentialResolver) { this.state = state; this.providers = providers; this.validator = validator; this.mapper = mapper; this.academicValidator = academicValidator; this.academicFinalizer = academicFinalizer; this.taskValidator = taskValidator; this.taskFinalizer = taskFinalizer; this.riskValidator = riskValidator; this.riskFinalizer = riskFinalizer; this.progressValidator = progressValidator; this.progressFinalizer = progressFinalizer; this.secondaryBrain = secondaryBrain; this.adjudication = adjudication; this.credentialResolver = credentialResolver; }
+	private TeamAiCredentialService teamKeys;
+	/** Team keys (commit reviews paid by the team) are served only when this is wired. */
+	@Autowired(required = false) public void setTeamKeys(TeamAiCredentialService teamKeys) { this.teamKeys = teamKeys; }
 	public AiAnalysisExecutionService(AiAnalysisStateService state, List<AiModelProvider> providers, AiStructuredResultValidator validator, ObjectMapper mapper) { this(state, providers, validator, mapper, new AiAcademicResultValidator(mapper), null, new AiTaskIntelligenceResultValidator(), null, new AiRiskAnalysisResultValidator(), null, new AiProgressNarrativeResultValidator(), null, null, null, null); }
 
 	/**
@@ -51,7 +54,10 @@ public class AiAnalysisExecutionService {
 			};
 			AiCredentialSource credentialSource = input.decision().getCredentialSource() == null ? AiCredentialSource.PLATFORM : input.decision().getCredentialSource();
 			AiProviderResponse response;
-			if (credentialSource == AiCredentialSource.COURSE) {
+			if (credentialSource == AiCredentialSource.COURSE && input.decision().getTeamCredentialId() != null) {
+				if (!provider.supportsCourseCredential()) throw new AiProviderException(AiCredentialResolver.COURSE_CREDENTIAL_REQUIRES_REMOTE_PROVIDER);
+				response = executeTeam(runId, input, provider, type, contract, evidence);
+			} else if (credentialSource == AiCredentialSource.COURSE) {
 				if (credentialResolver == null) throw new AiProviderException("AI_CREDENTIAL_ENVELOPE_UNAVAILABLE");
 				// Checked before any decrypt or dispatch: a provider that ignores the envelope would
 				// answer with the platform key and the course credential would be wrongly marked ACTIVE.
@@ -156,6 +162,31 @@ public class AiAnalysisExecutionService {
 		}
 		recordProvenance(runId, primary, lastBinding, lastCredential, attempts);
 		throw lastFailure != null ? lastFailure : new AiProviderException("AI_CREDENTIAL_UNAVAILABLE");
+	}
+
+	/**
+	 * A run paid by the team's own key: one attempt with that key and the team's model, never the
+	 * course fallback chain (that chain spends the lecturer's keys). The key is decrypted right here,
+	 * for this one call; an auth failure marks it INVALID and a quota/rate limit DEGRADED, and the
+	 * leader is told.
+	 */
+	private AiProviderResponse executeTeam(UUID runId, AiAnalysisStateService.ExecutionInput input, AiModelProvider provider, AiAnalysisType type, String contract, List<AiAnalysisRequest.AiEvidenceInput> evidence) throws Exception {
+		if (teamKeys == null) throw new AiProviderException("AI_CREDENTIAL_ENVELOPE_UNAVAILABLE");
+		var decision = input.decision();
+		UUID credentialId = decision.getTeamCredentialId();
+		UUID projectId = input.run().getProject() == null ? null : input.run().getProject().getId();
+		AiProviderBinding binding = decision.getAiProvider() == null ? null : new AiProviderBinding(decision.getAiProvider(), decision.getModelId());
+		try {
+			AiCredentialEnvelope envelope = teamKeys.buildEnvelope(credentialId, projectId);
+			AiProviderResponse response = provider.analyze(new AiAnalysisRequest(runId, decision.getProviderRole(), type, input.run().getPromptVersion(), input.run().getTaxonomyVersion(), contract, evidence, AiCredentialSource.COURSE, envelope, binding));
+			teamKeys.markSuccessful(credentialId);
+			return response;
+		} catch (AiProviderException ex) {
+			String code = ex.safeCode();
+			if (CREDENTIAL_INVALID_CODES.contains(code)) teamKeys.markInvalid(credentialId, code);
+			else if (CREDENTIAL_DEGRADED_CODES.contains(code)) teamKeys.markDegraded(credentialId, code);
+			throw ex;
+		}
 	}
 
 	private void recordProvenance(UUID runId, AiProviderBinding primary, AiProviderBinding used, AiCredentialResolver.CourseCredentialRef credential, List<Map<String, String>> attempts) throws Exception {

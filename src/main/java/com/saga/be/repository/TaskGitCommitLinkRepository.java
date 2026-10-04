@@ -26,6 +26,15 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			""")
 	List<TaskGitCommitLink> findByGitCommit_IdIn(@Param("commitIds") Collection<UUID> commitIds);
 
+	/** Automatic links of these commits to tasks that still exist, with the task (commit review display). */
+	@Query(
+			"""
+			select l from TaskGitCommitLink l
+			join fetch l.task t
+			where l.gitCommit.id in :commitIds and t.deletedAt is null
+			""")
+	List<TaskGitCommitLink> findLiveWithTaskByGitCommitIds(@Param("commitIds") Collection<UUID> commitIds);
+
 	@Query(
 			"""
 			select l from TaskGitCommitLink l
