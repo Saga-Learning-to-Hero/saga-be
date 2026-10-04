@@ -318,14 +318,29 @@ public class ProjectProgressService {
 	 * Jira is currently connected.
 	 */
 	private ProjectProgressResponse.SprintSummary currentSprint(UUID projectId) {
-		Sprint active = sprints.findActiveByProject_Id(projectId).stream()
+		// Several Jira sites may each have an active sprint: take the one with the most tasks among
+		// connected sites (a revoked site's sprint is history), ties keeping the latest start. Sites
+		// are never added together. Same rule as the lecturer course dashboard's default.
+		Sprint active = null;
+		long totalTasks = -1;
+		List<Sprint> activeSprints = sprints.findActiveByProject_Id(projectId).stream()
 				.filter(s -> s.getState() != null && s.getState().equalsIgnoreCase("active"))
-				.findFirst()
-				.orElse(null);
+				.toList();
+		boolean anyConnected = activeSprints.stream().anyMatch(ProjectProgressService::connected);
+		for (Sprint sprint : activeSprints) {
+			// with no connected site left, keep the last-known sprint (sync.jiraStatus says REVOKED)
+			if (anyConnected && !connected(sprint)) {
+				continue;
+			}
+			long count = tasks.countCurrentByProjectAndSprint(projectId, sprint.getId());
+			if (count > totalTasks) {
+				active = sprint;
+				totalTasks = count;
+			}
+		}
 		if (active == null) {
 			return null;
 		}
-		long totalTasks = tasks.countCurrentByProjectAndSprint(projectId, active.getId());
 		long completedTasks = tasks.countCurrentByProjectAndSprintAndStatus(
 				projectId, active.getId(), TaskStatus.DONE);
 		return new ProjectProgressResponse.SprintSummary(
@@ -339,19 +354,47 @@ public class ProjectProgressService {
 				completedTasks);
 	}
 
+	private static boolean connected(Sprint sprint) {
+		var source = sprint.getJiraIntegration();
+		return source == null
+				|| source.getConnectionStatus() == null
+				|| (source.getConnectionStatus() != com.saga.be.entity.enums.IntegrationStatus.REVOKED
+						&& source.getConnectionStatus() != com.saga.be.entity.enums.IntegrationStatus.DISCONNECTED);
+	}
+
 	/** DB-projected connection/sync status only — no live Jira/GitHub HTTP call on this read path. */
 	private ProjectProgressResponse.SyncSummary syncSummary(UUID userId, UUID projectId) {
 		ProjectIntegrationsResponse integrationStatus = integrations.summary(userId, projectId);
-		String jiraStatus = integrationStatus.jira() == null ? null : integrationStatus.jira().status();
+		// The singular jira summary is null when a project has several sites: read every site and
+		// report ACTIVE when any of them is connected.
+		String jiraStatus = integrationStatus.jira() != null ? integrationStatus.jira().status() : null;
+		java.util.Set<UUID> activeSources = new java.util.HashSet<>();
+		if (integrationStatus.jiraSources() != null) {
+			for (var source : integrationStatus.jiraSources()) {
+				if ("ACTIVE".equals(source.connectionStatus())) {
+					activeSources.add(source.integrationId());
+				}
+			}
+			if (jiraStatus == null && !integrationStatus.jiraSources().isEmpty()) {
+				jiraStatus = activeSources.isEmpty() ? integrationStatus.jiraSources().getFirst().connectionStatus() : "ACTIVE";
+			}
+		}
 		String githubStatus = integrationStatus.github() == null ? null : integrationStatus.github().status();
 		String jiraSyncStatus = null;
 		LocalDateTime jiraLastSyncAt = null;
 		String githubSyncStatus = null;
 		LocalDateTime githubLastSyncAt = null;
+		LocalDateTime jiraStartedAt = null;
 		for (ProjectSyncStatusResponse row : manualSync.latestStatus(userId, projectId)) {
 			if ("JIRA".equals(row.provider())) {
-				jiraSyncStatus = row.status();
-				jiraLastSyncAt = row.completedAt() != null ? row.completedAt() : row.startedAt();
+				// one row per site: keep the latest job among connected sites
+				boolean connectedSite = activeSources.isEmpty() || activeSources.contains(row.jiraIntegrationId());
+				LocalDateTime started = row.startedAt();
+				if (connectedSite && (jiraStartedAt == null || (started != null && started.isAfter(jiraStartedAt)))) {
+					jiraStartedAt = started;
+					jiraSyncStatus = row.status();
+					jiraLastSyncAt = row.completedAt() != null ? row.completedAt() : row.startedAt();
+				}
 			} else if ("GITHUB".equals(row.provider())) {
 				githubSyncStatus = row.status();
 				githubLastSyncAt = row.completedAt() != null ? row.completedAt() : row.startedAt();

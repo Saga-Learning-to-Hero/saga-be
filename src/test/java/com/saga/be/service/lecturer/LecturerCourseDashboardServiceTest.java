@@ -340,6 +340,41 @@ class LecturerCourseDashboardServiceTest {
 	}
 
 	@Test
+	void syncStatusComesFromTheShownSitesOwnJobNotAnOldProjectKeyedOne() {
+		UserAccount lecturer = actor(AccountRole.LECTURER);
+		TwoSites data = twoSites(lecturer);
+		LocalDateTime now = LocalDateTime.ofInstant(NOW, ZoneOffset.UTC);
+		com.saga.be.entity.integration.SyncJobLog legacy = job("JIRA", data.projectId(), com.saga.be.entity.enums.SyncJobStatus.FAILED, now.minusDays(20));
+		com.saga.be.entity.integration.SyncJobLog sagaOk = job("JIRA", data.saga().getId(), com.saga.be.entity.enums.SyncJobStatus.SUCCEEDED, now.minusHours(2));
+		com.saga.be.entity.integration.SyncJobLog sgFailed = job("JIRA", data.sg().getId(), com.saga.be.entity.enums.SyncJobStatus.FAILED, now.minusHours(1));
+		lenient().when(syncJobs.findByTargetIdInOrderByStartedAtDesc(List.of(data.projectId()))).thenReturn(List.of(legacy));
+		lenient().when(syncJobs.findByTargetIdInOrderByStartedAtDesc(org.mockito.ArgumentMatchers.argThat(
+						(java.util.Collection<UUID> ids) -> ids != null && ids.contains(data.saga().getId()))))
+				.thenReturn(List.of(sgFailed, sagaOk));
+
+		TeamCard card = service.getDashboard(lecturer, courseId, null).teams().getFirst();
+
+		// the shown sprint is SAGA Sprint 5: its site's job, not the newer SG failure nor the 20-day-old project job
+		assertThat(card.sync().jiraStatus()).isEqualTo("ACTIVE");
+		assertThat(card.sync().jiraSyncStatus()).isEqualTo("SUCCEEDED");
+		assertThat(card.sync().jiraLastSuccessfulSyncAt()).isEqualTo(now.minusHours(2).plusMinutes(1).toInstant(ZoneOffset.UTC));
+
+		TeamCard sg = service.getDashboard(lecturer, courseId, null, data.team().getId(), data.sg().getId(), null).teams().getFirst();
+		assertThat(sg.sync().jiraSyncStatus()).isEqualTo("FAILED");
+	}
+
+	private static com.saga.be.entity.integration.SyncJobLog job(
+			String system, UUID targetId, com.saga.be.entity.enums.SyncJobStatus status, LocalDateTime startedAt) {
+		com.saga.be.entity.integration.SyncJobLog job = new com.saga.be.entity.integration.SyncJobLog();
+		job.setTargetSystem(system);
+		job.setTargetId(targetId);
+		job.setStatus(status);
+		job.setStartedAt(startedAt);
+		job.setCompletedAt(startedAt.plusMinutes(1));
+		return job;
+	}
+
+	@Test
 	void aPickThatDoesNotBelongTogetherIsRejected() {
 		UserAccount lecturer = actor(AccountRole.LECTURER);
 		TwoSites data = twoSites(lecturer);

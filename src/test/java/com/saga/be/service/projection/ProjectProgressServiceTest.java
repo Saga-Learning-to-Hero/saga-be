@@ -265,6 +265,52 @@ class ProjectProgressServiceTest {
 		assertThat(response.sync().jiraStatus()).isEqualTo("REVOKED");
 	}
 
+	@Test
+	void twoConnectedJiraSitesReportConnectedTheLatestSiteJobAndTheBusiestActiveSprint() {
+		stubActiveLeader();
+		stubEmptyAggregates();
+		UUID sagaId = UUID.randomUUID();
+		UUID sgId = UUID.randomUUID();
+		UUID oldId = UUID.randomUUID();
+		Sprint sg2 = sprint("active");
+		sg2.setJiraIntegration(jira(sgId, com.saga.be.entity.enums.IntegrationStatus.ACTIVE));
+		Sprint saga5 = sprint("active");
+		saga5.setJiraIntegration(jira(sagaId, com.saga.be.entity.enums.IntegrationStatus.ACTIVE));
+		Sprint stale = sprint("active");
+		stale.setJiraIntegration(jira(oldId, com.saga.be.entity.enums.IntegrationStatus.REVOKED));
+		when(sprints.findActiveByProject_Id(projectId)).thenReturn(List.of(stale, sg2, saga5));
+		org.mockito.Mockito.lenient().when(tasks.countCurrentByProjectAndSprint(projectId, stale.getId())).thenReturn(90L);
+		when(tasks.countCurrentByProjectAndSprint(projectId, sg2.getId())).thenReturn(1L);
+		when(tasks.countCurrentByProjectAndSprint(projectId, saga5.getId())).thenReturn(12L);
+		// several sites: the singular "jira" summary is null by design
+		when(integrations.summary(userId, projectId)).thenReturn(new ProjectIntegrationsResponse(null, null, List.of(
+				source(sagaId, "SAGA", "ACTIVE"), source(sgId, "SG", "ACTIVE"), source(oldId, "OLD", "REVOKED"))));
+		LocalDateTime today = LocalDateTime.of(2026, 10, 4, 7, 9);
+		when(manualSync.latestStatus(userId, projectId)).thenReturn(List.of(
+				new com.saga.be.dto.project.ProjectSyncStatusResponse(projectId, "JIRA", "SUCCEEDED", today.minusMinutes(5), today.minusMinutes(4), 2, 0, sagaId),
+				new com.saga.be.dto.project.ProjectSyncStatusResponse(projectId, "JIRA", "SUCCEEDED", today, today.plusMinutes(3), 105, 0, sgId),
+				new com.saga.be.dto.project.ProjectSyncStatusResponse(projectId, "JIRA", "FAILED", today.plusHours(1), today.plusHours(1), 0, 1, oldId)));
+
+		ProjectProgressResponse response = service.getProjectProgress(userId, projectId);
+
+		assertThat(response.sync().jiraStatus()).isEqualTo("ACTIVE");
+		assertThat(response.sync().jiraSyncStatus()).isEqualTo("SUCCEEDED");
+		assertThat(response.sync().jiraLastSyncAt()).isEqualTo(today.plusMinutes(3));
+		assertThat(response.currentSprint().id()).isEqualTo(saga5.getId());
+		assertThat(response.currentSprint().totalTasks()).isEqualTo(12);
+	}
+
+	private static com.saga.be.entity.jira.JiraIntegration jira(UUID id, com.saga.be.entity.enums.IntegrationStatus status) {
+		com.saga.be.entity.jira.JiraIntegration integration = new com.saga.be.entity.jira.JiraIntegration();
+		integration.setId(id);
+		integration.setConnectionStatus(status);
+		return integration;
+	}
+
+	private static com.saga.be.dto.integration.JiraSourceSummary source(UUID id, String key, String status) {
+		return new com.saga.be.dto.integration.JiraSourceSummary(id, "cloud-" + key, key + "-site", "1", key, "1", status, null, null, 0, null);
+	}
+
 	// ---------- COMMITS ----------
 
 	@Test

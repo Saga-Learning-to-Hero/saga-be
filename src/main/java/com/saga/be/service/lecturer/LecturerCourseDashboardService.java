@@ -287,6 +287,7 @@ public class LecturerCourseDashboardService {
 		Map<UUID, JobSnapshot> jiraJobs = new HashMap<>();
 		Map<UUID, JobSnapshot> githubJobs = new HashMap<>();
 		indexJobs(projectIds, jiraJobs, githubJobs);
+		indexJiraSourceJobs(sourcesByProject, currentByProject, jiraJobs);
 		Set<UUID> configuredGroupProjects = configuredGroupProjects(courseId);
 		Map<UUID, List<ReviewRow>> reviewsBySprint = reviewsBySprint(sprintIds);
 		attachPeerReviewEvents(eventsByProject, sprintsByProject, reviewsBySprint);
@@ -615,7 +616,10 @@ public class LecturerCourseDashboardService {
 	 * or disconnected site's sprint is history, never "current"). Ties keep the latest start.
 	 */
 	private static Sprint defaultSprint(List<Sprint> list, Map<UUID, long[]> activeTaskCounts) {
-		return mostTasks(list.stream().filter(sprint -> isActive(sprint) && sourceConnected(sprint)).toList(), activeTaskCounts);
+		List<Sprint> connected = list.stream().filter(sprint -> isActive(sprint) && sourceConnected(sprint)).toList();
+		// with no connected site left, keep the last-known active sprint (sync.jiraStatus says REVOKED)
+		return mostTasks(connected.isEmpty() ? list.stream().filter(LecturerCourseDashboardService::isActive).toList() : connected,
+				activeTaskCounts);
 	}
 
 	/** {@code candidates} come newest first, so the first of equal counts is the latest. */
@@ -1018,8 +1022,10 @@ public class LecturerCourseDashboardService {
 		if (projectIds.isEmpty()) {
 			return out;
 		}
+		// A project may have several Jira sites: the best status wins (any ACTIVE site means connected).
 		for (JiraIntegration row : jiraIntegrations.findByProject_IdIn(projectIds)) {
-			out.put(row.getProject().getId(), statusName(row.getConnectionStatus()));
+			UUID projectId = row.getProject().getId();
+			out.put(projectId, betterStatus(out.get(projectId), statusName(row.getConnectionStatus())));
 		}
 		return out;
 	}
@@ -1072,6 +1078,64 @@ public class LecturerCourseDashboardService {
 						new JobSnapshot(current.status(), toInstant(job.getCompletedAt())));
 			}
 		}
+	}
+
+	/**
+	 * Jira sync jobs are keyed by Jira site (integration id), not by project, since a project may
+	 * have several sites. Per project: the job of the site whose sprint is shown, else the latest job
+	 * of a connected site. Legacy project-keyed jobs only remain as a fallback when no site has one.
+	 */
+	private void indexJiraSourceJobs(
+			Map<UUID, List<JiraIntegration>> sourcesByProject, Map<UUID, Sprint> currentByProject, Map<UUID, JobSnapshot> jiraJobs) {
+		Map<UUID, UUID> projectBySource = new HashMap<>();
+		for (Map.Entry<UUID, List<JiraIntegration>> entry : sourcesByProject.entrySet()) {
+			for (JiraIntegration source : entry.getValue()) {
+				projectBySource.put(source.getId(), entry.getKey());
+			}
+		}
+		if (projectBySource.isEmpty()) {
+			return;
+		}
+		Map<UUID, JobSnapshot> bySource = new HashMap<>();
+		Map<UUID, UUID> latestConnectedSource = new HashMap<>();
+		for (SyncJobLog job : syncJobs.findByTargetIdInOrderByStartedAtDesc(projectBySource.keySet())) {
+			if (!"JIRA".equals(job.getTargetSystem()) || job.getTargetId() == null) {
+				continue;
+			}
+			UUID sourceId = job.getTargetId();
+			JobSnapshot current = bySource.get(sourceId);
+			Instant success = job.getStatus() == SyncJobStatus.SUCCEEDED ? toInstant(job.getCompletedAt()) : null;
+			if (current == null) {
+				bySource.put(sourceId, new JobSnapshot(job.getStatus() == null ? null : job.getStatus().name(), success));
+				UUID projectId = projectBySource.get(sourceId);
+				if (projectId != null && !latestConnectedSource.containsKey(projectId) && connected(sourcesByProject.get(projectId), sourceId)) {
+					latestConnectedSource.put(projectId, sourceId);
+				}
+			} else if (current.lastSuccess() == null && success != null) {
+				bySource.put(sourceId, new JobSnapshot(current.status(), success));
+			}
+		}
+		for (Map.Entry<UUID, List<JiraIntegration>> entry : sourcesByProject.entrySet()) {
+			UUID projectId = entry.getKey();
+			Sprint current = currentByProject.get(projectId);
+			UUID preferred = current == null ? null : sourceId(current);
+			JobSnapshot snapshot = preferred == null ? null : bySource.get(preferred);
+			if (snapshot == null && latestConnectedSource.containsKey(projectId)) {
+				snapshot = bySource.get(latestConnectedSource.get(projectId));
+			}
+			if (snapshot != null) {
+				jiraJobs.put(projectId, snapshot);
+			}
+		}
+	}
+
+	private static boolean connected(List<JiraIntegration> sources, UUID sourceId) {
+		if (sources == null) {
+			return false;
+		}
+		return sources.stream().anyMatch(source -> source.getId().equals(sourceId)
+				&& source.getConnectionStatus() != com.saga.be.entity.enums.IntegrationStatus.REVOKED
+				&& source.getConnectionStatus() != com.saga.be.entity.enums.IntegrationStatus.DISCONNECTED);
 	}
 
 	private Set<UUID> configuredGroupProjects(UUID courseId) {
