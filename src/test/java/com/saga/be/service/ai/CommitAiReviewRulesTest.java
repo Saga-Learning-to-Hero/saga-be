@@ -183,8 +183,9 @@ class CommitAiReviewRulesTest {
 		assertThat(CommitAiReviewRules.evaluate(false, AiAnalysisStatus.FAILED, null, true, true).status()).isEqualTo(CommitAiReviewDtos.FAILED);
 		assertThat(CommitAiReviewRules.evaluate(false, AiAnalysisStatus.CANCELLED, null, true, true).status()).isEqualTo(CommitAiReviewDtos.FAILED);
 		var failedNoTask = CommitAiReviewRules.evaluate(false, AiAnalysisStatus.FAILED, null, false, true);
-		assertThat(codes(failedNoTask)).containsExactly(CommitAiReviewDtos.REASON_NO_TASK);
-		assertThat(failedNoTask.headline()).contains("Lưu ý: Chưa gắn task.");
+		assertThat(failedNoTask.status()).isEqualTo(CommitAiReviewDtos.FAILED);
+		assertThat(codes(failedNoTask)).isEmpty();
+		assertThat(failedNoTask.headline()).doesNotContain("Chưa gắn task");
 	}
 
 	@Test

@@ -44,7 +44,7 @@ class AccountStatusEnforcementFilterTest {
 	void inactiveAuthenticatedRequestIsForbidden() throws Exception {
 		UserAccount account = student(AccountStatus.INACTIVE);
 		SecurityContextHolder.getContext().setAuthentication(SagaAuthentications.authenticated(account));
-		when(users.findById(account.getId())).thenReturn(Optional.of(account));
+		when(users.findAccountStatusById(account.getId())).thenReturn(Optional.of(account.getAccountStatus()));
 		MockHttpServletResponse response = new MockHttpServletResponse();
 
 		filter().doFilter(request("GET", "/api/student/anything"), response, chain);
@@ -52,7 +52,7 @@ class AccountStatusEnforcementFilterTest {
 		assertEquals(403, response.getStatus());
 		assertTrue(response.getContentAsString().contains("ACCOUNT_DISABLED"));
 		verify(chain, never()).doFilter(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
-		verify(users).findById(account.getId());
+		verify(users).findAccountStatusById(account.getId());
 	}
 
 	@Test
@@ -68,14 +68,14 @@ class AccountStatusEnforcementFilterTest {
 		assertProceeds(filter, request("GET", "/api/auth/csrf"));
 		assertProceeds(filter, request("POST", "/api/webhooks/github"));
 		assertProceeds(filter, request("GET", "/actuator/health"));
-		verify(users, never()).findById(account.getId());
+		verify(users, never()).findAccountStatusById(account.getId());
 	}
 
 	@Test
 	void sseReconnectIsDeniedWhileInactive() throws Exception {
 		UserAccount account = student(AccountStatus.INACTIVE);
 		SecurityContextHolder.getContext().setAuthentication(SagaAuthentications.authenticated(account));
-		when(users.findById(account.getId())).thenReturn(Optional.of(account));
+		when(users.findAccountStatusById(account.getId())).thenReturn(Optional.of(account.getAccountStatus()));
 		MockHttpServletResponse response = new MockHttpServletResponse();
 
 		filter().doFilter(request("GET", "/api/projects/" + UUID.randomUUID() + "/events"), response, chain);
@@ -95,7 +95,20 @@ class AccountStatusEnforcementFilterTest {
 	@Test
 	void anonymousRequestIsNotLookedUp() throws Exception {
 		assertProceeds(filter(), request("GET", "/api/student/anything"));
-		verify(users, never()).findById(org.mockito.ArgumentMatchers.any());
+		verify(users, never()).findAccountStatusById(org.mockito.ArgumentMatchers.any());
+	}
+
+	@Test
+	void activeAccountProceeds_andAVanishedAccountIsForbidden() throws Exception {
+		UserAccount account = student(AccountStatus.ACTIVE);
+		SecurityContextHolder.getContext().setAuthentication(SagaAuthentications.authenticated(account));
+		when(users.findAccountStatusById(account.getId())).thenReturn(Optional.of(AccountStatus.ACTIVE));
+		assertProceeds(filter(), request("GET", "/api/student/anything"));
+
+		when(users.findAccountStatusById(account.getId())).thenReturn(Optional.empty());
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		filter().doFilter(request("GET", "/api/student/anything"), response, chain);
+		assertEquals(403, response.getStatus());
 	}
 
 	private void assertProceeds(AccountStatusEnforcementFilter filter, MockHttpServletRequest request) throws Exception {

@@ -46,7 +46,7 @@ class SessionRevocationFeasibilityTest {
 	void requestTimeGuardRemainsAndDoesNotScanSessions() throws Exception {
 		String filter = Files.readString(Path.of("src/main/java/com/saga/be/security/AccountStatusEnforcementFilter.java"));
 		assertTrue(filter.contains("principal.getUserId()"));
-		assertTrue(filter.contains("users.findById("));
+		assertTrue(filter.contains("users.findAccountStatusById("));
 		assertFalse(filter.contains("findByEmail"));
 		assertFalse(filter.contains("SessionRepository"));
 		assertTrue(filter.contains("/api/auth/logout"));

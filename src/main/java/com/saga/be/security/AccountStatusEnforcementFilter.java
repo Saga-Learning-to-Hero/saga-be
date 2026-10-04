@@ -2,8 +2,7 @@ package com.saga.be.security;
 
 import com.saga.be.auth.AccountStatusGuard;
 import com.saga.be.auth.AuthErrorCode;
-import com.saga.be.entity.account.UserAccount;
-import com.saga.be.exception.AuthException;
+import com.saga.be.entity.enums.AccountStatus;
 import com.saga.be.repository.UserAccountRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -77,14 +76,9 @@ public class AccountStatusEnforcementFilter extends OncePerRequestFilter {
 			filterChain.doFilter(request, response);
 			return;
 		}
-		UserAccount account = users.findById(principal.getUserId()).orElse(null);
-		if (account == null) {
-			writeDisabled(response);
-			return;
-		}
-		try {
-			statusGuard.requireActive(account);
-		} catch (AuthException ex) {
+		// same rule as AccountStatusGuard.requireActive, read as a single column on every request
+		AccountStatus status = users.findAccountStatusById(principal.getUserId()).orElse(null);
+		if (status != AccountStatus.ACTIVE) {
 			writeDisabled(response);
 			return;
 		}

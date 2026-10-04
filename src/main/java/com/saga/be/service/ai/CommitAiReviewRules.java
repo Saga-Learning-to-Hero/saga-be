@@ -65,8 +65,8 @@ public final class CommitAiReviewRules {
 				return new Outcome(CommitAiReviewDtos.PENDING, List.copyOf(reasons));
 			}
 			case FAILED, CANCELLED -> {
-				if (!taskLinked) reasons.add(reason(CommitAiReviewDtos.REASON_NO_TASK));
-				return new Outcome(CommitAiReviewDtos.FAILED, List.copyOf(reasons));
+				// only the failure: a missing task is already shown in the commit's task section
+				return new Outcome(CommitAiReviewDtos.FAILED, List.of());
 			}
 			default -> { }
 		}
@@ -131,9 +131,9 @@ public final class CommitAiReviewRules {
 			case CommitAiReviewDtos.PASS -> "Đạt";
 			case CommitAiReviewDtos.WARNING -> "Cảnh báo";
 			case CommitAiReviewDtos.PENDING -> "Đang đánh giá";
-			case CommitAiReviewDtos.FAILED -> "Lỗi AI";
+			case CommitAiReviewDtos.FAILED -> "Lỗi";
 			case CommitAiReviewDtos.SKIPPED_MERGE -> "Merge – không đánh giá";
-			case CommitAiReviewDtos.NO_KEY -> "Chưa có key AI";
+			case CommitAiReviewDtos.NO_KEY -> "Chưa có key";
 			case CommitAiReviewDtos.NOT_REVIEWED -> "Chưa đánh giá";
 			case CommitAiReviewDtos.INSUFFICIENT_DATA -> "Không đủ dữ liệu";
 			default -> status;

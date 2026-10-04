@@ -63,6 +63,7 @@ class TeamActivityAnalyticsControllerWebTest {
 		student.setAccountStatus(AccountStatus.ACTIVE);
 		student.setPasswordHash("hash");
 		when(users.findById(any(UUID.class))).thenAnswer(call -> student.getId().equals(call.getArgument(0)) ? Optional.of(student) : Optional.empty());
+		when(users.findAccountStatusById(any(UUID.class))).thenAnswer(call -> ((Optional<?>) (student.getId().equals(call.getArgument(0)) ? Optional.of(student) : Optional.empty())).map(account -> ((com.saga.be.entity.account.UserAccount) account).getAccountStatus()));
 	}
 
 	@Test

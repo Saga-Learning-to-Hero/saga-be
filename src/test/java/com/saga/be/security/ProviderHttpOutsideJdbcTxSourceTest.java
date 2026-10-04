@@ -41,7 +41,7 @@ class ProviderHttpOutsideJdbcTxSourceTest {
 	@Test
 	void hardBanFilterStillLooksUpAccountStatusOnEveryProtectedRequest() throws Exception {
 		String filter = normalize(Path.of("src/main/java/com/saga/be/security/AccountStatusEnforcementFilter.java"));
-		assertTrue(filter.contains("users.findById("));
+		assertTrue(filter.contains("users.findAccountStatusById("));
 		assertTrue(filter.contains("principal.getUserId()"));
 		assertFalse(filter.contains("SessionRepository"));
 		assertFalse(filter.contains("request.setAttribute"));

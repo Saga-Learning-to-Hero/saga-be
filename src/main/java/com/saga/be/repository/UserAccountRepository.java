@@ -14,10 +14,21 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface UserAccountRepository extends JpaRepository<UserAccount, UUID> {
 
 	Optional<UserAccount> findByEmail(String email);
+
+	/**
+	 * The per-request ban check: one column and no transaction. A read-only transaction around a whole
+	 * entity costs several extra database round trips (read-only and autocommit set and reset) on
+	 * every API call.
+	 */
+	@Transactional(propagation = Propagation.NOT_SUPPORTED)
+	@Query("select u.accountStatus from UserAccount u where u.id = :id")
+	Optional<AccountStatus> findAccountStatusById(@Param("id") UUID id);
 
 	List<UserAccount> findByEmailIn(Collection<String> emails);
 

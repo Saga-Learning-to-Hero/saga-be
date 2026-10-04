@@ -84,6 +84,7 @@ class LecturerCourseAiAcademicClassificationControllerWebTest {
 		reset(authorization, classifications, users);
 		accounts.clear();
 		when(users.findById(any(UUID.class))).thenAnswer(call -> Optional.ofNullable(accounts.get(call.getArgument(0))));
+		when(users.findAccountStatusById(any(UUID.class))).thenAnswer(call -> ((Optional<?>) (Optional.ofNullable(accounts.get(call.getArgument(0))))).map(account -> ((com.saga.be.entity.account.UserAccount) account).getAccountStatus()));
 	}
 
 	@Test

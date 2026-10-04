@@ -66,6 +66,7 @@ class AccountStatusEnforcementWebTest {
 	void inactiveStudentCannotReadGenericTaskEvidence() throws Exception {
 		UserAccount account = student(AccountStatus.INACTIVE);
 		when(users.findById(account.getId())).thenReturn(Optional.of(account));
+		when(users.findAccountStatusById(account.getId())).thenReturn(Optional.of(account.getAccountStatus()));
 		UUID projectId = UUID.fromString("00000000-0000-0000-0000-000000000066");
 		UUID taskId = UUID.fromString("00000000-0000-0000-0000-000000000055");
 		mockMvc.perform(get("/api/projects/" + projectId + "/tasks/" + taskId + "/evidence")
@@ -78,6 +79,7 @@ class AccountStatusEnforcementWebTest {
 	void leftoverAuthenticatedSessionIsForbiddenWithAccountDisabled() throws Exception {
 		UserAccount account = student(AccountStatus.INACTIVE);
 		when(users.findById(account.getId())).thenReturn(Optional.of(account));
+		when(users.findAccountStatusById(account.getId())).thenReturn(Optional.of(account.getAccountStatus()));
 
 		mockMvc.perform(get("/api/student/anything").with(authentication(SagaAuthentications.authenticated(account))))
 				.andExpect(status().isForbidden())
@@ -117,12 +119,14 @@ class AccountStatusEnforcementWebTest {
 	void reEnabledAccountCanUseProtectedApiAgain() throws Exception {
 		UserAccount inactive = student(AccountStatus.INACTIVE);
 		when(users.findById(inactive.getId())).thenReturn(Optional.of(inactive));
+		when(users.findAccountStatusById(inactive.getId())).thenReturn(Optional.of(inactive.getAccountStatus()));
 		mockMvc.perform(get("/api/student/anything").with(authentication(SagaAuthentications.authenticated(inactive))))
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.code").value("ACCOUNT_DISABLED"));
 
 		inactive.setAccountStatus(AccountStatus.ACTIVE);
 		when(users.findById(inactive.getId())).thenReturn(Optional.of(inactive));
+		when(users.findAccountStatusById(inactive.getId())).thenReturn(Optional.of(inactive.getAccountStatus()));
 		mockMvc.perform(get("/api/student/anything").with(authentication(SagaAuthentications.authenticated(inactive))))
 				.andExpect(status().isOk())
 				.andExpect(content().string("student-ok"));
@@ -148,6 +152,7 @@ class AccountStatusEnforcementWebTest {
 	void publicForgotAndWebhooksAreUnaffectedByDisabledSession() throws Exception {
 		UserAccount account = student(AccountStatus.INACTIVE);
 		when(users.findById(account.getId())).thenReturn(Optional.of(account));
+		when(users.findAccountStatusById(account.getId())).thenReturn(Optional.of(account.getAccountStatus()));
 		Csrf csrf = fetchCsrf();
 		mockMvc.perform(post("/api/auth/password/forgot")
 						.with(authentication(SagaAuthentications.authenticated(account)))
@@ -170,6 +175,7 @@ class AccountStatusEnforcementWebTest {
 	void sseReconnectWhileDisabledIsDenied() throws Exception {
 		UserAccount account = student(AccountStatus.INACTIVE);
 		when(users.findById(account.getId())).thenReturn(Optional.of(account));
+		when(users.findAccountStatusById(account.getId())).thenReturn(Optional.of(account.getAccountStatus()));
 		mockMvc.perform(get("/api/projects/" + UUID.randomUUID() + "/events")
 						.with(authentication(SagaAuthentications.authenticated(account))))
 				.andExpect(status().isForbidden())

@@ -602,16 +602,29 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 	 * Deterministic deadline scan candidates: non-DONE tasks with a due date at or before the
 	 * due-soon cutoff (this covers both already-overdue and due-soon-within-window tasks in one
 	 * bounded, paged query; {@link com.saga.be.service.task.TaskDeadlinePolicy} classifies each row).
+	 * The scan runs outside a transaction, so the project, course and assignee it reads are fetched here.
 	 */
 	@Query(
-			"""
+			value = """
 			select t
 			from Task t
+			left join fetch t.project p
+			left join fetch p.course
+			left join fetch t.assigneeStudent s
+			left join fetch s.userAccount
 			where t.deletedAt is null
 			  and t.status <> com.saga.be.entity.enums.TaskStatus.DONE
 			  and t.dueDate is not null
 			  and t.dueDate <= :dueSoonCutoff
 			order by t.dueDate asc, t.id asc
+			""",
+			countQuery = """
+			select count(t)
+			from Task t
+			where t.deletedAt is null
+			  and t.status <> com.saga.be.entity.enums.TaskStatus.DONE
+			  and t.dueDate is not null
+			  and t.dueDate <= :dueSoonCutoff
 			""")
 	Page<Task> findDeadlineScanCandidates(@Param("dueSoonCutoff") LocalDateTime dueSoonCutoff, Pageable pageable);
 

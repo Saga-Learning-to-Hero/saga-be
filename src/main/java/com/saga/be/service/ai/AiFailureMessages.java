@@ -15,12 +15,12 @@ public final class AiFailureMessages {
 	private static final Text TIMEOUT = new Text(
 			"AI phản hồi quá lâu",
 			"Nhà cung cấp AI không trả kết quả trong thời gian chờ.",
-			"Commit hoặc task có nhiều nội dung (ví dụ commit merge pull request) dễ bị quá thời gian. Hãy thử lại sau ít phút.",
+			"Commit có diff lớn hoặc model đang chậm dễ bị quá thời gian. Hãy thử lại sau ít phút, hoặc đổi sang model nhanh hơn.",
 			true);
 	private static final Text RESULT_INVALID = new Text(
 			"Kết quả AI không hợp lệ",
 			"AI trả về kết quả sai định dạng hoặc dẫn tới dữ liệu không có trong bằng chứng, nên SAGA không lưu kết quả này.",
-			"Hãy thử lại. Nếu lỗi lặp lại, giảng viên nên chọn model mạnh hơn trong cài đặt AI của lớp.",
+			"Hãy thử lại. Nếu lỗi lặp lại, hãy đổi sang model khác: leader đổi trong key AI của nhóm, hoặc giảng viên đổi trong cài đặt AI của lớp.",
 			true);
 	private static final Text QUOTA = new Text(
 			"Key AI đã hết hạn mức",
