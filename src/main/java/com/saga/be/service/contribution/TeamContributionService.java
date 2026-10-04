@@ -28,6 +28,7 @@ import com.saga.be.repository.PeerReviewRepository;
 import com.saga.be.repository.StudentProfileRepository;
 import com.saga.be.repository.TaskAttachmentRepository;
 import com.saga.be.repository.TaskFileRepository;
+import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
 import com.saga.be.repository.TaskWebLinkRepository;
 import com.saga.be.repository.TeamMemberRepository;
@@ -67,6 +68,7 @@ public class TeamContributionService {
 	private final TaskAttachmentRepository attachments;
 	private final TaskFileRepository uploadedFiles;
 	private final TaskWebLinkRepository webLinks;
+	private final TaskGitCommitLinkRepository commitLinks;
 	private final PeerReviewRepository peerReviews;
 	private final ContributionOverrideRepository overrides;
 	private final StudentProfileRepository students;
@@ -80,6 +82,7 @@ public class TeamContributionService {
 			TaskAttachmentRepository attachments,
 			TaskFileRepository uploadedFiles,
 			TaskWebLinkRepository webLinks,
+			TaskGitCommitLinkRepository commitLinks,
 			PeerReviewRepository peerReviews,
 			ContributionOverrideRepository overrides,
 			StudentProfileRepository students,
@@ -91,6 +94,7 @@ public class TeamContributionService {
 		this.attachments = attachments;
 		this.uploadedFiles = uploadedFiles;
 		this.webLinks = webLinks;
+		this.commitLinks = commitLinks;
 		this.peerReviews = peerReviews;
 		this.overrides = overrides;
 		this.students = students;
@@ -208,7 +212,14 @@ public class TeamContributionService {
 				evidenced.add(file.getTask().getId());
 			}
 		}
-		List<TaskFact> facts = ContributionTaskFacts.from(projectTasks, evidenced);
+		Set<UUID> committed = new HashSet<>();
+		for (Object[] row : commitLinks.countV23LinksByProjectGrouped(project.getId())) {
+			if (row != null && row.length >= 2 && row[0] instanceof UUID taskId && row[1] instanceof Number count
+					&& count.longValue() > 0) {
+				committed.add(taskId);
+			}
+		}
+		List<TaskFact> facts = ContributionTaskFacts.from(projectTasks, evidenced, committed);
 		List<UUID> studentIds = new ArrayList<>(memberByStudent.keySet());
 		List<PeerFact> peers = new ArrayList<>();
 		if (!studentIds.isEmpty()) {
