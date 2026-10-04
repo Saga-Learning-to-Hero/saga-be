@@ -117,8 +117,17 @@ public class LecturerCourseController {
 			@PathVariable UUID courseId,
 			@Parameter(description = "Only CURRENT_SPRINT is supported. Omit to use CURRENT_SPRINT.")
 			@RequestParam(name = "scope", required = false)
-			String scope) {
-		return dashboard.getDashboard(actor(principal), courseId, scope);
+			String scope,
+			@Parameter(description = "Team whose site/sprint is picked; other teams keep their default sprint.")
+			@RequestParam(name = "teamId", required = false)
+			UUID teamId,
+			@Parameter(description = "With teamId: show that team's active sprint on this Jira site.")
+			@RequestParam(name = "jiraIntegrationId", required = false)
+			UUID jiraIntegrationId,
+			@Parameter(description = "With teamId: show exactly this sprint of the team (closed sprints allowed).")
+			@RequestParam(name = "sprintId", required = false)
+			UUID sprintId) {
+		return dashboard.getDashboard(actor(principal), courseId, scope, teamId, jiraIntegrationId, sprintId);
 	}
 
 	private UserAccount actor(SagaUserPrincipal principal) {

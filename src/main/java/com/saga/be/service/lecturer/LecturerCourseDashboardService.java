@@ -4,6 +4,8 @@ import com.saga.be.dto.lecturer.LecturerCourseDashboardResponse;
 import com.saga.be.dto.lecturer.LecturerCourseDashboardResponse.Activity;
 import com.saga.be.dto.lecturer.LecturerCourseDashboardResponse.ActivityDay;
 import com.saga.be.dto.lecturer.LecturerCourseDashboardResponse.Configuration;
+import com.saga.be.dto.lecturer.LecturerCourseDashboardResponse.JiraSourceRef;
+import com.saga.be.dto.lecturer.LecturerCourseDashboardResponse.SprintOption;
 import com.saga.be.dto.lecturer.LecturerCourseDashboardResponse.CurrentSprint;
 import com.saga.be.dto.lecturer.LecturerCourseDashboardResponse.PeerReview;
 import com.saga.be.dto.lecturer.LecturerCourseDashboardResponse.PreviousSprintComparison;
@@ -171,6 +173,18 @@ public class LecturerCourseDashboardService {
 
 	@Transactional(readOnly = true)
 	public LecturerCourseDashboardResponse getDashboard(UserAccount actor, UUID courseId, String scopeRaw) {
+		return getDashboard(actor, courseId, scopeRaw, null, null, null);
+	}
+
+	/**
+	 * {@code teamId} with {@code jiraIntegrationId} shows that team's active sprint on that Jira site;
+	 * with {@code sprintId} it shows exactly that sprint (closed ones too). Other teams, and a team
+	 * without a pick, show their default: the active sprint with the most tasks among their connected
+	 * sites. Sites are never added together; a sprint is identified by its UUID, never by name.
+	 */
+	@Transactional(readOnly = true)
+	public LecturerCourseDashboardResponse getDashboard(
+			UserAccount actor, UUID courseId, String scopeRaw, UUID pickTeamId, UUID pickSourceId, UUID pickSprintId) {
 		requireNotAdmin(actor);
 		DashboardScope scope = parseScope(scopeRaw);
 		Course course = authorization.requireCourse(actor, courseId);
@@ -207,11 +221,36 @@ public class LecturerCourseDashboardService {
 			UUID projectId = sprint.getJiraIntegration().getProject().getId();
 			sprintsByProject.computeIfAbsent(projectId, id -> new ArrayList<>()).add(sprint);
 		}
+		Map<UUID, List<JiraIntegration>> sourcesByProject = new HashMap<>();
+		if (!projectIds.isEmpty()) {
+			for (JiraIntegration source : jiraIntegrations.findByProject_IdIn(projectIds)) {
+				if (source.getProject() != null) {
+					sourcesByProject.computeIfAbsent(source.getProject().getId(), id -> new ArrayList<>()).add(source);
+				}
+			}
+		}
+		UUID selectedProject = selectedProject(teamRows, pickTeamId, pickSourceId, pickSprintId);
+		Set<UUID> activeIds = new LinkedHashSet<>();
+		for (Sprint sprint : sprintRows) {
+			if (isActive(sprint)) {
+				activeIds.add(sprint.getId());
+			}
+		}
+		Map<UUID, long[]> activeTaskCounts = taskBuckets(activeIds);
 		Map<UUID, Sprint> currentByProject = new HashMap<>();
-		for (Map.Entry<UUID, List<Sprint>> entry : sprintsByProject.entrySet()) {
-			Sprint current = pickCurrent(entry.getValue());
+		Map<UUID, Sprint> previousByProject = new HashMap<>();
+		for (UUID projectId : projectIds) {
+			List<Sprint> list = sprintsByProject.getOrDefault(projectId, List.of());
+			boolean picked = projectId.equals(selectedProject);
+			Sprint current = picked
+					? selectedSprint(list, sourcesByProject.getOrDefault(projectId, List.of()), pickSourceId, pickSprintId, activeTaskCounts)
+					: defaultSprint(list, activeTaskCounts);
 			if (current != null) {
-				currentByProject.put(entry.getKey(), current);
+				currentByProject.put(projectId, current);
+				Sprint previous = pickPrevious(sameSource(list, current), current);
+				if (previous != null) {
+					previousByProject.put(projectId, previous);
+				}
 			}
 		}
 
@@ -219,11 +258,8 @@ public class LecturerCourseDashboardService {
 		for (Sprint sprint : currentByProject.values()) {
 			sprintIds.add(sprint.getId());
 		}
-		for (List<Sprint> list : sprintsByProject.values()) {
-			Sprint previous = pickPrevious(list, pickCurrent(list));
-			if (previous != null) {
-				sprintIds.add(previous.getId());
-			}
+		for (Sprint sprint : previousByProject.values()) {
+			sprintIds.add(sprint.getId());
 		}
 
 		Map<UUID, long[]> tasksBySprint = taskBuckets(sprintIds);
@@ -292,7 +328,10 @@ public class LecturerCourseDashboardService {
 					reviewsBySprint,
 					mode,
 					now,
-					nowInstant);
+					nowInstant,
+					previousByProject,
+					sourcesByProject,
+					selectedProject);
 			cards.add(card);
 			if (card.projectId() == null) {
 				withoutProject++;
@@ -381,7 +420,10 @@ public class LecturerCourseDashboardService {
 			Map<UUID, List<ReviewRow>> reviewsBySprint,
 			ContributionConfigMode mode,
 			LocalDateTime now,
-			Instant nowInstant) {
+			Instant nowInstant,
+			Map<UUID, Sprint> previousByProject,
+			Map<UUID, List<JiraIntegration>> sourcesByProject,
+			UUID selectedProject) {
 		Project project = team.getProject();
 		UUID projectId = project == null ? null : project.getId();
 		int memberCount = roster.size();
@@ -423,11 +465,14 @@ public class LecturerCourseDashboardService {
 							null,
 							null,
 							List.of())),
-					null);
+					null,
+					null,
+					List.of(),
+					List.of());
 		}
 
 		Sprint current = currentByProject.get(projectId);
-		Sprint previous = pickPrevious(sprintsByProject.getOrDefault(projectId, List.of()), current);
+		Sprint previous = previousByProject.get(projectId);
 		CurrentSprint currentDto = current == null ? null : toCurrentSprint(current, now);
 		Progress progress = current == null
 				? null
@@ -506,7 +551,10 @@ public class LecturerCourseDashboardService {
 						peer == null ? null : peer.expectedReviews(),
 						peer == null ? null : peer.submittedReviews(),
 						pending)),
-				null);
+				null,
+				projectId.equals(selectedProject) ? "SELECTED" : "DEFAULT",
+				sourceRefs(sourcesByProject.getOrDefault(projectId, List.of())),
+				sprintOptions(sprintsByProject.getOrDefault(projectId, List.of())));
 	}
 
 	private static CurrentSprint toCurrentSprint(Sprint sprint, LocalDateTime now) {
@@ -516,7 +564,121 @@ public class LecturerCourseDashboardService {
 				sprint.getState() == null ? null : sprint.getState().toUpperCase(),
 				toDate(sprint.getStartDate()),
 				toDate(sprint.getEndDate()),
-				elapsedPercent(sprint.getStartDate(), sprint.getEndDate(), now));
+				elapsedPercent(sprint.getStartDate(), sprint.getEndDate(), now),
+				sprint.getJiraIntegration() == null ? null : sourceRef(sprint.getJiraIntegration()));
+	}
+
+	static final int SPRINT_OPTION_LIMIT = 30;
+
+	/** The project of the picked team; validates that the pick belongs to this course and that team. */
+	private static UUID selectedProject(List<Team> teamRows, UUID teamId, UUID jiraIntegrationId, UUID sprintId) {
+		if (teamId == null) {
+			if (jiraIntegrationId != null || sprintId != null) {
+				throw invalidSelection("teamId is required to pick a site or a sprint.");
+			}
+			return null;
+		}
+		Team team = teamRows.stream().filter(row -> teamId.equals(row.getId())).findFirst()
+				.orElseThrow(() -> invalidSelection("The team is not in this course."));
+		if (team.getProject() == null) {
+			if (jiraIntegrationId != null || sprintId != null) {
+				throw invalidSelection("The team has no project yet.");
+			}
+			return null;
+		}
+		return team.getProject().getId();
+	}
+
+	/** The lecturer's pick for one team: a given sprint, or the active sprint of a given site. */
+	private static Sprint selectedSprint(
+			List<Sprint> list, List<JiraIntegration> sources, UUID jiraIntegrationId, UUID sprintId, Map<UUID, long[]> activeTaskCounts) {
+		if (jiraIntegrationId != null && sources.stream().noneMatch(source -> jiraIntegrationId.equals(source.getId()))) {
+			throw invalidSelection("The Jira site does not belong to this team's project.");
+		}
+		if (sprintId != null) {
+			Sprint sprint = list.stream().filter(row -> sprintId.equals(row.getId())).findFirst()
+					.orElseThrow(() -> invalidSelection("The sprint does not belong to this team's project."));
+			if (jiraIntegrationId != null && !jiraIntegrationId.equals(sourceId(sprint))) {
+				throw invalidSelection("The sprint does not belong to the chosen Jira site.");
+			}
+			return sprint;
+		}
+		if (jiraIntegrationId != null) {
+			return mostTasks(list.stream().filter(sprint -> isActive(sprint) && jiraIntegrationId.equals(sourceId(sprint))).toList(),
+					activeTaskCounts);
+		}
+		return defaultSprint(list, activeTaskCounts);
+	}
+
+	/**
+	 * No pick: the active sprint with the most tasks among the project's connected sites (a revoked
+	 * or disconnected site's sprint is history, never "current"). Ties keep the latest start.
+	 */
+	private static Sprint defaultSprint(List<Sprint> list, Map<UUID, long[]> activeTaskCounts) {
+		return mostTasks(list.stream().filter(sprint -> isActive(sprint) && sourceConnected(sprint)).toList(), activeTaskCounts);
+	}
+
+	/** {@code candidates} come newest first, so the first of equal counts is the latest. */
+	private static Sprint mostTasks(List<Sprint> candidates, Map<UUID, long[]> activeTaskCounts) {
+		Sprint best = null;
+		long bestCount = -1;
+		for (Sprint sprint : candidates) {
+			long[] bucket = activeTaskCounts.get(sprint.getId());
+			long count = bucket == null ? 0 : bucket[0];
+			if (count > bestCount) {
+				best = sprint;
+				bestCount = count;
+			}
+		}
+		return best;
+	}
+
+	private static List<Sprint> sameSource(List<Sprint> list, Sprint current) {
+		UUID source = sourceId(current);
+		return list.stream().filter(sprint -> java.util.Objects.equals(source, sourceId(sprint))).toList();
+	}
+
+	private static boolean isActive(Sprint sprint) {
+		return sprint.getState() != null && sprint.getState().equalsIgnoreCase("active");
+	}
+
+	private static boolean sourceConnected(Sprint sprint) {
+		JiraIntegration source = sprint.getJiraIntegration();
+		return source == null
+				|| source.getConnectionStatus() == null
+				|| (source.getConnectionStatus() != com.saga.be.entity.enums.IntegrationStatus.REVOKED
+						&& source.getConnectionStatus() != com.saga.be.entity.enums.IntegrationStatus.DISCONNECTED);
+	}
+
+	private static UUID sourceId(Sprint sprint) {
+		return sprint.getJiraIntegration() == null ? null : sprint.getJiraIntegration().getId();
+	}
+
+	private static JiraSourceRef sourceRef(JiraIntegration source) {
+		return new JiraSourceRef(source.getId(), source.getSiteName(), source.getProjectKey(),
+				source.getConnectionStatus() == null ? null : source.getConnectionStatus().name());
+	}
+
+	private static List<JiraSourceRef> sourceRefs(List<JiraIntegration> sources) {
+		return sources.stream()
+				.sorted(java.util.Comparator.comparing((JiraIntegration source) ->
+								source.getConnectionStatus() != com.saga.be.entity.enums.IntegrationStatus.ACTIVE)
+						.thenComparing(source -> source.getProjectKey() == null ? "" : source.getProjectKey()))
+				.map(LecturerCourseDashboardService::sourceRef)
+				.toList();
+	}
+
+	private static List<SprintOption> sprintOptions(List<Sprint> sprints) {
+		return sprints.stream()
+				.limit(SPRINT_OPTION_LIMIT)
+				.map(sprint -> new SprintOption(sprint.getId(), sprint.getName(),
+						sprint.getState() == null ? null : sprint.getState().toUpperCase(),
+						toDate(sprint.getStartDate()), toDate(sprint.getEndDate()), sourceId(sprint)))
+				.toList();
+	}
+
+	private static AcademicException invalidSelection(String message) {
+		return new AcademicException(AcademicErrorCode.INVALID_DASHBOARD_SELECTION, HttpStatus.BAD_REQUEST, message);
 	}
 
 	private static Progress toProgress(

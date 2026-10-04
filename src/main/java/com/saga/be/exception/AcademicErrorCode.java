@@ -83,5 +83,7 @@ public enum AcademicErrorCode {
 	TEAM_LEADER_REMOVAL_REQUIRES_REASSIGNMENT,
 	PEER_REVIEW_FORBIDDEN,
 	PEER_REVIEW_INVALID,
-	INVALID_DASHBOARD_SCOPE
+	INVALID_DASHBOARD_SCOPE,
+	/** teamId / jiraIntegrationId / sprintId do not belong together or to this course. */
+	INVALID_DASHBOARD_SELECTION
 }

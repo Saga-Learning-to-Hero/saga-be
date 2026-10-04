@@ -72,7 +72,20 @@ public record LecturerCourseDashboardResponse(
 			PreviousSprintComparison previousSprintComparison,
 			Risk risk,
 			@Schema(description = "Always null. This endpoint does not join notification history.")
-			Reminder reminder) {}
+			Reminder reminder,
+			@Schema(description = "SELECTED when the lecturer picked this team's site or sprint, DEFAULT otherwise; null without a project.")
+			String sprintSelection,
+			@Schema(description = "This team's Jira sites, for the site picker (active ones first).")
+			List<JiraSourceRef> jiraSources,
+			@Schema(description = "This team's sprints across its sites, newest first, for the sprint picker.")
+			List<SprintOption> sprintOptions) {}
+
+	/** One Jira site of a project. */
+	public record JiraSourceRef(UUID jiraIntegrationId, String siteName, String projectKey, String connectionStatus) {}
+
+	/** One sprint a lecturer can pick; jiraIntegrationId tells which site it belongs to. */
+	public record SprintOption(
+			UUID sprintId, String sprintName, String state, LocalDate startDate, LocalDate endDate, UUID jiraIntegrationId) {}
 
 	public record CurrentSprint(
 			UUID sprintId,
@@ -80,7 +93,9 @@ public record LecturerCourseDashboardResponse(
 			String state,
 			LocalDate startDate,
 			LocalDate endDate,
-			Double elapsedPercent) {}
+			Double elapsedPercent,
+			@Schema(description = "The Jira site this sprint belongs to.")
+			JiraSourceRef source) {}
 
 	public record Progress(
 			long totalTasks,

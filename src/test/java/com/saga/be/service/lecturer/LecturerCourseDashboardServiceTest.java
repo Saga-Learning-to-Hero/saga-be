@@ -256,6 +256,109 @@ class LecturerCourseDashboardServiceTest {
 				});
 	}
 
+	// ------------------------------------------------------------------ site / sprint picking
+
+	private record TwoSites(UUID projectId, Team team, Sprint saga5, Sprint sg2, Sprint sg1, Sprint oldActive, JiraIntegration saga, JiraIntegration sg) {}
+
+	/** One team, two connected sites with one active sprint each, plus a revoked site still showing an "active" sprint. */
+	private TwoSites twoSites(UserAccount lecturer) {
+		Course course = course();
+		when(authorization.requireCourse(lecturer, courseId)).thenReturn(course);
+		Project project = project();
+		Team team = team(1, "SAGA Team", project);
+		when(teams.findFetchedByCourse_IdOrderByTeamNoAsc(courseId)).thenReturn(List.of(team));
+		stubProjectReads(project.getId());
+		LocalDateTime now = LocalDateTime.ofInstant(NOW, ZoneOffset.UTC);
+		Sprint saga5 = sprint(project, "active", "SAGA Sprint 5", now.minusDays(10), now.plusDays(4));
+		Sprint sg2 = sprint(project, "active", "SG Sprint 2", now.minusDays(2), now.plusDays(12));
+		Sprint sg1 = sprint(project, "closed", "SG Sprint 1", now.minusDays(16), now.minusDays(3));
+		sg1.setJiraIntegration(sg2.getJiraIntegration());
+		Sprint oldActive = sprint(project, "active", "Old Sprint 9", now.minusDays(1), now.plusDays(13));
+		JiraIntegration saga = saga5.getJiraIntegration();
+		saga.setProjectKey("SAGA");
+		saga.setSiteName("old-site");
+		saga.setConnectionStatus(com.saga.be.entity.enums.IntegrationStatus.ACTIVE);
+		JiraIntegration sg = sg2.getJiraIntegration();
+		sg.setProjectKey("SG");
+		sg.setSiteName("new-site");
+		sg.setConnectionStatus(com.saga.be.entity.enums.IntegrationStatus.ACTIVE);
+		oldActive.getJiraIntegration().setProjectKey("OLD");
+		oldActive.getJiraIntegration().setConnectionStatus(com.saga.be.entity.enums.IntegrationStatus.REVOKED);
+		// newest first, like the repository
+		when(sprints.findActiveByProjectIdIn(List.of(project.getId()))).thenReturn(List.of(oldActive, sg2, saga5, sg1));
+		lenient().when(jiraIntegrations.findByProject_IdIn(List.of(project.getId())))
+				.thenReturn(List.of(oldActive.getJiraIntegration(), sg, saga));
+		lenient().when(tasks.countGroupedBySprintIdsAndStatus(any())).thenReturn(List.<Object[]>of(
+				new Object[] {saga5.getId(), TaskStatus.TODO, 12L},
+				new Object[] {sg2.getId(), TaskStatus.DONE, 1L},
+				new Object[] {oldActive.getId(), TaskStatus.TODO, 40L},
+				new Object[] {sg1.getId(), TaskStatus.DONE, 8L}));
+		lenient().when(tasks.countOverdueBySprintIds(any(), any())).thenReturn(List.of());
+		lenient().when(tasks.findDoneTaskIdsBySprintIds(any())).thenReturn(List.of());
+		lenient().when(links.findLinkedCommitAndTaskIdsBySprintIds(any())).thenReturn(List.of());
+		lenient().when(peerReviews.findSubmittedRowsBySprintIds(any())).thenReturn(List.of());
+		return new TwoSites(project.getId(), team, saga5, sg2, sg1, oldActive, saga, sg);
+	}
+
+	@Test
+	void withoutAPickATeamShowsTheActiveSprintWithMostTasksOnAConnectedSiteAndListsItsChoices() {
+		UserAccount lecturer = actor(AccountRole.LECTURER);
+		TwoSites data = twoSites(lecturer);
+
+		TeamCard card = service.getDashboard(lecturer, courseId, null).teams().getFirst();
+
+		// the revoked site's "active" sprint has more tasks but is history; SAGA Sprint 5 beats SG Sprint 2
+		assertThat(card.currentSprint().sprintId()).isEqualTo(data.saga5().getId());
+		assertThat(card.currentSprint().source().projectKey()).isEqualTo("SAGA");
+		assertThat(card.currentSprint().source().jiraIntegrationId()).isEqualTo(data.saga().getId());
+		assertThat(card.progress().totalTasks()).isEqualTo(12);
+		assertThat(card.sprintSelection()).isEqualTo("DEFAULT");
+		assertThat(card.jiraSources()).extracting(source -> source.projectKey()).containsExactly("SAGA", "SG", "OLD");
+		assertThat(card.sprintOptions()).extracting(option -> option.sprintName())
+				.containsExactly("Old Sprint 9", "SG Sprint 2", "SAGA Sprint 5", "SG Sprint 1");
+		assertThat(card.sprintOptions().get(1).jiraIntegrationId()).isEqualTo(data.sg().getId());
+	}
+
+	@Test
+	void pickingASiteShowsItsActiveSprintAndPickingASprintShowsExactlyThatOneWithItsOwnSitesPrevious() {
+		UserAccount lecturer = actor(AccountRole.LECTURER);
+		TwoSites data = twoSites(lecturer);
+
+		TeamCard bySite = service.getDashboard(lecturer, courseId, null, data.team().getId(), data.sg().getId(), null)
+				.teams().getFirst();
+		assertThat(bySite.currentSprint().sprintId()).isEqualTo(data.sg2().getId());
+		assertThat(bySite.progress().totalTasks()).isEqualTo(1);
+		assertThat(bySite.sprintSelection()).isEqualTo("SELECTED");
+		// previous comparison stays on the same site: SG Sprint 1, not a SAGA sprint
+		assertThat(bySite.previousSprintComparison()).isNotNull();
+
+		TeamCard closed = service.getDashboard(lecturer, courseId, null, data.team().getId(), null, data.sg1().getId())
+				.teams().getFirst();
+		assertThat(closed.currentSprint().sprintId()).isEqualTo(data.sg1().getId());
+		assertThat(closed.currentSprint().state()).isEqualTo("CLOSED");
+		assertThat(closed.progress().done()).isEqualTo(8);
+	}
+
+	@Test
+	void aPickThatDoesNotBelongTogetherIsRejected() {
+		UserAccount lecturer = actor(AccountRole.LECTURER);
+		TwoSites data = twoSites(lecturer);
+		UUID team = data.team().getId();
+
+		assertSelectionRejected(() -> service.getDashboard(lecturer, courseId, null, null, null, data.sg2().getId()));
+		assertSelectionRejected(() -> service.getDashboard(lecturer, courseId, null, UUID.randomUUID(), null, null));
+		assertSelectionRejected(() -> service.getDashboard(lecturer, courseId, null, team, UUID.randomUUID(), null));
+		assertSelectionRejected(() -> service.getDashboard(lecturer, courseId, null, team, null, UUID.randomUUID()));
+		assertSelectionRejected(() -> service.getDashboard(lecturer, courseId, null, team, data.saga().getId(), data.sg2().getId()));
+	}
+
+	private static void assertSelectionRejected(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+		assertThatThrownBy(call)
+				.isInstanceOf(AcademicException.class)
+				.extracting(ex -> ((AcademicException) ex).getCode())
+				.isEqualTo(AcademicErrorCode.INVALID_DASHBOARD_SELECTION);
+	}
+
 	private void stubProjectReads(UUID projectId) {
 		lenient().when(commits.findProjectIdAndIdAndCommittedAtByProjectIds(List.of(projectId))).thenReturn(List.of());
 		lenient().when(tasks.findProjectIdAndCreatedAtByProjectIds(List.of(projectId))).thenReturn(List.of());

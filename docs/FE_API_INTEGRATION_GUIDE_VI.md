@@ -1946,6 +1946,27 @@ GET  /api/lecturer/delay-cases?status=...         -> hàng chờ của giảng v
 
 Xoá / thay nguồn Jira bằng reset: project có hồ sơ trễ hạn được coi như có **bằng chứng cần bảo vệ** (giống phiên làm việc) → không reset được; dùng failover.
 
+## 28e. Dashboard giảng viên: chọn site và sprint của từng nhóm
+
+`GET /api/lecturer/courses/{courseId}/dashboard?teamId=&jiraIntegrationId=&sprintId=` — 3 tham số đều tuỳ chọn, **không phải gọi thêm API theo từng nhóm**:
+
+| Tham số | Ý nghĩa |
+|---|---|
+| (không truyền) | Mỗi nhóm hiện sprint **mặc định**: sprint đang chạy (`active`) **có nhiều task nhất** trong các site đang kết nối (site đã ngắt bị bỏ qua). Không bao giờ cộng gộp 2 site |
+| `teamId` + `jiraIntegrationId` | Nhóm đó hiện sprint đang chạy của **site đã chọn** (không có sprint đang chạy → `currentSprint = null`) |
+| `teamId` + `sprintId` | Nhóm đó hiện **đúng sprint đã chọn**, kể cả sprint đã đóng (xem lại) |
+
+Các nhóm khác vẫn hiện sprint mặc định; KPI tổng lớp tính theo sprint đang hiện của từng nhóm.
+
+Mỗi `teams[]` có thêm (chỉ thêm field, không phá client cũ):
+- `currentSprint.source`: `{ jiraIntegrationId, siteName, projectKey, connectionStatus }` — sprint đang hiện thuộc site nào → ghi "Sprint 5 · site SAGA".
+- `jiraSources[]`: các site của nhóm (site đang kết nối trước) → dropdown **Site**.
+- `sprintOptions[]`: `{ sprintId, sprintName, state, startDate, endDate, jiraIntegrationId }`, mới nhất trước, tối đa 30 → dropdown **Sprint** (lọc theo `jiraIntegrationId` của site đang chọn).
+- `sprintSelection`: `SELECTED` khi nhóm đang hiện theo lựa chọn của giảng viên, `DEFAULT` khi tự chọn.
+- `previousSprintComparison` luôn so với sprint trước **trong cùng site**.
+
+Lỗi: `INVALID_DASHBOARD_SELECTION` (400) khi chọn site/sprint mà thiếu `teamId`, nhóm không thuộc lớp, site hoặc sprint không thuộc dự án của nhóm, hoặc sprint không thuộc site đã chọn.
+
 ## 28d. Tự động chuyển nguồn Jira khi một site chết
 
 Dự án có **từ 2 site Jira ACTIVE** trở lên: BE dò mỗi 10 phút (gọi nhẹ vào project Jira của từng site). Một site bị coi là **chết** khi liên tục trả lời kiểu "không còn" (401 / 403 / 404, token bị thu hồi hoặc không làm mới được) **ít nhất 1 giờ và ít nhất 3 lần dò**; timeout / lỗi 5xx không tính, một lần dò thành công xoá chuỗi lỗi. Chỉ chuyển khi site đích **trả lời bình thường trong cùng lượt** (cả 2 site cùng lỗi → không làm gì).
