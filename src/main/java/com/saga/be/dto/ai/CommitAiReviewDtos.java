@@ -2,6 +2,7 @@ package com.saga.be.dto.ai;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -107,7 +108,7 @@ public final class CommitAiReviewDtos {
 			@Schema(description = "Key the next review would use: TEAM | COURSE | NONE") String keySource,
 			@Schema(description = "The caller may attach/detach tasks by hand (commit author or team leader)") boolean canManageLinks,
 			UUID analysisId,
-			LocalDateTime reviewedAt,
+			@Schema(description = "When the review finished, with its +07:00 offset (Vietnam time)") OffsetDateTime reviewedAt,
 			String provider,
 			String modelId,
 			MessageReview messageReview,

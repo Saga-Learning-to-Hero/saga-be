@@ -257,7 +257,9 @@ class CommitAiReviewServiceTest {
 			assertThat(linked.canUnlink()).isFalse();
 		});
 		assertThat(detail.provider()).isEqualTo("GEMINI");
-		assertThat(detail.reviewedAt()).isEqualTo(LocalDateTime.of(2026, 10, 4, 21, 0));
+		assertThat(detail.reviewedAt().toInstant())
+				.isEqualTo(LocalDateTime.of(2026, 10, 4, 21, 0).atZone(java.time.ZoneId.systemDefault()).toInstant());
+		assertThat(detail.reviewedAt().getOffset()).isEqualTo(java.time.ZoneOffset.ofHours(7));
 		assertThat(detail.canRequestReview()).isTrue();
 		assertThat(detail.keySource()).isEqualTo("TEAM");
 		assertThat(detail.failure()).isNull();

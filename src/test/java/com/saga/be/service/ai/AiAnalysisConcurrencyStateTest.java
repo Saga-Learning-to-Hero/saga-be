@@ -134,6 +134,36 @@ class AiAnalysisConcurrencyStateTest {
 	}
 
 	@Test
+	void recoveryReEnqueuingARunStillWaitingAddsNoCopy_onceItRanItCanBeEnqueuedAgain() {
+		AiAnalysisExecutionService execution = mock(AiAnalysisExecutionService.class);
+		AiAnalysisStateService executionState = mock(AiAnalysisStateService.class);
+		List<Runnable> queue = new java.util.ArrayList<>();
+		AiAnalysisExecutor dispatcher = new AiAnalysisExecutor(queue::add, execution, executionState);
+		UUID runId = UUID.randomUUID();
+
+		dispatcher.enqueue(runId);
+		dispatcher.enqueue(runId);
+		dispatcher.enqueue(runId);
+		assertThat(queue).hasSize(1);
+
+		queue.getFirst().run();
+		verify(execution).execute(runId);
+		assertThat(dispatcher.pendingCount()).isZero();
+		dispatcher.enqueue(runId);
+		assertThat(queue).hasSize(2);
+	}
+
+	@Test
+	void aRejectedRunIsNotRememberedAsWaiting() {
+		AiAnalysisExecutionService execution = mock(AiAnalysisExecutionService.class);
+		AiAnalysisStateService executionState = mock(AiAnalysisStateService.class);
+		AiAnalysisExecutor dispatcher = new AiAnalysisExecutor(command -> { throw new RejectedExecutionException(); }, execution, executionState);
+		UUID runId = UUID.randomUUID();
+		dispatcher.enqueue(runId);
+		assertThat(dispatcher.pendingCount()).isZero();
+	}
+
+	@Test
 	void queueRejectionOnlyTransitionsAStillQueuedRun() {
 		UUID runId = UUID.randomUUID();
 		when(runs.failQueued(eq(runId), eq("AI_QUEUE_CAPACITY_EXCEEDED"), any())).thenReturn(1);

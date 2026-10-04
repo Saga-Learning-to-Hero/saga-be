@@ -182,7 +182,7 @@ public class CommitAiReviewService {
 				keySource,
 				canManageLinks,
 				run == null ? null : run.getId(),
-				run == null ? null : run.getCompletedAt(),
+				run == null ? null : vietnamTime(run.getCompletedAt()),
 				decision == null || decision.getAiProvider() == null ? null : decision.getAiProvider().name(),
 				decision == null ? null : decision.getModelId(),
 				result == null ? null : CommitAiReviewRules.presentMessage(
@@ -295,6 +295,14 @@ public class CommitAiReviewService {
 			keys.computeIfAbsent(link.getGitCommit().getId(), ignored -> new ArrayList<>()).add(link.getTask().getExternalKey());
 		}
 		return keys;
+	}
+
+	private static final java.time.ZoneId VIETNAM = java.time.ZoneId.of("Asia/Ho_Chi_Minh");
+
+	/** Stored times are the server's local time (UTC on Railway); without an offset the browser read them
+	 * as its own local time, 7 hours off. */
+	static java.time.OffsetDateTime vietnamTime(java.time.LocalDateTime stored) {
+		return stored == null ? null : stored.atZone(java.time.ZoneId.systemDefault()).withZoneSameInstant(VIETNAM).toOffsetDateTime();
 	}
 
 	private Map<UUID, AiAnalysisRun> latestRuns(UUID projectId, List<UUID> commitIds) {
