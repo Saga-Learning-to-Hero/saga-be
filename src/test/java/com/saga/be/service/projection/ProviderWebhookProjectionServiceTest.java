@@ -524,6 +524,57 @@ class ProviderWebhookProjectionServiceTest {
 	}
 
 	@Test
+	void jiraSprint_closedOrStartedReReadsTheSprintsIssuesButOtherSprintEventsDoNot() {
+		com.saga.be.service.sync.JiraSprintIssueRefresher refresher =
+				org.mockito.Mockito.mock(com.saga.be.service.sync.JiraSprintIssueRefresher.class);
+		service.setSprintRefresher(refresher);
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		JiraIntegration integration = new JiraIntegration();
+		integration.setId(UUID.randomUUID());
+		integration.setProject(project);
+		integration.setJiraBoardId("68");
+		when(jiraIntegrations.findFetchedActiveByBoardId(IntegrationStatus.ACTIVE, "68")).thenReturn(List.of(integration));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		service.projectJira(receipt(IntegrationProvider.JIRA),
+				"{\"webhookEvent\":\"sprint_closed\",\"sprint\":{\"id\":11,\"name\":\"SG Sprint 1\",\"state\":\"closed\",\"originBoardId\":68}}");
+		service.projectJira(receipt(IntegrationProvider.JIRA),
+				"{\"webhookEvent\":\"sprint_started\",\"sprint\":{\"id\":12,\"name\":\"SG Sprint 2\",\"state\":\"active\",\"originBoardId\":68}}");
+		service.projectJira(receipt(IntegrationProvider.JIRA),
+				"{\"webhookEvent\":\"sprint_updated\",\"sprint\":{\"id\":12,\"name\":\"SG Sprint 2b\",\"originBoardId\":68}}");
+		service.projectJira(receipt(IntegrationProvider.JIRA),
+				"{\"webhookEvent\":\"sprint_deleted\",\"sprint\":{\"id\":13,\"originBoardId\":68}}");
+
+		verify(refresher).refreshAsync(integration.getId(), "11");
+		verify(refresher).refreshAsync(integration.getId(), "12");
+		org.mockito.Mockito.verifyNoMoreInteractions(refresher);
+	}
+
+	@Test
+	void jiraSprint_aRefreshThatCannotBeQueuedStillRecordsTheSprint() {
+		com.saga.be.service.sync.JiraSprintIssueRefresher refresher =
+				org.mockito.Mockito.mock(com.saga.be.service.sync.JiraSprintIssueRefresher.class);
+		org.mockito.Mockito.doThrow(new org.springframework.core.task.TaskRejectedException("full"))
+				.when(refresher).refreshAsync(any(), any());
+		service.setSprintRefresher(refresher);
+		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
+		JiraIntegration integration = new JiraIntegration();
+		integration.setId(UUID.randomUUID());
+		Project project = new Project();
+		project.setId(UUID.randomUUID());
+		integration.setProject(project);
+		when(jiraIntegrations.findFetchedActiveByBoardId(IntegrationStatus.ACTIVE, "68")).thenReturn(List.of(integration));
+		when(receiptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		service.projectJira(receipt,
+				"{\"webhookEvent\":\"sprint_closed\",\"sprint\":{\"id\":11,\"name\":\"SG Sprint 1\",\"state\":\"closed\",\"originBoardId\":68}}");
+
+		verify(tasks).upsertSprint(eq(integration), eq("11"), eq("SG Sprint 1"), eq("closed"), any(), any(), any(), any());
+		assertThat(receipt.getReceiptStatus()).isEqualTo(WebhookReceiptStatus.PROCESSED);
+	}
+
+	@Test
 	void jiraSprint_unrelatedBoardIgnored() {
 		WebhookReceipt receipt = receipt(IntegrationProvider.JIRA);
 		when(jiraIntegrations.findFetchedActiveByBoardId(IntegrationStatus.ACTIVE, "999"))

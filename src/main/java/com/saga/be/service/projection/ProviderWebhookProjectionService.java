@@ -217,6 +217,14 @@ public class ProviderWebhookProjectionService {
 		}
 	}
 
+	private com.saga.be.service.sync.JiraSprintIssueRefresher sprintRefresher;
+
+	/** Optional so hand-built tests keep working; absent means sprint events only update the sprint row. */
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	public void setSprintRefresher(com.saga.be.service.sync.JiraSprintIssueRefresher sprintRefresher) {
+		this.sprintRefresher = sprintRefresher;
+	}
+
 	public void projectJira(WebhookReceipt receipt, String payloadJson) {
 		try {
 			JsonNode root = mapper.readTree(payloadJson);
@@ -487,6 +495,16 @@ public class ProviderWebhookProjectionService {
 			}
 			receipts.markProcessed(receipt, LocalDateTime.now());
 		});
+		// Jira moves a closed sprint's unfinished issues to the next sprint without an issue_updated
+		// event, so re-read the sprint's issues once the sprint row is committed.
+		String event = webhookEvent.toLowerCase(Locale.ROOT);
+		if (!deleted && sprintRefresher != null && (event.equals("sprint_closed") || event.equals("sprint_started"))) {
+			try {
+				sprintRefresher.refreshAsync(match.getId(), sprintId);
+			} catch (RuntimeException ex) {
+				log.warn("jira sprint refresh not queued sprintId={} type={}", sprintId, ex.getClass().getSimpleName());
+			}
+		}
 	}
 
 	private JiraIntegration resolveSprintSource(

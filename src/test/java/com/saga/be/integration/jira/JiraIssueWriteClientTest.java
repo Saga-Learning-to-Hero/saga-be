@@ -283,6 +283,41 @@ class JiraIssueWriteClientTest {
 	}
 
 	@Test
+	void toSummary_carriedOverIssue_takesTheActiveSprintWhateverTheListOrder() {
+		// Jira lists every sprint the issue went through and does not promise their order.
+		for (String sprints : java.util.List.of(
+				"[{\"id\":11,\"name\":\"SG Sprint 1\",\"state\":\"closed\",\"completeDate\":\"2026-10-01T10:00:00.000Z\"},"
+						+ "{\"id\":12,\"name\":\"SG Sprint 2\",\"state\":\"active\"}]",
+				"[{\"id\":12,\"name\":\"SG Sprint 2\",\"state\":\"active\"},"
+						+ "{\"id\":11,\"name\":\"SG Sprint 1\",\"state\":\"closed\",\"completeDate\":\"2026-10-01T10:00:00.000Z\"}]")) {
+			JsonNode issue = readTree("{\"id\":\"500\",\"key\":\"SG-2\",\"fields\":{\"summary\":\"API\",\"customfield_10020\":" + sprints + "}}");
+			IssueSummary summary = JiraIssueWriteClient.toSummary(issue, null, "customfield_10020", true);
+			assertEquals("12", summary.sprintExternalId());
+			assertEquals("SG Sprint 2", summary.sprintName());
+			assertEquals("active", summary.sprintState());
+		}
+	}
+
+	@Test
+	void currentSprint_prefersActiveThenTheNextFutureThenTheLastClosed() {
+		assertEquals("13", JiraIssueWriteClient.currentSprint(readTree(
+				"[{\"id\":14,\"state\":\"future\",\"startDate\":\"2026-10-20T00:00:00.000Z\"},"
+						+ "{\"id\":13,\"state\":\"future\",\"startDate\":\"2026-10-10T00:00:00.000Z\"},"
+						+ "{\"id\":11,\"state\":\"closed\",\"completeDate\":\"2026-10-01T00:00:00.000Z\"}]")).path("id").asText());
+		// all closed (done in the second sprint after it closed): the one that ended last
+		assertEquals("12", JiraIssueWriteClient.currentSprint(readTree(
+				"[{\"id\":12,\"state\":\"closed\",\"completeDate\":\"2026-10-08T00:00:00.000Z\"},"
+						+ "{\"id\":11,\"state\":\"closed\",\"completeDate\":\"2026-10-01T00:00:00.000Z\"}]")).path("id").asText());
+		assertEquals("12", JiraIssueWriteClient.currentSprint(readTree(
+				"[{\"id\":11,\"state\":\"closed\",\"endDate\":\"2026-10-01T00:00:00.000Z\"},"
+						+ "{\"id\":12,\"state\":\"closed\",\"endDate\":\"2026-10-08T00:00:00.000Z\"}]")).path("id").asText());
+		assertEquals("12", JiraIssueWriteClient.currentSprint(readTree(
+				"[{\"id\":12,\"state\":\"active\"},{\"id\":13,\"state\":\"future\"}]")).path("id").asText());
+		// state-less legacy ids: the newest
+		assertEquals("12", JiraIssueWriteClient.currentSprint(readTree("[12, 11]")).asText());
+	}
+
+	@Test
 	void toSummary_missingCustomField_authoritative_marksProvidedWithNullValue() {
 		// Authoritative (bulk/full sync) fetch explicitly requested the field; its absence from
 		// the response is the true current value (cleared), not an unrelated omission.

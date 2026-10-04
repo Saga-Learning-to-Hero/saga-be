@@ -1147,6 +1147,89 @@ public class JiraIssueWriteClient {
 	 * actually carried a value for the dynamically-resolved field — a payload that simply omits
 	 * the field must never be treated as "Jira cleared this field".
 	 */
+	/**
+	 * The sprint an issue belongs to now, out of Jira's sprint list (an unfinished issue carried over
+	 * keeps every sprint it went through). Jira does not promise any order for that list, so the
+	 * choice is by state: the active sprint, else a future one (the earliest to start), else the
+	 * closed one that ended last. Never simply the last element.
+	 */
+	static JsonNode currentSprint(JsonNode sprints) {
+		JsonNode best = null;
+		for (JsonNode sprint : sprints) {
+			if (sprint == null || sprint.isNull()) {
+				continue;
+			}
+			if (best == null || sprintRank(sprint, best) > 0) {
+				best = sprint;
+			}
+		}
+		return best;
+	}
+
+	/** Positive when {@code a} is the better "current" sprint than {@code b}. */
+	private static int sprintRank(JsonNode a, JsonNode b) {
+		int byState = Integer.compare(stateWeight(a), stateWeight(b));
+		if (byState != 0) {
+			return byState;
+		}
+		if (stateWeight(a) == 2) {
+			// two future sprints: the one starting first is next
+			int byStart = compareText(text(b, "startDate"), text(a, "startDate"));
+			if (byStart != 0) {
+				return byStart;
+			}
+			return Long.compare(numericId(b), numericId(a));
+		}
+		// active or closed: the latest one
+		int byEnd = compareText(endOf(a), endOf(b));
+		if (byEnd != 0) {
+			return byEnd;
+		}
+		int byStart = compareText(text(a, "startDate"), text(b, "startDate"));
+		if (byStart != 0) {
+			return byStart;
+		}
+		return Long.compare(numericId(a), numericId(b));
+	}
+
+	private static int stateWeight(JsonNode sprint) {
+		String state = sprint.isObject() ? text(sprint, "state") : null;
+		if (state == null) {
+			return 0;
+		}
+		return switch (state.toLowerCase(java.util.Locale.ROOT)) {
+			case "active" -> 3;
+			case "future" -> 2;
+			case "closed" -> 1;
+			default -> 0;
+		};
+	}
+
+	private static String endOf(JsonNode sprint) {
+		String complete = sprint.isObject() ? text(sprint, "completeDate") : null;
+		return complete != null ? complete : (sprint.isObject() ? text(sprint, "endDate") : null);
+	}
+
+	/** ISO-8601 instants from one Jira site share a format, so text order is time order; null sorts first. */
+	private static int compareText(String a, String b) {
+		if (a == null || b == null) {
+			return a == null ? (b == null ? 0 : -1) : 1;
+		}
+		return a.compareTo(b);
+	}
+
+	private static long numericId(JsonNode sprint) {
+		String id = sprint.isObject() ? text(sprint, "id") : sprint.asText(null);
+		if (id == null && sprint.isObject() && sprint.path("id").canConvertToLong()) {
+			return sprint.path("id").asLong();
+		}
+		try {
+			return id == null ? Long.MIN_VALUE : Long.parseLong(id.trim());
+		} catch (NumberFormatException ex) {
+			return Long.MIN_VALUE;
+		}
+	}
+
 	public static IssueSummary toSummary(JsonNode issue, String storyField, String sprintField, boolean authoritative) {
 		return toSummary(issue, storyField, sprintField, null, authoritative);
 	}
@@ -1186,13 +1269,13 @@ public class JiraIssueWriteClient {
 		String sprintName = null;
 		String sprintState = null;
 		if (sprintNode.isArray() && !sprintNode.isEmpty()) {
-			JsonNode last = sprintNode.get(sprintNode.size() - 1);
-			sprintId = text(last, "id");
-			if (sprintId == null && last != null && last.isNumber()) {
-				sprintId = last.asText();
+			JsonNode current = currentSprint(sprintNode);
+			sprintId = text(current, "id");
+			if (sprintId == null && current != null && current.isNumber()) {
+				sprintId = current.asText();
 			}
-			sprintName = text(last, "name");
-			sprintState = text(last, "state");
+			sprintName = text(current, "name");
+			sprintState = text(current, "state");
 		} else if (sprintNode.isObject()) {
 			sprintId = text(sprintNode, "id");
 			sprintName = text(sprintNode, "name");

@@ -214,9 +214,31 @@ public class JiraOAuthClient {
 			String storyPointsFieldId,
 			String sprintFieldId,
 			String startDateFieldId) {
+		return searchIssues(accessToken, cloudId, projectKey, nextPageToken, maxResults, storyPointsFieldId, sprintFieldId,
+				startDateFieldId, null);
+	}
+
+	/**
+	 * Same search, limited to the issues that are or were in one sprint ({@code sprint = id}) when a
+	 * numeric {@code sprintExternalId} is given -- carried-over issues keep the closed sprint in their
+	 * sprint list, so a closed sprint's query also returns what moved on.
+	 */
+	public IssueSearchPage searchIssues(
+			String accessToken,
+			String cloudId,
+			String projectKey,
+			String nextPageToken,
+			int maxResults,
+			String storyPointsFieldId,
+			String sprintFieldId,
+			String startDateFieldId,
+			String sprintExternalId) {
 		try {
 			int safeMax = Math.max(1, Math.min(maxResults, 100));
-			String jql = "project = \"" + projectKey.replace("\"", "") + "\" ORDER BY updated DESC";
+			String sprintClause = sprintExternalId != null && sprintExternalId.trim().matches("\\d{1,18}")
+					? " AND sprint = " + sprintExternalId.trim()
+					: "";
+			String jql = "project = \"" + projectKey.replace("\"", "") + "\"" + sprintClause + " ORDER BY updated DESC";
 			String fields = "summary,status,issuetype,assignee,updated,created,description,priority,resolution,sprint,parent,labels,duedate"
 					+ (storyPointsFieldId == null || storyPointsFieldId.isBlank() ? "" : "," + storyPointsFieldId)
 					+ (sprintFieldId == null || sprintFieldId.isBlank() || "sprint".equals(sprintFieldId)

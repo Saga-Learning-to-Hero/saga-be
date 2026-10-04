@@ -145,6 +145,24 @@ class JiraOAuthClientTest {
 	}
 
 	@Test
+	void searchIssues_canBeLimitedToOneSprintAndRejectsANonNumericSprint() {
+		server.expect(request -> {
+					String query = java.net.URLDecoder.decode(request.getURI().getRawQuery(), java.nio.charset.StandardCharsets.UTF_8);
+					assertTrue(query.contains("jql=project = \"SAGA\" AND sprint = 12 ORDER BY updated DESC"), query);
+				})
+				.andRespond(withSuccess("{\"issues\":[],\"isLast\":true}", MediaType.APPLICATION_JSON));
+		server.expect(request -> {
+					String query = java.net.URLDecoder.decode(request.getURI().getRawQuery(), java.nio.charset.StandardCharsets.UTF_8);
+					assertFalse(query.contains("sprint ="), query);
+				})
+				.andRespond(withSuccess("{\"issues\":[],\"isLast\":true}", MediaType.APPLICATION_JSON));
+
+		client.searchIssues("token", "cloud-1", "SAGA", null, 50, null, null, null, "12");
+		client.searchIssues("token", "cloud-1", "SAGA", null, 50, null, null, null, "12 OR project = OTHER");
+		server.verify();
+	}
+
+	@Test
 	void searchIssues_passesNextPageToken() {
 		server.expect(request -> {
 					String uri = request.getURI().toString();
