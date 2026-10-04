@@ -42,6 +42,7 @@ Override giảng viên chỉ đụng `% cuối`. `sliceScore` / `sliceContributi
 | `sliceScore` | Slice của **đúng sprint đó**, chưa nhân `P_s`. |
 | `sliceContributionPercentage` | `% slice trong sprint`, chuẩn hóa team = 100, chưa nhân peer sprint. |
 | `contributionPercentage` | `% đóng góp sprint` sau khi nhân `P_s`. Sprint chưa peer: `P_s = 1` → trùng `% slice`. |
+| `peerReviewScore` | `P_s` của thành viên trong sprint (`sao nhận trong sprint / tổng sao sprint`). Chưa ai chấm = `1`. Chỉ hiển thị, không nhân thêm. |
 
 ## 4. Công thức (nhắc lại)
 
@@ -82,7 +83,8 @@ Hai người, một sprint, trọng số mặc định 25/25/25/25. Cả hai tas
       "sprintName": "Sprint 1",
       "sliceScore": 0.75,
       "sliceContributionPercentage": 37.5,
-      "contributionPercentage": 70.5882
+      "contributionPercentage": 70.5882,
+      "peerReviewScore": 0.8
     }
   ]
 }

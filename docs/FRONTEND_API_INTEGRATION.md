@@ -1234,7 +1234,7 @@ POST /api/teams/{teamId}/contribution-override
 { "studentProfileId": "...", "percentage": 40, "reason": "..." }
 ```
 
-Member fields: `sliceScore`, `sliceContributionPercentage` (trước peer), `finalContributionPercentage` (sau peer), `peerReviewScore` (P 0–1, chỉ hiển thị), radar `code/test/document/researchContributionPercentage`, `sprintBreakdowns[]` cùng cặp slice/%.
+Member fields: `sliceScore`, `sliceContributionPercentage` (trước peer), `finalContributionPercentage` (sau peer), `peerReviewScore` (P cả dự án, 0–1, chỉ hiển thị), radar `code/test/document/researchContributionPercentage`, `sprintBreakdowns[]` cùng cặp slice/% và `peerReviewScore` (P của sprint đó, chưa ai chấm = 1).
 
 Task được tính: `DONE` + có sprint + đúng một nhãn `saga:code|test|document|research`. DOCUMENT/RESEARCH cần ≥1 `task_attachment` **hoặc** ≥1 `task_web_link` **hoặc** ≥1 `task_file`. CODE/TEST cần ≥1 commit không phải merge gắn vào đúng task. Số file/link và số commit không tăng điểm. `storyPoint` null → 1.
 
