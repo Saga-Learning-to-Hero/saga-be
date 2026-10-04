@@ -134,7 +134,7 @@ Story point Subtask là thang 1–10 trên trần của cha. Không gửi nhãn 
 
 `6` nghĩa là 60% story point của cha. Đã có một Subtask `6` thì các Subtask còn lại cộng lại tối đa `4`. Vượt 100% hoặc số ngoài 1–10 thì `400 TASK_SUBTASK_PERCENT_INVALID`.
 
-Share chỉ vào điểm khi cả cha và Subtask đó đều `DONE`. Sprint lấy từ cha. Nhãn `saga:*` là của chính Subtask. Task `saga:document` hoặc `saga:research` cần file hoặc link trên Subtask.
+Share của một Subtask vào điểm khi Subtask đó `DONE`. Cha và các Subtask khác chưa xong không chặn share này. Sprint lấy từ cha. Nhãn `saga:*` là của chính Subtask. Task `saga:document` hoặc `saga:research` cần file hoặc link trên Subtask.
 
 ### Cấp loại thẻ
 

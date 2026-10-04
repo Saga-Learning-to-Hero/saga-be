@@ -103,7 +103,7 @@ Cha 10 điểm, Subtask A nhập 6, Subtask B nhập 4:
 | % của cha | 60% | 40% |
 | Share | 6 | 4 |
 
-Share chỉ vào công thức khi **cả cha và Subtask đó đều `DONE`**. B chưa DONE thì B nhận 0, 4 điểm không sang A. Cha chưa DONE thì cả hai nhận 0.
+Share của một Subtask vào công thức khi **Subtask đó `DONE`**. B chưa DONE thì B nhận 0, 4 điểm không sang A. Cha hoặc subtask khác chưa DONE không chặn A.
 
 Assignee của cha không nhận story point cha. Muốn tính công review / quản lý thì tạo một Subtask và gán cho người đó.
 

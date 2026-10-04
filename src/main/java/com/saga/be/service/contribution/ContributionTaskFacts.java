@@ -17,7 +17,8 @@ import java.util.UUID;
 /**
  * Turns project tasks into mixer facts. A Standard item with no Subtask is unchanged. A Standard
  * item with Subtasks does not award its own story points: each Subtask receives
- * {@code parentStoryPoint × (entered / 10)} when both the parent and that Subtask are DONE.
+ * {@code parentStoryPoint × (entered / 10)} when that Subtask is DONE. Sibling Subtasks and the
+ * parent staying open do not hold the share back.
  * Sprint comes from the parent. The {@code saga:*} label is the Subtask's own, so a test
  * Subtask under a code parent scores as test. DOCUMENT/RESEARCH evidence is the Subtask's.
  * CODE/TEST score only when that same task has a linked non-merge commit. An Epic awards nothing.
@@ -80,12 +81,11 @@ public final class ContributionTaskFacts {
 	private static TaskFact subtask(Task parent, Task child, Set<UUID> evidenced, Set<UUID> committed) {
 		Outcome outcome = ReservedContributionMarkerClassifier.classify(TaskLabelParser.parse(child.getLabelsJson()));
 		ContributionCriterion criterion = gate(child, ReservedContributionMarkerClassifier.toCriterion(outcome), evidenced, committed);
-		boolean bothDone = parent.getStatus() == TaskStatus.DONE && child.getStatus() == TaskStatus.DONE;
 		return new TaskFact(
 				child.getAssigneeStudent().getId(),
 				parent.getSprint() == null ? null : parent.getSprint().getId(),
 				parent.getSprint() == null ? null : parent.getSprint().getName(),
-				bothDone ? TaskStatus.DONE : TaskStatus.IN_PROGRESS,
+				child.getStatus(),
 				SubtaskPercentPolicy.share(parent.getStoryPoint(), child.getStoryPoint()),
 				criterion);
 	}

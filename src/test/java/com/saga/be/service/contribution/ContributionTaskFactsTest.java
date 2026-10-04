@@ -48,19 +48,22 @@ class ContributionTaskFactsTest {
 	}
 
 	@Test
-	void unfinishedSubtaskAndUnfinishedParentAwardNothing() {
-		Task parent = standard(PARENT, "P-1", 10, LEADER, "[\"saga:code\"]", TaskStatus.DONE);
+	void aFinishedSubtaskScoresWhileSiblingsAndTheParentAreStillOpen() {
+		Task parent = standard(PARENT, "P-1", 10, LEADER, "[\"saga:code\"]", TaskStatus.IN_PROGRESS);
 		Task a = subtask(CHILD_A, "P-1", 6, STUDENT_A, "[\"saga:code\"]", TaskStatus.DONE);
 		Task b = subtask(CHILD_B, "P-1", 4, STUDENT_B, "[\"saga:code\"]", TaskStatus.IN_PROGRESS);
 
-		List<TaskFact> openChild = ContributionTaskFacts.from(List.of(parent, a, b), Set.of(), Set.of(CHILD_A, CHILD_B));
-		assertThat(openChild).filteredOn(fact -> fact.assigneeStudentId().equals(STUDENT_B))
-				.allMatch(fact -> fact.status() != TaskStatus.DONE);
-		assertThat(points(openChild, STUDENT_A)).isEqualByComparingTo("6");
+		List<TaskFact> facts = ContributionTaskFacts.from(List.of(parent, a, b), Set.of(), Set.of(CHILD_A, CHILD_B));
 
-		parent.setStatus(TaskStatus.IN_PROGRESS);
-		List<TaskFact> openParent = ContributionTaskFacts.from(List.of(parent, a, b), Set.of(), Set.of(CHILD_A, CHILD_B));
-		assertThat(openParent).allMatch(fact -> fact.status() != TaskStatus.DONE);
+		assertThat(facts).noneMatch(fact -> fact.assigneeStudentId().equals(LEADER));
+		assertThat(facts).filteredOn(fact -> fact.assigneeStudentId().equals(STUDENT_A))
+				.singleElement()
+				.satisfies(fact -> {
+					assertThat(fact.status()).isEqualTo(TaskStatus.DONE);
+					assertThat(fact.storyPoint()).isEqualByComparingTo("6");
+				});
+		assertThat(facts).filteredOn(fact -> fact.assigneeStudentId().equals(STUDENT_B))
+				.allMatch(fact -> fact.status() != TaskStatus.DONE);
 	}
 
 	@Test
