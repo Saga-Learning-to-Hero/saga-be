@@ -180,6 +180,7 @@ Sau bước này:
 
 ```text
 peerReviewScore(i) = P(i)
+sprintBreakdowns[].peerReviewScore = P_s(i)
 ```
 
 `finalContribution%` đã bao gồm `P(i)` và đã được chuẩn hóa; client không được

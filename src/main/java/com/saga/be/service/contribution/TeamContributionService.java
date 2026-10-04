@@ -352,7 +352,8 @@ public class TeamContributionService {
 				slice.sprintName(),
 				scale(slice.sliceScore()),
 				scale(slice.sliceContributionPercentage()),
-				scale(slice.contributionPercentage()));
+				scale(slice.contributionPercentage()),
+				scale(slice.peerReviewScore()));
 	}
 
 	private static ContributionSliceWeightsResponse toWeightResponse(ContributionSliceWeights weights) {

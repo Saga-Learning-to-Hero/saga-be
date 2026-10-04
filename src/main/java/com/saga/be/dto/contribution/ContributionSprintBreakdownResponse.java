@@ -8,4 +8,5 @@ public record ContributionSprintBreakdownResponse(
 		String sprintName,
 		BigDecimal sliceScore,
 		BigDecimal sliceContributionPercentage,
-		BigDecimal contributionPercentage) {}
+		BigDecimal contributionPercentage,
+		BigDecimal peerReviewScore) {}
