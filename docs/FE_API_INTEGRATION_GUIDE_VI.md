@@ -1946,6 +1946,18 @@ GET  /api/lecturer/delay-cases?status=...         -> hàng chờ của giảng v
 
 Xoá / thay nguồn Jira bằng reset: project có hồ sơ trễ hạn được coi như có **bằng chứng cần bảo vệ** (giống phiên làm việc) → không reset được; dùng failover.
 
+## 28d. Tự động chuyển nguồn Jira khi một site chết
+
+Dự án có **từ 2 site Jira ACTIVE** trở lên: BE dò mỗi 10 phút (gọi nhẹ vào project Jira của từng site). Một site bị coi là **chết** khi liên tục trả lời kiểu "không còn" (401 / 403 / 404, token bị thu hồi hoặc không làm mới được) **ít nhất 1 giờ và ít nhất 3 lần dò**; timeout / lỗi 5xx không tính, một lần dò thành công xoá chuỗi lỗi. Chỉ chuyển khi site đích **trả lời bình thường trong cùng lượt** (cả 2 site cùng lỗi → không làm gì).
+
+Khi chuyển, BE chạy **đúng luồng failover thủ công** với tư cách trưởng nhóm: ngắt site chết (giữ dữ liệu cũ), tạo các task **chưa DONE** (không gồm subtask, epic, task đã/đang được chuyển) vào **backlog** của site còn sống với loại issue "Task" của site đó, chép tiêu đề / mô tả / story point / label / hạn chót / ngày bắt đầu. **Không chép người được giao** → trưởng nhóm kéo task vào sprint và giao người. Tối đa 200 task một lần.
+
+FE không cần API mới:
+- Cả nhóm nhận thông báo loại `INTEGRATION`: "Đã tự chuyển task sang site Jira …" (hoặc "… đã được ngắt kết nối" khi không có task nào cần chuyển). Nếu chuyển lỗi, trưởng nhóm nhận "Không tự chuyển được task khỏi site Jira …" → dùng màn chuyển nguồn thủ công.
+- Site chết hiện trạng thái `REVOKED` như khi trưởng nhóm tự ngắt; tiến độ chuyển xem bằng `GET /api/projects/{projectId}/integrations/jira-sources/{sourceId}/failover/runs/{runId}` như failover thủ công.
+
+Cấu hình: `SAGA_JIRA_AUTO_FAILOVER_ENABLED` (mặc định `true`), `SAGA_JIRA_AUTO_FAILOVER_PROBE_INTERVAL` (`10m`), `SAGA_JIRA_AUTO_FAILOVER_DEAD_AFTER` (`1h`), `SAGA_JIRA_AUTO_FAILOVER_MIN_FAILED_PROBES` (`3`).
+
 ## 28c. Trợ lý hỏi đáp dự án (Chatbox AI)
 
 Hỏi đáp **chỉ đọc** về **một dự án**: tiến độ sprint, task trễ / sắp đến hạn, hồ sơ trễ hạn, hoạt động của một thành viên, chi tiết một task (gõ mã như `SAGA-12`). **Không** chấm điểm, **không** sửa task, **không** quyết định hồ sơ trễ hạn.

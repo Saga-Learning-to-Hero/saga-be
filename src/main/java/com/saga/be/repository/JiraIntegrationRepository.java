@@ -67,6 +67,10 @@ public interface JiraIntegrationRepository extends JpaRepository<JiraIntegration
 
 	List<JiraIntegration> findAllByProject_IdAndConnectionStatus(UUID projectId, IntegrationStatus status);
 
+	/** Every source in this state, with its project (auto failover health probe). */
+	@Query("select j from JiraIntegration j join fetch j.project where j.connectionStatus = :status")
+	List<JiraIntegration> findByConnectionStatus(@Param("status") IntegrationStatus status);
+
 	List<JiraIntegration> findByProject_IdIn(Collection<UUID> projectIds);
 
 	/**
