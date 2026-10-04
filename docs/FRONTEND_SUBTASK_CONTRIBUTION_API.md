@@ -107,7 +107,7 @@ Share chỉ vào công thức khi **cả cha và Subtask đó đều `DONE`**. B
 
 Assignee của cha không nhận story point cha. Muốn tính công review / quản lý thì tạo một Subtask và gán cho người đó.
 
-Sprint và nhãn `saga:*` lấy từ cha. `saga:document` / `saga:research` cần file hoặc link trên **Subtask**, không cần trên cha. Commit không cộng điểm.
+Sprint lấy từ cha. Nhãn `saga:*` là của chính Subtask: form tạo và sửa Subtask gửi `labels` như task thường (`saga:code`, `saga:test`, `saga:document`, `saga:research`), tối đa một nhãn. Cha `saga:code` vẫn có Subtask `saga:test`. `saga:document` / `saga:research` cần file hoặc link trên **Subtask**, không cần trên cha. Commit không cộng điểm.
 
 Epic không tạo điểm.
 
@@ -123,9 +123,9 @@ Cha đã có ít nhất một Subtask:
 - `requiresDocument` = `false`
 - `status` không phải `MISSING_COMMIT` / `MISSING_DOCUMENT`
 
-File, link và commit nằm trên Subtask. `evidenceCheck` của Subtask dùng nhãn của cha:
+File, link và commit nằm trên Subtask. `evidenceCheck` của Subtask dùng nhãn của chính Subtask:
 
-| Nhãn trên cha | Subtask cần |
+| Nhãn trên Subtask | Subtask cần |
 | --- | --- |
 | `saga:code`, `saga:test` | Commit không phải merge |
 | `saga:document`, `saga:research` | File, link, hoặc attachment |

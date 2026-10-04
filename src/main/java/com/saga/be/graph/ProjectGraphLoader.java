@@ -139,25 +139,17 @@ public class ProjectGraphLoader {
 		}
 		Map<String, UUID> bySourceAndJiraId = jiraIdIndex(projectTasks);
 		Set<String> parentsOfSubtasks = parentsOfSubtasks(projectTasks);
-		Map<String, String> labelsByKey = labelsByKey(projectTasks);
 		List<TaskNode> taskNodes = new ArrayList<>();
 		for (Task task : projectTasks) {
 			JiraParentResolution.Result parent = resolveParent(task, bySourceAndJiraId);
 			int linked = commitCounts.getOrDefault(task.getId(), 0);
-			boolean subtask = "SUBTASK".equals(task.getIssueTypeLevel());
 			String ownKey = task.getJiraIntegration() == null || task.getExternalId() == null
 					? null
 					: JiraParentResolution.key(task.getJiraIntegration().getId(), task.getExternalId());
 			boolean proofOnSubtasks = ownKey != null && parentsOfSubtasks.contains(ownKey);
-			String labelsJson = task.getLabelsJson();
-			if (subtask && task.getJiraIntegration() != null && task.getParentExternalId() != null) {
-				labelsJson = labelsByKey.getOrDefault(
-						JiraParentResolution.key(task.getJiraIntegration().getId(), task.getParentExternalId()),
-						labelsJson);
-			}
 			TaskGraphAttrs attrs = SagaGraphRules.classify(
 					task.getStatus(),
-					TaskLabelParser.parse(labelsJson),
+					TaskLabelParser.parse(task.getLabelsJson()),
 					evidenced.contains(task.getId()),
 					linked,
 					proofOnSubtasks);
@@ -242,18 +234,6 @@ public class ProjectGraphLoader {
 			keys.add(JiraParentResolution.key(task.getJiraIntegration().getId(), task.getParentExternalId()));
 		}
 		return keys;
-	}
-
-	private static Map<String, String> labelsByKey(List<Task> projectTasks) {
-		Map<String, String> labels = new HashMap<>();
-		for (Task task : projectTasks) {
-			if (task.getJiraIntegration() != null && task.getExternalId() != null && !task.getExternalId().isBlank()) {
-				labels.put(
-						JiraParentResolution.key(task.getJiraIntegration().getId(), task.getExternalId()),
-						task.getLabelsJson());
-			}
-		}
-		return labels;
 	}
 
 	private static Map<String, UUID> jiraIdIndex(List<Task> projectTasks) {

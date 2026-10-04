@@ -98,13 +98,9 @@ public class ProjectProjectionReadService {
 		}
 		ParentLookup lookup = (integrationId, externalId) -> bySourceAndJiraId.get(JiraParentResolution.key(integrationId, externalId));
 		Set<String> parentsOfSubtasks = new java.util.HashSet<>();
-		Map<String, String> labelsByKey = new HashMap<>();
 		for (Task row : rows) {
 			if (row.getJiraIntegration() == null) {
 				continue;
-			}
-			if (row.getExternalId() != null && !row.getExternalId().isBlank()) {
-				labelsByKey.put(JiraParentResolution.key(row.getJiraIntegration().getId(), row.getExternalId()), row.getLabelsJson());
 			}
 			if ("SUBTASK".equals(row.getIssueTypeLevel())
 					&& row.getParentExternalId() != null
@@ -114,18 +110,9 @@ public class ProjectProjectionReadService {
 		}
 		return rows.stream()
 				.map(task -> {
-					boolean subtask = "SUBTASK".equals(task.getIssueTypeLevel());
 					String ownKey = task.getJiraIntegration() == null || task.getExternalId() == null
 							? null
 							: JiraParentResolution.key(task.getJiraIntegration().getId(), task.getExternalId());
-					List<String> proofLabels = null;
-					if (subtask && task.getJiraIntegration() != null && task.getParentExternalId() != null) {
-						String parentLabels = labelsByKey.get(
-								JiraParentResolution.key(task.getJiraIntegration().getId(), task.getParentExternalId()));
-						if (parentLabels != null) {
-							proofLabels = com.saga.be.service.contribution.TaskLabelParser.parse(parentLabels);
-						}
-					}
 					return toTask(
 							task,
 							counts.getOrDefault(task.getId(), 0L),
@@ -135,7 +122,7 @@ public class ProjectProjectionReadService {
 							(List<ProjectTaskResponse.Subtask>) null,
 							migrations.getOrDefault(task.getId(), TaskMigrationSummary.none()),
 							lookup,
-							proofLabels,
+							null,
 							ownKey != null && parentsOfSubtasks.contains(ownKey));
 				})
 				.toList();
@@ -157,16 +144,6 @@ public class ProjectProjectionReadService {
 				break;
 			}
 		}
-		List<String> proofLabels = null;
-		if ("SUBTASK".equals(task.getIssueTypeLevel())
-				&& task.getJiraIntegration() != null
-				&& task.getParentExternalId() != null) {
-			proofLabels = tasks.findByJiraIntegration_IdAndExternalId(
-							task.getJiraIntegration().getId(), task.getParentExternalId())
-					.filter(row -> row.getDeletedAt() == null)
-					.map(row -> com.saga.be.service.contribution.TaskLabelParser.parse(row.getLabelsJson()))
-					.orElse(null);
-		}
 		return toTask(
 				task,
 				counts.getOrDefault(task.getId(), 0L),
@@ -176,7 +153,7 @@ public class ProjectProjectionReadService {
 				children,
 				migrations(List.of(task)).getOrDefault(task.getId(), TaskMigrationSummary.none()),
 				repositoryParentLookup(tasks, projectId),
-				proofLabels,
+				null,
 				proofOnSubtasks);
 	}
 
@@ -430,7 +407,7 @@ public class ProjectProjectionReadService {
 	}
 
 	/**
-	 * {@code proofLabels} null uses this task's own labels. A Subtask passes its parent's labels.
+	 * {@code proofLabels} null uses this task's own labels, including a Subtask.
 	 * {@code proofOnSubtasks} means this task already has Subtasks, so it needs no proof of its own.
 	 */
 	static ProjectTaskResponse toTask(

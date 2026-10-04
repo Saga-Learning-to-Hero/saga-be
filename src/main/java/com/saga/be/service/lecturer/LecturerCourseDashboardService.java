@@ -755,13 +755,12 @@ public class LecturerCourseDashboardService {
 		java.util.Set<UUID> parents = ids.isEmpty()
 				? java.util.Set.of()
 				: new java.util.HashSet<>(tasks.findIdsWithSubtaskChildren(ids));
-		Map<UUID, String> parentLabels = ids.isEmpty() ? Map.of() : parentLabelsBySubtask(ids);
 		for (Object[] row : rows) {
 			UUID taskId = (UUID) row[1];
 			if (parents.contains(taskId)) {
 				continue;
 			}
-			String labelsJson = parentLabels.getOrDefault(taskId, row.length > 2 ? (String) row[2] : null);
+			String labelsJson = row.length > 2 ? (String) row[2] : null;
 			if (!com.saga.be.service.contribution.TaskEvidencePolicy.requiresCommit(
 					com.saga.be.service.contribution.TaskLabelParser.parse(labelsJson))) {
 				continue;
@@ -769,16 +768,6 @@ public class LecturerCourseDashboardService {
 			out.computeIfAbsent((UUID) row[0], id -> new HashSet<>()).add(taskId);
 		}
 		return out;
-	}
-
-	private Map<UUID, String> parentLabelsBySubtask(List<UUID> ids) {
-		Map<UUID, String> labels = new HashMap<>();
-		for (Object[] row : tasks.findParentLabelsBySubtaskIds(ids)) {
-			if (row[0] instanceof UUID id) {
-				labels.put(id, (String) row[1]);
-			}
-		}
-		return labels;
 	}
 
 	private Map<UUID, List<TimedEvent>> loadEvents(List<UUID> projectIds) {
