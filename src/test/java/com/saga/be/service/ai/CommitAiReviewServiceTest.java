@@ -385,6 +385,29 @@ class CommitAiReviewServiceTest {
 	}
 
 	@Test
+	void backfillReRunsReviewsMadeWithAnOlderPrompt_butNotOnesStillInProgress() {
+		GitCommit outdated = commit(1);
+		GitCommit current = commit(1);
+		GitCommit running = commit(1);
+		List<GitCommit> page = List.of(outdated, current, running);
+		when(commits.findPageIdsByProject(eq(projectId), any())).thenReturn(new PageImpl<>(page.stream().map(GitCommit::getId).toList()));
+		when(commits.findFetchedByIdIn(anyList())).thenReturn(page);
+		AiAnalysisRun old = run(outdated, AiAnalysisStatus.COMPLETED);
+		old.setPromptVersion("commit-intelligence-v2");
+		AiAnalysisRun oldRunning = run(running, AiAnalysisStatus.RUNNING);
+		oldRunning.setPromptVersion("commit-intelligence-v2");
+		when(runs.findCommitReviewRuns(eq(projectId), any())).thenReturn(List.of(old, run(current, AiAnalysisStatus.COMPLETED), oldRunning));
+
+		CommitAiReviewDtos.BackfillResult result = service.backfill(leaderId, projectId, 15);
+
+		assertThat(result.queued()).isEqualTo(1);
+		assertThat(result.skipped()).isEqualTo(2);
+		verify(submissions).submit(leaderId, projectId, outdated.getId());
+		verify(submissions, never()).submit(leaderId, projectId, current.getId());
+		verify(submissions, never()).submit(leaderId, projectId, running.getId());
+	}
+
+	@Test
 	void backfillAnswersAtOnce_theSlowGitHubReadsAndSubmissionsRunInTheBackground() {
 		List<GitCommit> page = List.of(commit(1), commit(1), commit(1));
 		when(commits.findPageIdsByProject(eq(projectId), any())).thenReturn(new PageImpl<>(page.stream().map(GitCommit::getId).toList()));
@@ -480,6 +503,7 @@ class CommitAiReviewServiceTest {
 		run.setId(UUID.randomUUID());
 		run.setArtifactId(commit.getId());
 		run.setStatus(status);
+		run.setPromptVersion(AiAnalysisSubmissionService.PROMPT_VERSION);
 		return run;
 	}
 

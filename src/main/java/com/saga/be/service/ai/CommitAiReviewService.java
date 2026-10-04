@@ -201,8 +201,9 @@ public class CommitAiReviewService {
 	}
 
 	/**
-	 * Leader-only: review up to 15 recent commits that have no review yet (or whose last one failed),
-	 * e.g. commits pushed before the team entered its key. Merge commits are skipped. Uses the team
+	 * Leader-only: review up to 15 recent commits that have no review yet, whose last one failed, or whose
+	 * last one was made with an older prompt (so results stop mixing AI versions), e.g. commits pushed
+	 * before the team entered its key. A review still queued or running is left alone. Merge commits are skipped. Uses the team
 	 * key, or the course key only when the lecturer allows it (course AI automation on).
 	 * The commits are picked here; reading their diffs and queueing the reviews happens in the
 	 * background, so the request returns at once (each GitHub read takes seconds).
@@ -227,13 +228,26 @@ public class CommitAiReviewService {
 			if (picked.size() >= max) break;
 			GitCommit commit = byId.get(id);
 			AiAnalysisRun run = latest.get(id);
-			boolean done = run != null && run.getStatus() != AiAnalysisStatus.FAILED && run.getStatus() != AiAnalysisStatus.CANCELLED;
-			if (commit == null || commit.looksLikeMerge() || done) {
+			if (commit == null || commit.looksLikeMerge() || !needsReview(run)) {
 				skipped++;
 				continue;
 			}
 			picked.add(id);
 		}
+		return queueBackfill(userId, projectId, picked, skipped);
+	}
+
+	/** No review, a failed one, or a finished one made with an older prompt; never one still in progress. */
+	static boolean needsReview(AiAnalysisRun run) {
+		if (run == null) return true;
+		return switch (run.getStatus()) {
+			case QUEUED, RUNNING -> false;
+			case COMPLETED -> !AiAnalysisSubmissionService.PROMPT_VERSION.equals(run.getPromptVersion());
+			default -> true;
+		};
+	}
+
+	private BackfillResult queueBackfill(UUID userId, UUID projectId, List<UUID> picked, int skipped) {
 		if (picked.isEmpty()) return new BackfillResult(0, skipped, 0);
 		try {
 			background.execute(() -> submitAll(userId, projectId, picked));

@@ -244,7 +244,7 @@ class AiCommitReviewSubmissionTest {
 
 		var submission = service().submit(userId, projectId, commitId);
 
-		assertThat(submission.run().getPromptVersion()).isEqualTo("commit-intelligence-v2");
+		assertThat(submission.run().getPromptVersion()).isEqualTo("commit-intelligence-v3");
 		List<AiAnalysisEvidence> rows = savedEvidence();
 		assertThat(rows).extracting(AiAnalysisEvidence::getEvidenceType).contains(AiEvidenceType.SYLLABUS_VERSION);
 		assertThat(rows).filteredOn(r -> r.getEvidenceType() == AiEvidenceType.TASK_FIELD)
