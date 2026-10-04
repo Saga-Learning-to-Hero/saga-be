@@ -8,7 +8,7 @@ public class AiAnalysisProperties {
 	private int workers = 1;
 	private int queueCapacity = 100;
 	private int recoveryBatchSize = 50;
-	private Duration staleRunningAfter = Duration.ofMinutes(15);
+	private Duration staleRunningAfter = Duration.ofMinutes(5);
 	private boolean enabled = false;
 	private String primaryProvider = "openai";
 	/** Secondary brain feature flag. OFF by default; when off, behavior is unchanged (exactly one PRIMARY inference). */
@@ -24,7 +24,7 @@ public class AiAnalysisProperties {
 	public int getRecoveryBatchSize() { return recoveryBatchSize; }
 	public void setRecoveryBatchSize(int recoveryBatchSize) { this.recoveryBatchSize = Math.max(1, recoveryBatchSize); }
 	public Duration getStaleRunningAfter() { return staleRunningAfter; }
-	public void setStaleRunningAfter(Duration staleRunningAfter) { this.staleRunningAfter = staleRunningAfter == null ? Duration.ofMinutes(15) : staleRunningAfter; }
+	public void setStaleRunningAfter(Duration staleRunningAfter) { this.staleRunningAfter = staleRunningAfter == null ? Duration.ofMinutes(5) : staleRunningAfter; }
 	public boolean isEnabled() { return enabled; }
 	public void setEnabled(boolean enabled) { this.enabled = enabled; }
 	public String getPrimaryProvider() { return primaryProvider; }

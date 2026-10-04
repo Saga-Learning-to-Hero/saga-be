@@ -61,6 +61,37 @@ public interface AiAnalysisRunRepository extends JpaRepository<AiAnalysisRun, UU
 	@Query("select r.id from AiAnalysisRun r where r.status = com.saga.be.entity.enums.AiAnalysisStatus.RUNNING and r.startedAt < :cutoff")
 	List<UUID> findStaleRunningIds(@Param("cutoff") LocalDateTime cutoff);
 
+	/**
+	 * First attempts of commit reviews that failed for a transient reason in [from, to] and are still the
+	 * newest run of their commit: rows of {projectId, gitCommitId, runId}.
+	 */
+	@Query("""
+			select r.project.id, r.artifactId, r.id from AiAnalysisRun r
+			where r.artifactType = com.saga.be.entity.enums.AiArtifactType.COMMIT
+			  and r.analysisType = com.saga.be.entity.enums.AiAnalysisType.COMMIT_INTELLIGENCE
+			  and r.status = com.saga.be.entity.enums.AiAnalysisStatus.FAILED
+			  and (r.retryAttempt is null or r.retryAttempt = 0)
+			  and r.failureCode in :codes
+			  and r.completedAt between :from and :to
+			  and not exists (
+			      select 1 from AiAnalysisRun n
+			      where n.artifactId = r.artifactId and n.analysisType = r.analysisType and n.createdAt > r.createdAt)
+			order by r.completedAt asc
+			""")
+	List<Object[]> findTransientlyFailedCommitReviews(
+			@Param("codes") Collection<String> codes,
+			@Param("from") LocalDateTime from,
+			@Param("to") LocalDateTime to,
+			Pageable page);
+
+	@Query("""
+			select r.project.id from AiAnalysisRun r
+			where r.id = :id
+			  and r.artifactType = com.saga.be.entity.enums.AiArtifactType.COMMIT
+			  and r.analysisType = com.saga.be.entity.enums.AiAnalysisType.COMMIT_INTELLIGENCE
+			""")
+	Optional<UUID> findCommitReviewProjectId(@Param("id") UUID id);
+
 	/** Lecturer drill-down: latest run for one artifact within a project, any status. */
 	/** Every COMMIT_INTELLIGENCE run of these commits, newest first (the caller keeps the first per commit). */
 	@Query("""

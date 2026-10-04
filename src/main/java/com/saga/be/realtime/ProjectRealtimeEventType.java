@@ -10,5 +10,7 @@ public enum ProjectRealtimeEventType {
 	PEER_REVIEW_CHANGED,
 	PROJECT_METADATA_CHANGED,
 	GRAPH_CHANGED,
-	SYNC_STATUS_CHANGED
+	SYNC_STATUS_CHANGED,
+	/** A commit AI review was queued or finished: refresh commit badges only. */
+	COMMIT_REVIEWS_CHANGED
 }

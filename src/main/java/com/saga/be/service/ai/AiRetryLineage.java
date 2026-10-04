@@ -5,6 +5,7 @@ import com.saga.be.entity.enums.AiAnalysisStatus;
 import com.saga.be.entity.enums.AiInvocationOrigin;
 import com.saga.be.repository.AiAnalysisRunRepository;
 import java.util.Optional;
+import java.util.Set;
 
 /** Canonical identity groups immutable physical execution attempts. */
 final class AiRetryLineage {
@@ -16,6 +17,27 @@ final class AiRetryLineage {
 
 	static boolean createsRetry(AiAnalysisRun effective, AiInvocationOrigin origin) {
 		return effective != null && effective.getStatus() == AiAnalysisStatus.FAILED && origin == AiInvocationOrigin.USER_REQUEST;
+	}
+
+	/** Failures that say nothing about the commit or the key: the provider, saga-ai or SAGA itself was
+	 * briefly unavailable (typically a redeploy). An automatic commit review retries those once. */
+	static final Set<String> TRANSIENT_FAILURES = Set.of(
+			"AI_PROVIDER_UNAVAILABLE",
+			"AI_PROVIDER_TIMEOUT",
+			"AI_PROVIDER_RATE_LIMITED",
+			"AI_RUNTIME_UNAVAILABLE",
+			"AI_RUNNING_STALE_RECOVERED");
+
+	/** Commit review: a user may always retry a failed run; automation retries only a first attempt
+	 * that failed transiently, so a duplicate webhook never re-runs a real failure. */
+	static boolean createsCommitReviewRetry(AiAnalysisRun effective, AiInvocationOrigin origin) {
+		if (createsRetry(effective, origin)) return true;
+		return effective != null
+				&& origin == AiInvocationOrigin.AUTOMATION
+				&& effective.getStatus() == AiAnalysisStatus.FAILED
+				&& (effective.getRetryAttempt() == null || effective.getRetryAttempt() == 0)
+				&& effective.getFailureCode() != null // Set.of(...).contains(null) throws
+				&& TRANSIENT_FAILURES.contains(effective.getFailureCode());
 	}
 
 	static int nextAttempt(AiAnalysisRun effective) {

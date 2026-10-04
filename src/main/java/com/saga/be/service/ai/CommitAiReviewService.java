@@ -64,7 +64,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Profile("!test")
 public class CommitAiReviewService {
 
-	static final int MAX_BACKFILL = 20;
+	static final int MAX_BACKFILL = 15;
 	private static final int BACKFILL_CANDIDATES = 100;
 	private static final int MAX_SNIPPET = 4_000;
 	private static final Logger log = LoggerFactory.getLogger(CommitAiReviewService.class);
@@ -82,9 +82,17 @@ public class CommitAiReviewService {
 	private final ObjectMapper mapper;
 	private com.saga.be.repository.ProjectRepository projects;
 
+	/** Where backfill submissions run (GitHub reads take seconds each); inline unless Spring sets it. */
+	private java.util.concurrent.Executor background = Runnable::run;
+
 	@org.springframework.beans.factory.annotation.Autowired
 	public void setProjects(com.saga.be.repository.ProjectRepository projects) {
 		this.projects = projects;
+	}
+
+	@org.springframework.beans.factory.annotation.Autowired
+	public void setBackground(@org.springframework.beans.factory.annotation.Qualifier("aiAutomationExecutor") java.util.concurrent.Executor background) {
+		this.background = background;
 	}
 
 	public CommitAiReviewService(
@@ -193,9 +201,11 @@ public class CommitAiReviewService {
 	}
 
 	/**
-	 * Leader-only: review up to 20 recent commits that have no review yet (or whose last one failed),
+	 * Leader-only: review up to 15 recent commits that have no review yet (or whose last one failed),
 	 * e.g. commits pushed before the team entered its key. Merge commits are skipped. Uses the team
 	 * key, or the course key only when the lecturer allows it (course AI automation on).
+	 * The commits are picked here; reading their diffs and queueing the reviews happens in the
+	 * background, so the request returns at once (each GitHub read takes seconds).
 	 */
 	public BackfillResult backfill(UUID userId, UUID projectId, Integer limit) {
 		authorization.requireStudentLeader(userId, projectId);
@@ -211,9 +221,10 @@ public class CommitAiReviewService {
 		Map<UUID, GitCommit> byId = new HashMap<>();
 		for (GitCommit commit : commits.findFetchedByIdIn(recent)) byId.put(commit.getId(), commit);
 		Map<UUID, AiAnalysisRun> latest = latestRuns(projectId, recent);
-		int queued = 0, skipped = 0, failed = 0;
+		List<UUID> picked = new ArrayList<>();
+		int skipped = 0;
 		for (UUID id : recent) {
-			if (queued >= max) break;
+			if (picked.size() >= max) break;
 			GitCommit commit = byId.get(id);
 			AiAnalysisRun run = latest.get(id);
 			boolean done = run != null && run.getStatus() != AiAnalysisStatus.FAILED && run.getStatus() != AiAnalysisStatus.CANCELLED;
@@ -221,15 +232,29 @@ public class CommitAiReviewService {
 				skipped++;
 				continue;
 			}
+			picked.add(id);
+		}
+		if (picked.isEmpty()) return new BackfillResult(0, skipped, 0);
+		try {
+			background.execute(() -> submitAll(userId, projectId, picked));
+		} catch (java.util.concurrent.RejectedExecutionException ex) {
+			log.warn("commit review backfill queue full projectId={}", projectId);
+			return new BackfillResult(0, skipped, picked.size());
+		}
+		return new BackfillResult(picked.size(), skipped, 0);
+	}
+
+	private void submitAll(UUID userId, UUID projectId, List<UUID> commitIds) {
+		int failed = 0;
+		for (UUID id : commitIds) {
 			try {
 				submissions.submit(userId, projectId, id);
-				queued++;
 			} catch (RuntimeException ex) {
 				failed++;
 				log.warn("commit review backfill failed projectId={} gitCommitId={} type={}", projectId, id, ex.getClass().getSimpleName());
 			}
 		}
-		return new BackfillResult(queued, skipped, failed);
+		log.info("commit review backfill done projectId={} submitted={} failed={}", projectId, commitIds.size() - failed, failed);
 	}
 
 	// ---------------------------------------------------------------- pieces

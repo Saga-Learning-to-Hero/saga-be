@@ -365,7 +365,7 @@ class CommitAiReviewServiceTest {
 	}
 
 	@Test
-	void backfillIsCappedAtTwenty_andCountsFailures() {
+	void backfillIsCappedAtFifteen_andOneFailingCommitDoesNotStopTheOthers() {
 		List<GitCommit> page = new ArrayList<>();
 		for (int i = 0; i < 30; i++) page.add(commit(1));
 		when(commits.findPageIdsByProject(eq(projectId), any())).thenReturn(new PageImpl<>(page.stream().map(GitCommit::getId).toList()));
@@ -377,7 +377,37 @@ class CommitAiReviewServiceTest {
 
 		CommitAiReviewDtos.BackfillResult result = service.backfill(leaderId, projectId, null);
 
-		assertThat(result.queued()).isEqualTo(CommitAiReviewService.MAX_BACKFILL);
+		assertThat(CommitAiReviewService.MAX_BACKFILL).isEqualTo(15);
+		assertThat(result.queued()).isEqualTo(15);
+		verify(submissions, times(15)).submit(eq(leaderId), eq(projectId), any());
+	}
+
+	@Test
+	void backfillAnswersAtOnce_theSlowGitHubReadsAndSubmissionsRunInTheBackground() {
+		List<GitCommit> page = List.of(commit(1), commit(1), commit(1));
+		when(commits.findPageIdsByProject(eq(projectId), any())).thenReturn(new PageImpl<>(page.stream().map(GitCommit::getId).toList()));
+		when(commits.findFetchedByIdIn(anyList())).thenReturn(page);
+		List<Runnable> queued = new ArrayList<>();
+		service.setBackground(queued::add);
+
+		CommitAiReviewDtos.BackfillResult result = service.backfill(leaderId, projectId, 10);
+
+		assertThat(result.queued()).isEqualTo(3);
+		verify(submissions, never()).submit(any(), any(), any());
+		queued.getFirst().run();
+		verify(submissions, times(3)).submit(eq(leaderId), eq(projectId), any());
+	}
+
+	@Test
+	void aFullBackgroundQueueReportsTheCommitsAsNotQueued() {
+		GitCommit fresh = commit(1);
+		when(commits.findPageIdsByProject(eq(projectId), any())).thenReturn(new PageImpl<>(List.of(fresh.getId())));
+		when(commits.findFetchedByIdIn(anyList())).thenReturn(List.of(fresh));
+		service.setBackground(task -> { throw new java.util.concurrent.RejectedExecutionException("full"); });
+
+		CommitAiReviewDtos.BackfillResult result = service.backfill(leaderId, projectId, 10);
+
+		assertThat(result.queued()).isZero();
 		assertThat(result.failed()).isEqualTo(1);
 	}
 

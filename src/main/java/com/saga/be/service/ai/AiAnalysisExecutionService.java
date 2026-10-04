@@ -107,8 +107,13 @@ public class AiAnalysisExecutionService {
 			state.fail(runId, code, false);
 			log.warn("ai analysis failed runId={} type={} code={}", runId, ex.getClass().getSimpleName(), code);
 		}
-		finally { if (adjudication != null) adjudication.adjudicate(runId); }
+		finally {
+			if (adjudication != null) adjudication.adjudicate(runId);
+			if (reviewEvents != null) reviewEvents.finished(runId);
+		}
 	}
+	private CommitReviewEvents reviewEvents;
+	@Autowired(required = false) public void setReviewEvents(CommitReviewEvents reviewEvents) { this.reviewEvents = reviewEvents; }
 	/**
 	 * Runs a COURSE-credential PRIMARY inference. A legacy decision (no provider binding) is exactly
 	 * one attempt, as before. A bound decision may continue down the course's own fallback chain,
