@@ -39,7 +39,7 @@ public class AiProgressNarrativeSubmissionService {
 	public Submission submitStudent(UUID userId, UUID projectId, UUID studentId) {
 		projectAuth.requireReader(userId, projectId);
 		Project project = projects.findById(projectId).orElseThrow(() -> notFound("Project not found."));
-		var resolution = requireCredential(project.getCourse() == null ? null : project.getCourse().getId());
+		var resolution = requireProjectCredential(project);
 		AiModelProvider provider = primaryProvider();
 		AiProgressFactsBuilder.Facts data = facts.buildStudent(project, studentId);
 		List<AiEvidenceDraft> draft = List.of(factsRow("student:" + studentId, data));
@@ -49,7 +49,7 @@ public class AiProgressNarrativeSubmissionService {
 	public Submission submitTeam(UUID userId, UUID projectId) {
 		projectAuth.requireReader(userId, projectId);
 		Project project = projects.findById(projectId).orElseThrow(() -> notFound("Project not found."));
-		var resolution = requireCredential(project.getCourse() == null ? null : project.getCourse().getId());
+		var resolution = requireProjectCredential(project);
 		AiModelProvider provider = primaryProvider();
 		AiProgressFactsBuilder.Facts data = facts.buildTeam(project);
 		List<AiEvidenceDraft> draft = List.of(factsRow("team:" + projectId, data));
@@ -68,6 +68,14 @@ public class AiProgressNarrativeSubmissionService {
 
 	/** PROGRESS_NARRATIVE prefers a COURSE credential and only falls back to PLATFORM for a
 	 * manual USER_REQUEST when the course explicitly allows it (section II/VIII). */
+	/** A team/student report: the team's key, or the course key only for a team the lecturer picked. */
+	private AiCredentialResolver.Resolution requireProjectCredential(Project project) {
+		UUID courseId = project.getCourse() == null ? null : project.getCourse().getId();
+		var resolution = credentialResolver.resolveForProject(project.getId(), courseId, AiAnalysisType.PROGRESS_NARRATIVE, AiProviderRole.PRIMARY, AiInvocationOrigin.USER_REQUEST);
+		if (resolution.outcome() == AiCredentialResolver.Outcome.UNAVAILABLE) throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE, HttpStatus.CONFLICT, "Nhóm chưa nhập key AI và chưa được giảng viên cho dùng key của lớp.");
+		return resolution;
+	}
+
 	private AiCredentialResolver.Resolution requireCredential(UUID courseId) {
 		var resolution = credentialResolver.resolve(courseId, AiAnalysisType.PROGRESS_NARRATIVE, AiProviderRole.PRIMARY, AiInvocationOrigin.USER_REQUEST);
 		if (resolution.outcome() == AiCredentialResolver.Outcome.UNAVAILABLE) throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE, HttpStatus.CONFLICT, "No AI credential is available for this course (no course key, and platform fallback is not allowed or not configured).");

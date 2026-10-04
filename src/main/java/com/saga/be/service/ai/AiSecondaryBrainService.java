@@ -39,7 +39,8 @@ public class AiSecondaryBrainService {
 		// credential means secondary is simply unavailable; PRIMARY is unaffected either way.
 		if (credentialResolver == null) { log.info("secondary brain has no credential resolver wired; treating as unavailable runId={}", runId); return; }
 		UUID courseId = input.run().resolveCourseId();
-		AiCredentialResolver.Resolution resolution = credentialResolver.resolve(courseId, input.run().getAnalysisType(), AiProviderRole.SECONDARY, AiInvocationOrigin.AUTOMATION);
+		UUID projectId = input.run().getProject() == null ? null : input.run().getProject().getId();
+		AiCredentialResolver.Resolution resolution = credentialResolver.resolveForProject(projectId, courseId, input.run().getAnalysisType(), AiProviderRole.SECONDARY, AiInvocationOrigin.AUTOMATION);
 		if (resolution.outcome() != AiCredentialResolver.Outcome.COURSE) return;
 		if (decisions.findByAnalysisRun_IdAndProviderRole(runId, AiProviderRole.SECONDARY).isPresent()) return;
 		AiAnalysisProviderDecision row = new AiAnalysisProviderDecision();

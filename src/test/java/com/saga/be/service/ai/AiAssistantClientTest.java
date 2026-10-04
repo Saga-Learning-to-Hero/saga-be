@@ -255,6 +255,75 @@ class AiAssistantClientTest {
 
 	// ------------------------------------------------------------------ fixtures
 
+	// ---------------- who asks with which key
+
+	private static final UUID PROJECT = UUID.fromString("44444444-4444-4444-4444-444444444444");
+
+	@Test
+	void aLecturerAsksWithTheSystemKey_neverACourseOrTeamKey() throws Exception {
+		AtomicReference<String> sent = new AtomicReference<>();
+		server.expect(requestTo(URL))
+				.andExpect(request -> sent.set(((org.springframework.mock.http.client.MockClientHttpRequest) request).getBodyAsString()))
+				.andRespond(withSuccess(response("chat:L", "Lớp ổn.", "[]", false, false), MediaType.APPLICATION_JSON));
+
+		assertThat(client.keySource(PROJECT, COURSE, true)).isEqualTo("PLATFORM");
+		client.ask("chat:L", PROJECT, COURSE, true, List.of(evidence()), context());
+
+		assertThat(mapper.readTree(sent.get()).path("credentialSource").asText()).isEqualTo("PLATFORM");
+		assertThat(mapper.readTree(sent.get()).has("credentialEnvelope")).isFalse();
+		org.mockito.Mockito.verifyNoInteractions(credentials);
+	}
+
+	@Test
+	void aStudentAsksWithTheTeamsOwnKeyAndModel() throws Exception {
+		UUID teamCredential = UUID.randomUUID();
+		TeamAiCredentialService teamKeys = mock(TeamAiCredentialService.class);
+		when(teamKeys.buildEnvelope(teamCredential, PROJECT)).thenReturn(new AiCredentialEnvelope(1, "AES-256-GCM", "n", "team-cipher"));
+		client.setTeamKeys(teamKeys);
+		when(credentials.resolveForProject(PROJECT, COURSE, AiAnalysisType.PROGRESS_NARRATIVE, AiProviderRole.PRIMARY, AiInvocationOrigin.USER_REQUEST))
+				.thenReturn(new AiCredentialResolver.Resolution(AiCredentialResolver.Outcome.COURSE, null, "team-fp",
+						new com.saga.be.ai.AiProviderBinding(com.saga.be.entity.enums.AiProvider.COHERE, "command-a-plus-05-2026"), teamCredential));
+		AtomicReference<String> sent = new AtomicReference<>();
+		server.expect(requestTo(URL))
+				.andExpect(request -> sent.set(((org.springframework.mock.http.client.MockClientHttpRequest) request).getBodyAsString()))
+				.andRespond(withSuccess(response("chat:S", "Nhóm ổn.", "[]", false, false), MediaType.APPLICATION_JSON));
+
+		assertThat(client.keySource(PROJECT, COURSE, false)).isEqualTo("TEAM");
+		client.ask("chat:S", PROJECT, COURSE, false, List.of(evidence()), context());
+
+		var body = mapper.readTree(sent.get());
+		assertThat(body.path("credentialSource").asText()).isEqualTo("COURSE");
+		assertThat(body.path("credentialEnvelope").path("ciphertext").asText()).isEqualTo("team-cipher");
+		assertThat(body.path("provider").path("name").asText()).isEqualTo("COHERE");
+		verify(teamKeys).markSuccessful(teamCredential);
+		verify(credentials, org.mockito.Mockito.never()).buildEnvelope(any(), any(), any());
+	}
+
+	@Test
+	void aStudentWhoseTeamHasNoKeyAndWasNotPicked_getsTheBackendSummary() {
+		when(credentials.resolveForProject(PROJECT, COURSE, AiAnalysisType.PROGRESS_NARRATIVE, AiProviderRole.PRIMARY, AiInvocationOrigin.USER_REQUEST))
+				.thenReturn(AiCredentialResolver.Resolution.UNAVAILABLE);
+		assertThat(client.keySource(PROJECT, COURSE, false)).isEqualTo("UNAVAILABLE");
+		expectUnavailable(() -> client.ask("chat:N", PROJECT, COURSE, false, List.of(evidence()), context()), "AI_CREDENTIAL_UNAVAILABLE");
+	}
+
+	@Test
+	void aRejectedTeamKeyIsMarkedInvalidForTheLeader() {
+		UUID teamCredential = UUID.randomUUID();
+		TeamAiCredentialService teamKeys = mock(TeamAiCredentialService.class);
+		when(teamKeys.buildEnvelope(teamCredential, PROJECT)).thenReturn(new AiCredentialEnvelope(1, "AES-256-GCM", "n", "c"));
+		client.setTeamKeys(teamKeys);
+		when(credentials.resolveForProject(any(), any(), any(), any(), any()))
+				.thenReturn(new AiCredentialResolver.Resolution(AiCredentialResolver.Outcome.COURSE, null, "fp",
+						new com.saga.be.ai.AiProviderBinding(com.saga.be.entity.enums.AiProvider.GEMINI, "gemini-3.6-flash"), teamCredential));
+		server.expect(requestTo(URL)).andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+				.withStatus(org.springframework.http.HttpStatus.BAD_GATEWAY).contentType(MediaType.APPLICATION_JSON)
+				.body("{\"code\":\"AI_PROVIDER_AUTH_FAILED\",\"message\":\"x\"}"));
+
+		expectUnavailable(() -> client.ask("chat:X", PROJECT, COURSE, false, List.of(evidence()), context()), "AI_PROVIDER_AUTH_FAILED");
+		verify(teamKeys).markInvalid(teamCredential, "AI_PROVIDER_AUTH_FAILED");
+	}
+
 	private static AiAssistantClient.Evidence evidence() {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("key", "SAGA-1");

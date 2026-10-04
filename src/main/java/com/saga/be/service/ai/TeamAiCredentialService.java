@@ -130,7 +130,7 @@ public class TeamAiCredentialService {
 				row == null ? null : row.getLastSuccessfulUseAt(),
 				row == null ? null : row.getUpdatedAt(),
 				leader,
-				courseFallbackAvailable(courseId),
+				courseFallbackAvailable(projectId, courseId),
 				options());
 	}
 
@@ -211,17 +211,18 @@ public class TeamAiCredentialService {
 				});
 	}
 
-	/** The lecturer allows teams without a key to use the course key: course automation on + a usable course key. */
-	public boolean courseFallbackAvailable(UUID courseId) {
-		return courseKeyUsable(courseId, AiInvocationOrigin.AUTOMATION);
+	/** Without its own key this team is reviewed automatically with the course key: the lecturer picked
+	 * the team, kept course AI automation on, and a course key exists. */
+	public boolean courseFallbackAvailable(UUID projectId, UUID courseId) {
+		return courseKeyUsable(projectId, courseId, AiInvocationOrigin.AUTOMATION);
 	}
 
-	/** A course PRIMARY key would serve a commit review for this origin (never throws). */
-	public boolean courseKeyUsable(UUID courseId, AiInvocationOrigin origin) {
+	/** The course PRIMARY key would serve this team's commit review for this origin (never throws). */
+	public boolean courseKeyUsable(UUID projectId, UUID courseId, AiInvocationOrigin origin) {
 		if (courseId == null) return false;
 		try {
 			return Boolean.TRUE.equals(isolated.execute(status -> courseResolver
-					.resolve(courseId, AiAnalysisType.COMMIT_INTELLIGENCE, AiProviderRole.PRIMARY, origin)
+					.resolveCourseForProject(projectId, courseId, AiAnalysisType.COMMIT_INTELLIGENCE, AiProviderRole.PRIMARY, origin)
 					.outcome() == AiCredentialResolver.Outcome.COURSE));
 		} catch (RuntimeException ex) {
 			return false;

@@ -285,18 +285,19 @@ class TeamAiCredentialServiceTest {
 
 	@Test
 	void courseKeyChecksNeverThrow_aResolverFailureMeansNoCourseKey() {
-		when(courseResolver.resolve(eq(courseId), any(), any(), eq(AiInvocationOrigin.AUTOMATION)))
+		when(courseResolver.resolveCourseForProject(eq(projectId), eq(courseId), any(), any(), eq(AiInvocationOrigin.AUTOMATION)))
 				.thenReturn(new AiCredentialResolver.Resolution(AiCredentialResolver.Outcome.COURSE, UUID.randomUUID(), "fp"));
-		assertThat(service.courseFallbackAvailable(courseId)).isTrue();
+		assertThat(service.courseFallbackAvailable(projectId, courseId)).isTrue();
 
-		when(courseResolver.resolve(eq(courseId), any(), any(), eq(AiInvocationOrigin.USER_REQUEST)))
+		when(courseResolver.resolveCourseForProject(eq(projectId), eq(courseId), any(), any(), eq(AiInvocationOrigin.USER_REQUEST)))
 				.thenThrow(new IntegrationException(IntegrationErrorCode.AI_MODEL_NOT_SUPPORTED, HttpStatus.BAD_REQUEST, "gone"));
-		assertThat(service.courseKeyUsable(courseId, AiInvocationOrigin.USER_REQUEST)).isFalse();
-		assertThat(service.courseKeyUsable(null, AiInvocationOrigin.USER_REQUEST)).isFalse();
+		assertThat(service.courseKeyUsable(projectId, courseId, AiInvocationOrigin.USER_REQUEST)).isFalse();
+		assertThat(service.courseKeyUsable(projectId, null, AiInvocationOrigin.USER_REQUEST)).isFalse();
 
-		when(courseResolver.resolve(eq(courseId), any(), any(), eq(AiInvocationOrigin.AUTOMATION))).thenReturn(AiCredentialResolver.Resolution.UNAVAILABLE);
-		assertThat(service.courseFallbackAvailable(courseId)).isFalse();
+		org.mockito.Mockito.doReturn(AiCredentialResolver.Resolution.UNAVAILABLE).when(courseResolver)
+				.resolveCourseForProject(eq(projectId), eq(courseId), any(), any(), eq(AiInvocationOrigin.AUTOMATION));
+		assertThat(service.courseFallbackAvailable(projectId, courseId)).isFalse();
 		assertThat(service.status(memberId, projectId).courseFallbackAvailable()).isFalse();
-		verify(courseResolver, times(4)).resolve(any(), any(), any(), any());
+		verify(courseResolver, times(4)).resolveCourseForProject(any(), any(), any(), any(), any());
 	}
 }

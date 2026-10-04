@@ -80,6 +80,12 @@ public class CommitAiReviewService {
 	private final TeamMemberRepository members;
 	private final AiAnalysisSubmissionService submissions;
 	private final ObjectMapper mapper;
+	private com.saga.be.repository.ProjectRepository projects;
+
+	@org.springframework.beans.factory.annotation.Autowired
+	public void setProjects(com.saga.be.repository.ProjectRepository projects) {
+		this.projects = projects;
+	}
 
 	public CommitAiReviewService(
 			ProjectDataAuthorization authorization,
@@ -109,7 +115,7 @@ public class CommitAiReviewService {
 	/** Key the next review would use: TEAM | COURSE | NONE. Never throws. */
 	public String keySource(UUID projectId, UUID courseId) {
 		if (teamKeys.usableKey(projectId).isPresent()) return "TEAM";
-		return teamKeys.courseKeyUsable(courseId, AiInvocationOrigin.USER_REQUEST) ? "COURSE" : "NONE";
+		return teamKeys.courseKeyUsable(projectId, courseId, AiInvocationOrigin.USER_REQUEST) ? "COURSE" : "NONE";
 	}
 
 	// ---------------------------------------------------------------- list badges
@@ -138,7 +144,7 @@ public class CommitAiReviewService {
 	public Detail detail(UUID userId, UUID projectId, UUID commitId) {
 		authorization.requireReader(userId, projectId);
 		GitCommit commit = requireCommit(projectId, commitId);
-		UUID courseId = commit.getRepo().getProject().getCourse() == null ? null : commit.getRepo().getProject().getCourse().getId();
+		UUID courseId = projects.findCourseIdById(projectId).orElse(null);
 		AiAnalysisRun run = latestRuns(projectId, List.of(commitId)).get(commitId);
 		AiAnalysisProviderDecision decision = run == null ? null : decisions.findByAnalysisRun_Id(run.getId()).orElse(null);
 		AiStructuredResult result = run == null || run.getStatus() != AiAnalysisStatus.COMPLETED ? null : parse(decision);
@@ -173,7 +179,8 @@ public class CommitAiReviewService {
 				run == null ? null : AiAnalysisReadService.failure(run, decision));
 	}
 
-	/** (Re)request the review of one commit, then return the panel. */
+	/** (Re)request the review of one commit, then return the panel. Called without a transaction:
+	 * {@link #detail} must therefore never load anything lazily (it reads the course id by query). */
 	public Detail request(UUID userId, UUID projectId, UUID commitId) {
 		submissions.submit(userId, projectId, commitId);
 		return detail(userId, projectId, commitId);
@@ -189,9 +196,9 @@ public class CommitAiReviewService {
 		int max = limit == null ? MAX_BACKFILL : Math.max(1, Math.min(MAX_BACKFILL, limit));
 		List<UUID> recent = commits.findPageIdsByProject(projectId, PageRequest.of(0, BACKFILL_CANDIDATES)).getContent();
 		if (recent.isEmpty()) return new BackfillResult(0, 0, 0);
-		GitCommit any = commits.findFetchedByIdIn(List.of(recent.getFirst())).stream().findFirst().orElse(null);
-		UUID courseId = any == null || any.getRepo().getProject().getCourse() == null ? null : any.getRepo().getProject().getCourse().getId();
-		if (teamKeys.usableKey(projectId).isEmpty() && !teamKeys.courseFallbackAvailable(courseId)) {
+		// Read without lazy loading: backfill runs outside a transaction (each submission opens its own).
+		UUID courseId = projects.findCourseIdById(projectId).orElse(null);
+		if (teamKeys.usableKey(projectId).isEmpty() && !teamKeys.courseFallbackAvailable(projectId, courseId)) {
 			throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE, HttpStatus.CONFLICT,
 					"Nhóm chưa nhập key AI và giảng viên chưa cho dùng key của lớp, nên chưa đánh giá hàng loạt được.");
 		}

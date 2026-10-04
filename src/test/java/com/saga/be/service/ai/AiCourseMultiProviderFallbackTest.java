@@ -69,7 +69,7 @@ class AiCourseMultiProviderFallbackTest {
 		for (AiProvider provider : AiProvider.values()) credentialIds.put(provider, UUID.randomUUID());
 		state = mock(AiAnalysisStateService.class);
 		when(state.claim(runId)).thenReturn(true);
-		resolver = mock(AiCredentialResolver.class);
+		resolver = mock(AiCredentialResolver.class); org.mockito.Mockito.lenient().when(resolver.resolveForProject(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> resolver.resolve(inv.getArgument(1), inv.getArgument(2), inv.getArgument(3), inv.getArgument(4))); org.mockito.Mockito.lenient().when(resolver.resolveCourseForProject(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> resolver.resolve(inv.getArgument(1), inv.getArgument(2), inv.getArgument(3), inv.getArgument(4)));
 		when(resolver.buildEnvelope(any(), eq(AiProviderRole.PRIMARY), any())).thenReturn(envelope);
 		for (AiProvider provider : AiProvider.values())
 			when(resolver.usableCourseCredential(any(), eq(AiProviderRole.PRIMARY), eq(provider))).thenReturn(Optional.of(new AiCredentialResolver.CourseCredentialRef(credentialIds.get(provider), "fp-" + provider)));

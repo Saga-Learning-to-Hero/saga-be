@@ -131,7 +131,7 @@ public class AssistantService {
 			Project project = projects.findById(projectId).orElseThrow();
 			long used = messages.countQuestionsSince(userId, now().minusHours(24));
 			UUID courseId = project.getCourse() == null ? null : project.getCourse().getId();
-			return new StatusResponse(enabled, ai.runtimeConfigured(), ai.keySource(courseId), dailyLimit, used,
+			return new StatusResponse(enabled, ai.runtimeConfigured(), ai.keySource(projectId, courseId, isLecturer(userId)), dailyLimit, used,
 					Math.max(0, dailyLimit - used));
 		});
 	}
@@ -178,7 +178,7 @@ public class AssistantService {
 
 		Outcome outcome;
 		try {
-			AiAssistantClient.Answer answer = ai.ask("chat:" + prepared.questionId(), prepared.courseId(),
+			AiAssistantClient.Answer answer = ai.ask("chat:" + prepared.questionId(), projectId, prepared.courseId(), isLecturer(userId),
 					evidence(prepared.facts()), context(prepared.facts(), question, prepared.history()));
 			outcome = fromAi(answer, prepared.facts());
 		} catch (AiAssistantClient.Unavailable ex) {
@@ -226,6 +226,11 @@ public class AssistantService {
 	}
 
 	// ------------------------------------------------------------------ ask steps
+
+	/** A lecturer asks with the system key; students follow their team's key. */
+	private boolean isLecturer(UUID userId) {
+		return users.findById(userId).map(user -> user.getAccountRole() == com.saga.be.entity.enums.AccountRole.LECTURER).orElse(false);
+	}
 
 	record Prepared(UUID questionId, MessageResponse question, AssistantFacts facts, List<Map<String, Object>> history, UUID courseId) {}
 

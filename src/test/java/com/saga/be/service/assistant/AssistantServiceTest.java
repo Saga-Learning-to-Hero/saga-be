@@ -130,7 +130,7 @@ class AssistantServiceTest {
 	@Test
 	void anAiAnswerKeepsOnlyCitationsOfSuppliedFactsAndIsUnverifiedWhenOneWasDropped() {
 		UUID invented = UUID.randomUUID();
-		when(ai.ask(anyString(), eq(courseId), any(), any())).thenReturn(answer(
+		when(ai.ask(anyString(), any(), eq(courseId), org.mockito.ArgumentMatchers.anyBoolean(), any(), any())).thenReturn(answer(
 				"SAGA-1 đang trễ hạn.",
 				List.of(new AiAssistantClient.Citation("TASK", overdueTaskId),
 						new AiAssistantClient.Citation("TASK", overdueTaskId),
@@ -160,7 +160,7 @@ class AssistantServiceTest {
 
 	@Test
 	void anAnswerCitingOnlySuppliedFactsIsVerified() {
-		when(ai.ask(anyString(), any(), any(), any())).thenReturn(answer("Minh có 2 task trễ.",
+		when(ai.ask(anyString(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any(), any())).thenReturn(answer("Minh có 2 task trễ.",
 				List.of(new AiAssistantClient.Citation("MEMBER", memberId), new AiAssistantClient.Citation("COMMIT", commitId)), false, false));
 
 		MessageResponse answer = service().ask(userId, projectId, conversation.getId(), "Minh làm gì?").answer();
@@ -173,7 +173,7 @@ class AssistantServiceTest {
 
 	@Test
 	void aClaimWithoutAnyCitationIsUnverifiedButADeclineOrNoDataIsNot() {
-		when(ai.ask(anyString(), any(), any(), any()))
+		when(ai.ask(anyString(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any(), any()))
 				.thenReturn(answer("Nhóm ổn.", List.of(), false, false))
 				.thenReturn(answer("Câu hỏi nằm ngoài phạm vi dự án.", List.of(), false, true))
 				.thenReturn(answer("Không có dữ liệu về việc này.", List.of(), true, false));
@@ -189,7 +189,7 @@ class AssistantServiceTest {
 
 	@Test
 	void theAiGetsEveryFactTheViewerAndTheRecentTurns() {
-		when(ai.ask(anyString(), any(), any(), any())).thenReturn(answer("Đầu tiên.", List.of(), true, false));
+		when(ai.ask(anyString(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any(), any())).thenReturn(answer("Đầu tiên.", List.of(), true, false));
 		service().ask(userId, projectId, conversation.getId(), "Câu một");
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<List<AiAssistantClient.Evidence>> evidence = ArgumentCaptor.forClass(List.class);
@@ -198,7 +198,7 @@ class AssistantServiceTest {
 
 		service().ask(userId, projectId, conversation.getId(), "Câu hai");
 
-		verify(ai, org.mockito.Mockito.times(2)).ask(anyString(), eq(courseId), evidence.capture(), context.capture());
+		verify(ai, org.mockito.Mockito.times(2)).ask(anyString(), any(), eq(courseId), org.mockito.ArgumentMatchers.eq(false), evidence.capture(), context.capture());
 		assertThat(evidence.getValue()).hasSize(facts.items().size());
 		assertThat(evidence.getValue()).extracting(AiAssistantClient.Evidence::type).contains("PROJECT", "SPRINT", "TASK", "MEMBER", "COMMIT");
 		assertThat(evidence.getValue().getFirst().sourceRef()).isEqualTo("project:" + projectId);
@@ -218,7 +218,7 @@ class AssistantServiceTest {
 
 	@Test
 	void whenTheAiIsUnavailableTheBackendSummarisesTheDataWithCitations() {
-		when(ai.ask(anyString(), any(), any(), any())).thenThrow(new AiAssistantClient.Unavailable("AI_CREDENTIAL_UNAVAILABLE"));
+		when(ai.ask(anyString(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any(), any())).thenThrow(new AiAssistantClient.Unavailable("AI_CREDENTIAL_UNAVAILABLE"));
 
 		MessageResponse answer = service().ask(userId, projectId, conversation.getId(), "SAGA-7 tới đâu rồi? Minh sao?").answer();
 
@@ -323,7 +323,7 @@ class AssistantServiceTest {
 	@Test
 	void statusReportsTheKeySourceAndTheRemainingQuestions() {
 		when(ai.runtimeConfigured()).thenReturn(true);
-		when(ai.keySource(courseId)).thenReturn("PLATFORM");
+		when(ai.keySource(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(courseId), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn("PLATFORM");
 		when(messages.countQuestionsSince(userId, NOW_UTC.minusHours(24))).thenReturn(12L);
 
 		var status = service(true, 50).status(userId, projectId);

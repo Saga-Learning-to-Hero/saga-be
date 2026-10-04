@@ -41,17 +41,19 @@ public class AiTaskIntelligenceSubmissionService {
 		Task task = tasks.findActiveFetchedByIdAndProject_Id(taskId, projectId).orElse(null);
 		if (task == null) return Optional.empty();
 		var course = task.getProject().getCourse();
-		if (course == null || !courseSettings.get(course.getId()).automationEnabled()) return Optional.empty();
-		var resolution = credentialResolver.resolve(course.getId(), AiAnalysisType.TASK_INTELLIGENCE, AiProviderRole.PRIMARY, AiInvocationOrigin.AUTOMATION);
+		if (course == null) return Optional.empty();
+		var resolution = credentialResolver.resolveForProject(projectId, course.getId(), AiAnalysisType.TASK_INTELLIGENCE, AiProviderRole.PRIMARY, AiInvocationOrigin.AUTOMATION);
 		if (resolution.outcome() != AiCredentialResolver.Outcome.COURSE) return Optional.empty();
+		// a team key always runs automatically; the course key only while the lecturer keeps automation on
+		if (!resolution.team() && !courseSettings.get(course.getId()).automationEnabled()) return Optional.empty();
 		return Optional.of(submit(projectId, taskId, AiInvocationOrigin.AUTOMATION));
 	}
 
 	private Submission submit(UUID projectId, UUID taskId, AiInvocationOrigin origin) {
 		Task task = tasks.findActiveFetchedByIdAndProject_Id(taskId, projectId).orElseThrow(() -> notFound("Task not found."));
 		UUID courseId = task.getProject().getCourse() == null ? null : task.getProject().getCourse().getId();
-		var resolution = credentialResolver.resolve(courseId, AiAnalysisType.TASK_INTELLIGENCE, AiProviderRole.PRIMARY, origin);
-		if (resolution.outcome() != AiCredentialResolver.Outcome.COURSE) throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE, HttpStatus.CONFLICT, "This course has no PRIMARY AI credential configured; Task Intelligence never falls back to the platform key.");
+		var resolution = credentialResolver.resolveForProject(projectId, courseId, AiAnalysisType.TASK_INTELLIGENCE, AiProviderRole.PRIMARY, origin);
+		if (resolution.outcome() != AiCredentialResolver.Outcome.COURSE) throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE, HttpStatus.CONFLICT, "Nhóm chưa nhập key AI và chưa được giảng viên cho dùng key của lớp.");
 		AiModelProvider provider = primaryProvider();
 		List<AiEvidenceDraft> draft = snapshots.build(task);
 		String evidenceHash = hashEvidence(draft);

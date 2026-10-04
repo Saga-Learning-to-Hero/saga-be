@@ -39,12 +39,25 @@ public class AiCredentialResolver {
 
 	public enum Outcome { COURSE, PLATFORM, UNAVAILABLE }
 
+	private com.saga.be.repository.AiTeamCredentialRepository teamCredentials;
+	private com.saga.be.repository.AiCourseKeyGrantRepository courseKeyGrants;
+
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	public void setTeamCredentials(com.saga.be.repository.AiTeamCredentialRepository teamCredentials) { this.teamCredentials = teamCredentials; }
+
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	public void setCourseKeyGrants(com.saga.be.repository.AiCourseKeyGrantRepository courseKeyGrants) { this.courseKeyGrants = courseKeyGrants; }
+
 	/** {@code binding} is the course's server-validated provider/model for this role, or null for
 	 * the legacy (OpenAI credential, platform model) behaviour and for PLATFORM/UNAVAILABLE. */
-	public record Resolution(Outcome outcome, UUID courseCredentialId, String credentialFingerprint, AiProviderBinding binding) {
-		public static final Resolution UNAVAILABLE = new Resolution(Outcome.UNAVAILABLE, null, null, null);
-		public static final Resolution PLATFORM = new Resolution(Outcome.PLATFORM, null, null, null);
-		public Resolution(Outcome outcome, UUID courseCredentialId, String credentialFingerprint) { this(outcome, courseCredentialId, credentialFingerprint, null); }
+	public record Resolution(Outcome outcome, UUID courseCredentialId, String credentialFingerprint, AiProviderBinding binding, UUID teamCredentialId) {
+		public static final Resolution UNAVAILABLE = new Resolution(Outcome.UNAVAILABLE, null, null, null, null);
+		public static final Resolution PLATFORM = new Resolution(Outcome.PLATFORM, null, null, null, null);
+		public Resolution(Outcome outcome, UUID courseCredentialId, String credentialFingerprint, AiProviderBinding binding) { this(outcome, courseCredentialId, credentialFingerprint, binding, null); }
+		public Resolution(Outcome outcome, UUID courseCredentialId, String credentialFingerprint) { this(outcome, courseCredentialId, credentialFingerprint, null, null); }
+
+		/** Served by the team's own key (wire format COURSE: saga-ai forwards the sealed key). */
+		public boolean team() { return teamCredentialId != null; }
 
 		/** Credential identity for run idempotency. Identical to the bare fingerprint for legacy
 		 * (unbound) resolutions, so pre multi-provider idempotency keys are unchanged; a binding
@@ -79,6 +92,49 @@ public class AiCredentialResolver {
 		return Resolution.UNAVAILABLE;
 	}
 
+	/**
+	 * Key for an analysis of one project (team): the team's own key first (PRIMARY only), then the
+	 * course key only when the lecturer picked this team as a course-key team, otherwise none. The
+	 * course-level resolution (platform fallback rules included) applies only to such a team.
+	 */
+	@Transactional(readOnly = true)
+	public Resolution resolveForProject(UUID projectId, UUID courseId, AiAnalysisType analysisType, AiProviderRole providerRole, AiInvocationOrigin origin) {
+		if (projectId == null) return resolve(courseId, analysisType, providerRole, origin);
+		if (providerRole == AiProviderRole.PRIMARY) {
+			Resolution team = teamResolution(projectId);
+			if (team != null) return team;
+		}
+		return resolveCourseForProject(projectId, courseId, analysisType, providerRole, origin);
+	}
+
+	/** The course key for this team, only when the lecturer allows it (never the team key). */
+	@Transactional(readOnly = true)
+	public Resolution resolveCourseForProject(UUID projectId, UUID courseId, AiAnalysisType analysisType, AiProviderRole providerRole, AiInvocationOrigin origin) {
+		if (!courseKeyAllowed(projectId)) return Resolution.UNAVAILABLE;
+		return resolve(courseId, analysisType, providerRole, origin);
+	}
+
+	/** The lecturer picked this team to fall back to the course key. */
+	@Transactional(readOnly = true)
+	public boolean courseKeyAllowed(UUID projectId) {
+		if (projectId == null) return true;
+		return courseKeyGrants == null || courseKeyGrants.existsByProject_Id(projectId);
+	}
+
+	private Resolution teamResolution(UUID projectId) {
+		if (teamCredentials == null) return null;
+		var row = teamCredentials.findByProject_Id(projectId)
+				.filter(c -> c.getStatus() != AiCredentialStatus.INVALID && c.getStatus() != AiCredentialStatus.REVOKED)
+				.orElse(null);
+		if (row == null) return null;
+		try {
+			AiProviderBinding binding = catalog.requireRuntimeCompatible(new AiProviderBinding(row.getProvider(), row.getModelId()));
+			return new Resolution(Outcome.COURSE, null, row.getFingerprint(), binding, row.getId());
+		} catch (RuntimeException ex) {
+			return null; // the stored model left the catalog: the leader must pick another one
+		}
+	}
+
 	@Transactional(readOnly = true)
 	public java.util.Optional<CourseCredentialRef> usableCourseCredential(UUID courseId, AiProviderRole role, AiProvider provider) {
 		return credentials.findByCourse_IdAndProviderRoleAndProvider(courseId, role, provider)
@@ -97,7 +153,10 @@ public class AiCredentialResolver {
 
 	/** Stamps the course binding onto a new decision row (provider + model actually requested). */
 	public static void applyBinding(AiAnalysisProviderDecision decision, Resolution resolution) {
-		if (resolution == null || resolution.binding() == null) return;
+		if (resolution == null) return;
+		// A team-key run records which team key served it; execution then uses that key, never the course chain.
+		if (resolution.team()) { decision.setTeamCredentialId(resolution.teamCredentialId()); decision.setCourseCredentialId(null); }
+		if (resolution.binding() == null) return;
 		decision.setAiProvider(resolution.binding().provider());
 		decision.setModelId(resolution.binding().modelId());
 	}

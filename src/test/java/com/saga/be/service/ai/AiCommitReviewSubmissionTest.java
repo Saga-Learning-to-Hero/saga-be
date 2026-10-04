@@ -71,7 +71,7 @@ class AiCommitReviewSubmissionTest {
 	@BeforeEach
 	void setUp() {
 		commits = mock(GitCommitRepository.class);
-		credentialResolver = mock(AiCredentialResolver.class);
+		credentialResolver = mock(AiCredentialResolver.class); org.mockito.Mockito.lenient().when(credentialResolver.resolveForProject(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> credentialResolver.resolve(inv.getArgument(1), inv.getArgument(2), inv.getArgument(3), inv.getArgument(4))); org.mockito.Mockito.lenient().when(credentialResolver.resolveCourseForProject(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> credentialResolver.resolve(inv.getArgument(1), inv.getArgument(2), inv.getArgument(3), inv.getArgument(4)));
 		courseSettings = mock(CourseAiSettingsService.class);
 		runs = mock(AiAnalysisRunRepository.class);
 		decisions = mock(AiAnalysisProviderDecisionRepository.class);

@@ -103,6 +103,74 @@ public class AiAssistantClient {
 		return runtime.isEnabled() && !blank(runtime.getBaseUrl()) && !blank(runtime.getInternalToken());
 	}
 
+	private TeamAiCredentialService teamKeys;
+
+	@Autowired(required = false)
+	public void setTeamKeys(TeamAiCredentialService teamKeys) { this.teamKeys = teamKeys; }
+
+	/**
+	 * Which key answers this person in this project: a lecturer asks with the system (platform) key; a
+	 * student's team asks with its own key (TEAM), else the course key only when the lecturer picked
+	 * the team (COURSE, or PLATFORM where the course allows it), else UNAVAILABLE.
+	 */
+	public String keySource(UUID projectId, UUID courseId, boolean lecturer) {
+		if (!runtimeConfigured()) {
+			return AiCredentialResolver.Outcome.UNAVAILABLE.name();
+		}
+		if (lecturer) {
+			return AiCredentialResolver.Outcome.PLATFORM.name();
+		}
+		try {
+			AiCredentialResolver.Resolution resolution = resolveForTeam(projectId, courseId);
+			return resolution.team() ? "TEAM" : resolution.outcome().name();
+		} catch (RuntimeException ex) {
+			return AiCredentialResolver.Outcome.UNAVAILABLE.name();
+		}
+	}
+
+	/** One answer for a person in a project, following {@link #keySource(UUID, UUID, boolean)}. */
+	public Answer ask(String requestId, UUID projectId, UUID courseId, boolean lecturer, List<Evidence> evidence, Map<String, Object> context) {
+		if (!runtimeConfigured()) {
+			throw new Unavailable("AI_RUNTIME_NOT_CONFIGURED");
+		}
+		List<Object> items = items(evidence);
+		if (lecturer) {
+			return send(requestId, courseId, items, context, null, null);
+		}
+		AiCredentialResolver.Resolution resolution;
+		try {
+			resolution = resolveForTeam(projectId, courseId);
+		} catch (RuntimeException ex) {
+			throw new Unavailable("AI_MODEL_NOT_SUPPORTED");
+		}
+		if (resolution.team()) {
+			return sendTeam(requestId, projectId, items, context, resolution);
+		}
+		return answerWith(requestId, courseId, items, context, resolution);
+	}
+
+	private AiCredentialResolver.Resolution resolveForTeam(UUID projectId, UUID courseId) {
+		return credentials.resolveForProject(projectId, courseId, AiAnalysisType.PROGRESS_NARRATIVE, AiProviderRole.PRIMARY, AiInvocationOrigin.USER_REQUEST);
+	}
+
+	/** The team's own key and model: one attempt, never the course chain. */
+	private Answer sendTeam(String requestId, UUID projectId, List<Object> items, Map<String, Object> context, AiCredentialResolver.Resolution resolution) {
+		if (teamKeys == null) throw new Unavailable("AI_CREDENTIAL_ENVELOPE_UNAVAILABLE");
+		UUID teamCredentialId = resolution.teamCredentialId();
+		try {
+			AiCredentialEnvelope envelope = teamKeys.buildEnvelope(teamCredentialId, projectId);
+			Answer answer = dispatch(requestId, items, context, resolution.binding(), envelope, true);
+			teamKeys.markSuccessful(teamCredentialId);
+			return answer;
+		} catch (AiCredentialCryptoException ex) {
+			throw new Unavailable(ex.safeCode());
+		} catch (Unavailable ex) {
+			if (AiAnalysisExecutionService.CREDENTIAL_INVALID_CODES.contains(ex.code())) teamKeys.markInvalid(teamCredentialId, ex.code());
+			else if (AiAnalysisExecutionService.CREDENTIAL_DEGRADED_CODES.contains(ex.code())) teamKeys.markDegraded(teamCredentialId, ex.code());
+			throw ex;
+		}
+	}
+
 	/** COURSE, PLATFORM or UNAVAILABLE: which key would answer for this course right now. */
 	public String keySource(UUID courseId) {
 		if (!runtimeConfigured()) {
@@ -130,13 +198,22 @@ public class AiAssistantClient {
 		} catch (RuntimeException ex) {
 			throw new Unavailable("AI_MODEL_NOT_SUPPORTED");
 		}
-		if (resolution.outcome() == AiCredentialResolver.Outcome.UNAVAILABLE) {
-			throw new Unavailable("AI_CREDENTIAL_UNAVAILABLE");
-		}
+		return answerWith(requestId, courseId, items(evidence), context, resolution);
+	}
+
+	private List<Object> items(List<Evidence> evidence) {
 		List<Object> items = new ArrayList<>();
 		for (Evidence item : evidence) {
 			items.add(Map.of("id", item.id().toString(), "type", item.type(), "sourceRef", item.sourceRef(),
 					"payload", item.payload(), "metadata", Map.of()));
+		}
+		return items;
+	}
+
+	/** A course or platform resolution: the course key and its fallback chain, or the platform key. */
+	private Answer answerWith(String requestId, UUID courseId, List<Object> items, Map<String, Object> context, AiCredentialResolver.Resolution resolution) {
+		if (resolution.outcome() == AiCredentialResolver.Outcome.UNAVAILABLE) {
+			throw new Unavailable("AI_CREDENTIAL_UNAVAILABLE");
 		}
 		if (resolution.outcome() == AiCredentialResolver.Outcome.PLATFORM) {
 			return send(requestId, courseId, items, context, null, null);
@@ -175,6 +252,33 @@ public class AiAssistantClient {
 	private Answer send(
 			String requestId, UUID courseId, List<Object> items, Map<String, Object> context, AiProviderBinding binding, UUID credentialId) {
 		boolean course = credentialId != null;
+		if (!course) {
+			return dispatch(requestId, items, context, binding, null, false);
+		}
+		AiCredentialEnvelope envelope;
+		try {
+			// Decrypt-and-reseal exactly here, right before this one dispatch.
+			envelope = credentials.buildEnvelope(credentialId, AiProviderRole.PRIMARY, courseId);
+		} catch (AiCredentialCryptoException ex) {
+			throw new Unavailable(ex.safeCode());
+		}
+		try {
+			Answer answer = dispatch(requestId, items, context, binding, envelope, true);
+			credentials.markSuccessful(credentialId);
+			return answer;
+		} catch (Unavailable ex) {
+			if (AiAnalysisExecutionService.CREDENTIAL_INVALID_CODES.contains(ex.code())) {
+				credentials.markInvalid(credentialId);
+			} else if (AiAnalysisExecutionService.CREDENTIAL_DEGRADED_CODES.contains(ex.code())) {
+				credentials.markDegraded(credentialId);
+			}
+			throw ex;
+		}
+	}
+
+	/** One HTTP call to saga-ai: with a sealed key (COURSE wire format) or with the platform key. */
+	private Answer dispatch(
+			String requestId, List<Object> items, Map<String, Object> context, AiProviderBinding binding, AiCredentialEnvelope envelope, boolean course) {
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("requestId", requestId);
 		body.put("analysisType", ANALYSIS_TYPE);
@@ -187,8 +291,6 @@ public class AiAssistantClient {
 		body.put("context", context);
 		try {
 			if (course) {
-				// Decrypt-and-reseal exactly here, right before this one dispatch.
-				AiCredentialEnvelope envelope = credentials.buildEnvelope(credentialId, AiProviderRole.PRIMARY, courseId);
 				body.put("credentialEnvelope", Map.of("version", envelope.version(), "algorithm", envelope.algorithm(),
 						"nonce", envelope.nonce(), "ciphertext", envelope.ciphertext()));
 			}
@@ -199,25 +301,12 @@ public class AiAssistantClient {
 					.body(body)
 					.retrieve()
 					.body(String.class);
-			Answer answer = parse(requestId, raw, course);
-			if (course) {
-				credentials.markSuccessful(credentialId);
-			}
-			return answer;
+			return parse(requestId, raw, course);
 		} catch (Unavailable ex) {
 			throw ex;
-		} catch (AiCredentialCryptoException ex) {
-			throw new Unavailable(ex.safeCode());
 		} catch (RestClientResponseException ex) {
 			// 422 = saga-ai rejected the request shape: a runtime older than the CHAT_ANSWER contract.
 			String code = ex.getStatusCode().value() == 422 ? "AI_RUNTIME_OUTDATED" : RemoteAiErrorCodes.from(mapper, ex);
-			if (course) {
-				if (AiAnalysisExecutionService.CREDENTIAL_INVALID_CODES.contains(code)) {
-					credentials.markInvalid(credentialId);
-				} else if (AiAnalysisExecutionService.CREDENTIAL_DEGRADED_CODES.contains(code)) {
-					credentials.markDegraded(credentialId);
-				}
-			}
 			log.warn("assistant answer failed requestId={} provider={} code={}", requestId,
 					binding == null ? null : binding.provider(), code);
 			throw new Unavailable(code);

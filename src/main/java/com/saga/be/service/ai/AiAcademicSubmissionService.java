@@ -62,8 +62,8 @@ public class AiAcademicSubmissionService {
   * manual USER_REQUEST when the course explicitly allows it (section II/VIII). */
  private AiCredentialResolver.Resolution requireCredential(com.saga.be.entity.project.Project project) {
   UUID courseId=project.getCourse()==null?null:project.getCourse().getId();
-  var resolution=credentialResolver.resolve(courseId,AiAnalysisType.ACADEMIC_CLASSIFICATION,AiProviderRole.PRIMARY,AiInvocationOrigin.USER_REQUEST);
-  if (resolution.outcome()==AiCredentialResolver.Outcome.UNAVAILABLE) throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE,HttpStatus.CONFLICT,"No AI credential is available for this course (no course key, and platform fallback is not allowed or not configured).");
+  var resolution=credentialResolver.resolveForProject(project.getId(),courseId,AiAnalysisType.ACADEMIC_CLASSIFICATION,AiProviderRole.PRIMARY,AiInvocationOrigin.USER_REQUEST);
+  if (resolution.outcome()==AiCredentialResolver.Outcome.UNAVAILABLE) throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE,HttpStatus.CONFLICT,"Nhóm chưa nhập key AI và chưa được giảng viên cho dùng key của lớp.");
   return resolution;
  }
 

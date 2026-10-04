@@ -29,7 +29,7 @@ class AiSecondaryBrainServiceTest {
 		properties = new AiAnalysisProperties();
 		decisions = mock(AiAnalysisProviderDecisionRepository.class);
 		validation = mock(AiResultValidation.class);
-		credentialResolver = mock(AiCredentialResolver.class);
+		credentialResolver = mock(AiCredentialResolver.class); org.mockito.Mockito.lenient().when(credentialResolver.resolveForProject(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> credentialResolver.resolve(inv.getArgument(1), inv.getArgument(2), inv.getArgument(3), inv.getArgument(4))); org.mockito.Mockito.lenient().when(credentialResolver.resolveCourseForProject(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> credentialResolver.resolve(inv.getArgument(1), inv.getArgument(2), inv.getArgument(3), inv.getArgument(4)));
 		// Default: a course SECONDARY credential is available, matching the pre-BYOK test
 		// expectations below (which only exercise the "secondary flag on" gate). The dedicated
 		// no-credential tests further down override this per-test.

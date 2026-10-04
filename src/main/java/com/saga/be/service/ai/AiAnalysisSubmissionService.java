@@ -61,7 +61,7 @@ public class AiAnalysisSubmissionService {
 		if (teamKey(projectId).isPresent()) return Optional.of(submit(projectId, gitCommitId, AiInvocationOrigin.AUTOMATION));
 		Course course = commit.getRepo().getProject().getCourse();
 		if (course == null || !courseSettings.get(course.getId()).automationEnabled()) return Optional.empty();
-		var resolution = credentialResolver.resolve(course.getId(), AiAnalysisType.COMMIT_INTELLIGENCE, AiProviderRole.PRIMARY, AiInvocationOrigin.AUTOMATION);
+		var resolution = credentialResolver.resolveCourseForProject(projectId, course.getId(), AiAnalysisType.COMMIT_INTELLIGENCE, AiProviderRole.PRIMARY, AiInvocationOrigin.AUTOMATION);
 		if (resolution.outcome() != AiCredentialResolver.Outcome.COURSE) return Optional.empty();
 		return Optional.of(submit(projectId, gitCommitId, AiInvocationOrigin.AUTOMATION));
 	}
@@ -75,8 +75,8 @@ public class AiAnalysisSubmissionService {
 		TeamAiCredentialService.TeamKeyRef team = teamKey(projectId).orElse(null);
 		AiCredentialResolver.Resolution resolution = null;
 		if (team == null) {
-			resolution = credentialResolver.resolve(courseId, AiAnalysisType.COMMIT_INTELLIGENCE, AiProviderRole.PRIMARY, origin);
-			if (resolution.outcome() != AiCredentialResolver.Outcome.COURSE) throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE, HttpStatus.CONFLICT, "Nhóm chưa nhập key AI và lớp chưa có key AI của giảng viên, nên chưa đánh giá commit được.");
+			resolution = credentialResolver.resolveCourseForProject(projectId, courseId, AiAnalysisType.COMMIT_INTELLIGENCE, AiProviderRole.PRIMARY, origin);
+			if (resolution.outcome() != AiCredentialResolver.Outcome.COURSE) throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE, HttpStatus.CONFLICT, "Nhóm chưa nhập key AI và chưa được giảng viên cho dùng key của lớp.");
 		}
 		List<TaskGitCommitLink> taskLinks = withManualLinks(projectId, commit, links.findAnalysisEvidenceByGitCommitId(gitCommitId, projectId)); List<UUID> taskIds = taskLinks.stream().map(link -> link.getTask().getId()).toList(); List<JiraTaskFailoverItem> lineage = taskIds.isEmpty() ? List.of() : failover.findSuccessfulLineageByTaskIds(taskIds);
 		List<AiEvidenceDraft> draft = new ArrayList<>(snapshots.build(commit, taskLinks, lineage));

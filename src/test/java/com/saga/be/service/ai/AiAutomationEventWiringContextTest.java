@@ -167,7 +167,7 @@ class AiAutomationEventWiringContextTest {
 		@Bean
 		AiProgressFactsBuilder progressFacts() { return org.mockito.Mockito.mock(AiProgressFactsBuilder.class); }
 		@Bean
-		AiCredentialResolver credentialResolver() { return org.mockito.Mockito.mock(AiCredentialResolver.class); }
+		AiCredentialResolver credentialResolver() { AiCredentialResolver resolver = org.mockito.Mockito.mock(AiCredentialResolver.class); org.mockito.Mockito.lenient().when(resolver.resolveForProject(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> resolver.resolve(inv.getArgument(1), inv.getArgument(2), inv.getArgument(3), inv.getArgument(4))); org.mockito.Mockito.lenient().when(resolver.resolveCourseForProject(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> resolver.resolve(inv.getArgument(1), inv.getArgument(2), inv.getArgument(3), inv.getArgument(4))); return resolver; }
 		@Bean
 		CourseAiSettingsService courseAiSettingsService() { return org.mockito.Mockito.mock(CourseAiSettingsService.class); }
 		@Bean

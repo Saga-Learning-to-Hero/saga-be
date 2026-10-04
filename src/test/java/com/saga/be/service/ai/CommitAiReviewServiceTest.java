@@ -97,6 +97,9 @@ class CommitAiReviewServiceTest {
 		members = mock(TeamMemberRepository.class);
 		submissions = mock(AiAnalysisSubmissionService.class);
 		service = new CommitAiReviewService(authorization, commits, runs, decisions, evidence, links, manualLinks, teamKeys, members, submissions, mapper);
+		com.saga.be.repository.ProjectRepository projects = mock(com.saga.be.repository.ProjectRepository.class);
+		when(projects.findCourseIdById(projectId)).thenReturn(Optional.of(courseId));
+		service.setProjects(projects);
 		Course course = new Course();
 		course.setId(courseId);
 		project = new Project();
@@ -171,11 +174,11 @@ class CommitAiReviewServiceTest {
 	@Test
 	void noTeamKeyAndNoCourseKey_meansNoKeyBadge() {
 		when(teamKeys.usableKey(projectId)).thenReturn(Optional.empty());
-		when(teamKeys.courseKeyUsable(courseId, AiInvocationOrigin.USER_REQUEST)).thenReturn(false);
+		when(teamKeys.courseKeyUsable(projectId, courseId, AiInvocationOrigin.USER_REQUEST)).thenReturn(false);
 		GitCommit commit = commit(1);
 		assertThat(service.summaries(projectId, courseId, List.of(commit)).get(commit.getId()).status()).isEqualTo(CommitAiReviewDtos.NO_KEY);
 		assertThat(service.keySource(projectId, courseId)).isEqualTo("NONE");
-		when(teamKeys.courseKeyUsable(courseId, AiInvocationOrigin.USER_REQUEST)).thenReturn(true);
+		when(teamKeys.courseKeyUsable(projectId, courseId, AiInvocationOrigin.USER_REQUEST)).thenReturn(true);
 		assertThat(service.keySource(projectId, courseId)).isEqualTo("COURSE");
 	}
 
@@ -300,6 +303,23 @@ class CommitAiReviewServiceTest {
 				.satisfies(ex -> assertThat(((IntegrationException) ex).getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
 	}
 
+	@Test
+	void detailNeverLoadsTheCourseLazily_soTheReReviewButtonWorksOutsideATransaction() {
+		// regression: POST /ai-review returned 500 (LazyInitializationException on project.course)
+		Project lazy = org.mockito.Mockito.spy(new Project());
+		lazy.setId(projectId);
+		org.mockito.Mockito.doThrow(new org.hibernate.LazyInitializationException("no session")).when(lazy).getCourse();
+		GitRepo lazyRepo = new GitRepo();
+		lazyRepo.setProject(lazy);
+		GitCommit commit = commit(1);
+		commit.setRepo(lazyRepo);
+
+		CommitAiReviewDtos.Detail detail = service.request(authorId, projectId, commit.getId());
+
+		verify(submissions).submit(authorId, projectId, commit.getId());
+		assertThat(detail.keySource()).isEqualTo("TEAM");
+	}
+
 	// ---------------- backfill
 
 	@Test
@@ -348,7 +368,7 @@ class CommitAiReviewServiceTest {
 		GitCommit commit = commit(1);
 		when(commits.findPageIdsByProject(eq(projectId), any())).thenReturn(new PageImpl<>(List.of(commit.getId())));
 		when(teamKeys.usableKey(projectId)).thenReturn(Optional.empty());
-		when(teamKeys.courseFallbackAvailable(courseId)).thenReturn(false);
+		when(teamKeys.courseFallbackAvailable(projectId, courseId)).thenReturn(false);
 
 		assertThatThrownBy(() -> service.backfill(leaderId, projectId, 5))
 				.isInstanceOf(IntegrationException.class)
