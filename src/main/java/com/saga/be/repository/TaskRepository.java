@@ -761,4 +761,19 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			@Param("excludeTaskId") UUID excludeTaskId,
 			@Param("from") LocalDateTime from,
 			@Param("to") LocalDateTime to);
+
+	/**
+	 * Progress report rows for many projects in one query: {@code Object[]{UUID projectId,
+	 * String externalKey, String title, TaskStatus status, LocalDateTime dueDate, Integer storyPoint,
+	 * UUID assigneeStudentId}}.
+	 */
+	@Query(
+			"""
+			select t.project.id, t.externalKey, t.title, t.status, t.dueDate, t.storyPoint, s.id
+			from Task t
+			left join t.assigneeStudent s
+			where t.project.id in :projectIds
+			  and t.deletedAt is null
+			""")
+	List<Object[]> findProgressReportRows(@Param("projectIds") Collection<UUID> projectIds);
 }

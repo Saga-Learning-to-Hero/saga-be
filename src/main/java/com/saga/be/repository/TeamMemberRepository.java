@@ -159,4 +159,18 @@ public interface TeamMemberRepository extends JpaRepository<TeamMember, UUID> {
 			WHERE m.courseEnrollment.id IN :enrollmentIds
 			""")
 	List<TeamMember> findFetchedByCourseEnrollment_IdIn(@Param("enrollmentIds") Collection<UUID> enrollmentIds);
+
+	/** Active members of these teams for the progress report: {@code Object[]{UUID teamId, UUID studentProfileId,
+	 * String studentCode, String fullName, RoleInTeam role}}. */
+	@Query(
+			"""
+			select m.team.id, sp.id, sp.studentCode, u.fullName, m.roleInTeam
+			from TeamMember m
+			join m.courseEnrollment e
+			join e.studentProfile sp
+			join sp.userAccount u
+			where m.team.id in :teamIds
+			  and e.enrollmentStatus = com.saga.be.entity.enums.EnrollmentStatus.ACTIVE
+			""")
+	List<Object[]> findActiveProgressReportRows(@Param("teamIds") java.util.Collection<UUID> teamIds);
 }

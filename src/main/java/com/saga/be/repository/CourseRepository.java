@@ -146,4 +146,18 @@ public interface CourseRepository extends JpaRepository<Course, UUID> {
 	Optional<Course> findActiveFetchedById(@Param("courseId") UUID courseId);
 
 	long countBySemester_IdAndDeletedAtIsNull(UUID semesterId);
+
+	/** Course header for reports, without lazy loading: {@code Object[]{String courseCode, String name,
+	 * String subjectCode, String subjectName, String semesterName, String lecturerName}}. */
+	@org.springframework.data.jpa.repository.Query(
+			"""
+			select c.courseCode, c.name, s.subjectCode, s.name, sem.name, u.fullName
+			from Course c
+			left join c.subject s
+			left join c.semester sem
+			left join c.instructor i
+			left join i.userAccount u
+			where c.id = :id
+			""")
+	List<Object[]> findReportHeader(@org.springframework.data.repository.query.Param("id") UUID id);
 }

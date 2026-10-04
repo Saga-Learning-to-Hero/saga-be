@@ -405,4 +405,40 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			  and (c.parentCount is null or c.parentCount <= 1)
 			""")
 	List<Object[]> findProjectIdAndIdAndCommittedAtByProjectIds(@Param("projectIds") Collection<UUID> projectIds);
+
+	/** Non-merge commits per author for the progress report: {@code Object[]{UUID projectId,
+	 * UUID authorStudentId (null = unmapped GitHub author), Long commits, LocalDateTime lastCommittedAt}}. */
+	@Query(
+			"""
+			select r.project.id, a.id, count(c), max(c.committedAt)
+			from GitCommit c
+			join c.repo r
+			left join c.authorStudent a
+			where r.project.id in :projectIds
+			  and (c.parentCount is null or c.parentCount <= 1)
+			  and (c.message is null or c.message not like 'Merge %')
+			group by r.project.id, a.id
+			""")
+	List<Object[]> countProgressReportCommits(@Param("projectIds") java.util.Collection<UUID> projectIds);
+
+	/** Non-merge commits attached to no live task (automatic or manual), per author:
+	 * {@code Object[]{UUID projectId, UUID authorStudentId, Long commits}}. */
+	@Query(
+			"""
+			select r.project.id, a.id, count(c)
+			from GitCommit c
+			join c.repo r
+			left join c.authorStudent a
+			where r.project.id in :projectIds
+			  and (c.parentCount is null or c.parentCount <= 1)
+			  and (c.message is null or c.message not like 'Merge %')
+			  and not exists (
+			      select 1 from TaskGitCommitLink l
+			      where l.gitCommit = c and l.task.deletedAt is null)
+			  and not exists (
+			      select 1 from TaskCommitManualLink m
+			      where m.gitCommit = c and m.task.deletedAt is null)
+			group by r.project.id, a.id
+			""")
+	List<Object[]> countProgressReportUnlinkedCommits(@Param("projectIds") java.util.Collection<UUID> projectIds);
 }

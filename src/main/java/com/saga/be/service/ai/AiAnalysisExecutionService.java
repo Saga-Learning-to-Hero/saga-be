@@ -209,5 +209,5 @@ public class AiAnalysisExecutionService {
 
 	private Set<UUID> taskIds(List<com.saga.be.entity.ai.AiAnalysisEvidence> rows) { Set<UUID> ids = new HashSet<>(); for (var row : rows) if (row.getEvidenceType() == AiEvidenceType.TASK_FIELD) try { String id = mapper.readTree(row.getPayloadJson()).path("taskId").asText(null); if (id != null) ids.add(UUID.fromString(id)); } catch (Exception ignored) {} return ids; }
 	private boolean completeCoverage(List<com.saga.be.entity.ai.AiAnalysisEvidence> rows) { for (var row : rows) if (row.getEvidenceType() == AiEvidenceType.CHANGED_FILE_MANIFEST) try { return "COMPLETE".equals(mapper.readTree(row.getPayloadJson()).path("coverage").asText()); } catch (Exception ignored) { return false; } return false; }
-	private static String factsJson(List<com.saga.be.entity.ai.AiAnalysisEvidence> rows) { for (var row : rows) if (row.getSourceRef() != null && row.getSourceRef().startsWith("progress-facts:")) return row.getPayloadJson(); throw new IllegalStateException("Progress narrative run is missing its progress-facts evidence row"); }
+	private String factsJson(List<com.saga.be.entity.ai.AiAnalysisEvidence> rows) { return AiProgressTeamFacts.merge(mapper, rows); }
 }

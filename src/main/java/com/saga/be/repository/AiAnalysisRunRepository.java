@@ -108,4 +108,22 @@ public interface AiAnalysisRunRepository extends JpaRepository<AiAnalysisRun, UU
 
 	/** Lecturer drill-down: latest COURSE-scope run. */
 	Optional<AiAnalysisRun> findTopByCourse_IdAndArtifactTypeAndArtifactIdAndAnalysisTypeOrderByCreatedAtDesc(UUID courseId, AiArtifactType artifactType, UUID artifactId, AiAnalysisType analysisType);
+
+	/** Completed commit reviews of these projects, newest first (the caller keeps the first per commit):
+	 * {@code Object[]{UUID projectId, UUID authorStudentId, UUID gitCommitId, String structuredResultJson}}. */
+	@Query(
+			"""
+			select r.project.id, a.id, r.artifactId, d.structuredResultJson
+			from AiAnalysisRun r, AiAnalysisProviderDecision d, GitCommit c
+			left join c.authorStudent a
+			where d.analysisRun = r
+			  and d.providerRole = com.saga.be.entity.enums.AiProviderRole.PRIMARY
+			  and c.id = r.artifactId
+			  and r.project.id in :projectIds
+			  and r.artifactType = com.saga.be.entity.enums.AiArtifactType.COMMIT
+			  and r.analysisType = com.saga.be.entity.enums.AiAnalysisType.COMMIT_INTELLIGENCE
+			  and r.status = com.saga.be.entity.enums.AiAnalysisStatus.COMPLETED
+			order by r.createdAt desc
+			""")
+	List<Object[]> findCompletedCommitReviewsForReport(@Param("projectIds") Collection<UUID> projectIds);
 }

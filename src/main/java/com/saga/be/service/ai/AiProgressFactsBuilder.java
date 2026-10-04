@@ -48,6 +48,14 @@ public class AiProgressFactsBuilder {
 		this.mapper = mapper; this.tasks = tasks; this.taskIntelligence = taskIntelligence; this.riskAnalysis = riskAnalysis; this.teams = teams; this.teamMembers = teamMembers; this.deadlineProperties = deadlineProperties; this.clock = clock;
 	}
 
+	/** Per-team / per-member detail (who has which overdue task, commits, AI warnings); absent in slice tests. */
+	private AiProgressRosterBuilder roster;
+
+	@Autowired(required = false)
+	public void setRoster(AiProgressRosterBuilder roster) {
+		this.roster = roster;
+	}
+
 	public record Facts(Map<String, Object> data) {
 		public String json(ObjectMapper mapper) { try { return mapper.writeValueAsString(data); } catch (Exception e) { throw new IllegalStateException(e); } }
 	}
@@ -88,6 +96,10 @@ public class AiProgressFactsBuilder {
 		facts.put("taskStatusCounts", statusCounts);
 		facts.put("overdueCount", tasks.countOverdueForProject(project.getId(), null, now));
 		facts.put("dueSoonCount", tasks.countDueSoonForProject(project.getId(), null, now, cutoff));
+		if (roster != null && team != null) {
+			facts.put("course", roster.courseHeader(project.getCourse() == null ? null : project.getCourse().getId()));
+			roster.addRoster(facts, List.of(team), now);
+		}
 		return new Facts(facts);
 	}
 
@@ -111,6 +123,10 @@ public class AiProgressFactsBuilder {
 		facts.put("taskStatusCounts", statusCounts);
 		facts.put("overdueCount", tasks.countOverdueForProjects(projectIds, now));
 		facts.put("dueSoonCount", tasks.countDueSoonForProjects(projectIds, now, cutoff));
+		if (roster != null) {
+			facts.put("course", roster.courseHeader(course.getId()));
+			roster.addRoster(facts, teams.findByCourse_IdOrderByTeamNoAsc(course.getId()), now);
+		}
 		return new Facts(facts);
 	}
 

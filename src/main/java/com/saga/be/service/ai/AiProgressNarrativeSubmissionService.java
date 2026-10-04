@@ -52,7 +52,7 @@ public class AiProgressNarrativeSubmissionService {
 		var resolution = requireProjectCredential(project);
 		AiModelProvider provider = primaryProvider();
 		AiProgressFactsBuilder.Facts data = facts.buildTeam(project);
-		List<AiEvidenceDraft> draft = List.of(factsRow("team:" + projectId, data));
+		List<AiEvidenceDraft> draft = factsRows("team:" + projectId, data);
 		return submitCommon(project, null, AiArtifactType.TEAM, projectId, draft, provider, resolution, AiInvocationOrigin.USER_REQUEST);
 	}
 
@@ -62,7 +62,7 @@ public class AiProgressNarrativeSubmissionService {
 		AiModelProvider provider = primaryProvider();
 		List<Project> courseProjects = teams.findByCourse_IdOrderByTeamNoAsc(courseId).stream().map(com.saga.be.entity.project.Team::getProject).filter(Objects::nonNull).toList();
 		AiProgressFactsBuilder.Facts data = facts.buildCourse(course, courseProjects);
-		List<AiEvidenceDraft> draft = List.of(factsRow("course:" + courseId, data));
+		List<AiEvidenceDraft> draft = factsRows("course:" + courseId, data);
 		return submitCommon(null, course, AiArtifactType.COURSE, courseId, draft, provider, resolution, AiInvocationOrigin.USER_REQUEST);
 	}
 
@@ -80,6 +80,15 @@ public class AiProgressNarrativeSubmissionService {
 		var resolution = credentialResolver.resolve(courseId, AiAnalysisType.PROGRESS_NARRATIVE, AiProviderRole.PRIMARY, AiInvocationOrigin.USER_REQUEST);
 		if (resolution.outcome() == AiCredentialResolver.Outcome.UNAVAILABLE) throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE, HttpStatus.CONFLICT, "No AI credential is available for this course (no course key, and platform fallback is not allowed or not configured).");
 		return resolution;
+	}
+
+	/**
+	 * The summary facts as {@code progress-facts:<subject>}, and each team's detail as its own
+	 * {@code progress-team:<n>} row so a whole class never exceeds saga-ai's size limit per evidence item
+	 * and the AI can cite the team it talks about. The execution step merges them back for the report.
+	 */
+	List<AiEvidenceDraft> factsRows(String subjectRef, AiProgressFactsBuilder.Facts data) {
+		return AiProgressTeamFacts.split(mapper, subjectRef, data);
 	}
 
 	private AiEvidenceDraft factsRow(String subjectRef, AiProgressFactsBuilder.Facts data) {
