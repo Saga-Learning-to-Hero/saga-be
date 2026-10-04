@@ -32,6 +32,7 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -70,6 +71,10 @@ public class TeamAiCredentialService {
 	 * that left the catalog) must never mark the caller's transaction (a commit list) rollback-only. */
 	private final TransactionTemplate isolated;
 	private NotificationService notifications;
+	private ApplicationEventPublisher events;
+
+	/** First time this project has a usable team key (new, or replacing a revoked one). */
+	public record TeamKeyFirstSaved(UUID userId, UUID projectId) {}
 
 	public TeamAiCredentialService(
 			AiTeamCredentialRepository credentials,
@@ -101,6 +106,11 @@ public class TeamAiCredentialService {
 	@Autowired(required = false)
 	public void setNotifications(NotificationService notifications) {
 		this.notifications = notifications;
+	}
+
+	@Autowired(required = false)
+	public void setEvents(ApplicationEventPublisher events) {
+		this.events = events;
 	}
 
 	/** A usable team key (not INVALID / REVOKED): metadata only, never key material. */
@@ -153,7 +163,12 @@ public class TeamAiCredentialService {
 		Project project = projects.findById(projectId).orElseThrow();
 		UserAccount actor = users.findById(userId).orElseThrow();
 		AiCredentialCipher.Encrypted encrypted = cipher.encrypt(rawKey);
-		AiTeamCredential row = credentials.findByProject_Id(projectId).orElseGet(AiTeamCredential::new);
+		AiTeamCredential existing = credentials.findByProject_Id(projectId).orElse(null);
+		boolean firstKey = existing == null
+				|| existing.getStatus() == AiCredentialStatus.REVOKED
+				|| existing.getEncryptedSecret() == null
+				|| existing.getEncryptedSecret().isBlank();
+		AiTeamCredential row = existing == null ? new AiTeamCredential() : existing;
 		row.setProject(project);
 		row.setProvider(binding.provider());
 		row.setModelId(binding.modelId());
@@ -167,6 +182,9 @@ public class TeamAiCredentialService {
 		row.setCreatedBy(actor);
 		row.setRevokedAt(null);
 		credentials.saveAndFlush(row);
+		if (firstKey && events != null) {
+			events.publishEvent(new TeamKeyFirstSaved(userId, projectId));
+		}
 		return status(userId, projectId);
 	}
 

@@ -126,13 +126,16 @@ public class CommitAiReviewService {
 		List<UUID> ids = page.stream().map(GitCommit::getId).toList();
 		Map<UUID, AiAnalysisRun> latest = latestRuns(projectId, ids);
 		Map<UUID, AiAnalysisProviderDecision> decisionByRun = decisionsOf(latest.values());
-		Set<UUID> linked = linkedCommitIds(projectId, ids);
+		Map<UUID, List<String>> keysByCommit = linkedKeys(projectId, ids);
+		Set<UUID> linked = keysByCommit.keySet();
 		boolean keyAvailable = !"NONE".equals(keySource(projectId, courseId));
 		Map<UUID, Summary> out = new HashMap<>();
 		for (GitCommit commit : page) {
 			AiAnalysisRun run = latest.get(commit.getId());
 			AiStructuredResult result = run == null || run.getStatus() != AiAnalysisStatus.COMPLETED ? null : parse(decisionByRun.get(run.getId()));
-			var outcome = CommitAiReviewRules.evaluate(commit.isMerge(), run == null ? null : run.getStatus(), result, linked.contains(commit.getId()), keyAvailable);
+			var outcome = CommitAiReviewRules.evaluate(commit.looksLikeMerge(), run == null ? null : run.getStatus(), result,
+					linked.contains(commit.getId()), keyAvailable,
+					new CommitAiReviewRules.MessageContext(commit.getMessage(), commit.getHeadRef(), keysByCommit.getOrDefault(commit.getId(), List.of())));
 			out.put(commit.getId(), new Summary(outcome.status(), outcome.label(), outcome.reasons(), linked.contains(commit.getId())));
 		}
 		return out;
@@ -151,8 +154,9 @@ public class CommitAiReviewService {
 		boolean canManageLinks = canManageLinks(userId, projectId, commit);
 		List<LinkedTask> linkedTasks = linkedTasks(projectId, commit, canManageLinks);
 		String keySource = keySource(projectId, courseId);
-		boolean merge = Boolean.TRUE.equals(commit.isMerge());
-		var outcome = CommitAiReviewRules.evaluate(commit.isMerge(), run == null ? null : run.getStatus(), result, !linkedTasks.isEmpty(), !"NONE".equals(keySource));
+		boolean merge = commit.looksLikeMerge();
+		var outcome = CommitAiReviewRules.evaluate(merge, run == null ? null : run.getStatus(), result, !linkedTasks.isEmpty(), !"NONE".equals(keySource),
+				new CommitAiReviewRules.MessageContext(commit.getMessage(), commit.getHeadRef(), linkedTasks.stream().map(LinkedTask::externalKey).toList()));
 		Map<UUID, AiAnalysisEvidence> rows = new LinkedHashMap<>();
 		if (run != null) for (AiAnalysisEvidence row : evidence.findByAnalysisRun_IdOrderByOrdinalIndexAsc(run.getId())) rows.put(row.getId(), row);
 		String blocked = merge ? "MERGE" : "NONE".equals(keySource) ? "NO_KEY" : null;
@@ -173,7 +177,9 @@ public class CommitAiReviewService {
 				run == null ? null : run.getCompletedAt(),
 				decision == null || decision.getAiProvider() == null ? null : decision.getAiProvider().name(),
 				decision == null ? null : decision.getModelId(),
-				result == null ? null : messageReview(result, rows),
+				result == null ? null : CommitAiReviewRules.presentMessage(
+						messageReview(result, rows), commit.getMessage(), commit.getHeadRef(),
+						linkedTasks.stream().map(LinkedTask::externalKey).toList()),
 				result == null ? null : codeReview(result, rows),
 				taskReview(result, rows, linkedTasks),
 				run == null ? null : AiAnalysisReadService.failure(run, decision));
@@ -211,7 +217,7 @@ public class CommitAiReviewService {
 			GitCommit commit = byId.get(id);
 			AiAnalysisRun run = latest.get(id);
 			boolean done = run != null && run.getStatus() != AiAnalysisStatus.FAILED && run.getStatus() != AiAnalysisStatus.CANCELLED;
-			if (commit == null || Boolean.TRUE.equals(commit.isMerge()) || done) {
+			if (commit == null || commit.looksLikeMerge() || done) {
 				skipped++;
 				continue;
 			}
@@ -252,13 +258,18 @@ public class CommitAiReviewService {
 		return out;
 	}
 
-	private Set<UUID> linkedCommitIds(UUID projectId, List<UUID> ids) {
-		Set<UUID> linked = new HashSet<>();
+	/** Task keys each commit is attached to right now (automatic or manual); a commit absent here has no task. */
+	private Map<UUID, List<String>> linkedKeys(UUID projectId, List<UUID> ids) {
+		Map<UUID, List<String>> keys = new HashMap<>();
 		for (TaskGitCommitLink link : links.findLiveWithTaskByGitCommitIds(ids)) {
-			if (link.getTask().getProject() != null && projectId.equals(link.getTask().getProject().getId())) linked.add(link.getGitCommit().getId());
+			if (link.getTask().getProject() != null && projectId.equals(link.getTask().getProject().getId())) {
+				keys.computeIfAbsent(link.getGitCommit().getId(), ignored -> new ArrayList<>()).add(link.getTask().getExternalKey());
+			}
 		}
-		for (TaskCommitManualLink link : manualLinks.findFetchedByProjectAndCommitIds(projectId, ids)) linked.add(link.getGitCommit().getId());
-		return linked;
+		for (TaskCommitManualLink link : manualLinks.findFetchedByProjectAndCommitIds(projectId, ids)) {
+			keys.computeIfAbsent(link.getGitCommit().getId(), ignored -> new ArrayList<>()).add(link.getTask().getExternalKey());
+		}
+		return keys;
 	}
 
 	private Map<UUID, AiAnalysisRun> latestRuns(UUID projectId, List<UUID> commitIds) {

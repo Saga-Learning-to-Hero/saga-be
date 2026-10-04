@@ -83,6 +83,17 @@ class AiGitHubCommitEvidenceAcquirerTest {
 		assertThat(rows.stream().filter(row -> row.type() == AiEvidenceType.DIFF_HUNK).findFirst().orElseThrow().payloadJson()).doesNotContain("truncated");
 	}
 
+	@Test
+	void githubsParentCountIsReportedSoAMergeCanBeRecognised() {
+		GitHubOAuthClient github = mock(GitHubOAuthClient.class); GitHubAppJwtService jwt = mock(GitHubAppJwtService.class);
+		when(jwt.createJwt()).thenReturn("jwt"); when(github.createInstallationToken("jwt", 7L)).thenReturn("token");
+		when(github.getCommit("token", "org", "repo", "abc")).thenReturn(new GitHubOAuthClient.CommitDetail("abc", null, null, null, null, null, null,
+				List.of(new GitHubOAuthClient.CommitParent("p1"), new GitHubOAuthClient.CommitParent("p2")), List.of(file("src/A.java", "@@ -1 +1 @@\n-a\n+b")), false));
+		List<AiEvidenceDraft> rows = acquirer(github, jwt, new AiAnalysisProperties()).acquire(new AiGitHubCommitEvidenceAcquirer.Target(UUID.randomUUID(), 7L, "org", "repo", "abc"));
+		assertThat(AiGitHubCommitEvidenceAcquirer.parentCountOf(rows)).isEqualTo(2);
+		assertThat(AiGitHubCommitEvidenceAcquirer.parentCountOf(List.of())).isNull();
+	}
+
 	private static AiGitHubCommitEvidenceAcquirer acquirer(GitHubOAuthClient github, GitHubAppJwtService jwt, AiAnalysisProperties props) { return new AiGitHubCommitEvidenceAcquirer(github, jwt, props, new ObjectMapper()); }
 	private static GitHubOAuthClient.CommitDetail detail(String sha, List<GitHubOAuthClient.CommitFileChange> files) { return new GitHubOAuthClient.CommitDetail(sha, null, null, null, null, null, null, List.of(), files, false); }
 	private static GitHubOAuthClient.CommitFileChange file(String path, String patch) { return new GitHubOAuthClient.CommitFileChange(path, null, "modified", 1, 1, 2, patch); }

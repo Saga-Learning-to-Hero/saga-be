@@ -135,6 +135,19 @@ class TeamAiCredentialServiceTest {
 	}
 
 	@Test
+	void savingTheFirstKeyAnnouncesIt_replacingItDoesNot_aKeyAfterRemovalDoesAgain() {
+		org.springframework.context.ApplicationEventPublisher events = org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class);
+		service.setEvents(events);
+
+		saveGemini("first-key-0001");
+		saveGemini("second-key-0002");
+		service.revoke(leaderId, projectId);
+		saveGemini("third-key-0003");
+
+		verify(events, times(2)).publishEvent(new TeamAiCredentialService.TeamKeyFirstSaved(leaderId, projectId));
+	}
+
+	@Test
 	void onlyTheLeaderMaySaveOrRemove() {
 		assertThatThrownBy(() -> service.save(memberId, projectId, new TeamAiKeyDtos.SaveRequest("GEMINI", "gemini-3.6-flash", "k")))
 				.isInstanceOf(IntegrationException.class);

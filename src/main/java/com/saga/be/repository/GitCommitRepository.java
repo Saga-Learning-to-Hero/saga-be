@@ -48,6 +48,11 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 
 	List<GitCommit> findByRepo_IdAndShaHashIn(UUID repoId, Collection<String> shaHashes);
 
+	/** Fill a parent count still unknown (push webhooks do not carry it); never overwrites a known one. */
+	@org.springframework.data.jpa.repository.Modifying
+	@Query("update GitCommit c set c.parentCount = :parentCount where c.id = :id and c.parentCount is null")
+	int setParentCountIfUnknown(@Param("id") UUID id, @Param("parentCount") Integer parentCount);
+
 	/** SHAs of this repo already stored -- lets an incremental GitHub sync stop at known history. */
 	@Query("select c.shaHash from GitCommit c where c.repo.id = :repoId and c.shaHash in :shaHashes")
 	List<String> findShaHashesByRepoIdAndShaHashIn(

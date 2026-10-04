@@ -18,7 +18,10 @@ public class AiCommitEvidenceSnapshotBuilder {
 
 	public List<AiEvidenceDraft> build(GitCommit commit, List<TaskGitCommitLink> links, List<JiraTaskFailoverItem> lineage) {
 		List<AiEvidenceDraft> out = new ArrayList<>();
-		out.add(new AiEvidenceDraft(AiEvidenceType.COMMIT_MESSAGE, "git_commit:" + commit.getId() + ":message", json(Map.of("message", nullable(commit.getMessage()))), null));
+		Map<String, Object> message = new LinkedHashMap<>();
+		message.put("message", nullable(commit.getMessage()));
+		message.put("headRef", nullable(commit.getHeadRef()));
+		out.add(new AiEvidenceDraft(AiEvidenceType.COMMIT_MESSAGE, "git_commit:" + commit.getId() + ":message", json(message), null));
 		Map<String, Object> metadata = new LinkedHashMap<>();
 		metadata.put("gitCommitId", commit.getId()); metadata.put("repositoryId", commit.getRepo().getId()); metadata.put("sha", commit.getShaHash());
 		metadata.put("authorExternalId", commit.getAuthorExternalId()); metadata.put("authorStudentId", commit.getAuthorStudent() == null ? null : commit.getAuthorStudent().getId());

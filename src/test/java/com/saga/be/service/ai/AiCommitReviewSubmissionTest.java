@@ -271,6 +271,50 @@ class AiCommitReviewSubmissionTest {
 		assertThat(savedEvidence()).filteredOn(r -> r.getEvidenceType() == AiEvidenceType.TASK_FIELD).hasSize(AiAnalysisSubmissionService.MAX_TASKS_IN_EVIDENCE);
 	}
 
+	@Test
+	void aMergeArrivingByWebhookWithoutParents_isSkippedByItsMessage() {
+		commit.setParentCount(null);
+		commit.setMessage("Merge pull request #70 from Saga-Learning-to-Hero/dev");
+		when(teamKeys.usableKey(projectId)).thenReturn(Optional.of(teamKey()));
+
+		assertThat(service().submitAutomatic(projectId, commitId)).isEmpty();
+		verify(runs, never()).saveAndFlush(any());
+	}
+
+	@Test
+	void aMergeFoundOnlyWhenReadingGitHubIsRememberedAndNeverReviewed() {
+		commit.setParentCount(null);
+		commit.setMessage("Sync with upstream");
+		when(teamKeys.usableKey(projectId)).thenReturn(Optional.of(teamKey()));
+		AiAnalysisSubmissionService service = service();
+		AiGitHubCommitEvidenceAcquirer github = (AiGitHubCommitEvidenceAcquirer) org.springframework.test.util.ReflectionTestUtils.getField(service, "githubEvidence");
+		when(github.acquire(any())).thenReturn(List.of(new AiEvidenceDraft(AiEvidenceType.PROVIDER_EVIDENCE_STATUS, "github-commit-status:abc123",
+				"{\"providerEvidenceStatus\":\"AVAILABLE\",\"codeDiffAvailable\":true,\"parentCount\":2}", null)));
+
+		assertThatThrownBy(() -> service.submit(userId, projectId, commitId))
+				.isInstanceOf(IntegrationException.class)
+				.satisfies(ex -> assertThat(((IntegrationException) ex).getCode()).isEqualTo(IntegrationErrorCode.AI_COMMIT_MERGE_NOT_REVIEWED));
+		verify(commits).setParentCountIfUnknown(commitId, 2);
+		verify(runs, never()).saveAndFlush(any());
+		assertThat(commit.getParentCount()).isEqualTo(2);
+	}
+
+	@Test
+	void anOrdinaryCommitLearnsItsParentCountAndIsReviewed() {
+		commit.setParentCount(null);
+		commit.setMessage("feat: SAGA-1 login");
+		when(teamKeys.usableKey(projectId)).thenReturn(Optional.of(teamKey()));
+		AiAnalysisSubmissionService service = service();
+		AiGitHubCommitEvidenceAcquirer github = (AiGitHubCommitEvidenceAcquirer) org.springframework.test.util.ReflectionTestUtils.getField(service, "githubEvidence");
+		when(github.acquire(any())).thenReturn(List.of(new AiEvidenceDraft(AiEvidenceType.PROVIDER_EVIDENCE_STATUS, "github-commit-status:abc123",
+				"{\"providerEvidenceStatus\":\"AVAILABLE\",\"parentCount\":1}", null)));
+
+		service.submit(userId, projectId, commitId);
+
+		verify(commits).setParentCountIfUnknown(commitId, 1);
+		verify(runs).saveAndFlush(any());
+	}
+
 	private Task task(String key) {
 		Task task = new Task();
 		task.setId(UUID.randomUUID());

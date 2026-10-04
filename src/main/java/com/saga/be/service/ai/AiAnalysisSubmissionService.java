@@ -56,7 +56,7 @@ public class AiAnalysisSubmissionService {
 	public Optional<Submission> submitAutomatic(UUID projectId, UUID gitCommitId) {
 		GitCommit commit = commits.findAnalysisTargetById(gitCommitId).orElse(null);
 		if (commit == null || !commit.getRepo().getProject().getId().equals(projectId)) return Optional.empty();
-		if (Boolean.TRUE.equals(commit.isMerge())) return Optional.empty();
+		if (commit.looksLikeMerge()) return Optional.empty();
 		// The team pays with its own key: reviewed whatever the course automation setting is.
 		if (teamKey(projectId).isPresent()) return Optional.of(submit(projectId, gitCommitId, AiInvocationOrigin.AUTOMATION));
 		Course course = commit.getRepo().getProject().getCourse();
@@ -81,7 +81,16 @@ public class AiAnalysisSubmissionService {
 		List<TaskGitCommitLink> taskLinks = withManualLinks(projectId, commit, links.findAnalysisEvidenceByGitCommitId(gitCommitId, projectId)); List<UUID> taskIds = taskLinks.stream().map(link -> link.getTask().getId()).toList(); List<JiraTaskFailoverItem> lineage = taskIds.isEmpty() ? List.of() : failover.findSuccessfulLineageByTaskIds(taskIds);
 		List<AiEvidenceDraft> draft = new ArrayList<>(snapshots.build(commit, taskLinks, lineage));
 		if (reviewContext != null) draft.addAll(reviewContext.build(projectId));
-		draft.addAll(githubEvidence.acquire(new AiGitHubCommitEvidenceAcquirer.Target(commit.getRepo().getId(), commit.getRepo().getInstallation() == null ? null : commit.getRepo().getInstallation().getInstallationId(), commit.getRepo().getOwnerLogin(), commit.getRepo().getName(), commit.getShaHash())));
+		List<AiEvidenceDraft> githubDraft = githubEvidence.acquire(new AiGitHubCommitEvidenceAcquirer.Target(commit.getRepo().getId(), commit.getRepo().getInstallation() == null ? null : commit.getRepo().getInstallation().getInstallationId(), commit.getRepo().getOwnerLogin(), commit.getRepo().getName(), commit.getShaHash()));
+		// The push webhook does not carry parents; GitHub's commit detail does. A merge found here is
+		// remembered on the commit and never reviewed.
+		Integer parents = AiGitHubCommitEvidenceAcquirer.parentCountOf(githubDraft);
+		if (parents != null && commit.getParentCount() == null) {
+			transactions.executeWithoutResult(status -> commits.setParentCountIfUnknown(commit.getId(), parents));
+			commit.setParentCount(parents);
+		}
+		requireNotMerge(commit);
+		draft.addAll(githubDraft);
 		String revision = commit.getShaHash() == null || commit.getShaHash().isBlank() ? commit.getId().toString() : commit.getShaHash(); String evidenceHash = hashEvidence(draft); String idempotency = AiHashes.sha256(String.join("|", projectId.toString(), AiArtifactType.COMMIT.name(), gitCommitId.toString(), revision, AiAnalysisType.COMMIT_INTELLIGENCE.name(), evidenceHash, POLICY_VERSION, PROMPT_VERSION, com.saga.be.ai.AiSystemContract.OUTPUT_REVISION, SCHEMA_VERSION, provider.providerConfigHash(), team != null ? team.identity() : credentialIdentity(resolution)));
 		final AiCredentialResolver.Resolution courseResolution = resolution;
 		try { return Objects.requireNonNull(transactions.execute(status -> persist(commit, draft, evidenceHash, idempotency, revision, provider, courseResolution, team, origin))); }
@@ -106,7 +115,7 @@ public class AiAnalysisSubmissionService {
 
 	/** A merge commit only joins work that already exists. */
 	static void requireNotMerge(GitCommit commit) {
-		if (Boolean.TRUE.equals(commit.isMerge())) throw new IntegrationException(IntegrationErrorCode.AI_COMMIT_MERGE_NOT_REVIEWED, HttpStatus.UNPROCESSABLE_ENTITY, "Merge commit chỉ gộp code đã có nên SAGA không đánh giá AI cho merge commit.");
+		if (commit.looksLikeMerge()) throw new IntegrationException(IntegrationErrorCode.AI_COMMIT_MERGE_NOT_REVIEWED, HttpStatus.UNPROCESSABLE_ENTITY, "Merge commit chỉ gộp code đã có nên SAGA không đánh giá AI cho merge commit.");
 	}
 
 	/** Tasks attached by hand join the AI's task context (never persisted as TaskGitCommitLink, so

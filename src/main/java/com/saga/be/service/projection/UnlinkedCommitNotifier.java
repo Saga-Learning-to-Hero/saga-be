@@ -64,7 +64,7 @@ public class UnlinkedCommitNotifier {
 		if (projectId == null || fresh == null || fresh.isEmpty()) return;
 		List<NewCommit> captured = new ArrayList<>();
 		for (GitCommit commit : fresh) {
-			if (Boolean.TRUE.equals(commit.isMerge())) continue;
+			if (commit.looksLikeMerge()) continue;
 			var account = commit.getAuthorStudent() == null ? null : commit.getAuthorStudent().getUserAccount();
 			captured.add(new NewCommit(commit.getId(), commit.getShaHash(), commit.getMessage(),
 					account == null ? null : account.getId(), account == null ? null : account.getFullName(), commit.getAuthorExternalId()));

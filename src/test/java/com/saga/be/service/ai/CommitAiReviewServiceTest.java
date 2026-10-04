@@ -147,6 +147,24 @@ class CommitAiReviewServiceTest {
 	}
 
 	@Test
+	void aMergeKnownOnlyByItsMessage_showsNoAiAndNoTaskWarning_evenWithAnOldFailedRun() {
+		GitCommit merge = commit(1);
+		merge.setParentCount(null);
+		merge.setMessage("Merge pull request #70 from Saga-Learning-to-Hero/dev");
+		AiAnalysisRun failed = run(merge, AiAnalysisStatus.FAILED);
+		when(runs.findCommitReviewRuns(eq(projectId), any())).thenReturn(List.of(failed));
+
+		CommitAiReviewDtos.Summary badge = service.summaries(projectId, courseId, List.of(merge)).get(merge.getId());
+
+		assertThat(badge.status()).isEqualTo(CommitAiReviewDtos.SKIPPED_MERGE);
+		assertThat(badge.reasons()).isEmpty();
+		CommitAiReviewDtos.Detail detail = service.detail(authorId, projectId, merge.getId());
+		assertThat(detail.merge()).isTrue();
+		assertThat(detail.canRequestReview()).isFalse();
+		assertThat(detail.reviewBlockedReason()).isEqualTo("MERGE");
+	}
+
+	@Test
 	void onlyTheNewestRunOfACommitCounts() {
 		GitCommit commit = commit(1);
 		linkAutomatically(commit, task("SAGA-1"));

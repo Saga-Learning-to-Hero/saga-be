@@ -148,6 +148,8 @@ class MultiJiraCommitAttributionTest {
 	static class Collaborators {
 		@Bean ObjectMapper objectMapper() { return new ObjectMapper(); }
 		@Bean AiAnalysisSubmissionService aiAnalysisSubmissionService() { return mock(AiAnalysisSubmissionService.class); }
+		/** Automatic reviews run inline here so the test can verify them right after ingestion. */
+		@Bean(name = "aiAutomationExecutor") java.util.concurrent.Executor aiAutomationExecutor() { return Runnable::run; }
 		@Bean ProjectRealtimePublisher projectRealtimePublisher() { return mock(ProjectRealtimePublisher.class); }
 		@Bean JiraTaskProjectionService jiraTaskProjectionService() { return mock(JiraTaskProjectionService.class); }
 		@Bean JiraIssueWriteClient jiraIssueWriteClient() { return mock(JiraIssueWriteClient.class); }

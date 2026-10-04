@@ -53,7 +53,9 @@ public class AiGitHubCommitEvidenceAcquirer {
 		}
 		Map<String, Object> manifest = new LinkedHashMap<>(); manifest.put("providerEvidenceStatus", "AVAILABLE"); manifest.put("filesTotal", files.size()); manifest.put("filesAnalyzed", analyzed); manifest.put("filesOmitted", omitted); manifest.put("totalAvailablePatchBytes", totalPatchBytes); manifest.put("patchBytesIncluded", includedBytes); manifest.put("coverage", omitted == 0 && !anyTruncated && !detail.filesTruncated() ? "COMPLETE" : "PARTIAL"); manifest.put("providerFilesTruncated", detail.filesTruncated()); manifest.put("files", files);
 		result.add(0, new AiEvidenceDraft(AiEvidenceType.CHANGED_FILE_MANIFEST, "github-commit-manifest:" + target.sha(), json(manifest), null));
-		result.add(1, new AiEvidenceDraft(AiEvidenceType.PROVIDER_EVIDENCE_STATUS, "github-commit-status:" + target.sha(), json(Map.of("providerEvidenceStatus", "AVAILABLE", "codeDiffAvailable", !result.isEmpty())), null));
+		Map<String, Object> status = new LinkedHashMap<>(); status.put("providerEvidenceStatus", "AVAILABLE"); status.put("codeDiffAvailable", !result.isEmpty());
+		if (detail.parents() != null) status.put("parentCount", detail.parents().size());
+		result.add(1, new AiEvidenceDraft(AiEvidenceType.PROVIDER_EVIDENCE_STATUS, "github-commit-status:" + target.sha(), json(status), null));
 		return List.copyOf(result);
 	}
 
@@ -61,6 +63,17 @@ public class AiGitHubCommitEvidenceAcquirer {
 		List<String> out = new ArrayList<>();
 		for (String text : HUNK.split(patch)) if (text != null && !text.isBlank()) out.add(text);
 		return out;
+	}
+
+	/** GitHub's parent count of the commit, when the diff was read; null when unknown. */
+	public static Integer parentCountOf(List<AiEvidenceDraft> drafts) {
+		if (drafts == null) return null;
+		for (AiEvidenceDraft draft : drafts) {
+			if (draft.type() != AiEvidenceType.PROVIDER_EVIDENCE_STATUS || draft.payloadJson() == null) continue;
+			java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"parentCount\"\\s*:\\s*(\\d+)").matcher(draft.payloadJson());
+			if (m.find()) return Integer.valueOf(m.group(1));
+		}
+		return null;
 	}
 
 	private List<AiEvidenceDraft> unavailable(String reason) {

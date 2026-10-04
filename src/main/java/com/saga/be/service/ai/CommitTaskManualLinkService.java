@@ -92,7 +92,7 @@ public class CommitTaskManualLinkService {
 		if (commit == null || commit.getRepo() == null || commit.getRepo().getProject() == null || !projectId.equals(commit.getRepo().getProject().getId())) {
 			throw new IntegrationException(IntegrationErrorCode.AI_ANALYSIS_TARGET_NOT_FOUND, HttpStatus.NOT_FOUND, "Không tìm thấy commit trong dự án này.");
 		}
-		if (Boolean.TRUE.equals(commit.isMerge())) throw invalid("Merge commit chỉ gộp code đã có nên không cần gắn task.");
+		if (commit.looksLikeMerge()) throw invalid("Merge commit chỉ gộp code đã có nên không cần gắn task.");
 		if (!reviews.canManageLinks(userId, projectId, commit)) {
 			throw new IntegrationException(IntegrationErrorCode.COMMIT_TASK_LINK_FORBIDDEN, HttpStatus.FORBIDDEN,
 					"Chỉ tác giả của commit hoặc trưởng nhóm mới được gắn task cho commit này.");

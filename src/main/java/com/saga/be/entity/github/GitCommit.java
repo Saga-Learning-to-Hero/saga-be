@@ -83,4 +83,18 @@ public class GitCommit extends BaseEntity {
 	public Boolean isMerge() {
 		return parentCount == null ? null : parentCount > 1;
 	}
+
+	private static final java.util.regex.Pattern GIT_MERGE_MESSAGE = java.util.regex.Pattern.compile(
+			"^(Merge pull request #\\d+|Merge branch '|Merge remote-tracking branch '|Merge tag '|Merge commit ')");
+
+	/**
+	 * For AI review only (never for {@link #isMerge()}, which stays parent-count based): a commit with
+	 * two parents, or, while the parent count is still unknown (a push webhook does not carry it), one
+	 * whose message is Git's/GitHub's own merge message. A merge only joins existing work.
+	 */
+	@Transient
+	public boolean looksLikeMerge() {
+		if (parentCount != null) return parentCount > 1;
+		return message != null && GIT_MERGE_MESSAGE.matcher(message.strip()).find();
+	}
 }

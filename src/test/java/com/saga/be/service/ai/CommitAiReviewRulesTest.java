@@ -8,6 +8,8 @@ import com.saga.be.ai.AiOverallDecision;
 import com.saga.be.ai.AiStructuredResult;
 import com.saga.be.ai.AiTaskAlignmentVerdict;
 import com.saga.be.dto.ai.CommitAiReviewDtos;
+import com.saga.be.dto.ai.CommitAiReviewDtos.Finding;
+import com.saga.be.dto.ai.CommitAiReviewDtos.MessageReview;
 import com.saga.be.dto.ai.CommitAiReviewDtos.Reason;
 import com.saga.be.entity.enums.AiAnalysisStatus;
 import java.util.List;
@@ -66,7 +68,68 @@ class CommitAiReviewRulesTest {
 		var outcome = CommitAiReviewRules.evaluate(false, AiAnalysisStatus.COMPLETED,
 				result(AiCommitMessageVerdict.ADEQUATE, AiCodeVerdict.POSITIVE, AiTaskAlignmentVerdict.PARTIALLY_ALIGNS), true, true);
 		assertThat(outcome.status()).isEqualTo(CommitAiReviewDtos.WARNING);
-		assertThat(codes(outcome)).containsExactly(CommitAiReviewDtos.REASON_TASK_PARTIAL);
+		assertThat(codes(outcome)).containsExactly(CommitAiReviewDtos.REASON_MESSAGE, CommitAiReviewDtos.REASON_TASK_PARTIAL);
+	}
+
+	@Test
+	void anAdequateMessageIsAWarning_notAPass() {
+		var outcome = CommitAiReviewRules.evaluate(false, AiAnalysisStatus.COMPLETED,
+				result(AiCommitMessageVerdict.ADEQUATE, AiCodeVerdict.POSITIVE, AiTaskAlignmentVerdict.ALIGNS), true, true);
+		assertThat(outcome.status()).isEqualTo(CommitAiReviewDtos.WARNING);
+		assertThat(codes(outcome)).containsExactly(CommitAiReviewDtos.REASON_MESSAGE);
+		assertThat(outcome.label()).isEqualTo("Cảnh báo");
+		assertThat(outcome.headline()).isEqualTo("Cần xem lại: Tên commit chưa rõ.");
+	}
+
+	private static AiStructuredResult adequateWith(String... findingCodes) {
+		List<com.saga.be.ai.AiFinding> findings = java.util.Arrays.stream(findingCodes)
+				.map(code -> new com.saga.be.ai.AiFinding(code, "x", List.of())).toList();
+		return new AiStructuredResult(
+				new AiStructuredResult.CommitMessageAssessment(AiCommitMessageVerdict.ADEQUATE, 80, "s", null, findings),
+				new AiStructuredResult.CodeAssessment(AiCodeVerdict.POSITIVE, 0.8, List.of(), List.of()),
+				List.of(), AiTaskAlignmentVerdict.ALIGNS, List.of(), AiOverallDecision.INFORMATIONAL, false);
+	}
+
+	@Test
+	void anAdequateMessageWhoseOnlyComplaintIsAKeyTheBranchHas_passes_soBadgeAndPanelAgree() {
+		var context = new CommitAiReviewRules.MessageContext("feat: [FE][SG-06] refine graph evidence filters",
+				"feat/SAGA-102-Refine-flows-UI/UX-FE", List.of("SAGA-102"));
+		var outcome = CommitAiReviewRules.evaluate(false, AiAnalysisStatus.COMPLETED, adequateWith("MISSING_TASK_KEY"), true, true, context);
+		assertThat(outcome.status()).isEqualTo(CommitAiReviewDtos.PASS);
+	}
+
+	@Test
+	void anAdequateMessageMissingAKeyNowhere_orWithOtherComplaints_warns() {
+		var noKeyAnywhere = new CommitAiReviewRules.MessageContext("feat: refine filters", "feat/refine-filters", List.of("SAGA-102"));
+		assertThat(CommitAiReviewRules.evaluate(false, AiAnalysisStatus.COMPLETED, adequateWith("MISSING_TASK_KEY"), true, true, noKeyAnywhere).status())
+				.isEqualTo(CommitAiReviewDtos.WARNING);
+		var keyOnBranch = new CommitAiReviewRules.MessageContext("feat: refine", "feat/SAGA-102-x", List.of("SAGA-102"));
+		assertThat(CommitAiReviewRules.evaluate(false, AiAnalysisStatus.COMPLETED, adequateWith("MISSING_TASK_KEY", "VAGUE_MESSAGE"), true, true, keyOnBranch).status())
+				.isEqualTo(CommitAiReviewDtos.WARNING);
+	}
+
+	@Test
+	void aMissingTaskKeyFindingIsDroppedWhenTheBranchAlreadyHasTheLinkedKey() {
+		var raw = new MessageReview("ADEQUATE", "Tạm ổn", 80, "Tên nên nhắc SAGA-102.",
+				"feat: [FE][SG-06] refine graph evidence filters",
+				List.of(new Finding("MISSING_TASK_KEY", "Tên/nhánh không chứa SAGA-102", List.of()),
+						new Finding("VAGUE_MESSAGE", "Nên nói rõ phần nào của bộ lọc", List.of())));
+		var shown = CommitAiReviewRules.presentMessage(raw,
+				"feat: [FE][SG-06] refine graph evidence filters",
+				"feat/SAGA-102-Refine-flows-UI/UX-FE",
+				List.of("SAGA-102"));
+		assertThat(shown.findings()).extracting(Finding::code).containsExactly("VAGUE_MESSAGE");
+		assertThat(shown.suggestedMessage()).isNull();
+		assertThat(shown.summary()).isEqualTo("Khóa SAGA-102 đã có trên tên commit hoặc tên nhánh.");
+	}
+
+	@Test
+	void aRealMissingTaskKeyFindingStaysWhenNeitherMessageNorBranchHasTheKey() {
+		var raw = new MessageReview("ADEQUATE", "Tạm ổn", 60, "Thiếu khóa.", "feat: SAGA-102 refine filters",
+				List.of(new Finding("MISSING_TASK_KEY", "Không thấy khóa", List.of())));
+		var shown = CommitAiReviewRules.presentMessage(raw, "feat: refine filters", "feat/refine-filters", List.of("SAGA-102"));
+		assertThat(shown.findings()).extracting(Finding::code).containsExactly("MISSING_TASK_KEY");
+		assertThat(shown.suggestedMessage()).isEqualTo("feat: SAGA-102 refine filters");
 	}
 
 	@Test
