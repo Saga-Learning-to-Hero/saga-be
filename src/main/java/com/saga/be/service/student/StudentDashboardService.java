@@ -543,23 +543,12 @@ public class StudentDashboardService {
 		}
 		List<UUID> ids = candidates.stream().map(StudentDashboardAnomalyCandidateRow::id).toList();
 		java.util.Set<UUID> parents = new java.util.HashSet<>(tasks.findIdsWithSubtaskChildren(ids));
-		Map<UUID, String> parentLabels = parentLabelsBySubtask(ids);
 		return candidates.stream()
 				.filter(row -> !parents.contains(row.id()))
-				.filter(row -> isCodeOrTest(parentLabels.getOrDefault(row.id(), row.labelsJson())))
+				.filter(row -> isCodeOrTest(row.labelsJson()))
 				.map(StudentDashboardService::toAnomalyRow)
 				.sorted(ANOMALY_ORDER)
 				.toList();
-	}
-
-	private Map<UUID, String> parentLabelsBySubtask(List<UUID> ids) {
-		Map<UUID, String> labels = new HashMap<>();
-		for (Object[] row : tasks.findParentLabelsBySubtaskIds(ids)) {
-			if (row[0] instanceof UUID id) {
-				labels.put(id, (String) row[1]);
-			}
-		}
-		return labels;
 	}
 
 	/**

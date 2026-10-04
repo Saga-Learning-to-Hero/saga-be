@@ -171,7 +171,7 @@ AND đúng một nhãn: saga:code | saga:test | saga:document | saga:research
 - `saga:document` / `saga:research` — cần **≥1** bằng chứng: file Jira, URL, hoặc file SAGA. Số lượng không tăng điểm.
 - Sai/thiếu/hai nhãn, chưa DONE, chưa gắn sprint → không vào tiêu chí.
 - `storyPoint` null → tính như `1`. Commit không cộng điểm.
-- Hạng mục Standard có Subtask: assignee của cha không nhận story point cha. Story point Subtask là thang 1–10 (`6` = 60% trần của cha). Share chỉ vào mixer khi cả cha và Subtask đó đều DONE. Sprint và nhãn lấy từ cha. Evidence DOCUMENT/RESEARCH xét trên Subtask. Cha có Subtask thì `evidenceCheck` không báo thiếu commit hay thiếu tài liệu.
+- Hạng mục Standard có Subtask: assignee của cha không nhận story point cha. Story point Subtask là thang 1–10 (`6` = 60% trần của cha). Share chỉ vào mixer khi cả cha và Subtask đó đều DONE. Sprint lấy từ cha. Nhãn `saga:*` là của chính Subtask. Evidence DOCUMENT/RESEARCH xét trên Subtask. Cha có Subtask thì `evidenceCheck` không báo thiếu commit hay thiếu tài liệu.
 
 Nhãn **đúng chữ, phân biệt hoa thường**.
 

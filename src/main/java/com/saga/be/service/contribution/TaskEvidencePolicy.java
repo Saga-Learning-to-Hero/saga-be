@@ -21,7 +21,7 @@ import java.util.Set;
  * tell what proof it needs, and it earns no criterion credit until labelled.
  *
  * <p>A Standard item that already has at least one Subtask does not need commit or document proof of
- * its own. The Subtasks carry that proof, judged by the parent's labels.
+ * its own. Each Subtask carries that proof, judged by the Subtask's own labels.
  */
 public final class TaskEvidencePolicy {
 

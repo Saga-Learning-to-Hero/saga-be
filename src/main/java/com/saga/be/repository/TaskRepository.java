@@ -400,20 +400,6 @@ public interface TaskRepository extends JpaRepository<Task, UUID> {
 			""")
 	List<UUID> findIdsWithSubtaskChildren(@Param("ids") Collection<UUID> ids);
 
-	/** {@code Object[]{UUID subtaskId, String parentLabelsJson}} for Subtasks in {@code ids}. */
-	@Query(
-			"""
-			select child.id, parent.labelsJson
-			from Task child, Task parent
-			where child.id in :ids
-			  and child.deletedAt is null
-			  and child.issueTypeLevel = 'SUBTASK'
-			  and parent.deletedAt is null
-			  and parent.jiraIntegration = child.jiraIntegration
-			  and parent.externalId = child.parentExternalId
-			""")
-	List<Object[]> findParentLabelsBySubtaskIds(@Param("ids") Collection<UUID> ids);
-
 	@Modifying(clearAutomatically = true, flushAutomatically = true)
 	@Query("update Task t set t.parentTask = null where t.project.id = :projectId")
 	int clearParentTaskReferencesByProjectId(@Param("projectId") UUID projectId);

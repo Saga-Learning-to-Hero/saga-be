@@ -32,8 +32,8 @@ class ContributionTaskFactsTest {
 	@Test
 	void subtaskSharesArePercentsOfTheParentAndTheParentAssigneeGetsNothing() {
 		Task parent = standard(PARENT, "P-1", 10, LEADER, "[\"saga:code\"]", TaskStatus.DONE);
-		Task a = subtask(CHILD_A, "P-1", 6, STUDENT_A, TaskStatus.DONE);
-		Task b = subtask(CHILD_B, "P-1", 4, STUDENT_B, TaskStatus.DONE);
+		Task a = subtask(CHILD_A, "P-1", 6, STUDENT_A, "[\"saga:code\"]", TaskStatus.DONE);
+		Task b = subtask(CHILD_B, "P-1", 4, STUDENT_B, "[\"saga:test\"]", TaskStatus.DONE);
 
 		List<TaskFact> facts = ContributionTaskFacts.from(List.of(parent, a, b), Set.of());
 
@@ -42,15 +42,16 @@ class ContributionTaskFactsTest {
 		assertThat(points(facts, STUDENT_A)).isEqualByComparingTo("6");
 		assertThat(points(facts, STUDENT_B)).isEqualByComparingTo("4");
 		assertThat(facts).allMatch(fact -> SPRINT.equals(fact.sprintId()));
-		assertThat(facts).allMatch(fact -> fact.criterion() == ContributionCriterion.CODE);
+		assertThat(criterion(facts, STUDENT_A)).isEqualTo(ContributionCriterion.CODE);
+		assertThat(criterion(facts, STUDENT_B)).isEqualTo(ContributionCriterion.TEST);
 		assertThat(facts).allMatch(fact -> fact.status() == TaskStatus.DONE);
 	}
 
 	@Test
 	void unfinishedSubtaskAndUnfinishedParentAwardNothing() {
 		Task parent = standard(PARENT, "P-1", 10, LEADER, "[\"saga:code\"]", TaskStatus.DONE);
-		Task a = subtask(CHILD_A, "P-1", 6, STUDENT_A, TaskStatus.DONE);
-		Task b = subtask(CHILD_B, "P-1", 4, STUDENT_B, TaskStatus.IN_PROGRESS);
+		Task a = subtask(CHILD_A, "P-1", 6, STUDENT_A, "[\"saga:code\"]", TaskStatus.DONE);
+		Task b = subtask(CHILD_B, "P-1", 4, STUDENT_B, "[\"saga:code\"]", TaskStatus.IN_PROGRESS);
 
 		List<TaskFact> openChild = ContributionTaskFacts.from(List.of(parent, a, b), Set.of());
 		assertThat(openChild).filteredOn(fact -> fact.assigneeStudentId().equals(STUDENT_B))
@@ -78,8 +79,8 @@ class ContributionTaskFactsTest {
 
 	@Test
 	void documentEvidenceIsRequiredOnTheSubtaskNotTheParent() {
-		Task parent = standard(PARENT, "P-1", 10, LEADER, "[\"saga:document\"]", TaskStatus.DONE);
-		Task a = subtask(CHILD_A, "P-1", 6, STUDENT_A, TaskStatus.DONE);
+		Task parent = standard(PARENT, "P-1", 10, LEADER, "[\"saga:code\"]", TaskStatus.DONE);
+		Task a = subtask(CHILD_A, "P-1", 6, STUDENT_A, "[\"saga:document\"]", TaskStatus.DONE);
 
 		List<TaskFact> missing = ContributionTaskFacts.from(List.of(parent, a), Set.of(PARENT));
 		assertThat(missing).singleElement().satisfies(fact -> assertThat(fact.criterion()).isNull());
@@ -112,6 +113,14 @@ class ContributionTaskFactsTest {
 		assertThat(SubtaskPercentPolicy.share(null, 6)).isEqualByComparingTo(new BigDecimal("0.6"));
 	}
 
+	private static ContributionCriterion criterion(List<TaskFact> facts, UUID student) {
+		return facts.stream()
+				.filter(fact -> fact.assigneeStudentId().equals(student))
+				.findFirst()
+				.orElseThrow()
+				.criterion();
+	}
+
 	private static BigDecimal points(List<TaskFact> facts, UUID student) {
 		return facts.stream()
 				.filter(fact -> fact.assigneeStudentId().equals(student))
@@ -129,10 +138,12 @@ class ContributionTaskFactsTest {
 		return task;
 	}
 
-	private static Task subtask(UUID id, String parentExternalId, int storyPoint, UUID assignee, TaskStatus status) {
+	private static Task subtask(
+			UUID id, String parentExternalId, int storyPoint, UUID assignee, String labels, TaskStatus status) {
 		Task task = task(id, "S-" + id, storyPoint, assignee, status);
 		task.setIssueTypeLevel("SUBTASK");
 		task.setParentExternalId(parentExternalId);
+		task.setLabelsJson(labels);
 		return task;
 	}
 
