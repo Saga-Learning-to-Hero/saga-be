@@ -137,24 +137,28 @@ Response headers: `ETag`, `X-Graph-Revision`. Cùng revision **và cùng query**
 | --- | --- | --- | --- |
 | `focusNodeId` | không | — | `task:{id}`, `student:{id}`, … đúng prefix mục 5.1. Phải nằm **trong** graph đã scoped (project + `sprintId` nếu có). Sai scope → `400 REQUEST_INVALID`. |
 | `depth` | không | `1` | Neighborhood vô hướng từ `focusNodeId` (hoặc từ anomaly). Chỉ `1`–`3`. **Chỉ có `depth` thì bị bỏ qua** — phải kèm focus / type / paging. |
-| `nodeTypes` | không | Overview/Activity: không COMMIT. Graph khác: mọi type | CSV enum canonical: `STUDENT,TEAM,PROJECT,SPRINT,TASK,COMMIT,CRITERION,IDENTITY`. Sai enum → 400. |
+| `nodeTypes` | không | Overview/Activity: không evidence. Graph khác: mọi type | CSV enum: `STUDENT,TEAM,PROJECT,SPRINT,TASK,COMMIT,FILE,WEB_LINK,CRITERION,IDENTITY`. Sai enum → 400. |
 | `edgeTypes` | không | mọi label | CSV: `MEMBER_OF,OWNS,HAS_SPRINT,HAS_WORK_ITEM,CONTAINS,PARENT_OF,ASSIGNED_TO,EVIDENCED_BY,CLASSIFIED_AS,AUTHORED_BY,MAPS_TO`. |
 | `anomaliesOnly` | không | `false` | `true` = anomaly **kèm neighborhood** (không trả node cô lập nếu chúng còn cạnh). |
 | `maxNodes` | không | — | `1`–`2000`. Cắt theo thứ tự ổn định trong cùng revision. |
 | `cursor` | không | — | Token `revision:lastNodeId` từ `meta.nextCursor`. Alias: `continuationToken`. Sai revision → 400. |
-| `includeCommits` | không | `false` trên Graph 1 và 3 | `true` = vẽ đủ SHA như trước (mạng nhện). Graph 2/4 không dùng default compact. |
+| `includeEvidence` | không | Graph 1/3: ẩn hết evidence. Graph 2/4: hiện hết | `true` = COMMIT + FILE + WEB_LINK. Cùng nghĩa `evidenceTypes=ALL`. |
+| `evidenceTypes` | không | như trên | CSV: `COMMIT`, `FILE`, `WEB_LINK`, hoặc `ALL`. Chỉ loại được liệt kê. Áp dụng Graph 1–4. |
+| `includeCommits` | không | `false` | Alias `evidenceTypes=COMMIT`. Không còn “mở full compact”. |
 | `usedCriteriaOnly` | không | `false` | Graph 2: `true` = chỉ Criterion có cạnh `CLASSIFIED_AS`. Mặc định vẫn đủ 4 CODE/TEST/DOCUMENT/RESEARCH. |
 
 Ví dụ overview (mặc định đã gọn) + drill-down task:
 
 ```http
 GET /api/projects/{projectId}/graph/overview?sprintId={sprintId}
-GET /api/projects/{projectId}/graph/overview?includeCommits=true
+GET /api/projects/{projectId}/graph/overview?includeEvidence=true
+GET /api/projects/{projectId}/graph/overview?evidenceTypes=FILE
+GET /api/projects/{projectId}/graph/overview?evidenceTypes=COMMIT,WEB_LINK
 GET /api/projects/{projectId}/graph/overview
     ?sprintId={sprintId}
     &focusNodeId=task:{taskId}
     &depth=1
-    &nodeTypes=TASK,COMMIT,STUDENT
+    &includeEvidence=true
     &edgeTypes=ASSIGNED_TO,EVIDENCED_BY
     &maxNodes=200
 ```
@@ -247,6 +251,8 @@ interface CytoscapeNodeData {
     | "SPRINT"
     | "TASK"
     | "COMMIT"
+    | "FILE"
+    | "WEB_LINK"
     | "CRITERION"
     | "IDENTITY";
   status?: string;      // TASK: TODO | IN_PROGRESS | IN_REVIEW | DONE | BLOCKED
@@ -298,12 +304,12 @@ cy.json({ elements: payload }); // hoặc cy.add(payload.nodes.concat(payload.ed
 Style CSS theo `node[type = "TASK"]` và `edge[label = "EVIDENCED_BY"]` — **đúng string trên**, không dùng `IMPLEMENTS` / `AUTHORED` / `DOC`.
 
 **Phân rã công việc:** Project vẫn là gốc. `HAS_WORK_ITEM` nối Project với **mọi item không có cha trên Jira** (Epic, hoặc Task/Story/Bug không thuộc Epic nào); `PARENT_OF` đi từ cha sang con đúng như Jira:
-`PROJECT ─HAS_WORK_ITEM→ EPIC ─PARENT_OF→ STORY / TASK / BUG ─PARENT_OF→ SUBTASK ─EVIDENCED_BY→ COMMIT` (Story và Task **cùng cấp** — không có cạnh Story → Task; cấp trên Epic như Initiative cũng hiện, chỉ đọc). Item có cha trên Jira nhưng SAGA **chưa có** cha đó → **không** có `HAS_WORK_ITEM`, node mang `parentResolution = "UNRESOLVED"` (+ lý do) để FE hiện cảnh báo. Sprint chỉ là lập kế hoạch (`CONTAINS`), không phải cha.
+`PROJECT ─HAS_WORK_ITEM→ EPIC ─PARENT_OF→ STORY / TASK / BUG ─PARENT_OF→ SUBTASK ─EVIDENCED_BY→ COMMIT / FILE / WEB_LINK` (Story và Task **cùng cấp** — không có cạnh Story → Task; cấp trên Epic như Initiative cũng hiện, chỉ đọc). Item có cha trên Jira nhưng SAGA **chưa có** cha đó → **không** có `HAS_WORK_ITEM`, node mang `parentResolution = "UNRESOLVED"` (+ lý do) để FE hiện cảnh báo. Sprint chỉ là lập kế hoạch (`CONTAINS`), không phải cha.
 - **Overview toàn project:** mọi `PARENT_OF` và `HAS_WORK_ITEM`.
 - **Overview theo sprint, Activity:** task của sprint + **toàn bộ chuỗi cha** (kể cả Epic/Initiative không thuộc sprint) + Subtask con + `HAS_WORK_ITEM` tới gốc mỗi chuỗi.
 - **Attribution:** commit → item nó chứng minh → chuỗi cha → Project. Drill-down (`focusNodeId` + `depth`) chạy trên dữ liệu của view nên cũng có các cạnh này.
 - **Item có cha chưa đồng bộ vẫn hiện trong graph** (overview lấy mọi task của project, không đi từ Project xuống), với `parentResolution = "UNRESOLVED"`, không có `HAS_WORK_ITEM` giả. Đã kiểm thử trên Neo4j thật (`ProjectGraphNeo4jLiveTest`, chạy khi đặt `SAGA_NEO4J_TEST_URI`).
-- Gợi ý kích thước theo `issueTypeLevel`: Project 1.5, Above-Epic 1.4, Epic 1.3, Standard 1.0, Subtask 0.78, Commit 0.72; `PARENT_OF` nét đứt. Chỉ là hiển thị — **không ảnh hưởng tính điểm**. `graphVersion` hiện là 4. Graph lưu ở version cũ tự dựng lại lần đầu được mở sau khi BE deploy. Không còn cạnh `REVIEWED`.
+- Gợi ý kích thước theo `issueTypeLevel`: Project 1.5, Above-Epic 1.4, Epic 1.3, Standard 1.0, Subtask 0.78, Commit 0.72, File/WebLink 0.68; `PARENT_OF` nét đứt. Chỉ là hiển thị — **không ảnh hưởng tính điểm**. `graphVersion` hiện là 5 (thêm FILE/WEB_LINK). Graph lưu ở version cũ tự dựng lại lần đầu được mở sau khi BE deploy. Không còn cạnh `REVIEWED`.
 
 ### 5.1 `id` node (prefix)
 
@@ -315,10 +321,12 @@ Style CSS theo `node[type = "TASK"]` và `edge[label = "EVIDENCED_BY"]` — **đ
 | SPRINT | `sprint:{sprintId}` |
 | TASK | `task:{taskId}` |
 | COMMIT | `commit:{gitCommitId}` |
+| FILE | `file:{taskFileId}` |
+| WEB_LINK | `weblink:{taskWebLinkId}` |
 | IDENTITY | `identity:{projectId}:GITHUB:{githubLoginOrSubject}` |
 | CRITERION | `crit_code` / `crit_test` / `crit_document` / `crit_research` |
 
-Label hiển thị: TASK = Jira key; COMMIT = SHA 7 ký tự; CRITERION = `CODE`…; IDENTITY = GitHub username (`unmapped` nếu trống).
+Label hiển thị: TASK = Jira key; COMMIT = SHA 7 ký tự; FILE = tên file; WEB_LINK = title hoặc URL; CRITERION = `CODE`…; IDENTITY = GitHub username (`unmapped` nếu trống). `subLabel` FILE = mime/source; WEB_LINK = URL.
 
 ### 5.2 Chiều cạnh (source → target)
 
@@ -331,12 +339,12 @@ Label hiển thị: TASK = Jira key; COMMIT = SHA 7 ký tự; CRITERION = `CODE`
 | `CONTAINS` | Sprint → Task | 1, 3 |
 | `PARENT_OF` | Task → Task | 1, 3, 4 |
 | `ASSIGNED_TO` | Student → Task | 1–4 |
-| `EVIDENCED_BY` | **Task → Commit** | 1–4 |
+| `EVIDENCED_BY` | **Task → Commit / FILE / WEB_LINK** | 1–4 (Graph 4 chỉ Commit) |
 | `CLASSIFIED_AS` | Task → Criterion | 2, 3 |
 | `AUTHORED_BY` | Commit → Identity | 4 |
 | `MAPS_TO` | Identity → Student | 4 |
 
-Không đảo `EVIDENCED_BY`. Task là nguồn điểm; commit là bằng chứng. Không có cạnh `REVIEWED`.
+Không đảo `EVIDENCED_BY`. Task là nguồn điểm; commit / file / web link là bằng chứng. Không có cạnh `REVIEWED`. Jira attachment thô không thành node riêng — chỉ `task_file` / `task_web_link`.
 
 Phase này **không** có node `PULL_REQUEST`.
 
@@ -350,7 +358,7 @@ Không Criterion, không Identity.
 
 Không `sprintId`: cả project, **gồm task backlog** (task không nằm sprint). Có `sprintId`: chỉ sprint đó, **không** backlog.
 
-Mặc định **không trả COMMIT** (đó là thứ làm canvas thành mạng nhện). Còn STUDENT / TEAM / PROJECT / SPRINT / TASK. `meta.totalNodes` vẫn đếm cả commit bị ẩn — click task rồi GET `focusNodeId=task:…&depth=1&nodeTypes=TASK,COMMIT,STUDENT`. Muốn bản cũ đủ SHA: `includeCommits=true`.
+Mặc định **ẩn hết evidence** (COMMIT / FILE / WEB_LINK). Còn STUDENT / TEAM / PROJECT / SPRINT / TASK. Hiện tất cả: `includeEvidence=true`. Từng loại: `evidenceTypes=FILE` (hoặc `COMMIT`, `WEB_LINK`, CSV). `includeCommits=true` = chỉ SHA.
 
 ### Avatar trên node STUDENT
 
@@ -366,19 +374,19 @@ Luôn trả **4 node Criterion** (kể cả chưa có cạnh). Chỉ task **DONE
 
 Ẩn tiêu chí chưa dùng: `usedCriteriaOnly=true` — chỉ còn Criterion có `CLASSIFIED_AS`. Bỏ param = đủ 4 node như cũ.
 
-Drill-down evidence: `focusNodeId=task:{taskId}&depth=1&nodeTypes=TASK,COMMIT&edgeTypes=EVIDENCED_BY`.
+Evidence: cùng `includeEvidence` / `evidenceTypes` như Graph 1. Mặc định Graph 2 **hiện hết** evidence; `evidenceTypes=FILE` ẩn commit và web link.
 
 `weightType` trên task: `CODE` \| `TEST` \| `DOCUMENT` \| `RESEARCH`. Không viết `DOC`. Task DOCUMENT/RESEARCH thiếu file/link → **không** có cạnh `CLASSIFIED_AS`.
 
 ### Graph 3 — Sprint activity
 
-Mọi task trong sprint (mọi status) + Criterion + assignee. **Commit mặc định không vẽ hết** — tải dần theo task: `focusNodeId=task:{taskId}&depth=1&nodeTypes=TASK,COMMIT&edgeTypes=EVIDENCED_BY&maxNodes=200`. Đủ SHA một lần: `includeCommits=true`.
+Mọi task trong sprint (mọi status) + Criterion + assignee. **Evidence mặc định ẩn** — giống Graph 1: `includeEvidence=true` hoặc `evidenceTypes=…`.
 
 ### Graph 4 — Attribution
 
 `Commit → Identity → Student?`. Identity / Commit `isAnomaly: true` khi **chưa** `MAPS_TO` Student (commit mồ côi — vẫn vẽ).
 
-Không `sprintId`: mọi commit của project. Có `sprintId`: chỉ commit đã `EVIDENCED_BY` task trong sprint đó.
+Không `sprintId`: mọi commit của project. Có `sprintId`: chỉ commit đã `EVIDENCED_BY` task trong sprint đó. Filter evidence giống các graph khác — `evidenceTypes=COMMIT` giữ attribution; `FILE`/`WEB_LINK` gần như trống vì Graph 4 không có identity cho file/link.
 
 Highlight: node IDENTITY/COMMIT `isAnomaly`, hoặc Identity không có cạnh `MAPS_TO` đi ra.
 
@@ -436,6 +444,7 @@ CORS: origin FE phải nằm `SAGA_AUTH_FRONTEND_ORIGINS`. Local: `http://localh
 - Không bịa node Criterion từ `weightType` — BE đã trả 4 node trên Graph 2 và 3.
 - Không nối `Commit → Student` tắt Identity.
 - Không đợi node Pull Request.
+- Không bịa node FILE/WEB_LINK từ list evidence REST — BE đã trả cạnh `EVIDENCED_BY`. Click node: `file:{taskFileId}` / `weblink:{taskWebLinkId}` (cùng UUID API evidence).
 - Không gọi 5 graph song song lúc mount nếu chưa cần.
 - Không tải full graph rồi gom/ẩn trên Cytoscape — dùng `nodeTypes` / `focusNodeId` / `maxNodes`.
 - Không map `data.avatarUrl` trên node graph — field là `data.avatar`. GitHub `provider_avatar_url` không phải ảnh sinh viên.

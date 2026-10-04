@@ -19,10 +19,20 @@ public record GraphViewQuery(
 		String cursor,
 		boolean active,
 		boolean skipDefaultCompact,
-		boolean usedCriteriaOnly) {
+		boolean usedCriteriaOnly,
+		Set<String> evidenceTypes) {
 
 	static final Set<String> NODE_TYPES = Set.of(
-			"STUDENT", "TEAM", "PROJECT", "SPRINT", "TASK", "COMMIT", "CRITERION", "IDENTITY");
+			"STUDENT",
+			"TEAM",
+			"PROJECT",
+			"SPRINT",
+			"TASK",
+			"COMMIT",
+			"FILE",
+			"WEB_LINK",
+			"CRITERION",
+			"IDENTITY");
 	static final Set<String> EDGE_TYPES = Set.of(
 			"MEMBER_OF",
 			"OWNS",
@@ -35,6 +45,7 @@ public record GraphViewQuery(
 			"CLASSIFIED_AS",
 			"AUTHORED_BY",
 			"MAPS_TO");
+	static final Set<String> EVIDENCE_TYPES = Set.of("COMMIT", "FILE", "WEB_LINK");
 	static final Set<String> OVERVIEW_COMPACT_TYPES =
 			Set.of("STUDENT", "TEAM", "PROJECT", "SPRINT", "TASK");
 	static final Set<String> ACTIVITY_COMPACT_TYPES =
@@ -43,19 +54,19 @@ public record GraphViewQuery(
 	static final int MAX_NODES_CAP = 2000;
 
 	public static GraphViewQuery none() {
-		return new GraphViewQuery(null, 1, Set.of(), Set.of(), false, null, null, false, false, false);
+		return new GraphViewQuery(null, 1, Set.of(), Set.of(), false, null, null, false, false, false, Set.of());
 	}
 
 	public static GraphViewQuery full() {
-		return new GraphViewQuery(null, 1, Set.of(), Set.of(), false, null, null, false, true, false);
+		return new GraphViewQuery(null, 1, Set.of(), Set.of(), false, null, null, false, true, false, Set.of());
 	}
 
 	public static GraphViewQuery compactOverview() {
-		return new GraphViewQuery(null, 1, OVERVIEW_COMPACT_TYPES, Set.of(), false, null, null, true, false, false);
+		return new GraphViewQuery(null, 1, OVERVIEW_COMPACT_TYPES, Set.of(), false, null, null, true, false, false, Set.of());
 	}
 
 	public static GraphViewQuery compactActivity() {
-		return new GraphViewQuery(null, 1, ACTIVITY_COMPACT_TYPES, Set.of(), false, null, null, true, false, false);
+		return new GraphViewQuery(null, 1, ACTIVITY_COMPACT_TYPES, Set.of(), false, null, null, true, false, false, Set.of());
 	}
 
 	public GraphViewQuery withDefaultCompact(GraphViewQuery compact) {
@@ -132,15 +143,45 @@ public record GraphViewQuery(
 			String continuationToken,
 			Boolean includeCommits,
 			Boolean usedCriteriaOnly) {
+		return parse(
+				focusNodeId,
+				depth,
+				nodeTypes,
+				edgeTypes,
+				anomaliesOnly,
+				maxNodes,
+				cursor,
+				continuationToken,
+				includeCommits,
+				usedCriteriaOnly,
+				null,
+				null);
+	}
+
+	public static GraphViewQuery parse(
+			String focusNodeId,
+			Integer depth,
+			String nodeTypes,
+			String edgeTypes,
+			Boolean anomaliesOnly,
+			Integer maxNodes,
+			String cursor,
+			String continuationToken,
+			Boolean includeCommits,
+			Boolean usedCriteriaOnly,
+			Boolean includeEvidence,
+			String evidenceTypes) {
+		Set<String> evidence = resolveEvidence(includeCommits, includeEvidence, evidenceTypes);
 		boolean hasFocus = focusNodeId != null && !focusNodeId.isBlank();
 		boolean hasTypes = (nodeTypes != null && !nodeTypes.isBlank()) || (edgeTypes != null && !edgeTypes.isBlank());
 		boolean hasAnomalies = Boolean.TRUE.equals(anomaliesOnly);
 		String token = firstNonBlank(cursor, continuationToken);
 		boolean hasPage = maxNodes != null || token != null;
 		boolean hasUsedCriteria = Boolean.TRUE.equals(usedCriteriaOnly);
-		boolean active = hasFocus || hasTypes || hasAnomalies || hasPage || hasUsedCriteria;
+		boolean hasEvidence = !evidence.isEmpty();
+		boolean active = hasFocus || hasTypes || hasAnomalies || hasPage || hasUsedCriteria || hasEvidence;
 		if (!active) {
-			return Boolean.TRUE.equals(includeCommits) ? full() : none();
+			return none();
 		}
 		int resolvedDepth = depth == null ? 1 : depth;
 		if (resolvedDepth < 1 || resolvedDepth > MAX_DEPTH) {
@@ -156,7 +197,8 @@ public record GraphViewQuery(
 		if (token != null && cap == null) {
 			cap = 200;
 		}
-		return new GraphViewQuery(focus, resolvedDepth, nodes, edges, hasAnomalies, cap, token, true, false, hasUsedCriteria);
+		return new GraphViewQuery(
+				focus, resolvedDepth, nodes, edges, hasAnomalies, cap, token, true, false, hasUsedCriteria, evidence);
 	}
 
 	static String combine(String scope, GraphViewQuery query) {
@@ -179,8 +221,36 @@ public record GraphViewQuery(
 				String.join(",", new TreeSet<>(edgeTypes)),
 				Boolean.toString(anomaliesOnly),
 				Boolean.toString(usedCriteriaOnly),
+				String.join(",", new TreeSet<>(evidenceTypes)),
 				maxNodes == null ? "" : maxNodes.toString(),
 				nullToEmpty(cursor));
+	}
+
+	private static Set<String> resolveEvidence(Boolean includeCommits, Boolean includeEvidence, String evidenceTypes) {
+		Set<String> values = new LinkedHashSet<>();
+		if (Boolean.TRUE.equals(includeEvidence)) {
+			values.addAll(EVIDENCE_TYPES);
+		}
+		if (evidenceTypes != null && !evidenceTypes.isBlank()) {
+			for (String part : evidenceTypes.split(",")) {
+				String value = part.trim().toUpperCase(Locale.ROOT);
+				if (value.isEmpty()) {
+					continue;
+				}
+				if ("ALL".equals(value)) {
+					values.addAll(EVIDENCE_TYPES);
+					continue;
+				}
+				if (!EVIDENCE_TYPES.contains(value)) {
+					throw invalid("evidenceTypes contains unknown value '" + value + "'.");
+				}
+				values.add(value);
+			}
+		}
+		if (Boolean.TRUE.equals(includeCommits)) {
+			values.add("COMMIT");
+		}
+		return Collections.unmodifiableSet(values);
 	}
 
 	private static Set<String> parseEnums(String raw, Set<String> allowed, String field) {

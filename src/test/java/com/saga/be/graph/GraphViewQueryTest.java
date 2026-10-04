@@ -10,11 +10,24 @@ import org.junit.jupiter.api.Test;
 class GraphViewQueryTest {
 
 	@Test
-	void includeCommitsSkipsDefaultCompact() {
+	void includeCommitsSelectsCommitEvidence() {
 		GraphViewQuery query = GraphViewQuery.parse(null, null, null, null, null, null, null, null, true);
-		assertThat(query.skipDefaultCompact()).isTrue();
-		assertThat(query.active()).isFalse();
-		assertThat(query.withDefaultCompact(GraphViewQuery.compactOverview())).isSameAs(query);
+		assertThat(query.active()).isTrue();
+		assertThat(query.evidenceTypes()).containsExactly("COMMIT");
+		assertThat(query.skipDefaultCompact()).isFalse();
+	}
+
+	@Test
+	void includeEvidenceSelectsAllEvidenceTypes() {
+		GraphViewQuery query = GraphViewQuery.parse(
+				null, null, null, null, null, null, null, null, null, null, true, null);
+		assertThat(query.evidenceTypes()).containsExactlyInAnyOrder("COMMIT", "FILE", "WEB_LINK");
+		GraphViewQuery all = GraphViewQuery.parse(
+				null, null, null, null, null, null, null, null, null, null, null, "ALL");
+		assertThat(all.evidenceTypes()).containsExactlyInAnyOrder("COMMIT", "FILE", "WEB_LINK");
+		GraphViewQuery fileOnly = GraphViewQuery.parse(
+				null, null, null, null, null, null, null, null, null, null, null, "FILE");
+		assertThat(fileOnly.evidenceTypes()).containsExactly("FILE");
 	}
 
 	@Test
@@ -39,6 +52,23 @@ class GraphViewQueryTest {
 		GraphViewQuery fromToken = GraphViewQuery.parse(null, null, "TASK", null, null, null, null, "9:task:a");
 		assertThat(fromToken.cursor()).isEqualTo("9:task:a");
 		assertThat(fromToken.viewKey()).isEqualTo(fromCursor.viewKey());
+	}
+
+	@Test
+	void fileAndWebLinkAreAllowedNodeTypes() {
+		GraphViewQuery query = GraphViewQuery.parse(null, null, "TASK,FILE,WEB_LINK", "EVIDENCED_BY", null, null, null);
+		assertThat(query.nodeTypes()).containsExactlyInAnyOrder("TASK", "FILE", "WEB_LINK");
+		assertThat(GraphViewQuery.compactOverview().nodeTypes()).doesNotContain("COMMIT", "FILE", "WEB_LINK");
+		assertThat(GraphViewQuery.compactActivity().nodeTypes()).doesNotContain("COMMIT", "FILE", "WEB_LINK");
+	}
+
+	@Test
+	void unknownEvidenceTypeIsRejected() {
+		assertThatThrownBy(() -> GraphViewQuery.parse(
+						null, null, null, null, null, null, null, null, null, null, null, "PULL_REQUEST"))
+				.isInstanceOf(AcademicException.class)
+				.extracting(ex -> ((AcademicException) ex).getCode())
+				.isEqualTo(AcademicErrorCode.REQUEST_INVALID);
 	}
 
 	@Test

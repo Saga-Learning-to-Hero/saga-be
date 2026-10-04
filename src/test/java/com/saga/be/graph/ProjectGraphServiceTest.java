@@ -83,20 +83,70 @@ class ProjectGraphServiceTest {
 	}
 
 	@Test
-	void defaultOverviewOmitsCommitHairball() {
+	void defaultOverviewHidesAllEvidence() {
 		when(projector.ensureFresh(projectId)).thenReturn(4L);
-		when(reader.overview(projectId, null)).thenReturn(graph("student:1", "task:own", "commit:own"));
+		when(reader.overview(projectId, null))
+				.thenReturn(graph("student:1", "task:own", "commit:own", "file:1", "weblink:1"));
 		GraphRead read = service.overview(userId, projectId, null, GraphViewQuery.none());
 		assertThat(read.body().nodes())
 				.extracting(node -> node.data().id())
 				.containsExactlyInAnyOrder("student:1", "task:own")
-				.doesNotContain("commit:own");
+				.doesNotContain("commit:own", "file:1", "weblink:1");
 		assertThat(read.body().meta()).isNotNull();
-		assertThat(read.body().meta().totalNodes()).isEqualTo(3);
+		assertThat(read.body().meta().totalNodes()).isEqualTo(5);
 		assertThat(read.body().meta().returnedNodes()).isEqualTo(2);
 		assertThat(read.etag(projectId)).isNotEqualTo("graph-" + projectId + "-4");
 		verify(authorization).requireReader(userId, projectId);
 		verify(reader).overview(projectId, null);
+	}
+
+	@Test
+	void includeEvidenceShowsCommitFileAndWebLink() {
+		when(projector.ensureFresh(projectId)).thenReturn(4L);
+		when(reader.overview(projectId, null))
+				.thenReturn(graph("student:1", "task:own", "commit:own", "file:1", "weblink:1"));
+		GraphRead read = service.overview(
+				userId,
+				projectId,
+				null,
+				GraphViewQuery.parse(null, null, null, null, null, null, null, null, null, null, true, null));
+		assertThat(read.body().nodes())
+				.extracting(node -> node.data().id())
+				.containsExactlyInAnyOrder("student:1", "task:own", "commit:own", "file:1", "weblink:1");
+	}
+
+	@Test
+	void evidenceTypesFileHidesCommitAndWebLink() {
+		when(projector.ensureFresh(projectId)).thenReturn(4L);
+		when(reader.overview(projectId, null))
+				.thenReturn(graph("student:1", "task:own", "commit:own", "file:1", "weblink:1"));
+		GraphRead read = service.overview(
+				userId,
+				projectId,
+				null,
+				GraphViewQuery.parse(null, null, null, null, null, null, null, null, null, null, null, "FILE"));
+		assertThat(read.body().nodes())
+				.extracting(node -> node.data().id())
+				.containsExactlyInAnyOrder("student:1", "task:own", "file:1")
+				.doesNotContain("commit:own", "weblink:1");
+	}
+
+	@Test
+	void contributionEvidenceTypesKeepsOnlyChosenEvidence() {
+		when(members.existsActiveByProjectIdAndStudentProfileId(projectId, studentId)).thenReturn(true);
+		when(projector.ensureFresh(projectId)).thenReturn(4L);
+		when(reader.contribution(projectId, studentId, null))
+				.thenReturn(graph("student:1", "task:own", "commit:own", "file:1", "weblink:1"));
+		GraphRead read = service.contribution(
+				userId,
+				projectId,
+				studentId,
+				null,
+				GraphViewQuery.parse(null, null, null, null, null, null, null, null, null, null, null, "WEB_LINK"));
+		assertThat(read.body().nodes())
+				.extracting(node -> node.data().id())
+				.containsExactlyInAnyOrder("student:1", "task:own", "weblink:1")
+				.doesNotContain("commit:own", "file:1");
 	}
 
 	@Test
@@ -170,7 +220,13 @@ class ProjectGraphServiceTest {
 	private static CytoscapeGraphResponse graph(String... ids) {
 		CytoscapeGraphBuilder builder = new CytoscapeGraphBuilder();
 		for (String id : ids) {
-			String type = id.startsWith("commit") ? "COMMIT" : id.startsWith("student") ? "STUDENT" : "TASK";
+			String type = id.startsWith("commit")
+					? "COMMIT"
+					: id.startsWith("student")
+							? "STUDENT"
+							: id.startsWith("file")
+									? "FILE"
+									: id.startsWith("weblink") ? "WEB_LINK" : "TASK";
 			builder.node(CytoscapeGraphBuilder.nodeData(id, id, null, type, null, null, null, null, null, null));
 		}
 		if (ids.length >= 2) {

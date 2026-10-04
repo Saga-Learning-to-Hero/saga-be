@@ -1,11 +1,13 @@
 package com.saga.be.graph;
 
 import com.saga.be.graph.ProjectGraphSnapshot.CommitNode;
+import com.saga.be.graph.ProjectGraphSnapshot.FileNode;
 import com.saga.be.graph.ProjectGraphSnapshot.SprintNode;
 import com.saga.be.graph.ProjectGraphSnapshot.StudentNode;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskCommitLink;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskHierarchyLink;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskNode;
+import com.saga.be.graph.ProjectGraphSnapshot.WebLinkNode;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -28,9 +30,9 @@ public class ProjectGraphWriter {
 	 * Shape of what {@link #rebuild} writes. Bump it whenever nodes, properties or edges change:
 	 * a project graph stored under an older version counts as missing and is rebuilt on its next
 	 * read. 4 = same shape as 3, without the peer-review REVIEWED edges. 3 would not rebuild a
-	 * graph that already stored those edges.
+	 * graph that already stored those edges. 5 = File / WebLink evidence nodes on EVIDENCED_BY.
 	 */
-	public static final int GRAPH_VERSION = 4;
+	public static final int GRAPH_VERSION = 5;
 
 	private final SagaGraphClient graph;
 
@@ -53,7 +55,7 @@ public class ProjectGraphWriter {
 					"""
 					MATCH (n)
 					WHERE n.projectId = $projectId
-					  AND (n:Project OR n:Team OR n:Sprint OR n:Task OR n:Commit OR n:Identity)
+					  AND (n:Project OR n:Team OR n:Sprint OR n:Task OR n:Commit OR n:Identity OR n:File OR n:WebLink)
 					DETACH DELETE n
 					""",
 					Map.of("projectId", projectId.toString()));
@@ -281,6 +283,52 @@ public class ProjectGraphWriter {
 						""",
 						Map.of("rows", rows));
 			}
+			if (snapshot.files() != null && !snapshot.files().isEmpty()) {
+				List<Map<String, Object>> rows = new ArrayList<>();
+				for (FileNode file : snapshot.files()) {
+					Map<String, Object> row = new HashMap<>();
+					row.put("id", SagaGraphIds.file(file.id()));
+					row.put("name", nullToEmpty(file.filename()));
+					row.put("mimeType", file.mimeType());
+					row.put("source", file.source());
+					row.put("sagaId", file.id().toString());
+					row.put("taskId", SagaGraphIds.task(file.taskId()));
+					rows.add(row);
+				}
+				tx.run(
+						"""
+						UNWIND $rows AS row
+						MATCH (t:Task {id: row.taskId})
+						MERGE (f:File {id: row.id})
+						SET f.name = row.name, f.mimeType = row.mimeType, f.source = row.source,
+						    f.projectId = $pid, f.sagaId = row.sagaId
+						MERGE (t)-[:EVIDENCED_BY]->(f)
+						""",
+						Map.of("rows", rows, "pid", projectId.toString()));
+			}
+			if (snapshot.webLinks() != null && !snapshot.webLinks().isEmpty()) {
+				List<Map<String, Object>> rows = new ArrayList<>();
+				for (WebLinkNode link : snapshot.webLinks()) {
+					Map<String, Object> row = new HashMap<>();
+					row.put("id", SagaGraphIds.webLink(link.id()));
+					row.put("name", firstNonBlank(link.title(), truncate(link.url(), 80)));
+					row.put("url", truncate(link.url(), 500));
+					row.put("source", link.source());
+					row.put("sagaId", link.id().toString());
+					row.put("taskId", SagaGraphIds.task(link.taskId()));
+					rows.add(row);
+				}
+				tx.run(
+						"""
+						UNWIND $rows AS row
+						MATCH (t:Task {id: row.taskId})
+						MERGE (w:WebLink {id: row.id})
+						SET w.name = row.name, w.url = row.url, w.source = row.source,
+						    w.projectId = $pid, w.sagaId = row.sagaId
+						MERGE (t)-[:EVIDENCED_BY]->(w)
+						""",
+						Map.of("rows", rows, "pid", projectId.toString()));
+			}
 		});
 	}
 
@@ -292,6 +340,8 @@ public class ProjectGraphWriter {
 				"CREATE CONSTRAINT sprint_id IF NOT EXISTS FOR (n:Sprint) REQUIRE n.id IS UNIQUE",
 				"CREATE CONSTRAINT task_id IF NOT EXISTS FOR (n:Task) REQUIRE n.id IS UNIQUE",
 				"CREATE CONSTRAINT commit_id IF NOT EXISTS FOR (n:Commit) REQUIRE n.id IS UNIQUE",
+				"CREATE CONSTRAINT file_id IF NOT EXISTS FOR (n:File) REQUIRE n.id IS UNIQUE",
+				"CREATE CONSTRAINT weblink_id IF NOT EXISTS FOR (n:WebLink) REQUIRE n.id IS UNIQUE",
 				"CREATE CONSTRAINT identity_id IF NOT EXISTS FOR (n:Identity) REQUIRE n.id IS UNIQUE",
 				"CREATE CONSTRAINT criterion_id IF NOT EXISTS FOR (n:Criterion) REQUIRE n.id IS UNIQUE");
 		for (String cypher : constraints) {
@@ -309,6 +359,8 @@ public class ProjectGraphWriter {
 				"CREATE INDEX sprint_projectId IF NOT EXISTS FOR (n:Sprint) ON (n.projectId)",
 				"CREATE INDEX task_projectId IF NOT EXISTS FOR (n:Task) ON (n.projectId)",
 				"CREATE INDEX commit_projectId IF NOT EXISTS FOR (n:Commit) ON (n.projectId)",
+				"CREATE INDEX file_projectId IF NOT EXISTS FOR (n:File) ON (n.projectId)",
+				"CREATE INDEX weblink_projectId IF NOT EXISTS FOR (n:WebLink) ON (n.projectId)",
 				"CREATE INDEX identity_projectId IF NOT EXISTS FOR (n:Identity) ON (n.projectId)");
 		for (String cypher : indexes) {
 			graph.write(tx -> tx.run(cypher));
@@ -324,5 +376,14 @@ public class ProjectGraphWriter {
 			return "";
 		}
 		return value.length() <= max ? value : value.substring(0, max);
+	}
+
+	private static String firstNonBlank(String... values) {
+		for (String value : values) {
+			if (value != null && !value.isBlank()) {
+				return value;
+			}
+		}
+		return "";
 	}
 }
