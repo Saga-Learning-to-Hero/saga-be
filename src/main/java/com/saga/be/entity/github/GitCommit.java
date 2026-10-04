@@ -48,6 +48,10 @@ public class GitCommit extends BaseEntity {
 	@Column(name = "author_external_id", length = 128)
 	private String authorExternalId;
 
+	/** GitHub login (e.g. "trungne08"); author_external_id may be the numeric GitHub user id. */
+	@Column(name = "author_login", length = 128)
+	private String authorLogin;
+
 	@Column(name = "message", columnDefinition = "MEDIUMTEXT")
 	private String message;
 

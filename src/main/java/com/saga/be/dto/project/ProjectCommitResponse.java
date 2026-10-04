@@ -18,7 +18,9 @@ public record ProjectCommitResponse(
 		Integer parentCount,
 		Boolean isMerge,
 		@io.swagger.v3.oas.annotations.media.Schema(description = "AI review badge (PASS / WARNING / ...); null when not loaded")
-		com.saga.be.dto.ai.CommitAiReviewDtos.Summary aiReview) {
+		com.saga.be.dto.ai.CommitAiReviewDtos.Summary aiReview,
+		@io.swagger.v3.oas.annotations.media.Schema(description = "GitHub login of the author (e.g. trungne08); authorExternalId may be the numeric GitHub user id")
+		String authorLogin) {
 
 	/** Without the AI review badge (callers that do not show it). */
 	public ProjectCommitResponse(
@@ -26,11 +28,16 @@ public record ProjectCommitResponse(
 			UUID authorStudentId, String authorAvatarUrl, String headRef, LocalDateTime committedAt, LocalDateTime createdAt,
 			Integer parentCount, Boolean isMerge) {
 		this(id, repoId, repositoryFullName, sha, message, authorExternalId, authorStudentId, authorAvatarUrl, headRef,
-				committedAt, createdAt, parentCount, isMerge, null);
+				committedAt, createdAt, parentCount, isMerge, null, null);
 	}
 
 	public ProjectCommitResponse withAiReview(com.saga.be.dto.ai.CommitAiReviewDtos.Summary review) {
 		return new ProjectCommitResponse(id, repoId, repositoryFullName, sha, message, authorExternalId, authorStudentId,
-				authorAvatarUrl, headRef, committedAt, createdAt, parentCount, isMerge, review);
+				authorAvatarUrl, headRef, committedAt, createdAt, parentCount, isMerge, review, authorLogin);
+	}
+
+	public ProjectCommitResponse withAuthorLogin(String login) {
+		return new ProjectCommitResponse(id, repoId, repositoryFullName, sha, message, authorExternalId, authorStudentId,
+				authorAvatarUrl, headRef, committedAt, createdAt, parentCount, isMerge, aiReview, login);
 	}
 }

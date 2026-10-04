@@ -96,6 +96,24 @@ class GitCommitAutoReviewWindowTest {
 	}
 
 	@Test
+	void theGithubLoginIsKept_aWebhookGivesTheLogin_aSyncAddsTheNumericId_andNoneErasesIt() {
+		// webhook: login only
+		service.upsertBatch(repo, List.of(new CommitDraft("login01", "fix", LocalDateTime.now().minusHours(2), null, "trungne08", "main")));
+		GitCommit commit = stored.getFirst();
+		assertThat(commit.getAuthorLogin()).isEqualTo("trungne08");
+		assertThat(commit.getAuthorExternalId()).isEqualTo("trungne08");
+
+		// API sync of the same commit: numeric id and login
+		service.upsertBatch(repo, List.of(new CommitDraft("login01", "fix", LocalDateTime.now().minusHours(2), "139128461", "trungne08", "main")));
+		assertThat(commit.getAuthorExternalId()).isEqualTo("139128461");
+		assertThat(commit.getAuthorLogin()).isEqualTo("trungne08");
+
+		// a source that does not know the login never clears it
+		service.upsertBatch(repo, List.of(new CommitDraft("login01", "fix", LocalDateTime.now().minusHours(2), "139128461", null, "main")));
+		assertThat(commit.getAuthorLogin()).isEqualTo("trungne08");
+	}
+
+	@Test
 	void oldHistoryInAFirstBackfillIsNeverReviewedAutomatically() {
 		service.upsertBatch(repo, List.of(
 				new CommitDraft("old0001", "init", LocalDateTime.now().minusDays(30), "1", "alice", "main"),

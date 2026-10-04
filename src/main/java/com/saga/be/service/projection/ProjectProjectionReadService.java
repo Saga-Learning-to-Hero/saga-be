@@ -671,6 +671,6 @@ public class ProjectProjectionReadService {
 				commit.getCommittedAt(),
 				commit.getCreatedAt(),
 				commit.getParentCount(),
-				commit.isMerge());
+				commit.isMerge()).withAuthorLogin(commit.getAuthorLogin());
 	}
 }

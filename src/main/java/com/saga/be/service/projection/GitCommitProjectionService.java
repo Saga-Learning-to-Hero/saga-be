@@ -135,6 +135,8 @@ public class GitCommitProjectionService {
 					? draft.authorExternalId()
 					: draft.authorLogin();
 			commit.setAuthorExternalId(external);
+			// both the webhook and the API sync know the login; never erase a known one with null
+			if (draft.authorLogin() != null && !draft.authorLogin().isBlank()) commit.setAuthorLogin(draft.authorLogin().strip());
 			String key = authorKey(draft);
 			commit.setAuthorStudent(key == null ? null : authors.get(key));
 			commit.setHeadRef(draft.headRef());
@@ -157,6 +159,7 @@ public class GitCommitProjectionService {
 					row.setMessage(candidate.getMessage());
 					row.setCommittedAt(candidate.getCommittedAt());
 					row.setAuthorExternalId(candidate.getAuthorExternalId());
+					if (candidate.getAuthorLogin() != null) row.setAuthorLogin(candidate.getAuthorLogin());
 					row.setAuthorStudent(candidate.getAuthorStudent());
 					row.setHeadRef(candidate.getHeadRef());
 					applyParentCount(row, candidate.getParentCount());
