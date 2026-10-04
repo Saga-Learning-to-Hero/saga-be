@@ -266,7 +266,8 @@ public class GitHubCommitSyncService {
 			}
 			// Incremental: a page where every commit is already stored (or before the claim, so never
 			// stored) means the rest of this branch is history SAGA already has.
-			boolean pageHasNewCommit = !incremental || hasNewCommit(repo, providerPage, cutoffApplies);
+			int newOnPage = incremental ? newCommitCount(repo, providerPage, cutoffApplies) : -1;
+			boolean pageHasNewCommit = !incremental || newOnPage > 0;
 			List<CommitDraft> drafts = new ArrayList<>(providerPage.size());
 			for (CommitSummary summary : providerPage) {
 				if (summary == null || summary.sha() == null || summary.sha().isBlank()) {
@@ -293,7 +294,9 @@ public class GitHubCommitSyncService {
 			}
 			if (!drafts.isEmpty()) {
 				Integer applied = writes.execute(status -> projection.upsertBatch(repo, drafts));
-				upserted += applied == null ? 0 : applied;
+				// Incremental: count only commits SAGA did not have, so a sync that found nothing new
+				// reports 0 and does not tell every open commit page to reload.
+				upserted += incremental ? newOnPage : (applied == null ? 0 : applied);
 			}
 			if (providerPage.size() < GITHUB_COMMITS_PER_PAGE_MAX || !pageHasNewCommit) {
 				break;
@@ -309,7 +312,8 @@ public class GitHubCommitSyncService {
 		return upserted;
 	}
 
-	private boolean hasNewCommit(GitRepo repo, List<CommitSummary> providerPage, boolean cutoffApplies) {
+	/** Eligible commits of this page not stored yet (0 = the rest of the branch is known history). */
+	private int newCommitCount(GitRepo repo, List<CommitSummary> providerPage, boolean cutoffApplies) {
 		List<String> eligible = new ArrayList<>();
 		for (CommitSummary summary : providerPage) {
 			if (summary == null || summary.sha() == null || summary.sha().isBlank()) {
@@ -321,10 +325,10 @@ public class GitHubCommitSyncService {
 			}
 		}
 		if (eligible.isEmpty()) {
-			return false;
+			return 0;
 		}
 		Set<String> stored = new HashSet<>(writes.execute(status -> commits.findShaHashesByRepoIdAndShaHashIn(repo.getId(), eligible)));
-		return !stored.containsAll(eligible);
+		return (int) eligible.stream().distinct().filter(sha -> !stored.contains(sha)).count();
 	}
 
 	/** Prefer default branch first so headRef metadata favors the stored default when SHAs overlap. */

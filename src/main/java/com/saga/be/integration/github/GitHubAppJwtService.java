@@ -19,6 +19,12 @@ public class GitHubAppJwtService {
 
 	private final IntegrationProperties properties;
 	private final GitHubAppPrivateKeyParser keyParser;
+	/** The app JWT is valid 9 minutes; it is reused for 8 so the private key is not re-parsed and
+	 * re-signed on every GitHub call. */
+	private volatile String cachedJwt;
+	private volatile long cachedJwtUntilEpochSecond;
+	private volatile PrivateKey cachedKey;
+	private volatile String cachedKeySource;
 
 	public GitHubAppJwtService(IntegrationProperties properties) {
 		this.properties = properties;
@@ -26,6 +32,10 @@ public class GitHubAppJwtService {
 	}
 
 	public String createJwt() {
+		String jwt = cachedJwt;
+		if (jwt != null && Instant.now().getEpochSecond() < cachedJwtUntilEpochSecond) {
+			return jwt;
+		}
 		if (!properties.getGithub().isConfigured()) {
 			throw new IntegrationException(
 					IntegrationErrorCode.INTEGRATION_UNAVAILABLE, HttpStatus.SERVICE_UNAVAILABLE, "GitHub App is not configured.");
@@ -41,11 +51,20 @@ public class GitHubAppJwtService {
 					+ properties.getGithub().getAppId()
 					+ "\"}");
 			String signingInput = header + "." + payload;
-			PrivateKey privateKey = keyParser.parse(properties.getGithub().getPrivateKeyBase64());
+			String keySource = properties.getGithub().getPrivateKeyBase64();
+			PrivateKey privateKey = cachedKey;
+			if (privateKey == null || !keySource.equals(cachedKeySource)) {
+				privateKey = keyParser.parse(keySource);
+				cachedKey = privateKey;
+				cachedKeySource = keySource;
+			}
 			Signature signature = Signature.getInstance("SHA256withRSA");
 			signature.initSign(privateKey);
 			signature.update(signingInput.getBytes(StandardCharsets.US_ASCII));
-			return signingInput + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(signature.sign());
+			String signed = signingInput + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(signature.sign());
+			cachedJwt = signed;
+			cachedJwtUntilEpochSecond = now.getEpochSecond() + 480;
+			return signed;
 		} catch (IntegrationException ex) {
 			throw ex;
 		} catch (Exception ex) {

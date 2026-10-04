@@ -110,8 +110,23 @@ public class ProjectJiraSprintCommandService {
 		return syncNamedSourceThenListLocal(active.get(0), projectId);
 	}
 
+	/** A page load fires GET /sprints several times: Jira is asked at most once per window per site;
+	 * the other calls read the stored sprints (sprint webhooks and the sync keep them current). */
+	static final java.time.Duration LIVE_SYNC_WINDOW = java.time.Duration.ofSeconds(60);
+	private final java.util.concurrent.ConcurrentHashMap<UUID, Long> lastLiveSync = new java.util.concurrent.ConcurrentHashMap<>();
+
+	private boolean liveSyncDue(UUID integrationId) {
+		long now = System.nanoTime();
+		Long last = lastLiveSync.get(integrationId);
+		if (last != null && now - last < LIVE_SYNC_WINDOW.toNanos()) {
+			return false;
+		}
+		lastLiveSync.put(integrationId, now);
+		return true;
+	}
+
 	private List<ProjectSprintResponse> syncNamedSourceThenListLocal(JiraIntegration integration, UUID projectId) {
-		if (integration.getJiraBoardId() == null || integration.getJiraBoardId().isBlank()) {
+		if (integration.getJiraBoardId() == null || integration.getJiraBoardId().isBlank() || !liveSyncDue(integration.getId())) {
 			return listLocalSource(integration.getId(), projectId);
 		}
 		String access = tokens.accessToken(integration);

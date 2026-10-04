@@ -2081,6 +2081,7 @@ class ProjectJiraTaskCommandServiceTest {
 		// started in Sprint 5, carried into Sprint 6 when Sprint 5 closed: its start stays before Sprint 6
 		task.setStartDate(day(9, 25).atStartOfDay());
 		task.setSprint(sprint("SAGA Sprint 6", "active", day(10, 4), day(10, 17)));
+		org.mockito.Mockito.lenient().when(sprints.findById(task.getSprint().getId())).thenReturn(Optional.of(task.getSprint()));
 		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
@@ -2100,6 +2101,7 @@ class ProjectJiraTaskCommandServiceTest {
 		JiraIntegration integration = activeJira();
 		Task task = taskRow(integration);
 		task.setSprint(sprint("SAGA Sprint 6", "active", day(10, 4), day(10, 17)));
+		org.mockito.Mockito.lenient().when(sprints.findById(task.getSprint().getId())).thenReturn(Optional.of(task.getSprint()));
 		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 
@@ -2116,6 +2118,7 @@ class ProjectJiraTaskCommandServiceTest {
 		JiraIntegration integration = activeJira();
 		Task task = taskRow(integration);
 		task.setSprint(sprint("SAGA Sprint 6", "active", day(10, 4), day(10, 17)));
+		org.mockito.Mockito.lenient().when(sprints.findById(task.getSprint().getId())).thenReturn(Optional.of(task.getSprint()));
 		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 
@@ -2148,6 +2151,7 @@ class ProjectJiraTaskCommandServiceTest {
 		JiraIntegration integration = activeJira();
 		Task task = taskRow(integration);
 		task.setSprint(sprint("SAGA Sprint 5", "active", day(9, 20), day(10, 3)));
+		org.mockito.Mockito.lenient().when(sprints.findById(task.getSprint().getId())).thenReturn(Optional.of(task.getSprint()));
 		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(sprints.findByJiraIntegration_IdAndExternalSprintId(integration.getId(), "32"))
@@ -2167,6 +2171,7 @@ class ProjectJiraTaskCommandServiceTest {
 		task.setStartDate(day(9, 1).atStartOfDay());
 		task.setDueDate(day(8, 1).atStartOfDay());
 		task.setSprint(sprint("SAGA Sprint 5", "active", day(9, 20), day(10, 3)));
+		org.mockito.Mockito.lenient().when(sprints.findById(task.getSprint().getId())).thenReturn(Optional.of(task.getSprint()));
 		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
 		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
 		when(tokens.accessToken(integration)).thenReturn("token");
@@ -2205,6 +2210,28 @@ class ProjectJiraTaskCommandServiceTest {
 		// A document task is never gated on a GitHub link.
 		verify(identities, never()).findFetchedByUserAccount_IdInAndProviderAndMappingStatusIn(
 				any(), eq(com.saga.be.entity.enums.IntegrationProvider.GITHUB), any());
+	}
+
+	@Test
+	void patch_dueDateOnATaskWhoseSprintProxyIsDetached_neverHitsTheProxy() {
+		// regression: PATCH /tasks/{id} returned 500 (LazyInitializationException on task.sprint)
+		stubLeader();
+		JiraIntegration integration = activeJira();
+		Task task = taskRow(integration);
+		com.saga.be.entity.jira.Sprint loaded = sprint("SAGA Sprint 6", "active", day(10, 4), day(10, 17));
+		com.saga.be.entity.jira.Sprint detached = org.mockito.Mockito.spy(new com.saga.be.entity.jira.Sprint());
+		detached.setId(loaded.getId());
+		org.mockito.Mockito.lenient().doThrow(new org.hibernate.LazyInitializationException("no session")).when(detached).getDeletedAt();
+		org.mockito.Mockito.lenient().doThrow(new org.hibernate.LazyInitializationException("no session")).when(detached).getStartDate();
+		task.setSprint(detached);
+		when(sprints.findById(loaded.getId())).thenReturn(Optional.of(loaded));
+		when(jiraIntegrations.findByIdAndProject_Id(integration.getId(), projectId)).thenReturn(Optional.of(integration));
+		when(tasks.findByIdAndProject_IdAndDeletedAtIsNull(task.getId(), projectId)).thenReturn(Optional.of(task));
+
+		assertThatThrownBy(() -> service.patch(userId, projectId, task.getId(), datedPatch(day(10, 1), null, null)))
+				.isInstanceOf(IntegrationException.class)
+				.extracting(ex -> ((IntegrationException) ex).getCode())
+				.isEqualTo(IntegrationErrorCode.TASK_OUTSIDE_SPRINT);
 	}
 
 	private static java.time.LocalDate day(int month, int dayOfMonth) {

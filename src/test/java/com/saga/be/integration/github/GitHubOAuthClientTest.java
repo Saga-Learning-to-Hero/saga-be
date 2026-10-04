@@ -133,6 +133,22 @@ class GitHubOAuthClientTest {
 	}
 
 	@Test
+	void anInstallationTokenIsReusedWhileFresh_andEvictionAsksAgain() {
+		server.expect(org.springframework.test.web.client.ExpectedCount.times(2), requestTo("https://api.github.com/app/installations/42/access_tokens"))
+				.andRespond(withSuccess("{\"token\":\"ghs_cached\",\"expires_at\":\"2026-09-03T21:00:00Z\"}", MediaType.APPLICATION_JSON));
+
+		String first = client.createInstallationToken("app-jwt", 42L);
+		String second = client.createInstallationToken("app-jwt", 42L);
+		client.evictInstallationToken(42L);
+		String third = client.createInstallationToken("app-jwt", 42L);
+
+		org.junit.jupiter.api.Assertions.assertEquals("ghs_cached", first);
+		org.junit.jupiter.api.Assertions.assertEquals(first, second);
+		org.junit.jupiter.api.Assertions.assertEquals(first, third);
+		server.verify(); // exactly two POSTs: the first call and the one after eviction
+	}
+
+	@Test
 	void listUserInstallationsParsesInstallationIds() {
 		server.expect(requestTo("https://api.github.com/user/installations"))
 				.andRespond(withSuccess(

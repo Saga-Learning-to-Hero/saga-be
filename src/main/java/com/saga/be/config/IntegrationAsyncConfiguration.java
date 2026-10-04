@@ -44,11 +44,6 @@ public class IntegrationAsyncConfiguration {
 	}
 
 	/**
-	 * Sprint-overlap checks run off the caller's thread: they are triggered from afterCommit
-	 * callbacks that still hold their JDBC connection, and must not ask the small pool for a second
-	 * one there. The check is idempotent, so a rejected run is simply redone on the next change.
-	 */
-	/**
 	 * Re-reads a sprint's issues after a Jira sprint starts or closes. Kept apart from the single
 	 * integration sync thread, which a long GitHub backfill can hold for an hour.
 	 */
@@ -64,6 +59,28 @@ public class IntegrationAsyncConfiguration {
 		return executor;
 	}
 
+	/**
+	 * Automatic commit reviews: each submission reads the commit's diff from GitHub. Kept off the
+	 * webhook/sync thread so a push is acknowledged at once; a full queue skips new automatic
+	 * reviews only (a person can always press "Đánh giá lại").
+	 */
+	@Bean(name = "aiAutomationExecutor")
+	public Executor aiAutomationExecutor() {
+		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+		executor.setCorePoolSize(1);
+		executor.setMaxPoolSize(1);
+		executor.setQueueCapacity(QUEUE_CAPACITY);
+		executor.setThreadNamePrefix("ai-automation-");
+		executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+		executor.initialize();
+		return executor;
+	}
+
+	/**
+	 * Sprint-overlap checks run off the caller's thread: they are triggered from afterCommit
+	 * callbacks that still hold their JDBC connection, and must not ask the small pool for a second
+	 * one there. The check is idempotent, so a rejected run is simply redone on the next change.
+	 */
 	@Bean(name = "sprintOverlapExecutor")
 	public Executor sprintOverlapExecutor() {
 		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

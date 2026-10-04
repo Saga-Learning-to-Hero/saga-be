@@ -387,6 +387,25 @@ class ProjectJiraSprintCommandServiceTest {
 	}
 
 	@Test
+	void syncAndList_asksJiraAtMostOncePerMinutePerSite_theOtherCallsReadTheDatabase() {
+		stubReader();
+		JiraIntegration site = activeJira();
+		site.setJiraBoardId("20");
+		when(jiraIntegrations.findByIdAndProject_Id(site.getId(), projectId)).thenReturn(Optional.of(site));
+		when(tokens.accessToken(site)).thenReturn("token");
+		when(jiraWrite.listBoardSprints("token", site.getCloudId(), "20")).thenReturn(List.of());
+		when(sprints.findActiveFetchedByJiraIntegration_IdAndProject_Id(site.getId(), projectId)).thenReturn(List.of());
+
+		// one page load: four GET /sprints in a row
+		for (int i = 0; i < 4; i++) {
+			service.syncAndList(userId, projectId, site.getId());
+		}
+
+		verify(jiraWrite, org.mockito.Mockito.times(1)).listBoardSprints(any(), any(), any());
+		verify(sprints, org.mockito.Mockito.times(4)).findActiveFetchedByJiraIntegration_IdAndProject_Id(site.getId(), projectId);
+	}
+
+	@Test
 	void syncAndList_namedSource_syncsThatBoardThenReturnsOnlyThatSourceLocalSprints() {
 		stubReader();
 		JiraIntegration first = activeJira();

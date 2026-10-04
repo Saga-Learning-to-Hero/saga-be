@@ -28,6 +28,10 @@ public class GitHubOAuthClient {
 
 	private final RestClient restClient;
 	private final IntegrationProperties properties;
+	/** Installation tokens are valid an hour; reused for {@code installationTokenCacheTtl} (50 min). */
+	private final java.util.concurrent.ConcurrentHashMap<Long, CachedToken> installationTokens = new java.util.concurrent.ConcurrentHashMap<>();
+
+	private record CachedToken(String token, java.time.Instant until) {}
 
 	public GitHubOAuthClient(RestClient integrationRestClient, IntegrationProperties properties) {
 		this.restClient = integrationRestClient;
@@ -148,7 +152,30 @@ public class GitHubOAuthClient {
 		}
 	}
 
+	/**
+	 * Installation token, reused while still fresh: one POST per installation per ~50 minutes instead
+	 * of one per GitHub call. {@link #evictInstallationToken} drops it (e.g. after a 401).
+	 */
 	public String createInstallationToken(String appJwt, long installationId) {
+		CachedToken cached = installationTokens.get(installationId);
+		if (cached != null && java.time.Instant.now().isBefore(cached.until())) {
+			return cached.token();
+		}
+		String token = requestInstallationToken(appJwt, installationId);
+		java.time.Duration ttl = properties.getInstallationTokenCacheTtl() == null
+				? java.time.Duration.ofMinutes(50)
+				: properties.getInstallationTokenCacheTtl();
+		if (!ttl.isNegative() && !ttl.isZero()) {
+			installationTokens.put(installationId, new CachedToken(token, java.time.Instant.now().plus(ttl)));
+		}
+		return token;
+	}
+
+	public void evictInstallationToken(long installationId) {
+		installationTokens.remove(installationId);
+	}
+
+	private String requestInstallationToken(String appJwt, long installationId) {
 		try {
 			GitHubInstallationTokenResponse node = restClient
 					.post()

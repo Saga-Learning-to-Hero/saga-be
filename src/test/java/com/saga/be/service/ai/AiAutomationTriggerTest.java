@@ -104,4 +104,30 @@ class AiAutomationTriggerTest {
 		trigger.afterTaskIntelligenceCompleted(new TaskIntelligenceCompletedEvent(UUID.randomUUID(), null));
 		verifyNoInteractions(submissions);
 	}
+
+	@Test
+	void submissionsRunOnTheBackgroundExecutor_notOnTheWebhookThread() {
+		AiAnalysisSubmissionService submissions = mock(AiAnalysisSubmissionService.class);
+		java.util.List<Runnable> queued = new java.util.ArrayList<>();
+		UUID projectId = UUID.randomUUID();
+		UUID commitId = UUID.randomUUID();
+
+		new AiCommitAutomationTrigger(submissions, queued::add).afterCommitsPersisted(projectId, List.of(commitId));
+
+		verifyNoInteractions(submissions);
+		org.assertj.core.api.Assertions.assertThat(queued).hasSize(1);
+		queued.getFirst().run();
+		verify(submissions).submitAutomatic(projectId, commitId);
+	}
+
+	@Test
+	void aFullAutomationQueueNeverBreaksIngestion() {
+		AiAnalysisSubmissionService submissions = mock(AiAnalysisSubmissionService.class);
+		java.util.concurrent.Executor full = task -> {
+			throw new java.util.concurrent.RejectedExecutionException("full");
+		};
+		org.assertj.core.api.Assertions.assertThatCode(() -> new AiCommitAutomationTrigger(submissions, full)
+				.afterCommitsPersisted(UUID.randomUUID(), List.of(UUID.randomUUID()))).doesNotThrowAnyException();
+		verifyNoInteractions(submissions);
+	}
 }

@@ -768,7 +768,9 @@ public class ProjectJiraTaskCommandService {
 					.findByJiraIntegration_IdAndExternalSprintId(integration.getId(), request.sprintExternalId().trim())
 					.orElse(null);
 		} else {
-			targetSprint = task.getSprint();
+			// task.getSprint() is a lazy proxy and the session is already closed here: load it by id
+			// (same as parentSprint) instead of touching the proxy.
+			targetSprint = parentSprint(task);
 		}
 		requireValidSchedule(start, due, targetSprint, request.startDate() != null, request.dueDate() != null);
 	}
