@@ -441,4 +441,8 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, UUID> {
 			group by r.project.id, a.id
 			""")
 	List<Object[]> countProgressReportUnlinkedCommits(@Param("projectIds") java.util.Collection<UUID> projectIds);
+
+	/** The commit is attributed to this user's student profile. */
+	@Query("select count(c) > 0 from GitCommit c where c.id = :commitId and c.authorStudent.userAccount.id = :userId")
+	boolean existsAuthoredBy(@Param("commitId") UUID commitId, @Param("userId") UUID userId);
 }

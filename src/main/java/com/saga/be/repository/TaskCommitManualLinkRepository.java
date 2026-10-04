@@ -22,4 +22,14 @@ public interface TaskCommitManualLinkRepository extends JpaRepository<TaskCommit
 			@Param("projectId") UUID projectId, @Param("commitIds") Collection<UUID> commitIds);
 
 	Optional<TaskCommitManualLink> findByTask_IdAndGitCommit_Id(UUID taskId, UUID gitCommitId);
+
+	/** The commit is attached by hand to a live task assigned to this user. */
+	@Query(
+			"""
+			select count(l) > 0 from TaskCommitManualLink l
+			where l.gitCommit.id = :commitId
+			  and l.task.deletedAt is null
+			  and l.task.assigneeStudent.userAccount.id = :userId
+			""")
+	boolean existsManualLinkToTaskAssignedTo(@Param("commitId") java.util.UUID commitId, @Param("userId") java.util.UUID userId);
 }

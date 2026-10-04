@@ -131,6 +131,7 @@ public enum IntegrationErrorCode {
 	ASSISTANT_RATE_LIMITED,
 	/** A merge commit only joins work that already exists: SAGA never runs an AI review on it. */
 	AI_COMMIT_MERGE_NOT_REVIEWED,
+	AI_COMMIT_REVIEW_NOT_ALLOWED,
 	/** Only the commit author or the team leader may attach/detach a commit to a task by hand. */
 	COMMIT_TASK_LINK_FORBIDDEN,
 	/** The manual commit-task attachment is not possible (merge commit, task of another project...). */

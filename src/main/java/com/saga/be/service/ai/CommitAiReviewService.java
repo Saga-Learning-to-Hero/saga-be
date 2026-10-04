@@ -82,6 +82,24 @@ public class CommitAiReviewService {
 	private final ObjectMapper mapper;
 	private com.saga.be.repository.ProjectRepository projects;
 
+	/** Who may (re)request a review; absent in slice tests (then only merge / key rules apply). */
+	private CommitReviewPermission reviewPermission;
+
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	public void setReviewPermission(CommitReviewPermission reviewPermission) {
+		this.reviewPermission = reviewPermission;
+	}
+
+	/** READ_ONLY (lecturer), NOT_ALLOWED (a member, not their task), NO_KEY, or null when allowed. */
+	private String blockedFor(UUID userId, UUID projectId, UUID commitId, String keySource) {
+		CommitReviewPermission.Access access = reviewPermission == null
+				? CommitReviewPermission.Access.ALLOWED
+				: reviewPermission.access(userId, projectId, commitId);
+		if (access == CommitReviewPermission.Access.READ_ONLY) return "READ_ONLY";
+		if (access == CommitReviewPermission.Access.NOT_ALLOWED) return "NOT_ALLOWED";
+		return "NONE".equals(keySource) ? "NO_KEY" : null;
+	}
+
 	/** Where backfill submissions run (GitHub reads take seconds each); inline unless Spring sets it. */
 	private java.util.concurrent.Executor background = Runnable::run;
 
@@ -167,7 +185,7 @@ public class CommitAiReviewService {
 				new CommitAiReviewRules.MessageContext(commit.getMessage(), commit.getHeadRef(), linkedTasks.stream().map(LinkedTask::externalKey).toList()));
 		Map<UUID, AiAnalysisEvidence> rows = new LinkedHashMap<>();
 		if (run != null) for (AiAnalysisEvidence row : evidence.findByAnalysisRun_IdOrderByOrdinalIndexAsc(run.getId())) rows.put(row.getId(), row);
-		String blocked = merge ? "MERGE" : "NONE".equals(keySource) ? "NO_KEY" : null;
+		String blocked = merge ? "MERGE" : blockedFor(userId, projectId, commitId, keySource);
 		return new Detail(
 				commit.getId(),
 				commit.getShaHash(),

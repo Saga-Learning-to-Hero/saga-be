@@ -104,7 +104,7 @@ public final class CommitAiReviewDtos {
 			String headline,
 			List<Reason> reasons,
 			@Schema(description = "The caller can (re)request the AI review now") boolean canRequestReview,
-			@Schema(description = "Why not: MERGE (merge commits are never reviewed) | NO_KEY (no team key and no course key allowed)") String reviewBlockedReason,
+			@Schema(description = "Why not: MERGE (merge commits are never reviewed) | READ_ONLY (lecturer: reads only) | NOT_ALLOWED (a member, not their task's commit) | NO_KEY (no team key and no course key allowed)") String reviewBlockedReason,
 			@Schema(description = "Key the next review would use: TEAM | COURSE | NONE") String keySource,
 			@Schema(description = "The caller may attach/detach tasks by hand (commit author or team leader)") boolean canManageLinks,
 			UUID analysisId,

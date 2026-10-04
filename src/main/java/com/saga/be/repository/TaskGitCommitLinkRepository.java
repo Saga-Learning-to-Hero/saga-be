@@ -534,4 +534,14 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 			  and (c.parentCount is null or c.parentCount <= 1)
 			""")
 	List<Object[]> summarizeNonMergeCommitsByTask(@Param("taskId") UUID taskId);
+
+	/** The commit is automatically linked to a live task assigned to this user. */
+	@Query(
+			"""
+			select count(l) > 0 from TaskGitCommitLink l
+			where l.gitCommit.id = :commitId
+			  and l.task.deletedAt is null
+			  and l.task.assigneeStudent.userAccount.id = :userId
+			""")
+	boolean existsLiveLinkToTaskAssignedTo(@Param("commitId") java.util.UUID commitId, @Param("userId") java.util.UUID userId);
 }

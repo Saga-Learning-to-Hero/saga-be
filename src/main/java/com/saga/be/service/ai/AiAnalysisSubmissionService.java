@@ -43,6 +43,8 @@ public class AiAnalysisSubmissionService {
 	@Autowired(required = false) public void setManualLinks(TaskCommitManualLinkRepository manualLinks) { this.manualLinks = manualLinks; }
 	@Autowired(required = false) public void setReviewContext(AiCommitReviewContextBuilder reviewContext) { this.reviewContext = reviewContext; }
 	private CommitReviewEvents reviewEvents;
+	private CommitReviewPermission reviewPermission;
+	@Autowired(required = false) public void setReviewPermission(CommitReviewPermission reviewPermission) { this.reviewPermission = reviewPermission; }
 	@Autowired(required = false) public void setReviewEvents(CommitReviewEvents reviewEvents) { this.reviewEvents = reviewEvents; }
 	public static final String SCHEMA_VERSION = "ai-2-schema-v1";
 	private final ProjectDataAuthorization authorization; private final GitCommitRepository commits; private final TaskGitCommitLinkRepository links; private final JiraTaskFailoverItemRepository failover; private final AiAnalysisRunRepository runs; private final AiAnalysisEvidenceRepository evidence; private final AiAnalysisProviderDecisionRepository decisions; private final AiCommitEvidenceSnapshotBuilder snapshots; private final AiGitHubCommitEvidenceAcquirer githubEvidence; private final AiAnalysisExecutor executor; private final List<AiModelProvider> providers; private final TransactionTemplate transactions; private final AiCredentialResolver credentialResolver; private final CourseAiSettingsService courseSettings;
@@ -50,6 +52,10 @@ public class AiAnalysisSubmissionService {
 
 	public Submission submit(UUID userId, UUID projectId, UUID gitCommitId) {
 		authorization.requireReader(userId, projectId);
+		if (reviewPermission != null && reviewPermission.access(userId, projectId, gitCommitId) != CommitReviewPermission.Access.ALLOWED) {
+			throw new IntegrationException(IntegrationErrorCode.AI_COMMIT_REVIEW_NOT_ALLOWED, HttpStatus.FORBIDDEN,
+					"Chỉ nhóm trưởng, hoặc thành viên phụ trách task của commit này, mới được yêu cầu AI đánh giá lại.");
+		}
 		return submit(projectId, gitCommitId, AiInvocationOrigin.USER_REQUEST);
 	}
 

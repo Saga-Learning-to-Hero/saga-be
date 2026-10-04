@@ -277,6 +277,24 @@ class CommitAiReviewServiceTest {
 	}
 
 	@Test
+	void theLecturerReadsTheReviewButGetsNoReviewButton_aMemberOfAnotherTaskSeesWhy() {
+		GitCommit commit = commit(1);
+		CommitReviewPermission permission = org.mockito.Mockito.mock(CommitReviewPermission.class);
+		service.setReviewPermission(permission);
+
+		when(permission.access(authorId, projectId, commit.getId())).thenReturn(CommitReviewPermission.Access.READ_ONLY);
+		CommitAiReviewDtos.Detail lecturer = service.detail(authorId, projectId, commit.getId());
+		assertThat(lecturer.canRequestReview()).isFalse();
+		assertThat(lecturer.reviewBlockedReason()).isEqualTo("READ_ONLY");
+
+		when(permission.access(authorId, projectId, commit.getId())).thenReturn(CommitReviewPermission.Access.NOT_ALLOWED);
+		assertThat(service.detail(authorId, projectId, commit.getId()).reviewBlockedReason()).isEqualTo("NOT_ALLOWED");
+
+		when(permission.access(authorId, projectId, commit.getId())).thenReturn(CommitReviewPermission.Access.ALLOWED);
+		assertThat(service.detail(authorId, projectId, commit.getId()).canRequestReview()).isTrue();
+	}
+
+	@Test
 	void aFailedReviewCarriesTheReadableFailure() {
 		GitCommit commit = commit(1);
 		AiAnalysisRun run = run(commit, AiAnalysisStatus.FAILED);

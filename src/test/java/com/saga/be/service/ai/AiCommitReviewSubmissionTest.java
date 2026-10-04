@@ -315,6 +315,29 @@ class AiCommitReviewSubmissionTest {
 		verify(runs).saveAndFlush(any());
 	}
 
+	@Test
+	void aMemberWhoseTaskThisIsNot_cannotAskForAReview_andNothingIsRead() {
+		AiAnalysisSubmissionService service = service();
+		CommitReviewPermission permission = mock(CommitReviewPermission.class);
+		when(permission.access(userId, projectId, commitId)).thenReturn(CommitReviewPermission.Access.NOT_ALLOWED);
+		service.setReviewPermission(permission);
+
+		assertThatThrownBy(() -> service.submit(userId, projectId, commitId))
+				.isInstanceOf(IntegrationException.class)
+				.satisfies(ex -> assertThat(((IntegrationException) ex).getCode()).isEqualTo(IntegrationErrorCode.AI_COMMIT_REVIEW_NOT_ALLOWED));
+		verify(runs, never()).saveAndFlush(any());
+	}
+
+	@Test
+	void aLecturerCannotAskForAReviewEither() {
+		AiAnalysisSubmissionService service = service();
+		CommitReviewPermission permission = mock(CommitReviewPermission.class);
+		when(permission.access(userId, projectId, commitId)).thenReturn(CommitReviewPermission.Access.READ_ONLY);
+		service.setReviewPermission(permission);
+
+		assertThatThrownBy(() -> service.submit(userId, projectId, commitId)).isInstanceOf(IntegrationException.class);
+	}
+
 	private Task task(String key) {
 		Task task = new Task();
 		task.setId(UUID.randomUUID());
