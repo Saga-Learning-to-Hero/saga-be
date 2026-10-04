@@ -137,6 +137,25 @@ class GraphSubgraphFilterTest {
 		assertThat(out.meta().returnedNodes()).isEqualTo(3);
 	}
 
+	@Test
+	void evidenceTypesDropsOtherEvidenceNodes() {
+		CytoscapeGraphBuilder builder = new CytoscapeGraphBuilder();
+		builder.node(node("task:1", "TASK", false));
+		builder.node(node("commit:1", "COMMIT", false));
+		builder.node(node("file:1", "FILE", false));
+		builder.node(node("weblink:1", "WEB_LINK", false));
+		builder.edge(edge("task:1", "commit:1", "EVIDENCED_BY"));
+		builder.edge(edge("task:1", "file:1", "EVIDENCED_BY"));
+		builder.edge(edge("task:1", "weblink:1", "EVIDENCED_BY"));
+		CytoscapeGraphResponse out = GraphSubgraphFilter.apply(
+				builder.build(),
+				GraphViewQuery.parse(null, null, null, null, null, null, null, null, null, null, null, "FILE,WEB_LINK"),
+				1L);
+		assertThat(ids(out)).containsExactlyInAnyOrder("task:1", "file:1", "weblink:1");
+		assertThat(ids(out)).doesNotContain("commit:1");
+		assertNoDanglingEdges(out);
+	}
+
 	private static CytoscapeGraphResponse sample() {
 		CytoscapeGraphBuilder builder = new CytoscapeGraphBuilder();
 		builder.node(node("student:1", "STUDENT", false));

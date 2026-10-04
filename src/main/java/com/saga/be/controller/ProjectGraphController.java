@@ -51,6 +51,8 @@ public class ProjectGraphController {
 			@RequestParam(required = false) String cursor,
 			@RequestParam(required = false) String continuationToken,
 			@RequestParam(required = false) Boolean includeCommits,
+			@RequestParam(required = false) Boolean includeEvidence,
+			@RequestParam(required = false) String evidenceTypes,
 			@RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
 		return respond(
 				ifNoneMatch,
@@ -68,7 +70,10 @@ public class ProjectGraphController {
 								maxNodes,
 								cursor,
 								continuationToken,
-								includeCommits)));
+								includeCommits,
+								null,
+								includeEvidence,
+								evidenceTypes)));
 	}
 
 	@GetMapping("/students/{studentId}/graph/contribution")
@@ -87,6 +92,9 @@ public class ProjectGraphController {
 			@RequestParam(required = false) String cursor,
 			@RequestParam(required = false) String continuationToken,
 			@RequestParam(required = false) Boolean usedCriteriaOnly,
+			@RequestParam(required = false) Boolean includeCommits,
+			@RequestParam(required = false) Boolean includeEvidence,
+			@RequestParam(required = false) String evidenceTypes,
 			@RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
 		return respond(
 				ifNoneMatch,
@@ -96,7 +104,7 @@ public class ProjectGraphController {
 						projectId,
 						studentId,
 						sprintId,
-						GraphViewQuery.parse(
+						view(
 								focusNodeId,
 								depth,
 								nodeTypes,
@@ -105,8 +113,10 @@ public class ProjectGraphController {
 								maxNodes,
 								cursor,
 								continuationToken,
-								null,
-								usedCriteriaOnly)));
+								includeCommits,
+								usedCriteriaOnly,
+								includeEvidence,
+								evidenceTypes)));
 	}
 
 	@GetMapping("/sprints/{sprintId}/graph/activity")
@@ -124,6 +134,8 @@ public class ProjectGraphController {
 			@RequestParam(required = false) String cursor,
 			@RequestParam(required = false) String continuationToken,
 			@RequestParam(required = false) Boolean includeCommits,
+			@RequestParam(required = false) Boolean includeEvidence,
+			@RequestParam(required = false) String evidenceTypes,
 			@RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
 		return respond(
 				ifNoneMatch,
@@ -141,7 +153,10 @@ public class ProjectGraphController {
 								maxNodes,
 								cursor,
 								continuationToken,
-								includeCommits)));
+								includeCommits,
+								null,
+								includeEvidence,
+								evidenceTypes)));
 	}
 
 	@GetMapping("/graph/attribution")
@@ -158,6 +173,9 @@ public class ProjectGraphController {
 			@RequestParam(required = false) Integer maxNodes,
 			@RequestParam(required = false) String cursor,
 			@RequestParam(required = false) String continuationToken,
+			@RequestParam(required = false) Boolean includeCommits,
+			@RequestParam(required = false) Boolean includeEvidence,
+			@RequestParam(required = false) String evidenceTypes,
 			@RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
 		return respond(
 				ifNoneMatch,
@@ -166,20 +184,19 @@ public class ProjectGraphController {
 						principal.getUserId(),
 						projectId,
 						sprintId,
-						view(focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken)));
-	}
-
-	private static GraphViewQuery view(
-			String focusNodeId,
-			Integer depth,
-			String nodeTypes,
-			String edgeTypes,
-			Boolean anomaliesOnly,
-			Integer maxNodes,
-			String cursor,
-			String continuationToken) {
-		return GraphViewQuery.parse(
-				focusNodeId, depth, nodeTypes, edgeTypes, anomaliesOnly, maxNodes, cursor, continuationToken, null);
+						view(
+								focusNodeId,
+								depth,
+								nodeTypes,
+								edgeTypes,
+								anomaliesOnly,
+								maxNodes,
+								cursor,
+								continuationToken,
+								includeCommits,
+								null,
+								includeEvidence,
+								evidenceTypes)));
 	}
 
 	private static GraphViewQuery view(
@@ -191,7 +208,10 @@ public class ProjectGraphController {
 			Integer maxNodes,
 			String cursor,
 			String continuationToken,
-			Boolean includeCommits) {
+			Boolean includeCommits,
+			Boolean usedCriteriaOnly,
+			Boolean includeEvidence,
+			String evidenceTypes) {
 		return GraphViewQuery.parse(
 				focusNodeId,
 				depth,
@@ -201,7 +221,10 @@ public class ProjectGraphController {
 				maxNodes,
 				cursor,
 				continuationToken,
-				includeCommits);
+				includeCommits,
+				usedCriteriaOnly,
+				includeEvidence,
+				evidenceTypes);
 	}
 
 	private static ResponseEntity<CytoscapeGraphResponse> respond(

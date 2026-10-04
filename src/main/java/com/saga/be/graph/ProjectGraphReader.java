@@ -58,8 +58,8 @@ public class ProjectGraphReader {
 					"""
 					MATCH (sp:Sprint {projectId: $projectId})-[:CONTAINS]->(task:Task)
 					OPTIONAL MATCH (assignee:Student)-[:ASSIGNED_TO]->(task)
-					OPTIONAL MATCH (task)-[:EVIDENCED_BY]->(c:Commit)
-					RETURN sp, task, assignee, c
+					OPTIONAL MATCH (task)-[:EVIDENCED_BY]->(ev)
+					RETURN sp, task, assignee, ev
 					""",
 					Map.of("projectId", projectUuid))) {
 				addOverviewTaskRow(builder, record);
@@ -69,15 +69,15 @@ public class ProjectGraphReader {
 					MATCH (task:Task {projectId: $projectId})
 					WHERE NOT ( (:Sprint)-[:CONTAINS]->(task) )
 					OPTIONAL MATCH (assignee:Student)-[:ASSIGNED_TO]->(task)
-					OPTIONAL MATCH (task)-[:EVIDENCED_BY]->(c:Commit)
-					RETURN task, assignee, c
+					OPTIONAL MATCH (task)-[:EVIDENCED_BY]->(ev)
+					RETURN task, assignee, ev
 					""",
 					Map.of("projectId", projectUuid))) {
 				addNode(builder, record, "task");
 				addNode(builder, record, "assignee");
-				addNode(builder, record, "c");
+				addNode(builder, record, "ev");
 				addRel(builder, record.get("assignee"), record.get("task"), "ASSIGNED_TO");
-				addRel(builder, record.get("task"), record.get("c"), "EVIDENCED_BY");
+				addRel(builder, record.get("task"), record.get("ev"), "EVIDENCED_BY");
 			}
 			for (Record record : graph.read(
 					"""
@@ -115,8 +115,8 @@ public class ProjectGraphReader {
 				"""
 				MATCH (sp:Sprint {id: $sprintId, projectId: $projectId})-[:CONTAINS]->(task:Task)
 				OPTIONAL MATCH (assignee:Student)-[:ASSIGNED_TO]->(task)
-				OPTIONAL MATCH (task)-[:EVIDENCED_BY]->(c:Commit)
-				RETURN sp, task, assignee, c
+				OPTIONAL MATCH (task)-[:EVIDENCED_BY]->(ev)
+				RETURN sp, task, assignee, ev
 				""",
 				Map.of("projectId", projectUuid, "sprintId", SagaGraphIds.sprint(sprintId)))) {
 			addOverviewTaskRow(builder, record);
@@ -185,10 +185,10 @@ public class ProjectGraphReader {
 		addNode(builder, record, "sp");
 		addNode(builder, record, "task");
 		addNode(builder, record, "assignee");
-		addNode(builder, record, "c");
+		addNode(builder, record, "ev");
 		addRel(builder, record.get("sp"), record.get("task"), "CONTAINS");
 		addRel(builder, record.get("assignee"), record.get("task"), "ASSIGNED_TO");
-		addRel(builder, record.get("task"), record.get("c"), "EVIDENCED_BY");
+		addRel(builder, record.get("task"), record.get("ev"), "EVIDENCED_BY");
 	}
 
 	public CytoscapeGraphResponse contribution(UUID projectId, UUID studentId, UUID sprintId) {
@@ -215,8 +215,8 @@ public class ProjectGraphReader {
 		cypher.append(
 				"""
 				OPTIONAL MATCH (task)-[:CLASSIFIED_AS]->(crit:Criterion)
-				OPTIONAL MATCH (task)-[:EVIDENCED_BY]->(c:Commit)
-				RETURN s, task, crit, c
+				OPTIONAL MATCH (task)-[:EVIDENCED_BY]->(ev)
+				RETURN s, task, crit, ev
 				""");
 		Map<String, Object> params = new java.util.HashMap<>();
 		params.put("studentId", SagaGraphIds.student(studentId));
@@ -228,10 +228,10 @@ public class ProjectGraphReader {
 			addNode(builder, record, "s");
 			addNode(builder, record, "task");
 			addNode(builder, record, "crit");
-			addNode(builder, record, "c");
+			addNode(builder, record, "ev");
 			addRel(builder, record.get("s"), record.get("task"), "ASSIGNED_TO");
 			addRel(builder, record.get("task"), record.get("crit"), "CLASSIFIED_AS");
-			addRel(builder, record.get("task"), record.get("c"), "EVIDENCED_BY");
+			addRel(builder, record.get("task"), record.get("ev"), "EVIDENCED_BY");
 		}
 		return builder.build();
 	}
@@ -254,19 +254,19 @@ public class ProjectGraphReader {
 				MATCH (sp:Sprint {id: $sprintId, projectId: $projectId})-[:CONTAINS]->(task:Task)
 				OPTIONAL MATCH (s:Student)-[:ASSIGNED_TO]->(task)
 				OPTIONAL MATCH (task)-[:CLASSIFIED_AS]->(crit:Criterion)
-				OPTIONAL MATCH (task)-[:EVIDENCED_BY]->(c:Commit)
-				RETURN sp, task, s, crit, c
+				OPTIONAL MATCH (task)-[:EVIDENCED_BY]->(ev)
+				RETURN sp, task, s, crit, ev
 				""",
 				Map.of("sprintId", SagaGraphIds.sprint(sprintId), "projectId", projectId.toString()))) {
 			addNode(builder, record, "sp");
 			addNode(builder, record, "task");
 			addNode(builder, record, "s");
 			addNode(builder, record, "crit");
-			addNode(builder, record, "c");
+			addNode(builder, record, "ev");
 			addRel(builder, record.get("sp"), record.get("task"), "CONTAINS");
 			addRel(builder, record.get("s"), record.get("task"), "ASSIGNED_TO");
 			addRel(builder, record.get("task"), record.get("crit"), "CLASSIFIED_AS");
-			addRel(builder, record.get("task"), record.get("c"), "EVIDENCED_BY");
+			addRel(builder, record.get("task"), record.get("ev"), "EVIDENCED_BY");
 		}
 		addHierarchy(builder, SPRINT_TASKS, projectId, Map.of("sprintId", SagaGraphIds.sprint(sprintId)), true);
 		return builder.build();
@@ -363,12 +363,20 @@ public class ProjectGraphReader {
 												? "TASK"
 												: node.hasLabel("Commit")
 														? "COMMIT"
-														: node.hasLabel("Criterion")
-																? "CRITERION"
-																: node.hasLabel("Identity") ? "IDENTITY" : "UNKNOWN";
+														: node.hasLabel("File")
+																? "FILE"
+																: node.hasLabel("WebLink")
+																		? "WEB_LINK"
+																		: node.hasLabel("Criterion")
+																				? "CRITERION"
+																				: node.hasLabel("Identity")
+																						? "IDENTITY"
+																						: "UNKNOWN";
 		String label = switch (type) {
 			case "COMMIT" -> shortSha(str(node, "sha"));
 			case "TASK" -> firstNonBlank(str(node, "key"), str(node, "title"));
+			case "FILE" -> firstNonBlank(str(node, "name"), "file");
+			case "WEB_LINK" -> firstNonBlank(str(node, "name"), str(node, "url"), "link");
 			case "CRITERION" -> firstNonBlank(str(node, "name"), str(node, "label"));
 			case "IDENTITY" -> firstNonBlank(str(node, "username"), "unmapped");
 			default -> firstNonBlank(str(node, "name"), str(node, "title"), str(node, "label"), str(node, "id"));
@@ -376,6 +384,8 @@ public class ProjectGraphReader {
 		String subLabel = switch (type) {
 			case "TASK" -> str(node, "title");
 			case "COMMIT" -> str(node, "message");
+			case "FILE" -> firstNonBlank(str(node, "mimeType"), str(node, "source"));
+			case "WEB_LINK" -> str(node, "url");
 			case "STUDENT" -> str(node, "studentCode");
 			case "CRITERION" -> str(node, "label");
 			default -> null;

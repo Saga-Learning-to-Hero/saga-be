@@ -6,8 +6,10 @@ import com.saga.be.dto.graph.CytoscapeEdge;
 import com.saga.be.dto.graph.CytoscapeGraphResponse;
 import com.saga.be.dto.graph.CytoscapeNode;
 import com.saga.be.graph.ProjectGraphSnapshot.CommitNode;
+import com.saga.be.graph.ProjectGraphSnapshot.FileNode;
 import com.saga.be.graph.ProjectGraphSnapshot.SprintNode;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskCommitLink;
+import com.saga.be.graph.ProjectGraphSnapshot.WebLinkNode;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskHierarchyLink;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskNode;
 import java.util.List;
@@ -50,6 +52,8 @@ class ProjectGraphNeo4jLiveTest {
 	private static final UUID ORPHAN = UUID.randomUUID();
 	private static final UUID LOOSE = UUID.randomUUID();
 	private static final UUID COMMIT = UUID.randomUUID();
+	private static final UUID FILE = UUID.randomUUID();
+	private static final UUID WEB_LINK = UUID.randomUUID();
 
 	@BeforeAll
 	static void connectAndWrite() {
@@ -82,6 +86,10 @@ class ProjectGraphNeo4jLiveTest {
 				pair(INITIATIVE, EPIC), pair(EPIC, STORY), pair(EPIC, TASK), pair(STORY, SUBTASK));
 		assertThat(edges(graph, "HAS_WORK_ITEM")).containsExactlyInAnyOrder(
 				"project:" + PROJECT + "->task:" + INITIATIVE, "project:" + PROJECT + "->task:" + LOOSE);
+		assertThat(edges(graph, "EVIDENCED_BY")).contains(
+				"task:" + SUBTASK + "->commit:" + COMMIT,
+				"task:" + SUBTASK + "->file:" + FILE,
+				"task:" + SUBTASK + "->weblink:" + WEB_LINK);
 		assertThat(edgeCount(graph)).isEqualTo(edgeIds(graph).size());
 	}
 
@@ -158,6 +166,8 @@ class ProjectGraphNeo4jLiveTest {
 						task(LOOSE, null, "SAGA-7", "UNKNOWN", null, null, null, true)),
 				List.of(new CommitNode(COMMIT, "a1b2c3d4", "Login API", "github:trung", null, true)),
 				List.of(new TaskCommitLink(SUBTASK, COMMIT)),
+				List.of(new FileNode(FILE, SUBTASK, "srs.pdf", "application/pdf", "SAGA")),
+				List.of(new WebLinkNode(WEB_LINK, SUBTASK, "https://docs.example/srs", "SRS", "SAGA")),
 				List.of(
 						new TaskHierarchyLink(INITIATIVE, EPIC),
 						new TaskHierarchyLink(EPIC, STORY),

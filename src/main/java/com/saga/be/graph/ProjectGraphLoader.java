@@ -15,12 +15,14 @@ import com.saga.be.entity.traceability.TaskGitCommitLink;
 import com.saga.be.exception.AcademicErrorCode;
 import com.saga.be.exception.AcademicException;
 import com.saga.be.graph.ProjectGraphSnapshot.CommitNode;
+import com.saga.be.graph.ProjectGraphSnapshot.FileNode;
 import com.saga.be.graph.ProjectGraphSnapshot.SprintNode;
 import com.saga.be.graph.ProjectGraphSnapshot.StudentNode;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskCommitLink;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskHierarchyLink;
 import com.saga.be.graph.ProjectGraphSnapshot.TaskNode;
 import com.saga.be.graph.ProjectGraphSnapshot.TeamNode;
+import com.saga.be.graph.ProjectGraphSnapshot.WebLinkNode;
 import com.saga.be.graph.SagaGraphRules.TaskGraphAttrs;
 import com.saga.be.repository.GitCommitRepository;
 import com.saga.be.repository.ProjectRepository;
@@ -115,6 +117,8 @@ public class ProjectGraphLoader {
 		for (Task task : projectTasks) {
 			taskIds.add(task.getId());
 		}
+		List<FileNode> fileNodes = new ArrayList<>();
+		List<WebLinkNode> webLinkNodes = new ArrayList<>();
 		Set<UUID> evidenced = new HashSet<>();
 		if (!taskIds.isEmpty()) {
 			for (TaskAttachment attachment : attachments.findByTask_IdIn(taskIds)) {
@@ -122,9 +126,21 @@ public class ProjectGraphLoader {
 			}
 			for (TaskWebLink link : webLinks.findByTask_IdIn(taskIds)) {
 				evidenced.add(link.getTask().getId());
+				webLinkNodes.add(new WebLinkNode(
+						link.getId(),
+						link.getTask().getId(),
+						link.getUrl(),
+						link.getTitle(),
+						link.getSource() == null ? null : link.getSource().name()));
 			}
 			for (TaskFile file : files.findByTask_IdIn(taskIds)) {
 				evidenced.add(file.getTask().getId());
+				fileNodes.add(new FileNode(
+						file.getId(),
+						file.getTask().getId(),
+						file.getOriginalFilename(),
+						file.getMimeType(),
+						file.getSource() == null ? null : file.getSource().name()));
 			}
 		}
 		Map<UUID, Integer> commitCounts = new HashMap<>();
@@ -201,6 +217,8 @@ public class ProjectGraphLoader {
 				taskNodes,
 				commitNodes,
 				linkNodes,
+				fileNodes,
+				webLinkNodes,
 				hierarchyLinks(projectTasks));
 	}
 

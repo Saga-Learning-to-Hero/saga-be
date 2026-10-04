@@ -12,6 +12,8 @@ public record ProjectGraphSnapshot(
 		List<TaskNode> tasks,
 		List<CommitNode> commits,
 		List<TaskCommitLink> links,
+		List<FileNode> files,
+		List<WebLinkNode> webLinks,
 		List<TaskHierarchyLink> hierarchy) {
 
 	public record TeamNode(UUID id, String name) {}
@@ -61,6 +63,10 @@ public record ProjectGraphSnapshot(
 			boolean unmapped) {}
 
 	public record TaskCommitLink(UUID taskId, UUID commitId) {}
+
+	public record FileNode(UUID id, UUID taskId, String filename, String mimeType, String source) {}
+
+	public record WebLinkNode(UUID id, UUID taskId, String url, String title, String source) {}
 
 	/** Jira parent -> child (Epic -> Story/Task/Bug, Task -> Subtask), both tasks of this project. */
 	public record TaskHierarchyLink(UUID parentTaskId, UUID childTaskId) {}
