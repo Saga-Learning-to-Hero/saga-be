@@ -393,7 +393,7 @@ class CommitAiReviewServiceTest {
 		when(commits.findPageIdsByProject(eq(projectId), any())).thenReturn(new PageImpl<>(page.stream().map(GitCommit::getId).toList()));
 		when(commits.findFetchedByIdIn(anyList())).thenReturn(page);
 		AiAnalysisRun old = run(outdated, AiAnalysisStatus.COMPLETED);
-		old.setPromptVersion("commit-intelligence-v2");
+		old.setPromptVersion("commit-intelligence-v3");
 		AiAnalysisRun oldRunning = run(running, AiAnalysisStatus.RUNNING);
 		oldRunning.setPromptVersion("commit-intelligence-v2");
 		when(runs.findCommitReviewRuns(eq(projectId), any())).thenReturn(List.of(old, run(current, AiAnalysisStatus.COMPLETED), oldRunning));

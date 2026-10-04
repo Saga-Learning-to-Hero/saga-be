@@ -29,10 +29,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service @Profile("!test")
 public class AiAnalysisSubmissionService {
 	public static final String POLICY_VERSION = "commit-intelligence-v1";
-	/** v2: detailed Vietnamese findings, syllabus context and manual task links (saga-ai serves v1 and v2). */
-	/** v3: lenient message judgement and named strengths (GOOD_) for good code; reviews made with an older
-	 * prompt count as outdated and the leader's backfill re-runs them. Needs saga-ai serving v3. */
-	public static final String PROMPT_VERSION = "commit-intelligence-v3";
+	/** v4: a message is CLEAR only with a type, a task key and what changed; named strengths (GOOD_) for good
+	 * code. Reviews made with an older prompt count as outdated and the leader's backfill re-runs them.
+	 * Needs saga-ai serving v4 (it still serves v1-v3). */
+	public static final String PROMPT_VERSION = "commit-intelligence-v4";
 	/** At most this many linked tasks go to the AI (saga-ai caps a request at 100 evidence items). */
 	static final int MAX_TASKS_IN_EVIDENCE = 8;
 	private TeamAiCredentialService teamKeys;
