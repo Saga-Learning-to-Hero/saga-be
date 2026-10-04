@@ -181,7 +181,7 @@ Khi làm graph: **bắt buộc** node `Identity`. Không rút thành `Commit →
 
 Webhook GitHub hiện **chỉ xử lý `push`** → upsert Commit + link Task qua message/key. Bảng PullRequest tồn tại nhưng **không có ingest**.
 
-**Demo / Graph 1–4: evidence chỉ `COMMIT`.** Không vẽ `PullRequest` cho đến khi webhook PR ship. `type` DTO không gồm `PULL_REQUEST` ở phase này.
+**Graph 1–3: evidence = `COMMIT` + `FILE` + `WEB_LINK`** (`EVIDENCED_BY` từ Task). Graph 4 attribution vẫn chỉ Commit → Identity. Không vẽ `PullRequest` cho đến khi webhook PR ship. `type` DTO không gồm `PULL_REQUEST` ở phase này.
 
 ### 5. Bốn endpoint — nhận contract, chỉnh DTO
 
@@ -191,7 +191,7 @@ Chỉnh so với bản FE:
 
 **`type` node** (Graph 1 cần Team):
 
-`STUDENT | TEAM | PROJECT | SPRINT | TASK | COMMIT | CRITERION | IDENTITY`
+`STUDENT | TEAM | PROJECT | SPRINT | TASK | COMMIT | FILE | WEB_LINK | CRITERION | IDENTITY`
 
 **`weightType`:** `CODE | TEST | DOCUMENT | RESEARCH | null` — không dùng `DOC`.
 
@@ -207,9 +207,9 @@ Chỉnh so với bản FE:
 
 | Graph | Path | Node có mặt | Cạnh có mặt |
 | --- | --- | --- | --- |
-| 1 Overview | `GET /api/projects/{projectId}/graph/overview?sprintId=` | STUDENT, TEAM, PROJECT, SPRINT, TASK, COMMIT | MEMBER_OF, OWNS, HAS_SPRINT, HAS_WORK_ITEM, CONTAINS, PARENT_OF, ASSIGNED_TO, EVIDENCED_BY |
-| 2 Contribution | `GET /api/projects/{projectId}/students/{studentId}/graph/contribution?sprintId=` | STUDENT, TASK, CRITERION, COMMIT | ASSIGNED_TO, CLASSIFIED_AS, EVIDENCED_BY |
-| 3 Sprint | `GET /api/projects/{projectId}/sprints/{sprintId}/graph/activity` | STUDENT, PROJECT, SPRINT, TASK, CRITERION, COMMIT | CONTAINS, PARENT_OF, HAS_WORK_ITEM, ASSIGNED_TO, CLASSIFIED_AS, EVIDENCED_BY |
+| 1 Overview | `GET /api/projects/{projectId}/graph/overview?sprintId=` | STUDENT, TEAM, PROJECT, SPRINT, TASK. Evidence khi `includeEvidence` / `evidenceTypes` | MEMBER_OF, OWNS, HAS_SPRINT, HAS_WORK_ITEM, CONTAINS, PARENT_OF, ASSIGNED_TO, EVIDENCED_BY |
+| 2 Contribution | `GET /api/projects/{projectId}/students/{studentId}/graph/contribution?sprintId=` | STUDENT, TASK, CRITERION + evidence (lọc `evidenceTypes`) | ASSIGNED_TO, CLASSIFIED_AS, EVIDENCED_BY |
+| 3 Sprint | `GET /api/projects/{projectId}/sprints/{sprintId}/graph/activity` | STUDENT, SPRINT, TASK, CRITERION. Evidence khi `includeEvidence` / `evidenceTypes` | CONTAINS, PARENT_OF, HAS_WORK_ITEM, ASSIGNED_TO, CLASSIFIED_AS, EVIDENCED_BY |
 | 4 Attribution | `GET /api/projects/{projectId}/graph/attribution?sprintId=` | COMMIT, IDENTITY, STUDENT, PROJECT, TASK (nếu đã link) | AUTHORED_BY, MAPS_TO, EVIDENCED_BY, ASSIGNED_TO, PARENT_OF, HAS_WORK_ITEM |
 
 `sprintId` trên Graph 1, 2, 4 là **optional**. Bỏ query = cả project. Có `sprintId` = chỉ sprint đó (Graph 1 không gồm task backlog; Graph 4 chỉ commit gắn task trong sprint). Graph 3 luôn theo sprint trên path.

@@ -83,6 +83,14 @@ public final class GraphSubgraphFilter {
 				return data != null && "CRITERION".equals(data.type()) && !usedCriteria.contains(id);
 			});
 		}
+		if (query.evidenceTypes() != null && !query.evidenceTypes().isEmpty()) {
+			keep.removeIf(id -> {
+				CytoscapeNodeData data = nodes.get(id);
+				return data != null
+						&& GraphViewQuery.EVIDENCE_TYPES.contains(data.type())
+						&& !query.evidenceTypes().contains(data.type());
+			});
+		}
 		List<String> ordered = new ArrayList<>(keep);
 		if (query.focusNodeId() == null && !query.anomaliesOnly()) {
 			ordered.sort(String::compareTo);

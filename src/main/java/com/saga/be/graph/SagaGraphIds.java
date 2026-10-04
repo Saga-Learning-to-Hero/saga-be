@@ -30,6 +30,14 @@ public final class SagaGraphIds {
 		return "commit:" + id;
 	}
 
+	public static String file(UUID id) {
+		return "file:" + id;
+	}
+
+	public static String webLink(UUID id) {
+		return "weblink:" + id;
+	}
+
 	public static String identity(UUID projectId, String provider, String subject) {
 		return "identity:" + projectId + ":" + provider + ":" + subject;
 	}
