@@ -30,7 +30,26 @@ class TaskSchedulePolicyTest {
 		assertThat(TaskSchedulePolicy.issues(LocalDate.of(2026, 9, 19), null, SPRINT_5)).containsExactly(Issue.START_BEFORE_SPRINT);
 		assertThat(TaskSchedulePolicy.issues(LocalDate.of(2026, 10, 4), null, SPRINT_5)).containsExactly(Issue.START_AFTER_SPRINT);
 		assertThat(TaskSchedulePolicy.issues(null, LocalDate.of(2026, 9, 19), SPRINT_5)).containsExactly(Issue.DUE_BEFORE_SPRINT);
-		assertThat(TaskSchedulePolicy.issues(null, LocalDate.of(2026, 10, 4), SPRINT_5)).containsExactly(Issue.DUE_AFTER_SPRINT);
+	}
+
+	@Test
+	void aDueDatePastTheSprintEndIsAllowedTheTaskCarriesOver() {
+		assertThat(TaskSchedulePolicy.issues(LocalDate.of(2026, 9, 25), LocalDate.of(2026, 10, 20), SPRINT_5)).isEmpty();
+		assertThat(TaskSchedulePolicy.issues(null, LocalDate.of(2026, 10, 4), SPRINT_5)).isEmpty();
+		assertThat(TaskSchedulePolicy.runsPastSprint(LocalDate.of(2026, 10, 4), SPRINT_5)).isTrue();
+		assertThat(TaskSchedulePolicy.runsPastSprint(LocalDate.of(2026, 10, 3), SPRINT_5)).isFalse();
+		assertThat(TaskSchedulePolicy.runsPastSprint(LocalDate.of(2026, 10, 4), null)).isFalse();
+		assertThat(TaskSchedulePolicy.runsPastSprint(null, SPRINT_5)).isFalse();
+	}
+
+	@Test
+	void anExistingTaskStartingBeforeItsSprintIsNotFlaggedItWasCarriedOver() {
+		// started in Sprint 4, carried into Sprint 5 when Sprint 4 closed
+		assertThat(TaskSchedulePolicy.driftIssues(LocalDate.of(2026, 9, 10), LocalDate.of(2026, 9, 28), SPRINT_5)).isEmpty();
+		assertThat(TaskSchedulePolicy.driftIssues(LocalDate.of(2026, 10, 4), null, SPRINT_5))
+				.containsExactly(Issue.START_AFTER_SPRINT);
+		assertThat(TaskSchedulePolicy.driftIssues(LocalDate.of(2026, 9, 28), LocalDate.of(2026, 9, 21), SPRINT_5))
+				.containsExactly(Issue.START_AFTER_DUE);
 	}
 
 	@Test

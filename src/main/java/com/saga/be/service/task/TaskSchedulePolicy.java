@@ -12,13 +12,16 @@ import java.util.Locale;
  *
  * <ul>
  *   <li>its start date may not be after its due date;
- *   <li>when it belongs to a sprint, both dates must fall inside that sprint: from the sprint's
- *       start date to its end date (a closed sprint ends on its real complete date).
+ *   <li>when it belongs to a sprint, its start date must fall inside that sprint: from the sprint's
+ *       start date to its end date (a closed sprint ends on its real complete date);
+ *   <li>its due date may run past the sprint's end: a long task carries over into the next sprint
+ *       when this one closes. It may not end before the sprint even starts.
  * </ul>
  *
- * SAGA rejects a create/edit that sets dates breaking these rules. Tasks that drift out later
- * (the sprint's dates change, the task is moved to another sprint, or it is edited in Jira) are
- * only reported, never blocked, through {@link #issues}.
+ * A backlog task has no sprint, so only the first rule applies. SAGA rejects a create/edit that sets
+ * dates breaking these rules ({@link #issues}). Tasks that drift out later are only reported, never
+ * blocked ({@link #driftIssues}): a start before the current sprint is normal there, since the task
+ * was carried over from an earlier sprint or moved in from the backlog.
  */
 public final class TaskSchedulePolicy {
 
@@ -26,8 +29,7 @@ public final class TaskSchedulePolicy {
 		START_AFTER_DUE,
 		START_BEFORE_SPRINT,
 		START_AFTER_SPRINT,
-		DUE_BEFORE_SPRINT,
-		DUE_AFTER_SPRINT
+		DUE_BEFORE_SPRINT
 	}
 
 	/** A sprint's date range; either end may be null when Jira has not set it. */
@@ -63,10 +65,19 @@ public final class TaskSchedulePolicy {
 			if (due != null && window.start() != null && due.isBefore(window.start())) {
 				issues.add(Issue.DUE_BEFORE_SPRINT);
 			}
-			if (due != null && window.end() != null && due.isAfter(window.end())) {
-				issues.add(Issue.DUE_AFTER_SPRINT);
-			}
 		}
 		return issues;
+	}
+
+	/** What is worth flagging on an existing task: {@link #issues} without START_BEFORE_SPRINT. */
+	public static List<Issue> driftIssues(LocalDate start, LocalDate due, SprintWindow window) {
+		List<Issue> issues = issues(start, due, window);
+		issues.remove(Issue.START_BEFORE_SPRINT);
+		return issues;
+	}
+
+	/** True when the due date runs past the sprint's end, so the task is planned to carry over. Not an issue. */
+	public static boolean runsPastSprint(LocalDate due, SprintWindow window) {
+		return due != null && window != null && window.end() != null && due.isAfter(window.end());
 	}
 }

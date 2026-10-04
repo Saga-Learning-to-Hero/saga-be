@@ -537,11 +537,12 @@ public class ProjectProjectionReadService {
 		com.saga.be.service.task.TaskSchedulePolicy.SprintWindow window =
 				com.saga.be.service.task.TaskSchedulePolicy.windowOf(task.getSprint());
 		return new ProjectTaskResponse.ScheduleCheck(
-				com.saga.be.service.task.TaskSchedulePolicy.issues(startDate, dueDate, window).stream()
+				com.saga.be.service.task.TaskSchedulePolicy.driftIssues(startDate, dueDate, window).stream()
 						.map(Enum::name)
 						.toList(),
 				window == null ? null : window.start(),
-				window == null ? null : window.end());
+				window == null ? null : window.end(),
+				com.saga.be.service.task.TaskSchedulePolicy.runsPastSprint(dueDate, window));
 	}
 
 	private static ProjectTaskResponse.EvidenceCheck evidenceCheck(

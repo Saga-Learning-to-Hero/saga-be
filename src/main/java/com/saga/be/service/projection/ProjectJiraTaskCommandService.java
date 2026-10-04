@@ -247,7 +247,7 @@ public class ProjectJiraTaskCommandService {
 					: sprintId == null
 							? null
 							: sprints.findByJiraIntegration_IdAndExternalSprintId(integration.getId(), sprintId).orElse(null);
-			requireValidSchedule(request.startDate(), request.dueDate(), targetSprint);
+			requireValidSchedule(request.startDate(), request.dueDate(), targetSprint, true, true);
 		}
 		String jiraParentIssueId = jiraParent == null ? null : jiraParent.getExternalId();
 		if (access == null) {
@@ -741,8 +741,10 @@ public class ProjectJiraTaskCommandService {
 
 	/**
 	 * Only an edit that sets or clears a date is checked, against the sprint the task will be in after
-	 * this edit. Moving a task between sprints alone, or editing other fields of a task whose dates
-	 * already drifted, is never blocked -- those show up as {@code scheduleCheck} warnings instead.
+	 * this edit, and only the date being set is held to the sprint: a task carried over from an earlier
+	 * sprint keeps its old start date, and changing its due date must still work. Moving a task between
+	 * sprints alone, or editing other fields of a task whose dates already drifted, is never blocked --
+	 * those show up as {@code scheduleCheck} warnings instead.
 	 */
 	private void requirePatchKeepsValidSchedule(Task task, JiraIntegration integration, PatchProjectTaskRequest request) {
 		boolean touchesDates = request.startDate() != null
@@ -768,12 +770,27 @@ public class ProjectJiraTaskCommandService {
 		} else {
 			targetSprint = task.getSprint();
 		}
-		requireValidSchedule(start, due, targetSprint);
+		requireValidSchedule(start, due, targetSprint, request.startDate() != null, request.dueDate() != null);
 	}
 
-	private static void requireValidSchedule(java.time.LocalDate start, java.time.LocalDate due, Sprint sprint) {
+	private static final java.time.format.DateTimeFormatter VI_DATE = java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy");
+
+	/**
+	 * Start <= due always; against the sprint only the dates flagged as being set are checked: the start
+	 * date must fall inside the sprint, the due date may run past its end but not end before it starts.
+	 * A backlog task (no sprint) is only held to start <= due.
+	 */
+	private static void requireValidSchedule(
+			java.time.LocalDate start, java.time.LocalDate due, Sprint sprint, boolean checkStart, boolean checkDue) {
 		TaskSchedulePolicy.SprintWindow window = TaskSchedulePolicy.windowOf(sprint);
-		List<TaskSchedulePolicy.Issue> issues = TaskSchedulePolicy.issues(start, due, window);
+		List<TaskSchedulePolicy.Issue> issues = new java.util.ArrayList<>(TaskSchedulePolicy.issues(start, due, window));
+		if (!checkStart) {
+			issues.remove(TaskSchedulePolicy.Issue.START_BEFORE_SPRINT);
+			issues.remove(TaskSchedulePolicy.Issue.START_AFTER_SPRINT);
+		}
+		if (!checkDue) {
+			issues.remove(TaskSchedulePolicy.Issue.DUE_BEFORE_SPRINT);
+		}
 		if (issues.isEmpty()) {
 			return;
 		}
@@ -784,7 +801,7 @@ public class ProjectJiraTaskCommandService {
 			throw new IntegrationException(
 					IntegrationErrorCode.TASK_DATE_RANGE_INVALID,
 					HttpStatus.BAD_REQUEST,
-					"Task start date must not be after its due date.",
+					"Ngày bắt đầu (" + start.format(VI_DATE) + ") không được sau hạn hoàn thành (" + due.format(VI_DATE) + ").",
 					details);
 		}
 		Map<String, Object> details = new java.util.LinkedHashMap<>();
@@ -793,12 +810,22 @@ public class ProjectJiraTaskCommandService {
 		details.put("sprintName", sprint.getName());
 		details.put("sprintStartDate", window.start());
 		details.put("sprintEndDate", window.end());
-		throw new IntegrationException(
-				IntegrationErrorCode.TASK_OUTSIDE_SPRINT,
-				HttpStatus.BAD_REQUEST,
-				"Task dates must fall inside sprint \"" + sprint.getName() + "\" (" + window.start() + " to "
-						+ window.end() + ").",
-				details);
+		String message;
+		if (issues.contains(TaskSchedulePolicy.Issue.START_BEFORE_SPRINT) || issues.contains(TaskSchedulePolicy.Issue.START_AFTER_SPRINT)) {
+			message = "Ngày bắt đầu phải nằm trong " + sprint.getName() + " (" + range(window)
+					+ "). Hạn hoàn thành thì có thể sau ngày kết thúc sprint.";
+		} else {
+			message = "Hạn hoàn thành không được trước ngày bắt đầu của " + sprint.getName() + " ("
+					+ window.start().format(VI_DATE) + ").";
+		}
+		throw new IntegrationException(IntegrationErrorCode.TASK_OUTSIDE_SPRINT, HttpStatus.BAD_REQUEST, message, details);
+	}
+
+	private static String range(TaskSchedulePolicy.SprintWindow window) {
+		if (window.start() != null && window.end() != null) {
+			return "từ " + window.start().format(VI_DATE) + " đến " + window.end().format(VI_DATE);
+		}
+		return window.start() != null ? "từ " + window.start().format(VI_DATE) : "đến " + window.end().format(VI_DATE);
 	}
 
 	private static java.time.LocalDate localDate(java.time.LocalDateTime value) {

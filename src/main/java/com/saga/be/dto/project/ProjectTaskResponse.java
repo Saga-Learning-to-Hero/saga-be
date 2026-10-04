@@ -102,18 +102,19 @@ public record ProjectTaskResponse(
 				EvidenceCheck evidenceCheck,
 		@Schema(
 						description =
-								"Date warnings: start after due, or dates outside the task's sprint. SAGA rejects such "
-										+ "dates when they are entered; this reports tasks that drifted later (sprint "
-										+ "dates changed, task moved, Jira edits). Never null.")
+								"Date warnings: start after due, start after the sprint ends, or due before the "
+										+ "sprint starts. A start before the sprint is not flagged (carried over / moved "
+										+ "in from the backlog) and a due date past the sprint end is allowed "
+										+ "(runsPastSprint). Never null.")
 				ScheduleCheck scheduleCheck) {
 
 	/**
-	 * @param issues START_AFTER_DUE, START_BEFORE_SPRINT, START_AFTER_SPRINT, DUE_BEFORE_SPRINT,
-	 *     DUE_AFTER_SPRINT; empty = fine (or nothing to check)
+	 * @param issues START_AFTER_DUE, START_AFTER_SPRINT, DUE_BEFORE_SPRINT; empty = fine (or nothing to check)
 	 * @param sprintStartDate the task's sprint start, null when backlog / unset
 	 * @param sprintEndDate the task's sprint end (complete date once closed), null when backlog / unset
+	 * @param runsPastSprint due date is after the sprint end: the task will carry over into the next sprint (allowed)
 	 */
-	public record ScheduleCheck(List<String> issues, LocalDate sprintStartDate, LocalDate sprintEndDate) {}
+	public record ScheduleCheck(List<String> issues, LocalDate sprintStartDate, LocalDate sprintEndDate, boolean runsPastSprint) {}
 
 	/**
 	 * @param categories SAGA markers on the task: CODE, TEST, DOCUMENT, RESEARCH (empty = none)
