@@ -107,7 +107,7 @@ Share chỉ vào công thức khi **cả cha và Subtask đó đều `DONE`**. B
 
 Assignee của cha không nhận story point cha. Muốn tính công review / quản lý thì tạo một Subtask và gán cho người đó.
 
-Sprint lấy từ cha. Nhãn `saga:*` là của chính Subtask: form tạo và sửa Subtask gửi `labels` như task thường (`saga:code`, `saga:test`, `saga:document`, `saga:research`), tối đa một nhãn. Cha `saga:code` vẫn có Subtask `saga:test`. `saga:document` / `saga:research` cần file hoặc link trên **Subtask**, không cần trên cha. Commit không cộng điểm.
+Sprint lấy từ cha. Nhãn `saga:*` là của chính Subtask: form tạo và sửa Subtask gửi `labels` như task thường (`saga:code`, `saga:test`, `saga:document`, `saga:research`), tối đa một nhãn. Cha `saga:code` vẫn có Subtask `saga:test`. `saga:document` / `saga:research` cần file hoặc link trên **Subtask**, không cần trên cha. `saga:code` / `saga:test` cần commit không phải merge gắn trên **Subtask** và Subtask đã DONE. Commit không cộng thêm điểm.
 
 Epic không tạo điểm.
 

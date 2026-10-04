@@ -24,7 +24,7 @@ Task chỉ vào tiêu chí Contribution khi có đúng một reserved label
 (`saga:code`/`saga:test`/`saga:document`/`saga:research`). Không còn fallback keyword/title/type.
 Task không nhãn hoặc nhãn xung đột không vào criterion nào (sprint/`adjustedSprintScore` vẫn đếm
 story point). DOCUMENT và RESEARCH **chỉ công nhận story point khi Task có ít nhất một Jira
-attachment hoặc một link sinh viên nộp** — đó là điều kiện, không cộng thêm điểm. CODE/TEST không cần file/link.
+attachment hoặc một link sinh viên nộp** — đó là điều kiện, không cộng thêm điểm. CODE/TEST không cần file/link, nhưng chỉ công nhận story point khi task DONE và có ít nhất một commit không phải merge gắn vào task. Commit không cộng thêm điểm.
 Document SAGA không phải nguồn điểm. GitHub attachment vẫn chưa ingest.
 
 **Cập nhật (DEC-089 — Task-is-sole-numeric-authority + reserved Contribution markers):** Task
@@ -103,7 +103,7 @@ vẫn cộng storyPoint như bình thường.
 
 DOCUMENT/RESEARCH: story point (hoặc 1.0) **chỉ được cộng vào criterion khi Task có ≥1 Jira
 attachment hoặc ≥1 link sinh viên nộp**. Số lượng file/link không làm tăng điểm. Không có cả hai → story point không vào
-DOCUMENT/RESEARCH (sprint score vẫn đếm). CODE/TEST luôn công nhận story point, bỏ qua attachment/link.
+DOCUMENT/RESEARCH (sprint score vẫn đếm). CODE/TEST không cần attachment/link, nhưng story point chỉ vào tiêu chí khi task có commit không phải merge đã gắn vào task.
 Metadata attachment được upsert cùng Jira issue (`V38__add_task_attachment.sql`);
 link nộp qua SAGA lưu `task_web_link` (`V39__add_task_web_link.sql`).
 thiếu field `attachment` trên response Jira = danh sách rỗng (xóa snapshot cũ, không đụng web link). Không tải nội dung

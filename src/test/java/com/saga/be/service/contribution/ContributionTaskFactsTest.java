@@ -35,7 +35,7 @@ class ContributionTaskFactsTest {
 		Task a = subtask(CHILD_A, "P-1", 6, STUDENT_A, "[\"saga:code\"]", TaskStatus.DONE);
 		Task b = subtask(CHILD_B, "P-1", 4, STUDENT_B, "[\"saga:test\"]", TaskStatus.DONE);
 
-		List<TaskFact> facts = ContributionTaskFacts.from(List.of(parent, a, b), Set.of());
+		List<TaskFact> facts = ContributionTaskFacts.from(List.of(parent, a, b), Set.of(), Set.of(CHILD_A, CHILD_B));
 
 		assertThat(facts).hasSize(2);
 		assertThat(facts).noneMatch(fact -> fact.assigneeStudentId().equals(LEADER));
@@ -53,27 +53,27 @@ class ContributionTaskFactsTest {
 		Task a = subtask(CHILD_A, "P-1", 6, STUDENT_A, "[\"saga:code\"]", TaskStatus.DONE);
 		Task b = subtask(CHILD_B, "P-1", 4, STUDENT_B, "[\"saga:code\"]", TaskStatus.IN_PROGRESS);
 
-		List<TaskFact> openChild = ContributionTaskFacts.from(List.of(parent, a, b), Set.of());
+		List<TaskFact> openChild = ContributionTaskFacts.from(List.of(parent, a, b), Set.of(), Set.of(CHILD_A, CHILD_B));
 		assertThat(openChild).filteredOn(fact -> fact.assigneeStudentId().equals(STUDENT_B))
 				.allMatch(fact -> fact.status() != TaskStatus.DONE);
 		assertThat(points(openChild, STUDENT_A)).isEqualByComparingTo("6");
 
 		parent.setStatus(TaskStatus.IN_PROGRESS);
-		List<TaskFact> openParent = ContributionTaskFacts.from(List.of(parent, a, b), Set.of());
+		List<TaskFact> openParent = ContributionTaskFacts.from(List.of(parent, a, b), Set.of(), Set.of(CHILD_A, CHILD_B));
 		assertThat(openParent).allMatch(fact -> fact.status() != TaskStatus.DONE);
 	}
 
 	@Test
 	void standardWithoutSubtasksKeepsItsOwnStoryPointsAndDocumentGate() {
 		Task alone = standard(PARENT, "P-1", null, LEADER, "[\"saga:document\"]", TaskStatus.DONE);
-		List<TaskFact> missing = ContributionTaskFacts.from(List.of(alone), Set.of());
+		List<TaskFact> missing = ContributionTaskFacts.from(List.of(alone), Set.of(), Set.of());
 		assertThat(missing).singleElement().satisfies(fact -> {
 			assertThat(fact.assigneeStudentId()).isEqualTo(LEADER);
 			assertThat(fact.storyPoint()).isNull();
 			assertThat(fact.criterion()).isNull();
 		});
 
-		List<TaskFact> proved = ContributionTaskFacts.from(List.of(alone), Set.of(PARENT));
+		List<TaskFact> proved = ContributionTaskFacts.from(List.of(alone), Set.of(PARENT), Set.of());
 		assertThat(proved).singleElement().satisfies(fact -> assertThat(fact.criterion()).isEqualTo(ContributionCriterion.DOCUMENT));
 	}
 
@@ -82,10 +82,10 @@ class ContributionTaskFactsTest {
 		Task parent = standard(PARENT, "P-1", 10, LEADER, "[\"saga:code\"]", TaskStatus.DONE);
 		Task a = subtask(CHILD_A, "P-1", 6, STUDENT_A, "[\"saga:document\"]", TaskStatus.DONE);
 
-		List<TaskFact> missing = ContributionTaskFacts.from(List.of(parent, a), Set.of(PARENT));
+		List<TaskFact> missing = ContributionTaskFacts.from(List.of(parent, a), Set.of(PARENT), Set.of());
 		assertThat(missing).singleElement().satisfies(fact -> assertThat(fact.criterion()).isNull());
 
-		List<TaskFact> proved = ContributionTaskFacts.from(List.of(parent, a), Set.of(CHILD_A));
+		List<TaskFact> proved = ContributionTaskFacts.from(List.of(parent, a), Set.of(CHILD_A), Set.of());
 		assertThat(proved).singleElement().satisfies(fact -> {
 			assertThat(fact.criterion()).isEqualTo(ContributionCriterion.DOCUMENT);
 			assertThat(fact.storyPoint()).isEqualByComparingTo("6");
@@ -96,7 +96,31 @@ class ContributionTaskFactsTest {
 	void epicAwardsNothing() {
 		Task epic = standard(PARENT, "E-1", 10, LEADER, "[\"saga:code\"]", TaskStatus.DONE);
 		epic.setIssueTypeLevel("EPIC");
-		assertThat(ContributionTaskFacts.from(List.of(epic), Set.of())).isEmpty();
+		assertThat(ContributionTaskFacts.from(List.of(epic), Set.of(), Set.of())).isEmpty();
+	}
+
+	@Test
+	void codeAndTestScoreOnlyWhenDoneAndLinkedToANonMergeCommit() {
+		Task code = standard(PARENT, "P-1", 5, LEADER, "[\"saga:code\"]", TaskStatus.DONE);
+		Task test = standard(CHILD_A, "T-1", 3, STUDENT_A, "[\"saga:test\"]", TaskStatus.DONE);
+
+		List<TaskFact> missing = ContributionTaskFacts.from(List.of(code, test), Set.of(), Set.of());
+		assertThat(missing).allMatch(fact -> fact.criterion() == null);
+
+		List<TaskFact> codeOnly = ContributionTaskFacts.from(List.of(code, test), Set.of(), Set.of(PARENT));
+		assertThat(criterion(codeOnly, LEADER)).isEqualTo(ContributionCriterion.CODE);
+		assertThat(criterion(codeOnly, STUDENT_A)).isNull();
+
+		Task open = standard(CHILD_B, "T-2", 2, STUDENT_B, "[\"saga:code\"]", TaskStatus.IN_PROGRESS);
+		List<TaskFact> notDone = ContributionTaskFacts.from(List.of(open), Set.of(), Set.of(CHILD_B));
+		assertThat(notDone).singleElement().satisfies(fact -> assertThat(fact.status()).isNotEqualTo(TaskStatus.DONE));
+
+		Task parent = standard(PARENT, "P-1", 10, LEADER, "[\"saga:code\"]", TaskStatus.DONE);
+		Task child = subtask(CHILD_A, "P-1", 6, STUDENT_A, "[\"saga:test\"]", TaskStatus.DONE);
+		List<TaskFact> commitOnParent = ContributionTaskFacts.from(List.of(parent, child), Set.of(), Set.of(PARENT));
+		assertThat(commitOnParent).singleElement().satisfies(fact -> assertThat(fact.criterion()).isNull());
+		List<TaskFact> commitOnChild = ContributionTaskFacts.from(List.of(parent, child), Set.of(), Set.of(CHILD_A));
+		assertThat(criterion(commitOnChild, STUDENT_A)).isEqualTo(ContributionCriterion.TEST);
 	}
 
 	@Test

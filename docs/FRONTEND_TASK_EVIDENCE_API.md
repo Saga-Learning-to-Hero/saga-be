@@ -150,7 +150,7 @@ Response `201` — lấy `id` làm `taskId` cho web-links / files:
 
 `GET /tasks` và `GET /tasks/{taskId}` trả `evidenceCount` (file + web link, không gồm commit) và `hasEvidence` (`evidenceCount > 0`). Pipeline chỉ cần hai field này; **không** N+1 `GET /api/tasks/{id}/files` và `/web-links` chỉ để biết task có minh chứng. Hai GET đó vẫn dùng khi mở chi tiết / nộp evidence. Không có batch evidence-summary.
 
-`GET /tasks` **không** trả labels. Scoring vẫn đọc nhãn `saga:code|test|document|research` từ DB (Jira). `POST /tasks` hiện **không** nhận field label — gắn `saga:document` / `saga:research` trên Jira (hoặc sync về). FE vẫn cho nộp file/link trên mọi task; backend chỉ **công nhận điểm** khi DONE + đúng một nhãn DOCUMENT/RESEARCH + ≥1 evidence.
+`GET /tasks` **không** trả labels. Scoring vẫn đọc nhãn `saga:code|test|document|research` từ DB (Jira). `POST /tasks` hiện **không** nhận field label — gắn `saga:document` / `saga:research` trên Jira (hoặc sync về). FE vẫn cho nộp file/link trên mọi task. Document/research được điểm khi DONE + đúng một nhãn đó + ≥1 evidence. Code/test được điểm khi DONE + đúng một nhãn đó + ≥1 commit không phải merge gắn vào task.
 
 ---
 
@@ -158,8 +158,8 @@ Response `201` — lấy `id` làm `taskId` cho web-links / files:
 
 | Nhãn Jira trên task | Cần evidence? | Ghi chú |
 | --- | --- | --- |
-| `saga:code` | Không | Commit không cộng điểm; không cần file/link |
-| `saga:test` | Không | |
+| `saga:code` | Commit | Không cần file/link. Cần ≥1 commit không phải merge gắn vào task, và task `DONE`. Commit không cộng thêm điểm |
+| `saga:test` | Commit | Giống CODE |
 | `saga:document` | **Có** | ≥1 attachment Jira **hoặc** web link **hoặc** file SAGA |
 | `saga:research` | **Có** | Giống DOCUMENT |
 

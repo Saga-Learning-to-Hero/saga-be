@@ -195,7 +195,7 @@ Một Task chỉ vào công thức khi **đủ hết** các điều kiện:
 - đã gắn **sprint** (task backlog / chưa vào sprint = 0 điểm)
 - có **đúng một** nhãn: `saga:code` / `saga:test` / `saga:document` / `saga:research`
 - DOCUMENT và RESEARCH: Task phải có **ít nhất một file đính kèm hoặc một link** (sinh viên tải/nộp qua SAGA hoặc gắn file trực tiếp trên Jira; SAGA chỉ lưu metadata file và URL). Số file/link không làm tăng điểm. Thiếu cả hai = không công nhận SP.
-- CODE và TEST: không cần file đính kèm.
+- CODE và TEST: không cần file đính kèm, nhưng phải có ít nhất một commit không phải merge đã gắn vào đúng task đó. Commit không cộng thêm điểm.
 
 Không tính:
 
@@ -203,7 +203,7 @@ Không tính:
 - chưa gắn sprint
 - không nhãn reserved, hoặc gắn hai nhãn reserved cùng lúc
 - DOCUMENT/RESEARCH không có file và không có link
-- commit (dù đã link Task)
+- CODE/TEST không có commit không phải merge gắn vào task
 
 `storyPoint` thiếu thì lấy **1**.
 
