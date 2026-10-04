@@ -35,7 +35,7 @@ class IntegrationInitialSyncLauncherTest {
 		launcher.enqueueGithubInitialSync(projectId);
 		launcher.enqueueJiraInitialSync(integrationId, "token");
 		launcher.enqueueJiraInitialSync(integrationId);
-		verify(githubCommitSync).initialSync(projectId);
+		verify(githubCommitSync).sync(projectId, GitHubCommitSyncService.Mode.FULL);
 		verify(jiraTaskSync).initialSync(integrationId, "token");
 		verify(jiraTaskSync).initialSync(integrationId);
 	}
@@ -49,8 +49,29 @@ class IntegrationInitialSyncLauncherTest {
 	void launcherIsTheOnlySyncEntryFromIntegrationLayer() {
 		verifyNoInteractions(githubCommitSync, jiraTaskSync);
 		launcher.enqueueGithubInitialSync(UUID.randomUUID());
-		verify(githubCommitSync).initialSync(any());
+		verify(githubCommitSync).sync(any(), eq(GitHubCommitSyncService.Mode.FULL));
 		verify(jiraTaskSync, never()).initialSync(any(), any());
+	}
+
+	@Test
+	void manualAndReconcileGithubSyncPassTheirModeThrough() {
+		UUID projectId = UUID.randomUUID();
+		launcher.enqueueGithubSync(projectId, GitHubCommitSyncService.Mode.INCREMENTAL);
+		verify(githubCommitSync).sync(projectId, GitHubCommitSyncService.Mode.INCREMENTAL);
+	}
+
+	/** GitHub runs on its own thread so a long backfill never holds a Jira sync behind it. */
+	@Test
+	void githubAndJiraRunOnSeparateSyncThreads() throws Exception {
+		Class<IntegrationInitialSyncLauncher> type = IntegrationInitialSyncLauncher.class;
+		org.assertj.core.api.Assertions.assertThat(type.getMethod("enqueueGithubInitialSync", UUID.class)
+				.getAnnotation(org.springframework.scheduling.annotation.Async.class).value()).isEqualTo("githubSyncExecutor");
+		org.assertj.core.api.Assertions.assertThat(type.getMethod("enqueueGithubSync", UUID.class, GitHubCommitSyncService.Mode.class)
+				.getAnnotation(org.springframework.scheduling.annotation.Async.class).value()).isEqualTo("githubSyncExecutor");
+		org.assertj.core.api.Assertions.assertThat(type.getMethod("enqueueJiraInitialSync", UUID.class)
+				.getAnnotation(org.springframework.scheduling.annotation.Async.class).value()).isEqualTo("integrationSyncExecutor");
+		org.assertj.core.api.Assertions.assertThat(type.getMethod("enqueueJiraInitialSync", UUID.class, String.class)
+				.getAnnotation(org.springframework.scheduling.annotation.Async.class).value()).isEqualTo("integrationSyncExecutor");
 	}
 
 	@Test
@@ -63,7 +84,7 @@ class IntegrationInitialSyncLauncherTest {
 					throw new RuntimeException("provider down");
 				})
 				.when(githubCommitSync)
-				.initialSync(eq(projectId));
+				.sync(eq(projectId), eq(GitHubCommitSyncService.Mode.FULL));
 		launcher.enqueueGithubInitialSync(projectId);
 		finished.set(true);
 		assert started.await(1, TimeUnit.SECONDS);

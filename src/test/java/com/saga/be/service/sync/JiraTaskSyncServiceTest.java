@@ -207,6 +207,51 @@ class JiraTaskSyncServiceTest {
 	}
 
 	@Test
+	void evidenceIsTheLastStepOfTheSameJob_afterEveryIssuePage() {
+		com.saga.be.service.jira.JiraIssueEvidenceSyncService evidence =
+				org.mockito.Mockito.mock(com.saga.be.service.jira.JiraIssueEvidenceSyncService.class);
+		service.setEvidence(evidence);
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), isNull(), eq(50), isNull(), isNull(), isNull()))
+				.thenReturn(page(issues(3, 0), null, true));
+
+		SyncJobLog job = service.initialSync(integrationId, "token");
+
+		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		org.mockito.InOrder order = org.mockito.Mockito.inOrder(projection, evidence, claims);
+		order.verify(projection).upsertBatch(eq(integration), eq("SAGA"), any());
+		order.verify(evidence).syncIntegration(integration);
+		order.verify(claims).markSucceeded(any(SyncJobLog.class), org.mockito.ArgumentMatchers.anyInt());
+	}
+
+	@Test
+	void evidenceFailure_isLoggedButTheIssueSyncStillSucceeds() {
+		com.saga.be.service.jira.JiraIssueEvidenceSyncService evidence =
+				org.mockito.Mockito.mock(com.saga.be.service.jira.JiraIssueEvidenceSyncService.class);
+		service.setEvidence(evidence);
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), isNull(), eq(50), isNull(), isNull(), isNull()))
+				.thenReturn(page(issues(3, 0), null, true));
+		when(evidence.syncIntegration(integration)).thenThrow(new RuntimeException("attachments down"));
+
+		SyncJobLog job = service.initialSync(integrationId, "token");
+
+		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		assertThat(job.getItemsProcessed()).isEqualTo(3);
+	}
+
+	@Test
+	void issueSyncFailure_neverRunsEvidence() {
+		com.saga.be.service.jira.JiraIssueEvidenceSyncService evidence =
+				org.mockito.Mockito.mock(com.saga.be.service.jira.JiraIssueEvidenceSyncService.class);
+		service.setEvidence(evidence);
+		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), isNull(), eq(50), isNull(), isNull(), isNull()))
+				.thenThrow(new IntegrationException(
+						IntegrationErrorCode.JIRA_PROJECT_NOT_ACCESSIBLE, HttpStatus.BAD_GATEWAY, "down"));
+
+		assertThat(service.initialSync(integrationId, "token").getStatus()).isEqualTo(SyncJobStatus.FAILED);
+		org.mockito.Mockito.verifyNoInteractions(evidence);
+	}
+
+	@Test
 	void providerFailureMidRun_failsPreservingPriorPages() {
 		when(jira.searchIssues(eq("token"), eq("cloud"), eq("SAGA"), isNull(), eq(50), isNull(), isNull(), isNull()))
 				.thenReturn(page(issues(50, 0), "t1", false));

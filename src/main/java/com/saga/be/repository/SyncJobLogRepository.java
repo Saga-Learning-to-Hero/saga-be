@@ -20,6 +20,10 @@ public interface SyncJobLogRepository extends JpaRepository<SyncJobLog, UUID> {
 
 	Optional<SyncJobLog> findFirstByTargetSystemAndTargetIdOrderByStartedAtDesc(String targetSystem, UUID targetId);
 
+	/** Latest job of one kind (a 3am WEBHOOK_REFRESH row is not a data sync). */
+	Optional<SyncJobLog> findFirstByTargetSystemAndTargetIdAndJobTypeOrderByStartedAtDesc(
+			String targetSystem, UUID targetId, com.saga.be.entity.enums.SyncJobType jobType);
+
 	List<SyncJobLog> findByTargetSystemAndJobTypeAndStatus(
 			String targetSystem, SyncJobType jobType, SyncJobStatus status);
 

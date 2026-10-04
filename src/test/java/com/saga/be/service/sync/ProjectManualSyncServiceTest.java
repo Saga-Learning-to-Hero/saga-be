@@ -85,7 +85,7 @@ class ProjectManualSyncServiceTest {
 		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
 		assertThat(response.github()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
 		verify(launcher).enqueueJiraInitialSync(jira.getId());
-		verify(launcher).enqueueGithubInitialSync(projectId);
+		verify(launcher).enqueueGithubSync(projectId, GitHubCommitSyncService.Mode.INCREMENTAL);
 	}
 
 	@Test
@@ -152,7 +152,7 @@ class ProjectManualSyncServiceTest {
 		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
 		assertThat(response.github()).isEqualTo(ProjectSyncEnqueueResponse.SKIPPED_NOT_CONFIGURED);
 		verify(launcher).enqueueJiraInitialSync(jira.getId());
-		verify(launcher, never()).enqueueGithubInitialSync(any());
+		verify(launcher, never()).enqueueGithubSync(any(), any());
 	}
 
 	@Test
@@ -215,7 +215,7 @@ class ProjectManualSyncServiceTest {
 		assertThat(response.jira()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
 		assertThat(response.github()).isEqualTo(ProjectSyncEnqueueResponse.SKIPPED_NOT_CONFIGURED);
 		verify(launcher).enqueueJiraInitialSync(jira.getId());
-		verify(launcher, never()).enqueueGithubInitialSync(any());
+		verify(launcher, never()).enqueueGithubSync(any(), any());
 	}
 
 	@Test

@@ -89,6 +89,18 @@ public class JiraTaskSyncService {
 		return initialSync(jiraIntegrationId, null);
 	}
 
+	private com.saga.be.service.jira.JiraIssueEvidenceSyncService evidence;
+
+	/**
+	 * Attachments and web links are pulled as the last step of this same job. A separate 30s worker
+	 * used to grab the RUNNING job, mark it SUCCEEDED while issues were still syncing (hiding a later
+	 * failure and letting a second sync start), and ran on the shared scheduler thread.
+	 */
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	public void setEvidence(com.saga.be.service.jira.JiraIssueEvidenceSyncService evidence) {
+		this.evidence = evidence;
+	}
+
 	/**
 	 * Provider HTTP outside JDBC TX. Optional preferredAccess avoids refresh right after connect.
 	 * On 401: one credential refresh + one provider retry maximum.
@@ -180,6 +192,7 @@ public class JiraTaskSyncService {
 						HttpStatus.BAD_GATEWAY,
 						"Jira issue pagination exceeded defensive guard.");
 			}
+			syncEvidence(integration);
 			final int processedCount = processed;
 			final UUID publishProjectId = projectId;
 			writes.executeWithoutResult(status -> {
@@ -219,6 +232,21 @@ public class JiraTaskSyncService {
 			if (!finalized) {
 				claims.markFailed(job, "SYNC_JOB_ABORTED", "finalize");
 			}
+		}
+	}
+
+	/** Issues are already saved: an evidence failure is logged, never turns the job FAILED. */
+	private void syncEvidence(JiraIntegration integration) {
+		if (evidence == null) {
+			return;
+		}
+		try {
+			evidence.syncIntegration(integration);
+		} catch (RuntimeException ex) {
+			log.warn(
+					"jira evidence sync failed integrationId={} type={}",
+					integration.getId(),
+					ex.getClass().getSimpleName());
 		}
 	}
 

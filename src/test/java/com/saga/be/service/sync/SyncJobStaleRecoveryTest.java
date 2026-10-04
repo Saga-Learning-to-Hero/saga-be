@@ -312,7 +312,7 @@ class SyncJobStaleRecoveryTest {
 		assertThat(response.github()).isEqualTo(ProjectSyncEnqueueResponse.QUEUED);
 		assertThat(stale.getStatus()).isEqualTo(SyncJobStatus.FAILED);
 		verify(launcher).enqueueJiraInitialSync(integrationId);
-		verify(launcher).enqueueGithubInitialSync(projectId);
+		verify(launcher).enqueueGithubSync(projectId, GitHubCommitSyncService.Mode.INCREMENTAL);
 	}
 
 	private SyncJobLog runningJob(LocalDateTime startedAt) {

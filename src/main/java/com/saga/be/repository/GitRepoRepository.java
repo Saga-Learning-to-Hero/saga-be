@@ -59,6 +59,10 @@ public interface GitRepoRepository extends JpaRepository<GitRepo, UUID> {
 
 	List<GitRepo> findByProject_IdAndConnectionStatus(UUID projectId, IntegrationStatus status);
 
+	/** Projects with at least one repository in this state (periodic GitHub reconcile). */
+	@Query("select distinct r.project.id from GitRepo r where r.connectionStatus = :status and r.project is not null")
+	List<UUID> findProjectIdsByConnectionStatus(@Param("status") IntegrationStatus status);
+
 	/**
 	 * Scopes a single repository lookup to both its owning project AND {@code connectionStatus} so
 	 * a REVOKED historical row (kept for audit/history under V15's relaxed cross-project cardinality)

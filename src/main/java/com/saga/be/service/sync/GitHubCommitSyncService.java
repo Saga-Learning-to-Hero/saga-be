@@ -34,6 +34,7 @@ import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -52,6 +53,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * not proven equivalent to SAGA's canonical committedAt field. {@code createdAt} is the project's
  * first claim and is preserved on same-project reconnect; A → B → A multi-tenure windows are
  * deferred technical debt.
+ *
+ * <p>{@link Mode#INCREMENTAL} (manual "Đồng bộ" and the periodic reconcile) walks each branch only
+ * until a page holds no new commit, adds the memberships it saw and never replaces the snapshot.
+ * A repository that never finished a FULL traversal is always walked in full.
  */
 @Service
 @Profile("!test")
@@ -78,6 +83,10 @@ public class GitHubCommitSyncService {
 	private final SyncJobClaimService claims;
 	private final TransactionTemplate writes;
 	private final ProjectRealtimePublisher realtime;
+	private com.saga.be.repository.GitCommitRepository commits;
+
+	/** FULL walks every page of every branch; INCREMENTAL stops a branch at already-stored history. */
+	public enum Mode { FULL, INCREMENTAL }
 
 	public GitHubCommitSyncService(
 			GitRepoRepository repos,
@@ -102,11 +111,21 @@ public class GitHubCommitSyncService {
 		this.realtime = realtime;
 	}
 
+	/** Without it an INCREMENTAL request is walked as FULL. */
+	@Autowired(required = false)
+	public void setCommits(com.saga.be.repository.GitCommitRepository commits) {
+		this.commits = commits;
+	}
+
 	/**
 	 * Full reconciliation: all enumerable branches × full commit pagination per branch.
 	 * Provider HTTP outside JDBC TX. Per-repository failures are isolated.
 	 */
 	public SyncJobLog initialSync(UUID projectId) {
+		return sync(projectId, Mode.FULL);
+	}
+
+	public SyncJobLog sync(UUID projectId, Mode mode) {
 		SyncJobLog job = beginJob(projectId);
 		if (job == null) {
 			return alreadyRunning(projectId);
@@ -131,7 +150,7 @@ public class GitHubCommitSyncService {
 					continue;
 				}
 				try {
-					processed += syncOneRepository(token, repo);
+					processed += syncOneRepository(token, repo, mode);
 				} catch (IntegrationException ex) {
 					repoFailures++;
 					log.warn(
@@ -177,7 +196,8 @@ public class GitHubCommitSyncService {
 		}
 	}
 
-	private int syncOneRepository(String token, GitRepo repo) {
+	private int syncOneRepository(String token, GitRepo repo, Mode mode) {
+		boolean incremental = mode == Mode.INCREMENTAL && commits != null && repo.getBranchMembershipSyncedAt() != null;
 		List<String> branches = orderBranches(github.listBranches(token, repo.getOwnerLogin(), repo.getName()), repo);
 		if (branches.isEmpty() && repo.getDefaultBranch() != null && !repo.getDefaultBranch().isBlank()) {
 			branches = List.of(repo.getDefaultBranch());
@@ -200,7 +220,17 @@ public class GitHubCommitSyncService {
 		Map<String, Set<String>> memberships = new LinkedHashMap<>();
 		int uniqueUpserted = 0;
 		for (String branch : branches) {
-			uniqueUpserted += syncBranch(token, repo, branch, seenShas, memberships, cutoffApplies);
+			uniqueUpserted += syncBranch(token, repo, branch, seenShas, memberships, cutoffApplies, incremental);
+		}
+		if (incremental) {
+			LocalDateTime syncedAt = LocalDateTime.now();
+			writes.executeWithoutResult(status -> {
+				branchSnapshots.mergeMemberships(repo, memberships);
+				repo.setLastSyncedAt(syncedAt);
+				repo.setConsecutiveFailures(0);
+				repos.save(repo);
+			});
+			return uniqueUpserted;
 		}
 		// Snapshot replacement is reached only after every branch page was fetched AND every
 		// required upsertBatch returned without throwing. A provider or persist failure above
@@ -222,7 +252,8 @@ public class GitHubCommitSyncService {
 			String branch,
 			Set<String> seenShas,
 			Map<String, Set<String>> memberships,
-			boolean cutoffApplies) {
+			boolean cutoffApplies,
+			boolean incremental) {
 		int page = 1;
 		int upserted = 0;
 		while (page <= MAX_COMMIT_PAGES_PER_BRANCH) {
@@ -233,6 +264,9 @@ public class GitHubCommitSyncService {
 			if (providerPage == null || providerPage.isEmpty()) {
 				break;
 			}
+			// Incremental: a page where every commit is already stored (or before the claim, so never
+			// stored) means the rest of this branch is history SAGA already has.
+			boolean pageHasNewCommit = !incremental || hasNewCommit(repo, providerPage, cutoffApplies);
 			List<CommitDraft> drafts = new ArrayList<>(providerPage.size());
 			for (CommitSummary summary : providerPage) {
 				if (summary == null || summary.sha() == null || summary.sha().isBlank()) {
@@ -261,7 +295,7 @@ public class GitHubCommitSyncService {
 				Integer applied = writes.execute(status -> projection.upsertBatch(repo, drafts));
 				upserted += applied == null ? 0 : applied;
 			}
-			if (providerPage.size() < GITHUB_COMMITS_PER_PAGE_MAX) {
+			if (providerPage.size() < GITHUB_COMMITS_PER_PAGE_MAX || !pageHasNewCommit) {
 				break;
 			}
 			page++;
@@ -273,6 +307,24 @@ public class GitHubCommitSyncService {
 					"GitHub commit pagination exceeded defensive guard for a branch.");
 		}
 		return upserted;
+	}
+
+	private boolean hasNewCommit(GitRepo repo, List<CommitSummary> providerPage, boolean cutoffApplies) {
+		List<String> eligible = new ArrayList<>();
+		for (CommitSummary summary : providerPage) {
+			if (summary == null || summary.sha() == null || summary.sha().isBlank()) {
+				continue;
+			}
+			if (GitRepoCommitClaimCutoff.isEligible(
+					ProjectionMappings.parseInstant(summary.committedAt()), repo.getCreatedAt(), cutoffApplies)) {
+				eligible.add(summary.sha());
+			}
+		}
+		if (eligible.isEmpty()) {
+			return false;
+		}
+		Set<String> stored = new HashSet<>(writes.execute(status -> commits.findShaHashesByRepoIdAndShaHashIn(repo.getId(), eligible)));
+		return !stored.containsAll(eligible);
 	}
 
 	/** Prefer default branch first so headRef metadata favors the stored default when SHAs overlap. */

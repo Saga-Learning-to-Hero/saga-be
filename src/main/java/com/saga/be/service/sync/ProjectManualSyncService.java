@@ -73,22 +73,9 @@ public class ProjectManualSyncService {
 						IntegrationErrorCode.JIRA_SOURCE_NOT_FOUND,
 						HttpStatus.NOT_FOUND,
 						"Jira source was not found for this project."));
-		String jiraState;
-		if (integration.getConnectionStatus() != IntegrationStatus.ACTIVE) {
-			jiraState = ProjectSyncEnqueueResponse.SKIPPED_NOT_ACTIVE;
-		} else if (!credentials.hasRefreshOrAccessCredential(integrationId)) {
-			jiraState = ProjectSyncEnqueueResponse.SKIPPED_NO_CREDENTIAL;
-		} else if (!claims.tryReserveEnqueue("JIRA", integrationId)) {
-			jiraState = ProjectSyncEnqueueResponse.SKIPPED_ALREADY_RUNNING;
-		} else {
-			try {
-				launcher.enqueueJiraInitialSync(integrationId);
-				jiraState = ProjectSyncEnqueueResponse.QUEUED;
-			} catch (RuntimeException ex) {
-				claims.releaseEnqueue("JIRA", integrationId);
-				throw ex;
-			}
-		}
+		String jiraState = integration.getConnectionStatus() != IntegrationStatus.ACTIVE
+				? ProjectSyncEnqueueResponse.SKIPPED_NOT_ACTIVE
+				: enqueueJiraIntegration(integrationId);
 		return new ProjectSyncEnqueueResponse(
 				projectId.toString(), jiraState, ProjectSyncEnqueueResponse.SKIPPED_NOT_CONFIGURED);
 	}
@@ -123,22 +110,10 @@ public class ProjectManualSyncService {
 		boolean anyAlreadyRunning = false;
 		boolean anyNoCredential = false;
 		for (JiraIntegration integration : active) {
-			UUID integrationId = integration.getId();
-			if (!credentials.hasRefreshOrAccessCredential(integrationId)) {
-				anyNoCredential = true;
-				continue;
-			}
-			if (!claims.tryReserveEnqueue("JIRA", integrationId)) {
-				anyAlreadyRunning = true;
-				continue;
-			}
-			try {
-				launcher.enqueueJiraInitialSync(integrationId);
-				anyQueued = true;
-			} catch (RuntimeException ex) {
-				claims.releaseEnqueue("JIRA", integrationId);
-				throw ex;
-			}
+			String state = enqueueJiraIntegration(integration.getId());
+			anyQueued |= ProjectSyncEnqueueResponse.QUEUED.equals(state);
+			anyAlreadyRunning |= ProjectSyncEnqueueResponse.SKIPPED_ALREADY_RUNNING.equals(state);
+			anyNoCredential |= ProjectSyncEnqueueResponse.SKIPPED_NO_CREDENTIAL.equals(state);
 		}
 		if (anyQueued) {
 			return ProjectSyncEnqueueResponse.QUEUED;
@@ -160,11 +135,37 @@ public class ProjectManualSyncService {
 					? ProjectSyncEnqueueResponse.SKIPPED_NOT_ACTIVE
 					: ProjectSyncEnqueueResponse.SKIPPED_NOT_CONFIGURED;
 		}
+		// History already synced is not walked again: only new commits on each branch.
+		return enqueueGithubProject(projectId, GitHubCommitSyncService.Mode.INCREMENTAL);
+	}
+
+	/**
+	 * Queues one ACTIVE Jira site's sync (no permission check: callers check, or are the system's
+	 * own reconcile). A full queue throws after releasing the reservation.
+	 */
+	public String enqueueJiraIntegration(UUID integrationId) {
+		if (!credentials.hasRefreshOrAccessCredential(integrationId)) {
+			return ProjectSyncEnqueueResponse.SKIPPED_NO_CREDENTIAL;
+		}
+		if (!claims.tryReserveEnqueue("JIRA", integrationId)) {
+			return ProjectSyncEnqueueResponse.SKIPPED_ALREADY_RUNNING;
+		}
+		try {
+			launcher.enqueueJiraInitialSync(integrationId);
+			return ProjectSyncEnqueueResponse.QUEUED;
+		} catch (RuntimeException ex) {
+			claims.releaseEnqueue("JIRA", integrationId);
+			throw ex;
+		}
+	}
+
+	/** Queues a project's GitHub sync (no permission check, same contract as {@link #enqueueJiraIntegration}). */
+	public String enqueueGithubProject(UUID projectId, GitHubCommitSyncService.Mode mode) {
 		if (!claims.tryReserveEnqueue("GITHUB", projectId)) {
 			return ProjectSyncEnqueueResponse.SKIPPED_ALREADY_RUNNING;
 		}
 		try {
-			launcher.enqueueGithubInitialSync(projectId);
+			launcher.enqueueGithubSync(projectId, mode);
 			return ProjectSyncEnqueueResponse.QUEUED;
 		} catch (RuntimeException ex) {
 			claims.releaseEnqueue("GITHUB", projectId);

@@ -49,12 +49,18 @@ public class IntegrationInitialSyncLauncher {
 		}
 	}
 
-	@Async("integrationSyncExecutor")
+	/** Full walk of every branch (first connect, nightly reconcile). */
+	@Async("githubSyncExecutor")
 	public void enqueueGithubInitialSync(UUID projectId) {
+		enqueueGithubSync(projectId, GitHubCommitSyncService.Mode.FULL);
+	}
+
+	@Async("githubSyncExecutor")
+	public void enqueueGithubSync(UUID projectId, GitHubCommitSyncService.Mode mode) {
 		try {
-			githubCommitSync.initialSync(projectId);
+			githubCommitSync.sync(projectId, mode);
 		} catch (RuntimeException ex) {
-			log.warn("github initial sync failed projectId={} type={}", projectId, ex.getClass().getSimpleName());
+			log.warn("github sync failed projectId={} mode={} type={}", projectId, mode, ex.getClass().getSimpleName());
 		}
 	}
 }

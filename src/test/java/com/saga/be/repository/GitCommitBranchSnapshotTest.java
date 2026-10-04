@@ -199,6 +199,27 @@ class GitCommitBranchSnapshotTest {
 		assertThat(leftover).isEmpty();
 	}
 
+	@Test
+	void incrementalMerge_addsNewMembershipsKeepsOldOnesAndTheLastFullWalkTime() {
+		replace(repoA, Map.of(commitA.getShaHash(), Set.of("main", "feature/old")));
+		LocalDateTime lastFull = tx.execute(status -> repos.findById(repoA.getId()).orElseThrow().getBranchMembershipSyncedAt());
+
+		tx.executeWithoutResult(status -> snapshots.mergeMemberships(
+				repos.findById(repoA.getId()).orElseThrow(),
+				Map.of(commitA.getShaHash(), new LinkedHashSet<>(List.of("main", "feature/new")),
+						"sha-not-stored", new LinkedHashSet<>(List.of("main")))));
+		// running it twice adds nothing twice (unique commit+branch)
+		tx.executeWithoutResult(status -> snapshots.mergeMemberships(
+				repos.findById(repoA.getId()).orElseThrow(),
+				Map.of(commitA.getShaHash(), new LinkedHashSet<>(List.of("feature/new")))));
+
+		List<GitCommitBranch> rows = tx.execute(status -> branches.findByCommit_IdInOrderByBranchNameAsc(List.of(commitA.getId())));
+		assertThat(rows).extracting(GitCommitBranch::getBranchName)
+				.containsExactlyInAnyOrder("feature/new", "feature/old", "main");
+		LocalDateTime afterMerge = tx.execute(status -> repos.findById(repoA.getId()).orElseThrow().getBranchMembershipSyncedAt());
+		assertThat(afterMerge).isEqualTo(lastFull);
+	}
+
 	private void replace(GitRepo repo, Map<String, Set<String>> memberships) {
 		Map<String, Set<String>> copy = new LinkedHashMap<>();
 		memberships.forEach((sha, names) -> copy.put(sha, new LinkedHashSet<>(names)));

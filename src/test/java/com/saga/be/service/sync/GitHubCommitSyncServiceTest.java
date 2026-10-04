@@ -723,6 +723,127 @@ class GitHubCommitSyncServiceTest {
 		verify(projection, never()).upsertBatch(any(), any());
 	}
 
+	// ==================== INCREMENTAL (manual "Đồng bộ" / periodic reconcile) ====================
+
+	@Test
+	void incremental_stopsABranchAtTheFirstPageWithNoNewCommit_andOnlyAddsMemberships() {
+		com.saga.be.repository.GitCommitRepository commits = org.mockito.Mockito.mock(com.saga.be.repository.GitCommitRepository.class);
+		service.setCommits(commits);
+		GitRepo repo = activeRepo("org", "a");
+		repo.setBranchMembershipSyncedAt(java.time.LocalDateTime.of(2026, 6, 1, 0, 0));
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main"));
+		List<CommitSummary> page1 = concat2(summaries(3, "new-"), summaries(97, "old1-"));
+		List<CommitSummary> page2 = summaries(100, "old2-");
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100))).thenReturn(page1);
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(2), eq(100))).thenReturn(page2);
+		when(commits.findShaHashesByRepoIdAndShaHashIn(any(), any())).thenAnswer(inv -> {
+			java.util.Collection<String> asked = inv.getArgument(1);
+			return asked.stream().filter(sha -> sha.startsWith("old")).toList();
+		});
+
+		SyncJobLog job = service.sync(projectId, GitHubCommitSyncService.Mode.INCREMENTAL);
+
+		assertThat(job.getStatus()).isEqualTo(SyncJobStatus.SUCCEEDED);
+		// page 1 had new commits, page 2 was all known: page 3 is never asked for
+		verify(github, times(2)).listCommits(anyString(), anyString(), anyString(), eq("main"), anyInt(), anyInt());
+		verify(github, never()).listCommits(anyString(), anyString(), anyString(), eq("main"), eq(3), anyInt());
+		verify(branchSnapshots, never()).replaceSnapshot(any(), any(), any());
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, Set<String>>> memberships = ArgumentCaptor.forClass(Map.class);
+		verify(branchSnapshots).mergeMemberships(eq(repo), memberships.capture());
+		assertThat(memberships.getValue()).containsKeys("new-0", "new-1", "new-2");
+		// the last full walk is still the one recorded
+		assertThat(repo.getBranchMembershipSyncedAt()).isEqualTo(java.time.LocalDateTime.of(2026, 6, 1, 0, 0));
+		assertThat(repo.getLastSyncedAt()).isNotNull();
+	}
+
+	@Test
+	void incremental_aBranchWhoseFirstPageIsAllKnownCostsOneCall() {
+		com.saga.be.repository.GitCommitRepository commits = org.mockito.Mockito.mock(com.saga.be.repository.GitCommitRepository.class);
+		service.setCommits(commits);
+		GitRepo repo = activeRepo("org", "a");
+		repo.setBranchMembershipSyncedAt(java.time.LocalDateTime.of(2026, 6, 1, 0, 0));
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main", "feature/x"));
+		List<CommitSummary> known = summaries(100, "old-");
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), anyString(), eq(1), eq(100))).thenReturn(known);
+		when(commits.findShaHashesByRepoIdAndShaHashIn(any(), any()))
+				.thenAnswer(inv -> List.copyOf((java.util.Collection<String>) inv.getArgument(1)));
+
+		service.sync(projectId, GitHubCommitSyncService.Mode.INCREMENTAL);
+
+		verify(github, times(1)).listCommits(anyString(), anyString(), anyString(), eq("main"), anyInt(), anyInt());
+		verify(github, times(1)).listCommits(anyString(), anyString(), anyString(), eq("feature/x"), anyInt(), anyInt());
+	}
+
+	@Test
+	void incremental_aRepoThatNeverFinishedAFullWalkIsWalkedInFull() {
+		com.saga.be.repository.GitCommitRepository commits = org.mockito.Mockito.mock(com.saga.be.repository.GitCommitRepository.class);
+		service.setCommits(commits);
+		GitRepo repo = activeRepo("org", "a");
+		repo.setBranchMembershipSyncedAt(null);
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100))).thenReturn(summaries(100, "p1-"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(2), eq(100))).thenReturn(summaries(10, "p2-"));
+
+		service.sync(projectId, GitHubCommitSyncService.Mode.INCREMENTAL);
+
+		verify(github, times(2)).listCommits(anyString(), anyString(), anyString(), eq("main"), anyInt(), anyInt());
+		verify(commits, never()).findShaHashesByRepoIdAndShaHashIn(any(), any());
+		verify(branchSnapshots).replaceSnapshot(eq(repo), any(), any());
+		verify(branchSnapshots, never()).mergeMemberships(any(), any());
+	}
+
+	@Test
+	void incremental_stopsWhenThePageIsAllBeforeTheClaim() {
+		com.saga.be.repository.GitCommitRepository commits = org.mockito.Mockito.mock(com.saga.be.repository.GitCommitRepository.class);
+		service.setCommits(commits);
+		GitRepo repo = activeRepo("org", "b");
+		repo.setBranchMembershipSyncedAt(java.time.LocalDateTime.of(2026, 6, 1, 0, 0));
+		when(repos.existsByProviderAndRepositoryIdAndProject_IdNotAndCreatedAtLessThan(
+						repo.getProvider(), repo.getRepositoryId(), projectId, repo.getCreatedAt()))
+				.thenReturn(true);
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "b")).thenReturn(List.of("main"));
+		List<CommitSummary> preClaim = new ArrayList<>();
+		for (int i = 0; i < 100; i++) {
+			preClaim.add(new CommitSummary("pre-" + i, "old", "2025-06-01T00:00:00Z", null, null));
+		}
+		when(github.listCommits(eq("tok"), eq("org"), eq("b"), eq("main"), eq(1), eq(100))).thenReturn(preClaim);
+
+		service.sync(projectId, GitHubCommitSyncService.Mode.INCREMENTAL);
+
+		verify(github, times(1)).listCommits(anyString(), anyString(), anyString(), eq("main"), anyInt(), anyInt());
+		// nothing eligible on the page: no need to ask the database either
+		verify(commits, never()).findShaHashesByRepoIdAndShaHashIn(any(), any());
+	}
+
+	@Test
+	void fullMode_stillWalksEveryPageEvenWhenEverythingIsKnown() {
+		com.saga.be.repository.GitCommitRepository commits = org.mockito.Mockito.mock(com.saga.be.repository.GitCommitRepository.class);
+		service.setCommits(commits);
+		GitRepo repo = activeRepo("org", "a");
+		repo.setBranchMembershipSyncedAt(java.time.LocalDateTime.of(2026, 6, 1, 0, 0));
+		stubInstallationAndRepos(List.of(repo));
+		when(github.listBranches("tok", "org", "a")).thenReturn(List.of("main"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(1), eq(100))).thenReturn(summaries(100, "p1-"));
+		when(github.listCommits(eq("tok"), eq("org"), eq("a"), eq("main"), eq(2), eq(100))).thenReturn(summaries(5, "p2-"));
+
+		service.sync(projectId, GitHubCommitSyncService.Mode.FULL);
+
+		verify(github, times(2)).listCommits(anyString(), anyString(), anyString(), eq("main"), anyInt(), anyInt());
+		verify(commits, never()).findShaHashesByRepoIdAndShaHashIn(any(), any());
+		verify(branchSnapshots).replaceSnapshot(eq(repo), any(), any());
+	}
+
+	private static List<CommitSummary> concat2(List<CommitSummary> a, List<CommitSummary> b) {
+		List<CommitSummary> out = new ArrayList<>(a);
+		out.addAll(b);
+		return out;
+	}
+
 	private void stubInstallationAndRepos(List<GitRepo> active) {
 		GithubInstallation installation = new GithubInstallation();
 		installation.setInstallationId(99L);

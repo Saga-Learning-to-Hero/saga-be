@@ -56,6 +56,33 @@ class IntegrationAsyncConfigurationTest {
 		}
 	}
 
+	@Test
+	void aLongGithubSyncNeverHoldsAJiraSyncBehindIt() throws Exception {
+		IntegrationAsyncConfiguration config = new IntegrationAsyncConfiguration();
+		ThreadPoolTaskExecutor jira = (ThreadPoolTaskExecutor) config.integrationSyncExecutor();
+		ThreadPoolTaskExecutor github = (ThreadPoolTaskExecutor) config.githubSyncExecutor();
+		CountDownLatch githubStarted = new CountDownLatch(1);
+		CountDownLatch holdGithub = new CountDownLatch(1);
+		CountDownLatch jiraRan = new CountDownLatch(1);
+		try {
+			assertThat(github.getCorePoolSize()).isEqualTo(1);
+			assertThat(github.getMaxPoolSize()).isEqualTo(1);
+			assertThat(github.getThreadNamePrefix()).isEqualTo("github-sync-");
+			github.execute(() -> {
+				githubStarted.countDown();
+				await(holdGithub);
+			});
+			assertThat(githubStarted.await(2, TimeUnit.SECONDS)).isTrue();
+			jira.execute(jiraRan::countDown);
+			// the GitHub job is still running, the Jira job ran anyway
+			assertThat(jiraRan.await(2, TimeUnit.SECONDS)).isTrue();
+		} finally {
+			holdGithub.countDown();
+			jira.destroy();
+			github.destroy();
+		}
+	}
+
 	private static ThreadPoolTaskExecutor executor() {
 		return (ThreadPoolTaskExecutor) new IntegrationAsyncConfiguration().integrationSyncExecutor();
 	}

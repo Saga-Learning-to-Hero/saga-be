@@ -83,6 +83,51 @@ public class GitCommitBranchSnapshotService {
 		repos.save(repo);
 	}
 
+	/**
+	 * Incremental sync only: adds the branch memberships seen on the pages it walked, never deletes
+	 * (a partial walk cannot prove a commit left a branch) and leaves {@code branchMembershipSyncedAt}
+	 * on the last FULL traversal. Commits not stored (pre-claim) are skipped.
+	 */
+	@Transactional
+	public void mergeMemberships(GitRepo repo, Map<String, Set<String>> shaToBranches) {
+		if (repo == null || repo.getId() == null || shaToBranches == null || shaToBranches.isEmpty()) {
+			return;
+		}
+		Set<String> shas = requiredShas(shaToBranches);
+		if (shas.isEmpty()) {
+			return;
+		}
+		List<GitCommit> stored = commits.findByRepo_IdAndShaHashIn(repo.getId(), shas);
+		if (stored.isEmpty()) {
+			return;
+		}
+		Map<java.util.UUID, Set<String>> existing = new java.util.HashMap<>();
+		for (GitCommitBranch row : branches.findByCommit_IdInOrderByBranchNameAsc(
+				stored.stream().map(GitCommit::getId).toList())) {
+			existing.computeIfAbsent(row.getCommit().getId(), ignored -> new LinkedHashSet<>()).add(row.getBranchName());
+		}
+		List<GitCommitBranch> rows = new ArrayList<>();
+		for (GitCommit commit : stored) {
+			Set<String> names = shaToBranches.get(commit.getShaHash());
+			if (names == null) {
+				continue;
+			}
+			Set<String> have = existing.getOrDefault(commit.getId(), Set.of());
+			for (String branchName : names) {
+				if (branchName == null || branchName.isBlank() || have.contains(branchName)) {
+					continue;
+				}
+				GitCommitBranch row = new GitCommitBranch();
+				row.setCommit(commit);
+				row.setBranchName(branchName);
+				rows.add(row);
+			}
+		}
+		if (!rows.isEmpty()) {
+			branches.saveAll(rows);
+		}
+	}
+
 	private static Set<String> requiredShas(Map<String, Set<String>> memberships) {
 		Set<String> required = new LinkedHashSet<>();
 		for (Map.Entry<String, Set<String>> entry : memberships.entrySet()) {

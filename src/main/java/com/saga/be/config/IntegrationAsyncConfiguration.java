@@ -13,6 +13,7 @@ public class IntegrationAsyncConfiguration {
 	static final int MAX_ACTIVE_BACKGROUND_SYNC = 1;
 	static final int QUEUE_CAPACITY = 200;
 
+	/** Jira syncs (per site) and Jira failover. GitHub has its own thread: {@link #githubSyncExecutor()}. */
 	@Bean(name = "integrationSyncExecutor")
 	public Executor integrationSyncExecutor() {
 		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
@@ -21,6 +22,22 @@ public class IntegrationAsyncConfiguration {
 		executor.setQueueCapacity(QUEUE_CAPACITY);
 		executor.setThreadNamePrefix("integration-sync-");
 		// AbortPolicy: HTTP enqueue can releaseEnqueue; never silently drop work.
+		executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+		executor.initialize();
+		return executor;
+	}
+
+	/**
+	 * GitHub commit syncs. A long GitHub backfill used to share the single integration thread and
+	 * held every Jira sync (manual or automatic) behind it; now the two run side by side.
+	 */
+	@Bean(name = "githubSyncExecutor")
+	public Executor githubSyncExecutor() {
+		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+		executor.setCorePoolSize(MAX_ACTIVE_BACKGROUND_SYNC);
+		executor.setMaxPoolSize(MAX_ACTIVE_BACKGROUND_SYNC);
+		executor.setQueueCapacity(QUEUE_CAPACITY);
+		executor.setThreadNamePrefix("github-sync-");
 		executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
 		executor.initialize();
 		return executor;

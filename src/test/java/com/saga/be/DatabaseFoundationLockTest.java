@@ -57,7 +57,7 @@ class DatabaseFoundationLockTest {
 	}
 
 	@Test
-	void versionedFlywayMigrationsHaveUniqueVersionsThroughV39() throws IOException {
+	void versionedFlywayMigrationsHaveUniqueVersionsThroughV40() throws IOException {
 		Pattern versioned = Pattern.compile("^V(\\d+)__.+\\.sql$");
 		Map<Integer, List<String>> byVersion = new TreeMap<>();
 		try (Stream<Path> files = Files.list(Path.of("src/main/resources/db/migration"))) {
@@ -95,7 +95,8 @@ class DatabaseFoundationLockTest {
 		assertEquals(List.of("V37__task_issue_type_hierarchy.sql"), byVersion.get(37));
 		assertEquals(List.of("V38__task_delay_case.sql"), byVersion.get(38));
 		assertEquals(List.of("V39__assistant_chat.sql"), byVersion.get(39));
-		assertEquals(39, byVersion.keySet().stream().mapToInt(Integer::intValue).max().orElse(0));
+		assertEquals(List.of("V40__sync_job_log_target_index.sql"), byVersion.get(40));
+		assertEquals(40, byVersion.keySet().stream().mapToInt(Integer::intValue).max().orElse(0));
 	}
 
 	private static String allMigrations() throws IOException {

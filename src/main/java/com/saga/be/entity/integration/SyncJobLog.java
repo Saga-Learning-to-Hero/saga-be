@@ -24,7 +24,8 @@ import org.hibernate.annotations.JdbcTypeCode;
 @Table(
 	name = "sync_job_log",
 	indexes = {
-		@Index(name = "ix_sync_job_status", columnList = "status, started_at")
+		@Index(name = "ix_sync_job_status", columnList = "status, started_at"),
+		@Index(name = "ix_sync_job_target", columnList = "target_system, target_id, started_at")
 	}
 )
 public class SyncJobLog extends BaseEntity {

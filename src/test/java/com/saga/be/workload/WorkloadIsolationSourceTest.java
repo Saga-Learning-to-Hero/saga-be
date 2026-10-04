@@ -25,8 +25,6 @@ class WorkloadIsolationSourceTest {
 				.contains("SchedulingConfigurer"));
 		assertFalse(read("src/main/java/com/saga/be/service/mail/EmailOutboxWorker.java")
 				.contains("new ThreadPoolTaskScheduler"));
-		assertFalse(read("src/main/java/com/saga/be/scheduler/JiraInitialIssueSyncWorker.java")
-				.contains("setPoolSize"));
 	}
 
 	@Test
