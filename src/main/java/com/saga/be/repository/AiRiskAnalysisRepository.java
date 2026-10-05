@@ -13,11 +13,13 @@ public interface AiRiskAnalysisRepository extends JpaRepository<AiRiskAnalysis, 
 	Optional<AiRiskAnalysis> findByAnalysisRun_Id(UUID analysisRunId);
 	Optional<AiRiskAnalysis> findTopByAnalysisRun_ArtifactTypeAndAnalysisRun_ArtifactIdOrderByCreatedAtDesc(AiArtifactType artifactType, UUID artifactId);
 
-	/** Latest risk row per task, bounded to the supplied task IDs (progress facts aggregation). */
+	/** Latest risk row per task, bounded to the supplied task IDs (progress facts aggregation). The run is
+	 * fetched: callers read its artifactId, and may run outside a transaction. */
 	@Query("""
 			select r from AiRiskAnalysis r
-			where r.analysisRun.artifactType = com.saga.be.entity.enums.AiArtifactType.TASK
-			  and r.analysisRun.artifactId in :taskIds
+			join fetch r.analysisRun run
+			where run.artifactType = com.saga.be.entity.enums.AiArtifactType.TASK
+			  and run.artifactId in :taskIds
 			order by r.createdAt desc
 			""")
 	List<AiRiskAnalysis> findLatestByTaskIds(@Param("taskIds") List<UUID> taskIds);

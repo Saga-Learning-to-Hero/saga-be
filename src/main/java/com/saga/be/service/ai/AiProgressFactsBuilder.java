@@ -75,6 +75,8 @@ public class AiProgressFactsBuilder {
 		return project.getCourse() == null ? null : project.getCourse().getId();
 	}
 
+	// read-only transaction: the facts read lazy relations (a risk row's run, a task intelligence's task)
+	@org.springframework.transaction.annotation.Transactional(readOnly = true)
 	public Facts buildStudent(Project project, UUID studentId) {
 		LocalDateTime now = now();
 		LocalDateTime cutoff = now.plus(deadlineProperties.getDueSoonWindow());
@@ -93,6 +95,8 @@ public class AiProgressFactsBuilder {
 		return new Facts(facts);
 	}
 
+	// read-only transaction: the facts read lazy relations (a risk row's run, a task intelligence's task)
+	@org.springframework.transaction.annotation.Transactional(readOnly = true)
 	public Facts buildTeam(Project project) {
 		LocalDateTime now = now();
 		LocalDateTime cutoff = now.plus(deadlineProperties.getDueSoonWindow());
@@ -116,6 +120,8 @@ public class AiProgressFactsBuilder {
 		return new Facts(facts);
 	}
 
+	// read-only transaction: the facts read lazy relations (a risk row's run, a task intelligence's task)
+	@org.springframework.transaction.annotation.Transactional(readOnly = true)
 	public Facts buildCourse(Course course, List<Project> projects) {
 		LocalDateTime now = now();
 		LocalDateTime cutoff = now.plus(deadlineProperties.getDueSoonWindow());

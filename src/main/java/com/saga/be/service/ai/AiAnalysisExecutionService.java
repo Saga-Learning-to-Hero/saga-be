@@ -97,7 +97,8 @@ public class AiAnalysisExecutionService {
 				}
 				default -> finalized = state.complete(runId, resultJson, true, response.latencyMs() == null ? (System.nanoTime() - started) / 1_000_000L : response.latencyMs(), response.inputUnits(), response.outputUnits(), response.modelRevision(), response.costMetadataJson());
 			}
-			if (finalized) log.info("ai analysis completed runId={} type={} provider={} model={} durationMs={}", runId, type, provider.providerKey(), provider.modelId(), (System.nanoTime() - started) / 1_000_000L);
+			AiActualModel actual = AiActualModel.from(response.costMetadataJson());
+			if (finalized) log.info("ai analysis completed runId={} type={} provider={} model={} durationMs={}", runId, type, actual == null ? provider.providerKey() : actual.provider(), actual == null ? provider.modelId() : actual.modelId(), (System.nanoTime() - started) / 1_000_000L);
 			else log.info("ai analysis late result discarded runId={} type={} provider={}", runId, type, provider.providerKey());
 		} catch (Exception ex) {
 			String code = ex instanceof AiProviderException provider ? provider.safeCode()

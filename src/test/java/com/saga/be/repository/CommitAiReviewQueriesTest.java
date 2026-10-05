@@ -96,6 +96,7 @@ class CommitAiReviewQueriesTest {
 	@Autowired private AiAnalysisRunRepository runs;
 	@Autowired private AiAnalysisProviderDecisionRepository decisions;
 	@Autowired private AiTeamCredentialRepository teamCredentials;
+	@Autowired private AiRiskAnalysisRepository riskAnalyses;
 
 	private TransactionTemplate tx;
 	private Project projectA;
@@ -130,6 +131,26 @@ class CommitAiReviewQueriesTest {
 		assertThat(found).singleElement().satisfies(row -> assertThat(row.getTask().getId()).isEqualTo(liveTask.getId()));
 		java.util.Optional<TaskCommitManualLink> byPair = tx.execute(status -> manualLinks.findByTask_IdAndGitCommit_Id(liveTask.getId(), commit1.getId()));
 		assertThat(byPair).isPresent();
+	}
+
+	@Test
+	void latestTaskRiskRowsCarryTheirRun_readableOutsideATransaction() {
+		// a student's progress report read run.getArtifactId() outside a transaction: LazyInitializationException (500)
+		tx.executeWithoutResult(status -> {
+			AiAnalysisRun run = run(projectA, liveTask.getId(), AiAnalysisType.RISK_ANALYSIS, AiAnalysisStatus.COMPLETED);
+			run.setArtifactType(AiArtifactType.TASK);
+			com.saga.be.entity.ai.AiRiskAnalysis risk = new com.saga.be.entity.ai.AiRiskAnalysis();
+			risk.setProject(em.find(Project.class, projectA.getId()));
+			risk.setAnalysisRun(run);
+			risk.setRiskLevel(com.saga.be.entity.enums.AiRiskLevel.MEDIUM);
+			risk.setReasonsJson("[]");
+			risk.setRecommendedActionsJson("[]");
+			em.persist(risk);
+		});
+
+		List<com.saga.be.entity.ai.AiRiskAnalysis> rows = riskAnalyses.findLatestByTaskIds(List.of(liveTask.getId(), UUID.randomUUID()));
+
+		assertThat(rows).singleElement().satisfies(row -> assertThat(row.getAnalysisRun().getArtifactId()).isEqualTo(liveTask.getId()));
 	}
 
 	@Test
