@@ -427,10 +427,10 @@ class CommitAiReviewServiceTest {
 
 		assertThat(result.queued()).isEqualTo(2);
 		assertThat(result.skipped()).isEqualTo(2);
-		verify(submissions).submit(leaderId, projectId, failed.getId());
-		verify(submissions).submit(leaderId, projectId, fresh.getId());
-		verify(submissions, never()).submit(leaderId, projectId, merge.getId());
-		verify(submissions, never()).submit(leaderId, projectId, done.getId());
+		verify(submissions).submitInBackground(leaderId, projectId, failed.getId());
+		verify(submissions).submitInBackground(leaderId, projectId, fresh.getId());
+		verify(submissions, never()).submitInBackground(leaderId, projectId, merge.getId());
+		verify(submissions, never()).submitInBackground(leaderId, projectId, done.getId());
 	}
 
 	@Test
@@ -442,13 +442,13 @@ class CommitAiReviewServiceTest {
 			List<UUID> ids = inv.getArgument(0);
 			return page.stream().filter(c -> ids.contains(c.getId())).toList();
 		});
-		when(submissions.submit(leaderId, projectId, page.get(0).getId())).thenThrow(new RuntimeException("github down"));
+		when(submissions.submitInBackground(leaderId, projectId, page.get(0).getId())).thenThrow(new RuntimeException("github down"));
 
 		CommitAiReviewDtos.BackfillResult result = service.backfill(leaderId, projectId, null);
 
 		assertThat(CommitAiReviewService.MAX_BACKFILL).isEqualTo(15);
 		assertThat(result.queued()).isEqualTo(15);
-		verify(submissions, times(15)).submit(eq(leaderId), eq(projectId), any());
+		verify(submissions, times(15)).submitInBackground(eq(leaderId), eq(projectId), any());
 	}
 
 	@Test
@@ -469,9 +469,9 @@ class CommitAiReviewServiceTest {
 
 		assertThat(result.queued()).isEqualTo(1);
 		assertThat(result.skipped()).isEqualTo(2);
-		verify(submissions).submit(leaderId, projectId, outdated.getId());
-		verify(submissions, never()).submit(leaderId, projectId, current.getId());
-		verify(submissions, never()).submit(leaderId, projectId, running.getId());
+		verify(submissions).submitInBackground(leaderId, projectId, outdated.getId());
+		verify(submissions, never()).submitInBackground(leaderId, projectId, current.getId());
+		verify(submissions, never()).submitInBackground(leaderId, projectId, running.getId());
 	}
 
 	@Test
@@ -485,9 +485,9 @@ class CommitAiReviewServiceTest {
 		CommitAiReviewDtos.BackfillResult result = service.backfill(leaderId, projectId, 10);
 
 		assertThat(result.queued()).isEqualTo(3);
-		verify(submissions, never()).submit(any(), any(), any());
+		verify(submissions, never()).submitInBackground(any(), any(), any());
 		queued.getFirst().run();
-		verify(submissions, times(3)).submit(eq(leaderId), eq(projectId), any());
+		verify(submissions, times(3)).submitInBackground(eq(leaderId), eq(projectId), any());
 	}
 
 	@Test
@@ -514,7 +514,7 @@ class CommitAiReviewServiceTest {
 				.isInstanceOf(IntegrationException.class)
 				.satisfies(ex -> assertThat(((IntegrationException) ex).getCode()).isEqualTo(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE))
 				.hasMessageContaining("giảng viên chưa cho dùng key của lớp");
-		verify(submissions, never()).submit(any(), any(), any());
+		verify(submissions, never()).submitInBackground(any(), any(), any());
 	}
 
 	@Test
@@ -522,7 +522,7 @@ class CommitAiReviewServiceTest {
 		doThrow(new IntegrationException(IntegrationErrorCode.NOT_TEAM_LEADER, HttpStatus.FORBIDDEN, "leader only"))
 				.when(authorization).requireStudentLeader(authorId, projectId);
 		assertThatThrownBy(() -> service.backfill(authorId, projectId, 5)).isInstanceOf(IntegrationException.class);
-		verify(submissions, never()).submit(any(), any(), any());
+		verify(submissions, never()).submitInBackground(any(), any(), any());
 	}
 
 	// ---------------- helpers

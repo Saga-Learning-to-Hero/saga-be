@@ -5,8 +5,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "saga.ai")
 public class AiAnalysisProperties {
-	private int workers = 1;
+	private int workers = 3;
 	private int queueCapacity = 100;
+	private int backgroundWorkers = 1;
+	private int backgroundQueueCapacity = 300;
 	private int recoveryBatchSize = 50;
 	private Duration staleRunningAfter = Duration.ofMinutes(5);
 	private boolean enabled = false;
@@ -19,6 +21,10 @@ public class AiAnalysisProperties {
 	private final Runtime runtime = new Runtime();
 	public int getWorkers() { return workers; }
 	public void setWorkers(int workers) { this.workers = Math.max(1, workers); }
+	public int getBackgroundWorkers() { return backgroundWorkers; }
+	public void setBackgroundWorkers(int backgroundWorkers) { this.backgroundWorkers = Math.max(1, backgroundWorkers); }
+	public int getBackgroundQueueCapacity() { return backgroundQueueCapacity; }
+	public void setBackgroundQueueCapacity(int backgroundQueueCapacity) { this.backgroundQueueCapacity = Math.max(1, backgroundQueueCapacity); }
 	public int getQueueCapacity() { return queueCapacity; }
 	public void setQueueCapacity(int queueCapacity) { this.queueCapacity = Math.max(1, queueCapacity); }
 	public int getRecoveryBatchSize() { return recoveryBatchSize; }

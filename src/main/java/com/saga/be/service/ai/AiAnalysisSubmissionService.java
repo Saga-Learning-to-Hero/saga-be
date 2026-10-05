@@ -64,6 +64,15 @@ public class AiAnalysisSubmissionService {
 	 * when automation is off or no course credential is configured -- never creates a doomed run,
 	 * never throws. */
 	public Optional<Submission> submitAutomatic(UUID projectId, UUID gitCommitId) {
+		return AiAnalysisExecutor.inBackground(() -> automatic(projectId, gitCommitId));
+	}
+
+	/** A leader's backfill: their permission, the background lane. */
+	public Submission submitInBackground(UUID userId, UUID projectId, UUID gitCommitId) {
+		return AiAnalysisExecutor.inBackground(() -> submit(userId, projectId, gitCommitId));
+	}
+
+	private Optional<Submission> automatic(UUID projectId, UUID gitCommitId) {
 		GitCommit commit = commits.findAnalysisTargetById(gitCommitId).orElse(null);
 		if (commit == null || !commit.getRepo().getProject().getId().equals(projectId)) return Optional.empty();
 		if (commit.looksLikeMerge()) return Optional.empty();

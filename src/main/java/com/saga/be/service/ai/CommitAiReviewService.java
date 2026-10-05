@@ -349,7 +349,7 @@ public class CommitAiReviewService {
 		int failed = 0;
 		for (UUID id : commitIds) {
 			try {
-				submissions.submit(userId, projectId, id);
+				submissions.submitInBackground(userId, projectId, id);
 			} catch (RuntimeException ex) {
 				failed++;
 				log.warn("commit review backfill failed projectId={} gitCommitId={} type={}", projectId, id, ex.getClass().getSimpleName());

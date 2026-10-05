@@ -38,6 +38,10 @@ public class AiTaskIntelligenceSubmissionService {
 	/** Automation entry point: no interactive user. Silently returns empty when automation is off
 	 * or no course PRIMARY credential is configured -- never creates a doomed run. */
 	public Optional<Submission> submitAutomatic(UUID projectId, UUID taskId) {
+		return AiAnalysisExecutor.inBackground(() -> submitAutomaticOnLane(projectId, taskId));
+	}
+
+	private Optional<Submission> submitAutomaticOnLane(UUID projectId, UUID taskId) {
 		Task task = tasks.findActiveFetchedByIdAndProject_Id(taskId, projectId).orElse(null);
 		if (task == null) return Optional.empty();
 		var course = task.getProject().getCourse();

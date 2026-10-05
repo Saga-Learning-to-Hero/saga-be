@@ -12,6 +12,20 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 @Profile("!test")
 @EnableConfigurationProperties(AiAnalysisProperties.class)
 public class AiAnalysisConfiguration {
+	/** Background lane: automatic reviews, backfill, retries and recovery (see AiAnalysisExecutor). */
+	@Bean(name = "aiBackgroundExecutor")
+	public Executor aiBackgroundExecutor(AiAnalysisProperties properties) {
+		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+		executor.setCorePoolSize(properties.getBackgroundWorkers());
+		executor.setMaxPoolSize(properties.getBackgroundWorkers());
+		executor.setQueueCapacity(properties.getBackgroundQueueCapacity());
+		executor.setThreadNamePrefix("ai-background-");
+		executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+		executor.initialize();
+		return executor;
+	}
+
+	/** Interactive lane: runs someone asked for and is waiting on. */
 	@Bean(name = "aiAnalysisExecutor")
 	public Executor aiAnalysisExecutor(AiAnalysisProperties properties) {
 		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

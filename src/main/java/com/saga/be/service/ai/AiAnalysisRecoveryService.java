@@ -15,6 +15,7 @@ public class AiAnalysisRecoveryService {
 	@Scheduled(fixedDelayString = "${saga.ai.recovery-delay:PT30S}")
 	public void recover() {
 		state.failStaleRunning(LocalDateTime.now().minus(properties.getStaleRunningAfter()));
-		for (var id : state.queuedIds(properties.getRecoveryBatchSize())) executor.enqueue(id);
+		// a run someone is waiting on is enqueued at once and already pending; only leftovers come here
+		for (var id : state.queuedIds(properties.getRecoveryBatchSize())) executor.enqueueBackground(id);
 	}
 }

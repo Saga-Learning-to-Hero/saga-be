@@ -24,10 +24,42 @@ public class AiAnalysisExecutor {
 	 */
 	private final Set<UUID> pending = ConcurrentHashMap.newKeySet();
 
+	/**
+	 * Work nobody is waiting on (automatic reviews, a leader's backfill, retries, recovery) has its own
+	 * lane, so a lecturer's report or a "Đánh giá lại" never queues behind a dozen background reviews
+	 * of up to 100 s each. Without that lane (tests) everything shares the one executor.
+	 */
+	private Executor background;
+	private static final ThreadLocal<Boolean> BACKGROUND = ThreadLocal.withInitial(() -> false);
+
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	public void setBackground(@Qualifier("aiBackgroundExecutor") Executor background) {
+		this.background = background;
+	}
+
+	/** Runs {@code work} so that every run it enqueues (also after its transaction commits) goes to the background lane. */
+	public static <T> T inBackground(java.util.function.Supplier<T> work) {
+		boolean outer = BACKGROUND.get();
+		BACKGROUND.set(true);
+		try {
+			return work.get();
+		} finally {
+			BACKGROUND.set(outer);
+		}
+	}
+
 	public void enqueue(UUID runId) {
+		dispatch(runId, BACKGROUND.get() && background != null ? background : executor);
+	}
+
+	public void enqueueBackground(UUID runId) {
+		dispatch(runId, background != null ? background : executor);
+	}
+
+	private void dispatch(UUID runId, Executor lane) {
 		if (runId == null || !pending.add(runId)) return;
 		try {
-			executor.execute(() -> {
+			lane.execute(() -> {
 				try { execution.execute(runId); }
 				finally { pending.remove(runId); }
 			});
