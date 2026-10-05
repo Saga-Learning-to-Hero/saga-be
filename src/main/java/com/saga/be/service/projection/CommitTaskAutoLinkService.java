@@ -71,9 +71,11 @@ public class CommitTaskAutoLinkService {
 	}
 
 	/**
-	 * One commit belongs to one task (a task may have many commits): the first key in the message that
-	 * resolves to exactly one live task wins, then the first in the branch name. Other automatic links
-	 * of that commit, and hand-made ones, are removed; merge commits are never linked.
+	 * One commit belongs to one task (a task may have many commits): the first Jira key written in the
+	 * commit message that resolves to exactly one live task. The branch name never links a commit: a
+	 * branch like {@code feat/SAGA-119-x} also carries commits merged in from main. Links the message
+	 * does not support (another task, a key only in the branch name, any link of a merge commit) are
+	 * removed, and so is a hand-made attachment once the message names the task.
 	 *
 	 * <p>Bounded per batch: one ACTIVE-source query, one task query, one existing-link query, at most
 	 * one delete of each kind.
@@ -85,19 +87,24 @@ public class CommitTaskAutoLinkService {
 		}
 		Map<UUID, Set<String>> rawKeysByCommit = new HashMap<>();
 		Set<UUID> merges = new HashSet<>();
+		Set<UUID> batch = new HashSet<>();
 		for (GitCommit commit : commits) {
 			if (commit == null || commit.getId() == null) {
 				continue;
 			}
+			batch.add(commit.getId());
 			if (commit.looksLikeMerge()) {
 				merges.add(commit.getId());
 				continue;
 			}
-			// message keys first, in the order written; the branch name only as a fallback
-			Set<String> keys = JiraKeyExtractor.extract(commit.getMessage(), commit.getHeadRef());
+			// keys in the order written in the message; never the branch name
+			Set<String> keys = JiraKeyExtractor.extract(commit.getMessage());
 			if (!keys.isEmpty()) {
 				rawKeysByCommit.put(commit.getId(), keys);
 			}
+		}
+		if (batch.isEmpty()) {
+			return 0;
 		}
 		Map<UUID, List<SourceKey>> keysByCommit = new HashMap<>();
 		if (!rawKeysByCommit.isEmpty()) {
@@ -127,10 +134,7 @@ public class CommitTaskAutoLinkService {
 						ambiguousPrefixes);
 			}
 		}
-		if (keysByCommit.isEmpty() && merges.isEmpty()) {
-			return 0;
-		}
-		return applyLinks(projectId, chooseTasks(projectId, keysByCommit), merges, commits);
+		return applyLinks(projectId, chooseTasks(projectId, keysByCommit), merges, rawKeysByCommit, batch, commits);
 	}
 
 	/**
@@ -211,25 +215,30 @@ public class CommitTaskAutoLinkService {
 	}
 
 	/**
-	 * Keep exactly the chosen link of each commit: create it when missing, drop the commit's links to
-	 * other tasks (and every link of a merge commit). A commit with no resolvable key keeps what it has,
-	 * e.g. a link to a task of a source revoked since.
+	 * Keep exactly the chosen link of each commit: create it when missing; drop links to other tasks,
+	 * links whose key is not in the message (e.g. added from a branch name) and every link of a merge
+	 * commit. A link whose key is in the message but no longer resolves (a source revoked since) stays.
 	 */
-	private int applyLinks(UUID projectId, Map<UUID, Choice> chosen, Set<UUID> merges, List<GitCommit> commits) {
-		Set<UUID> touched = new HashSet<>(chosen.keySet());
-		touched.addAll(merges);
-		if (touched.isEmpty()) {
-			return 0;
-		}
+	private int applyLinks(
+			UUID projectId,
+			Map<UUID, Choice> chosen,
+			Set<UUID> merges,
+			Map<UUID, Set<String>> messageKeys,
+			Set<UUID> batch,
+			List<GitCommit> commits) {
 		Set<UUID> alreadyLinked = new HashSet<>();
 		List<TaskGitCommitLink> stale = new ArrayList<>();
-		for (TaskGitCommitLink link : links.findByGitCommit_IdIn(touched)) {
+		for (TaskGitCommitLink link : links.findByGitCommit_IdIn(batch)) {
 			UUID commitId = link.getGitCommit().getId();
 			Choice choice = chosen.get(commitId);
-			if (choice != null && choice.task().getId().equals(link.getTask().getId()) && alreadyLinked.add(commitId)) {
+			if (choice != null) {
+				if (choice.task().getId().equals(link.getTask().getId()) && alreadyLinked.add(commitId)) {
+					continue;
+				}
+			} else if (!merges.contains(commitId) && keyInMessage(link, messageKeys.get(commitId))) {
 				continue;
 			}
-			stale.add(link); // a second task of this commit, or any task of a merge commit
+			stale.add(link);
 		}
 		Map<UUID, GitCommit> commitsById = commits.stream()
 				.filter(c -> c != null && c.getId() != null)
@@ -260,6 +269,16 @@ public class CommitTaskAutoLinkService {
 			links.saveAll(created);
 		}
 		return created.size();
+	}
+
+	private static boolean keyInMessage(TaskGitCommitLink link, Set<String> messageKeys) {
+		if (messageKeys == null || messageKeys.isEmpty()) {
+			return false;
+		}
+		String key = link.getTask() != null && link.getTask().getExternalKey() != null
+				? link.getTask().getExternalKey()
+				: link.getJiraKeySnapshot();
+		return key != null && messageKeys.contains(key.toUpperCase(Locale.ROOT));
 	}
 
 	private static String prefixOf(String key) {

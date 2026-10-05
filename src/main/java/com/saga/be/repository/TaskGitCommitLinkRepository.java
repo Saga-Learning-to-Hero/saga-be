@@ -15,6 +15,16 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 
 	boolean existsByTask_IdAndGitCommit_Id(UUID taskId, UUID gitCommitId);
 
+	/** Links whose task key is not written in the commit message (made from a branch name before). */
+	@Query(
+			"""
+			select distinct c.id from TaskGitCommitLink l join l.gitCommit c join l.task t
+			where c.message is null
+			   or t.externalKey is null
+			   or upper(c.message) not like concat('%', upper(t.externalKey), '%')
+			""")
+	List<UUID> findCommitIdsLinkedWithoutKeyInMessage(Pageable pageable);
+
 	/** Commits linked to more than one task (made before "one commit, one task"). */
 	@Query("select l.gitCommit.id from TaskGitCommitLink l group by l.gitCommit.id having count(l) > 1")
 	List<UUID> findCommitIdsWithSeveralTasks(Pageable pageable);

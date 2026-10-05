@@ -21,9 +21,10 @@ import org.springframework.stereotype.Component;
 
 /**
  * Brings links made before "one commit, one task" in line once at startup instead of waiting for the
- * nightly full GitHub sync: commits linked to several tasks, and merge commits with any link, go
- * through {@link CommitTaskAutoLinkService#linkCommits} again. Idempotent, so a restart finds
- * nothing left to do; off the startup thread and never fatal.
+ * nightly full GitHub sync: commits linked to several tasks, merge commits with any link, and links
+ * whose key is not in the commit message (taken from a branch name), go through
+ * {@link CommitTaskAutoLinkService#linkCommits} again. Idempotent, so a restart finds nothing left to
+ * do; off the startup thread and never fatal.
  */
 @Component
 @Profile("!test")
@@ -62,6 +63,7 @@ public class CommitTaskLinkCleanup {
 		try {
 			Set<UUID> ids = new LinkedHashSet<>(links.findCommitIdsWithSeveralTasks(PageRequest.of(0, MAX_COMMITS)));
 			ids.addAll(links.findMergeCommitIdsWithLinks(PageRequest.of(0, MAX_COMMITS)));
+			ids.addAll(links.findCommitIdsLinkedWithoutKeyInMessage(PageRequest.of(0, MAX_COMMITS)));
 			if (ids.isEmpty()) return 0;
 			long before = links.count();
 			List<UUID> all = new ArrayList<>(ids);

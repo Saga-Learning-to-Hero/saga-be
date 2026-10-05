@@ -281,23 +281,23 @@ class GitCommitProjectionAndLinkTest {
 	}
 
 	@Test
-	void autoLink_theBranchNameIsOnlyAFallback() {
-		JiraIntegration saga = activeSaga();
+	void autoLink_theBranchNameNeverLinks_andItsOldLinkIsRemoved() {
+		// 3f0eb3c "fix: commit đã có task thì ẩn form..." reached feat/SAGA-119-... when main was merged in
 		GitCommit commit = new GitCommit();
 		commit.setId(UUID.randomUUID());
-		commit.setMessage("fix login redirect");
-		commit.setHeadRef("feat/SAGA-102-login");
-		Task t102 = task(saga, "SAGA-102");
-		when(tasks.findByProject_IdAndJiraIntegration_IdInAndExternalKeyIgnoreCaseIn(eq(project.getId()), eq(Set.of(saga.getId())), any()))
-				.thenReturn(List.of(t102));
-		when(links.findByGitCommit_IdIn(any())).thenReturn(List.of());
-		when(links.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+		commit.setMessage("fix:  commit đã có task thì ẩn form gắn task thủ công");
+		commit.setHeadRef("feat/SAGA-119-Fix-peer-review-evaluation");
+		Task t119 = new Task();
+		t119.setId(UUID.randomUUID());
+		t119.setExternalKey("SAGA-119");
+		TaskGitCommitLink fromBranch = link(t119, commit);
+		when(links.findByGitCommit_IdIn(Set.of(commit.getId()))).thenReturn(List.of(fromBranch));
 
-		assertThat(autoLink.linkCommits(project.getId(), List.of(commit))).isEqualTo(1);
-		assertThat(savedLinks()).singleElement().satisfies(link -> {
-			assertThat(link.getTask()).isSameAs(t102);
-			assertThat(link.getLinkSource()).isEqualTo(TraceLinkSource.RECONCILIATION);
-		});
+		assertThat(autoLink.linkCommits(project.getId(), List.of(commit))).isZero();
+
+		verify(links).deleteAllInBatch(List.of(fromBranch));
+		verify(links, org.mockito.Mockito.never()).saveAll(any());
+		org.mockito.Mockito.verifyNoInteractions(tasks);
 	}
 
 	@Test
@@ -352,16 +352,20 @@ class GitCommitProjectionAndLinkTest {
 	}
 
 	@Test
-	void autoLink_aCommitWithoutAResolvableKeyKeepsWhatItHas() {
+	void autoLink_aLinkWhoseKeyIsInTheMessageStaysEvenIfItNoLongerResolves() {
 		activeSaga();
 		GitCommit commit = new GitCommit();
 		commit.setId(UUID.randomUUID());
 		commit.setMessage("OLD-2 legacy work");
+		Task old = new Task();
+		old.setId(UUID.randomUUID());
+		old.setExternalKey("OLD-2");
+		when(links.findByGitCommit_IdIn(Set.of(commit.getId()))).thenReturn(List.of(link(old, commit)));
 
 		assertThat(autoLink.linkCommits(project.getId(), List.of(commit))).isZero();
 
-		verify(links, org.mockito.Mockito.never()).findByGitCommit_IdIn(any());
 		verify(links, org.mockito.Mockito.never()).deleteAllInBatch(any());
+		verify(links, org.mockito.Mockito.never()).saveAll(any());
 	}
 
 	@Test

@@ -333,6 +333,28 @@ class MultiJiraCommitAttributionTest {
 	}
 
 	@Test
+	void theStartupCleanupRemovesALinkThatCameFromTheBranchName() throws Exception {
+		Seed seed = seed(source("SAGA", IntegrationStatus.ACTIVE));
+		Task t119 = task(seed.sources().get(0), "SAGA-119", "10119");
+		String sha = sha();
+		webhook(seed, sha, "fix: [SAGA-UI] hide the manual link form");
+		new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+			TaskGitCommitLink fromBranch = new TaskGitCommitLink();
+			fromBranch.setTask(em.find(Task.class, t119.getId()));
+			fromBranch.setGitCommit(commits.findByRepo_IdAndShaHashIn(seed.repoId(), List.of(sha)).getFirst());
+			fromBranch.setLinkSource(TraceLinkSource.RECONCILIATION);
+			fromBranch.setJiraKeySnapshot("SAGA-119");
+			fromBranch.setConfidence("HIGH");
+			em.persist(fromBranch);
+		});
+		assertThat(links(seed)).hasSize(1);
+
+		assertThat(cleanup.run()).isEqualTo(1);
+
+		assertThat(links(seed)).isEmpty();
+	}
+
+	@Test
 	void aMergeCommitIsNeverLinkedToTheTaskInItsBranchName() throws Exception {
 		Seed seed = seed(source("SAGA", IntegrationStatus.ACTIVE));
 		task(seed.sources().get(0), "SAGA-119", "10119");
