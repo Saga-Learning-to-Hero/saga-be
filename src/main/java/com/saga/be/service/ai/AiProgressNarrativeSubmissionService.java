@@ -70,7 +70,8 @@ public class AiProgressNarrativeSubmissionService {
 	 * manual USER_REQUEST when the course explicitly allows it (section II/VIII). */
 	/** A team/student report: the team's key, or the course key only for a team the lecturer picked. */
 	private AiCredentialResolver.Resolution requireProjectCredential(Project project) {
-		UUID courseId = project.getCourse() == null ? null : project.getCourse().getId();
+		// by query: project was loaded outside a transaction, its course is a lazy proxy (cf. 986d160)
+		UUID courseId = projects.findCourseIdById(project.getId()).orElse(null);
 		var resolution = credentialResolver.resolveForProject(project.getId(), courseId, AiAnalysisType.PROGRESS_NARRATIVE, AiProviderRole.PRIMARY, AiInvocationOrigin.USER_REQUEST);
 		if (resolution.outcome() == AiCredentialResolver.Outcome.UNAVAILABLE) throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE, HttpStatus.CONFLICT, "Nhóm chưa nhập key AI và chưa được giảng viên cho dùng key của lớp.");
 		return resolution;

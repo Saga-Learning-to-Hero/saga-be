@@ -62,6 +62,19 @@ public class AiProgressFactsBuilder {
 
 	private LocalDateTime now() { return LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC); }
 
+	private com.saga.be.repository.ProjectRepository projects;
+
+	@Autowired(required = false)
+	public void setProjects(com.saga.be.repository.ProjectRepository projects) {
+		this.projects = projects;
+	}
+
+	/** By query when possible: a project loaded outside a transaction has a lazy course proxy (cf. 986d160). */
+	private UUID courseIdOf(Project project) {
+		if (projects != null) return projects.findCourseIdById(project.getId()).orElse(null);
+		return project.getCourse() == null ? null : project.getCourse().getId();
+	}
+
 	public Facts buildStudent(Project project, UUID studentId) {
 		LocalDateTime now = now();
 		LocalDateTime cutoff = now.plus(deadlineProperties.getDueSoonWindow());
@@ -97,7 +110,7 @@ public class AiProgressFactsBuilder {
 		facts.put("overdueCount", tasks.countOverdueForProject(project.getId(), null, now));
 		facts.put("dueSoonCount", tasks.countDueSoonForProject(project.getId(), null, now, cutoff));
 		if (roster != null && team != null) {
-			facts.put("course", roster.courseHeader(project.getCourse() == null ? null : project.getCourse().getId()));
+			facts.put("course", roster.courseHeader(courseIdOf(project)));
 			roster.addRoster(facts, List.of(team), now);
 		}
 		return new Facts(facts);

@@ -66,6 +66,8 @@ class AiAutomationEventWiringContextTest {
 	private CourseAiSettingsService settings;
 	@org.springframework.beans.factory.annotation.Autowired
 	private AiModelProvider provider;
+	@org.springframework.beans.factory.annotation.Autowired
+	private ProjectRepository projects;
 
 	@BeforeEach
 	void resetLeaves() {
@@ -111,6 +113,8 @@ class AiAutomationEventWiringContextTest {
 		task.setProject(project);
 		when(tasks.findActiveFetchedByIdAndProject_Id(TASK_ID, PROJECT_ID)).thenReturn(Optional.of(task));
 		when(settings.get(courseId)).thenReturn(new CourseAiSettingsService.Settings(true, false));
+		// the course id is read by query (the project is loaded outside a transaction)
+		when(projects.findCourseIdById(PROJECT_ID)).thenReturn(Optional.of(courseId));
 		when(credentials.resolve(courseId, AiAnalysisType.RISK_ANALYSIS, AiProviderRole.PRIMARY, AiInvocationOrigin.AUTOMATION))
 				.thenReturn(new AiCredentialResolver.Resolution(AiCredentialResolver.Outcome.COURSE, UUID.randomUUID(), "credential-fingerprint"));
 		when(snapshots.build(task)).thenReturn(List.of());

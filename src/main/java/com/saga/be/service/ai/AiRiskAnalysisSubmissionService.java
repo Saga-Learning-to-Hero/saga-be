@@ -89,7 +89,8 @@ public class AiRiskAnalysisSubmissionService {
 	/** RISK_ANALYSIS always requires a COURSE PRIMARY credential -- no platform fallback for any
 	 * scope (task/student/team), manual or automatic (section II). */
 	private AiCredentialResolver.Resolution requireCourseCredential(Project project, AiInvocationOrigin origin) {
-		UUID courseId = project.getCourse() == null ? null : project.getCourse().getId();
+		// by query: project was loaded outside a transaction, its course is a lazy proxy (cf. 986d160)
+		UUID courseId = projects.findCourseIdById(project.getId()).orElse(null);
 		var resolution = credentialResolver.resolveForProject(project.getId(), courseId, AiAnalysisType.RISK_ANALYSIS, AiProviderRole.PRIMARY, origin);
 		if (resolution.outcome() != AiCredentialResolver.Outcome.COURSE) throw new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE, HttpStatus.CONFLICT, "Nhóm chưa nhập key AI và chưa được giảng viên cho dùng key của lớp.");
 		return resolution;
