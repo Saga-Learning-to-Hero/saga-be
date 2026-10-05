@@ -108,12 +108,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 			"spring.jpa.open-in-view=false",
 			"spring.jpa.properties.hibernate.type.preferred_uuid_jdbc_type=CHAR",
 			"spring.jpa.properties.hibernate.generate_statistics=true",
-			"saga.auth.bootstrap-admin.enabled=false"
+			"saga.auth.bootstrap-admin.enabled=false",
+			"saga.links.one-task-cleanup.enabled=false"
 		})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
 	GitCommitProjectionService.class,
 	CommitTaskAutoLinkService.class,
+	CommitTaskLinkCleanup.class,
 	JpaCommitMessageCandidateQuery.class,
 	AiCommitAutomationTrigger.class,
 	ProviderWebhookProjectionService.class,
@@ -169,6 +171,7 @@ class MultiJiraCommitAttributionTest {
 	@Autowired private ProviderWebhookProjectionService webhookProjection;
 	@Autowired private GitCommitProjectionService commitProjection;
 	@Autowired private CommitTaskAutoLinkService autoLink;
+	@Autowired private CommitTaskLinkCleanup cleanup;
 	@Autowired private GitCommitBranchSnapshotService branchSnapshots;
 	@Autowired private AiAnalysisSubmissionService aiSubmissions;
 	@Autowired private ProjectRealtimePublisher realtime;
@@ -235,7 +238,9 @@ class MultiJiraCommitAttributionTest {
 		// Same key text under the other source must never be picked for SAGA-1 / LMS-42.
 		task(seed.sources().get(1), "SAGA-1", "20001");
 
-		webhook(seed, sha(), "SAGA-1 and LMS-42 wiring");
+		// one commit belongs to one task: each source gets its own commit
+		webhook(seed, sha(), "SAGA-1 wiring");
+		webhook(seed, sha(), "LMS-42 wiring");
 
 		assertThat(linkedTaskIds(seed)).containsExactlyInAnyOrder(saga.getId(), lms.getId());
 	}
@@ -246,7 +251,8 @@ class MultiJiraCommitAttributionTest {
 		Task saga = task(seed.sources().get(0), "SAGA-7", "10007");
 		Task lms = task(seed.sources().get(1), "LMS-7", "10007");
 
-		syncOnce(seed, sha(), "SAGA-7 then LMS-7");
+		syncOnce(seed, sha(), "SAGA-7 first half");
+		webhook(seed, sha(), "LMS-7 second half");
 
 		assertThat(saga.getId()).isNotEqualTo(lms.getId());
 		assertThat(linkedTaskIds(seed)).containsExactlyInAnyOrder(saga.getId(), lms.getId());
@@ -265,6 +271,77 @@ class MultiJiraCommitAttributionTest {
 
 		assertThat(commitIds(seed, sha)).hasSize(1);
 		assertThat(linkedTaskIds(seed)).containsExactly(lms.getId()); // unambiguous key still links
+	}
+
+	// ---- one commit, one task ----
+
+	@Test
+	void aSecondLinkFromTheOldRulesIsRemovedWhenTheCommitIsProjectedAgain() throws Exception {
+		Seed seed = seed(source("SAGA", IntegrationStatus.ACTIVE));
+		Task own = task(seed.sources().get(0), "SAGA-116", "10116");
+		Task branch = task(seed.sources().get(0), "SAGA-102", "10102");
+		String sha = sha();
+		webhook(seed, sha, "fix: [FE][SAGA-116] filter by courseId");
+		assertThat(linkedTaskIds(seed)).containsExactly(own.getId());
+		// what the branch name feat/SAGA-102-... used to add next to the message key
+		new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+			TaskGitCommitLink extra = new TaskGitCommitLink();
+			extra.setTask(em.find(Task.class, branch.getId()));
+			extra.setGitCommit(commits.findByRepo_IdAndShaHashIn(seed.repoId(), List.of(sha)).getFirst());
+			extra.setLinkSource(TraceLinkSource.RECONCILIATION);
+			extra.setJiraKeySnapshot("SAGA-102");
+			extra.setConfidence("HIGH");
+			em.persist(extra);
+		});
+		assertThat(linkedTaskIds(seed)).containsExactlyInAnyOrder(own.getId(), branch.getId());
+
+		syncOnce(seed, sha, "fix: [FE][SAGA-116] filter by courseId");
+
+		assertThat(linkedTaskIds(seed)).containsExactly(own.getId());
+	}
+
+	@Test
+	void theStartupCleanupFixesOldDoubleLinksAndMergeLinksOnce() throws Exception {
+		Seed seed = seed(source("SAGA", IntegrationStatus.ACTIVE));
+		Task own = task(seed.sources().get(0), "SAGA-116", "10116");
+		Task branch = task(seed.sources().get(0), "SAGA-102", "10102");
+		String work = sha();
+		String merge = sha();
+		webhook(seed, work, "fix: [FE][SAGA-116] filter by courseId");
+		webhook(seed, merge, "Merge pull request #7 from org/feat/SAGA-102-x");
+		// rows the old rules left behind
+		new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+			for (String sha : List.of(work, merge)) {
+				TaskGitCommitLink extra = new TaskGitCommitLink();
+				extra.setTask(em.find(Task.class, branch.getId()));
+				extra.setGitCommit(commits.findByRepo_IdAndShaHashIn(seed.repoId(), List.of(sha)).getFirst());
+				extra.setLinkSource(TraceLinkSource.RECONCILIATION);
+				extra.setJiraKeySnapshot("SAGA-102");
+				extra.setConfidence("HIGH");
+				em.persist(extra);
+			}
+		});
+		assertThat(links(seed)).hasSize(3);
+
+		assertThat(cleanup.run()).isEqualTo(2);
+
+		assertThat(links(seed)).singleElement().satisfies(link -> {
+			assertThat(link.getTask().getId()).isEqualTo(own.getId());
+			assertThat(link.getGitCommit().getShaHash()).isEqualTo(work);
+		});
+		assertThat(cleanup.run()).isZero();
+	}
+
+	@Test
+	void aMergeCommitIsNeverLinkedToTheTaskInItsBranchName() throws Exception {
+		Seed seed = seed(source("SAGA", IntegrationStatus.ACTIVE));
+		task(seed.sources().get(0), "SAGA-119", "10119");
+		String sha = sha();
+
+		webhook(seed, sha, "Merge pull request #42 from org/feat/SAGA-119-report");
+
+		assertThat(commitIds(seed, sha)).hasSize(1);
+		assertThat(links(seed)).isEmpty();
 	}
 
 	// ---- D. ACTIVE + REVOKED ----
@@ -409,7 +486,9 @@ class MultiJiraCommitAttributionTest {
 
 		assertThat(one).as("statistics are live").isPositive();
 		assertThat(forty).isEqualTo(one);
-		assertThat(links(seed)).hasSize(2 + 80);
+		// "SAGA-i LMS-i": one task per commit, the first key written
+		assertThat(links(seed)).hasSize(1 + 40);
+		assertThat(links(seed)).allSatisfy(link -> assertThat(link.getTask().getExternalKey()).startsWith("SAGA-"));
 	}
 
 	// ---- helpers ----

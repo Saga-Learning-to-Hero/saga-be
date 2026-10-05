@@ -160,6 +160,34 @@ class CommitTaskManualLinkServiceTest {
 	}
 
 	@Test
+	void aCommitWhoseKeyAlreadyNamesAnotherTaskCannotTakeASecondOne() {
+		Task other = new Task();
+		other.setId(UUID.randomUUID());
+		other.setExternalKey("SAGA-116");
+		TaskGitCommitLink automatic = new TaskGitCommitLink();
+		automatic.setTask(other);
+		automatic.setGitCommit(commit);
+		when(links.findLiveWithTaskByGitCommitIds(any())).thenReturn(List.of(automatic));
+
+		assertThatThrownBy(() -> service.link(userId, projectId, commit.getId(), task.getId()))
+				.isInstanceOf(IntegrationException.class)
+				.satisfies(ex -> assertThat(((IntegrationException) ex).getCode()).isEqualTo(IntegrationErrorCode.COMMIT_TASK_LINK_INVALID))
+				.hasMessageContaining("SAGA-116")
+				.hasMessageContaining("Mỗi commit chỉ gắn một task");
+		verify(manualLinks, never()).saveAndFlush(any());
+	}
+
+	@Test
+	void aCommitAttachedByHandToAnotherTaskMustBeUnlinkedFirst() {
+		when(manualLinks.existsByGitCommit_Id(commit.getId())).thenReturn(true);
+
+		assertThatThrownBy(() -> service.link(userId, projectId, commit.getId(), task.getId()))
+				.isInstanceOf(IntegrationException.class)
+				.hasMessageContaining("Bỏ gắn task đó trước");
+		verify(manualLinks, never()).saveAndFlush(any());
+	}
+
+	@Test
 	void aDoubleClickRaceIsHarmless() {
 		when(manualLinks.saveAndFlush(any())).thenThrow(new DataIntegrityViolationException("uk_task_commit_manual_link"));
 		service.link(userId, projectId, commit.getId(), task.getId());

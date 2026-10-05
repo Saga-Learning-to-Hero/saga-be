@@ -93,7 +93,6 @@ class GitCommitProjectionAndLinkTest {
 		});
 		activeSaga();
 		when(tasks.findByProject_IdAndJiraIntegration_IdInAndExternalKeyIgnoreCaseIn(any(), any(), any())).thenReturn(List.of());
-		when(links.findByGitCommit_IdIn(any())).thenReturn(List.of());
 
 		assertThat(commitsService.upsertBatch(repo, List.of(draft))).isEqualTo(1);
 
@@ -239,25 +238,130 @@ class GitCommitProjectionAndLinkTest {
 	}
 
 	@Test
-	void autoLink_oneCommitMultipleTasks() {
+	void autoLink_oneCommitBelongsToOneTask_theFirstKeyInTheMessage() {
 		JiraIntegration saga = activeSaga();
 		GitCommit commit = new GitCommit();
 		commit.setId(UUID.randomUUID());
 		commit.setMessage("SAGA-12 SAGA-15 complete flow");
-		Task t12 = new Task();
-		t12.setId(UUID.randomUUID());
-		t12.setExternalKey("SAGA-12");
-		t12.setJiraIntegration(saga);
-		Task t15 = new Task();
-		t15.setId(UUID.randomUUID());
-		t15.setExternalKey("SAGA-15");
-		t15.setJiraIntegration(saga);
+		Task t12 = task(saga, "SAGA-12");
+		Task t15 = task(saga, "SAGA-15");
 		when(tasks.findByProject_IdAndJiraIntegration_IdInAndExternalKeyIgnoreCaseIn(eq(project.getId()), eq(Set.of(saga.getId())), any()))
-				.thenReturn(List.of(t12, t15));
+				.thenReturn(List.of(t15, t12));
 		when(links.findByGitCommit_IdIn(any())).thenReturn(List.of());
 		when(links.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
-		assertThat(autoLink.linkCommits(project.getId(), List.of(commit))).isEqualTo(2);
+		assertThat(autoLink.linkCommits(project.getId(), List.of(commit))).isEqualTo(1);
+
+		assertThat(savedLinks()).singleElement().satisfies(link -> {
+			assertThat(link.getTask()).isSameAs(t12);
+			assertThat(link.getJiraKeySnapshot()).isEqualTo("SAGA-12");
+		});
+	}
+
+	@Test
+	void autoLink_theMessageKeyWinsOverTheBranchName_andTheBranchLinkIsRemoved() {
+		// af2e84a: "fix: [FE][SAGA-116] ..." pushed on feat/SAGA-102-... used to be linked to both
+		JiraIntegration saga = activeSaga();
+		GitCommit commit = new GitCommit();
+		commit.setId(UUID.randomUUID());
+		commit.setMessage("fix: [FE][SAGA-116] Cập nhật bộ lọc courseId cho DelayCasesActionWidget");
+		commit.setHeadRef("refs/heads/feat/SAGA-102-delay-cases");
+		Task t116 = task(saga, "SAGA-116");
+		Task t102 = task(saga, "SAGA-102");
+		when(tasks.findByProject_IdAndJiraIntegration_IdInAndExternalKeyIgnoreCaseIn(eq(project.getId()), eq(Set.of(saga.getId())), any()))
+				.thenReturn(List.of(t102, t116));
+		TaskGitCommitLink keep = link(t116, commit);
+		TaskGitCommitLink branch = link(t102, commit);
+		when(links.findByGitCommit_IdIn(any())).thenReturn(List.of(branch, keep));
+
+		assertThat(autoLink.linkCommits(project.getId(), List.of(commit))).isZero();
+
+		verify(links).deleteAllInBatch(List.of(branch));
+		verify(links, org.mockito.Mockito.never()).saveAll(any());
+	}
+
+	@Test
+	void autoLink_theBranchNameIsOnlyAFallback() {
+		JiraIntegration saga = activeSaga();
+		GitCommit commit = new GitCommit();
+		commit.setId(UUID.randomUUID());
+		commit.setMessage("fix login redirect");
+		commit.setHeadRef("feat/SAGA-102-login");
+		Task t102 = task(saga, "SAGA-102");
+		when(tasks.findByProject_IdAndJiraIntegration_IdInAndExternalKeyIgnoreCaseIn(eq(project.getId()), eq(Set.of(saga.getId())), any()))
+				.thenReturn(List.of(t102));
+		when(links.findByGitCommit_IdIn(any())).thenReturn(List.of());
+		when(links.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		assertThat(autoLink.linkCommits(project.getId(), List.of(commit))).isEqualTo(1);
+		assertThat(savedLinks()).singleElement().satisfies(link -> {
+			assertThat(link.getTask()).isSameAs(t102);
+			assertThat(link.getLinkSource()).isEqualTo(TraceLinkSource.RECONCILIATION);
+		});
+	}
+
+	@Test
+	void autoLink_aKeyWithoutATaskFallsThroughToTheNextKey() {
+		JiraIntegration saga = activeSaga();
+		GitCommit commit = new GitCommit();
+		commit.setId(UUID.randomUUID());
+		commit.setMessage("SAGA-404 SAGA-15 typo in key");
+		Task t15 = task(saga, "SAGA-15");
+		when(tasks.findByProject_IdAndJiraIntegration_IdInAndExternalKeyIgnoreCaseIn(eq(project.getId()), eq(Set.of(saga.getId())), any()))
+				.thenReturn(List.of(t15));
+		when(links.findByGitCommit_IdIn(any())).thenReturn(List.of());
+		when(links.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		assertThat(autoLink.linkCommits(project.getId(), List.of(commit))).isEqualTo(1);
+		assertThat(savedLinks()).singleElement().extracting(TaskGitCommitLink::getTask).isSameAs(t15);
+	}
+
+	@Test
+	void autoLink_aMergeCommitIsNeverLinked_andLosesOldLinks() {
+		GitCommit merge = new GitCommit();
+		merge.setId(UUID.randomUUID());
+		merge.setMessage("Merge pull request #12 from org/feat/SAGA-102-login");
+		Task t102 = new Task();
+		t102.setId(UUID.randomUUID());
+		TaskGitCommitLink old = link(t102, merge);
+		when(links.findByGitCommit_IdIn(Set.of(merge.getId()))).thenReturn(List.of(old));
+
+		assertThat(autoLink.linkCommits(project.getId(), List.of(merge))).isZero();
+
+		verify(links).deleteAllInBatch(List.of(old));
+		verify(links, org.mockito.Mockito.never()).saveAll(any());
+		org.mockito.Mockito.verifyNoInteractions(tasks, jiraIntegrations);
+	}
+
+	@Test
+	void autoLink_aKeyThatNamesTheTaskReplacesAHandMadeAttachment() {
+		JiraIntegration saga = activeSaga();
+		var manualLinks = org.mockito.Mockito.mock(com.saga.be.repository.TaskCommitManualLinkRepository.class);
+		autoLink.setManualLinks(manualLinks);
+		GitCommit commit = new GitCommit();
+		commit.setId(UUID.randomUUID());
+		commit.setMessage("feat: SAGA-12 login");
+		when(tasks.findByProject_IdAndJiraIntegration_IdInAndExternalKeyIgnoreCaseIn(eq(project.getId()), eq(Set.of(saga.getId())), any()))
+				.thenReturn(List.of(task(saga, "SAGA-12")));
+		when(links.findByGitCommit_IdIn(any())).thenReturn(List.of());
+		when(links.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		autoLink.linkCommits(project.getId(), List.of(commit));
+
+		verify(manualLinks).deleteByGitCommitIds(Set.of(commit.getId()));
+	}
+
+	@Test
+	void autoLink_aCommitWithoutAResolvableKeyKeepsWhatItHas() {
+		activeSaga();
+		GitCommit commit = new GitCommit();
+		commit.setId(UUID.randomUUID());
+		commit.setMessage("OLD-2 legacy work");
+
+		assertThat(autoLink.linkCommits(project.getId(), List.of(commit))).isZero();
+
+		verify(links, org.mockito.Mockito.never()).findByGitCommit_IdIn(any());
+		verify(links, org.mockito.Mockito.never()).deleteAllInBatch(any());
 	}
 
 	@Test
@@ -337,6 +441,29 @@ class GitCommitProjectionAndLinkTest {
 		assertThat(after100 - after10).isEqualTo(1);
 	}
 	/** The project's single ACTIVE Jira source with projectKey SAGA. */
+	private Task task(JiraIntegration source, String key) {
+		Task task = new Task();
+		task.setId(UUID.randomUUID());
+		task.setExternalKey(key);
+		task.setJiraIntegration(source);
+		return task;
+	}
+
+	private static TaskGitCommitLink link(Task task, GitCommit commit) {
+		TaskGitCommitLink link = new TaskGitCommitLink();
+		link.setTask(task);
+		link.setGitCommit(commit);
+		link.setLinkSource(TraceLinkSource.COMMIT_MESSAGE);
+		return link;
+	}
+
+	@SuppressWarnings("unchecked")
+	private List<TaskGitCommitLink> savedLinks() {
+		ArgumentCaptor<List<TaskGitCommitLink>> captor = ArgumentCaptor.forClass(List.class);
+		verify(links).saveAll(captor.capture());
+		return captor.getValue();
+	}
+
 	private JiraIntegration activeSaga() {
 		JiraIntegration saga = new JiraIntegration();
 		saga.setId(UUID.randomUUID());

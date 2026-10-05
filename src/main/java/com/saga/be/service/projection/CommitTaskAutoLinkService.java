@@ -7,6 +7,7 @@ import com.saga.be.entity.jira.JiraIntegration;
 import com.saga.be.entity.jira.Task;
 import com.saga.be.entity.traceability.TaskGitCommitLink;
 import com.saga.be.repository.JiraIntegrationRepository;
+import com.saga.be.repository.TaskCommitManualLinkRepository;
 import com.saga.be.repository.TaskGitCommitLinkRepository;
 import com.saga.be.repository.TaskRepository;
 import com.saga.be.service.traceability.JiraKeyExtractor;
@@ -38,6 +39,8 @@ import org.springframework.transaction.annotation.Transactional;
  * live on different Jira sites; such a key is ambiguous and is not linked. The task is then looked
  * up within that source only ({@code task.jira_integration_id}), so the same key under two sources
  * can never cross-link.
+ *
+ * <p>One commit, one task: see {@link #linkCommits}.
  */
 @Service
 @Profile("!test")
@@ -49,6 +52,12 @@ public class CommitTaskAutoLinkService {
 	private final TaskGitCommitLinkRepository links;
 	private final CommitMessageCandidateQuery candidates;
 	private final JiraIntegrationRepository jiraIntegrations;
+	private TaskCommitManualLinkRepository manualLinks;
+
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	public void setManualLinks(TaskCommitManualLinkRepository manualLinks) {
+		this.manualLinks = manualLinks;
+	}
 
 	public CommitTaskAutoLinkService(
 			TaskRepository tasks,
@@ -61,58 +70,67 @@ public class CommitTaskAutoLinkService {
 		this.jiraIntegrations = jiraIntegrations;
 	}
 
-	/** Bounded per batch: one ACTIVE-source query, one task query, one existing-link query. */
+	/**
+	 * One commit belongs to one task (a task may have many commits): the first key in the message that
+	 * resolves to exactly one live task wins, then the first in the branch name. Other automatic links
+	 * of that commit, and hand-made ones, are removed; merge commits are never linked.
+	 *
+	 * <p>Bounded per batch: one ACTIVE-source query, one task query, one existing-link query, at most
+	 * one delete of each kind.
+	 */
 	@Transactional
 	public int linkCommits(UUID projectId, List<GitCommit> commits) {
 		if (projectId == null || commits == null || commits.isEmpty()) {
 			return 0;
 		}
 		Map<UUID, Set<String>> rawKeysByCommit = new HashMap<>();
+		Set<UUID> merges = new HashSet<>();
 		for (GitCommit commit : commits) {
 			if (commit == null || commit.getId() == null) {
 				continue;
 			}
+			if (commit.looksLikeMerge()) {
+				merges.add(commit.getId());
+				continue;
+			}
+			// message keys first, in the order written; the branch name only as a fallback
 			Set<String> keys = JiraKeyExtractor.extract(commit.getMessage(), commit.getHeadRef());
 			if (!keys.isEmpty()) {
 				rawKeysByCommit.put(commit.getId(), keys);
 			}
 		}
-		if (rawKeysByCommit.isEmpty()) {
-			return 0;
-		}
-		Map<String, List<UUID>> sourcesByProjectKey = activeSourcesByProjectKey(projectId);
-		if (sourcesByProjectKey.isEmpty()) {
-			return 0;
-		}
-		Map<UUID, Set<SourceKey>> keysByCommit = new HashMap<>();
-		Set<String> ambiguousPrefixes = new TreeSet<>();
-		for (Map.Entry<UUID, Set<String>> entry : rawKeysByCommit.entrySet()) {
-			Set<SourceKey> resolved = new HashSet<>();
-			for (String key : entry.getValue()) {
-				List<UUID> sources = sourcesByProjectKey.get(prefixOf(key));
-				if (sources == null) {
-					continue; // not a key of any ACTIVE source of this project
+		Map<UUID, List<SourceKey>> keysByCommit = new HashMap<>();
+		if (!rawKeysByCommit.isEmpty()) {
+			Map<String, List<UUID>> sourcesByProjectKey = activeSourcesByProjectKey(projectId);
+			Set<String> ambiguousPrefixes = new TreeSet<>();
+			for (Map.Entry<UUID, Set<String>> entry : rawKeysByCommit.entrySet()) {
+				List<SourceKey> resolved = new ArrayList<>();
+				for (String key : entry.getValue()) {
+					List<UUID> sources = sourcesByProjectKey.get(prefixOf(key));
+					if (sources == null) {
+						continue; // not a key of any ACTIVE source of this project
+					}
+					if (sources.size() > 1) {
+						ambiguousPrefixes.add(prefixOf(key));
+						continue;
+					}
+					resolved.add(new SourceKey(sources.get(0), key));
 				}
-				if (sources.size() > 1) {
-					ambiguousPrefixes.add(prefixOf(key));
-					continue;
+				if (!resolved.isEmpty()) {
+					keysByCommit.put(entry.getKey(), resolved);
 				}
-				resolved.add(new SourceKey(sources.get(0), key));
 			}
-			if (!resolved.isEmpty()) {
-				keysByCommit.put(entry.getKey(), resolved);
+			if (!ambiguousPrefixes.isEmpty()) {
+				log.warn(
+						"commit task auto-link skipped ambiguous Jira keys projectId={} projectKeys={} reason=MULTIPLE_ACTIVE_SOURCES_SHARE_PROJECT_KEY",
+						projectId,
+						ambiguousPrefixes);
 			}
 		}
-		if (!ambiguousPrefixes.isEmpty()) {
-			log.warn(
-					"commit task auto-link skipped ambiguous Jira keys projectId={} projectKeys={} reason=MULTIPLE_ACTIVE_SOURCES_SHARE_PROJECT_KEY",
-					projectId,
-					ambiguousPrefixes);
-		}
-		if (keysByCommit.isEmpty()) {
+		if (keysByCommit.isEmpty() && merges.isEmpty()) {
 			return 0;
 		}
-		return createMissingLinks(projectId, keysByCommit, commits);
+		return applyLinks(projectId, chooseTasks(projectId, keysByCommit), merges, commits);
 	}
 
 	/**
@@ -162,7 +180,11 @@ public class CommitTaskAutoLinkService {
 		return byKey;
 	}
 
-	private int createMissingLinks(UUID projectId, Map<UUID, Set<SourceKey>> keysByCommit, List<GitCommit> commits) {
+	/** Per commit, the first key (in written order) that names exactly one live task of its source. */
+	private Map<UUID, Choice> chooseTasks(UUID projectId, Map<UUID, List<SourceKey>> keysByCommit) {
+		if (keysByCommit.isEmpty()) {
+			return Map.of();
+		}
 		Set<UUID> sourceIds = new HashSet<>();
 		Set<String> allKeys = new HashSet<>();
 		keysByCommit.values().forEach(keys -> keys.forEach(k -> {
@@ -174,39 +196,65 @@ public class CommitTaskAutoLinkService {
 				.stream()
 				.filter(task -> task.getDeletedAt() == null && task.getJiraIntegration() != null && task.getExternalKey() != null)
 				.collect(Collectors.groupingBy(task -> new SourceKey(task.getJiraIntegration().getId(), task.getExternalKey().toUpperCase(Locale.ROOT))));
-		Set<UUID> commitIds = keysByCommit.keySet();
-		Set<String> existingPairs = links.findByGitCommit_IdIn(commitIds).stream()
-				.map(link -> link.getTask().getId() + ":" + link.getGitCommit().getId())
-				.collect(Collectors.toCollection(HashSet::new));
+		Map<UUID, Choice> chosen = new HashMap<>();
+		for (Map.Entry<UUID, List<SourceKey>> entry : keysByCommit.entrySet()) {
+			for (SourceKey sourceKey : entry.getValue()) {
+				List<Task> matches = tasksBySourceKey.getOrDefault(sourceKey, List.of());
+				// None: unresolved key. Several live tasks with one key in one source: ambiguous, never guessed.
+				if (matches.size() == 1) {
+					chosen.put(entry.getKey(), new Choice(sourceKey.key(), matches.get(0)));
+					break;
+				}
+			}
+		}
+		return chosen;
+	}
+
+	/**
+	 * Keep exactly the chosen link of each commit: create it when missing, drop the commit's links to
+	 * other tasks (and every link of a merge commit). A commit with no resolvable key keeps what it has,
+	 * e.g. a link to a task of a source revoked since.
+	 */
+	private int applyLinks(UUID projectId, Map<UUID, Choice> chosen, Set<UUID> merges, List<GitCommit> commits) {
+		Set<UUID> touched = new HashSet<>(chosen.keySet());
+		touched.addAll(merges);
+		if (touched.isEmpty()) {
+			return 0;
+		}
+		Set<UUID> alreadyLinked = new HashSet<>();
+		List<TaskGitCommitLink> stale = new ArrayList<>();
+		for (TaskGitCommitLink link : links.findByGitCommit_IdIn(touched)) {
+			UUID commitId = link.getGitCommit().getId();
+			Choice choice = chosen.get(commitId);
+			if (choice != null && choice.task().getId().equals(link.getTask().getId()) && alreadyLinked.add(commitId)) {
+				continue;
+			}
+			stale.add(link); // a second task of this commit, or any task of a merge commit
+		}
 		Map<UUID, GitCommit> commitsById = commits.stream()
 				.filter(c -> c != null && c.getId() != null)
 				.collect(Collectors.toMap(GitCommit::getId, Function.identity(), (a, b) -> a));
 		List<TaskGitCommitLink> created = new ArrayList<>();
-		for (Map.Entry<UUID, Set<SourceKey>> entry : keysByCommit.entrySet()) {
+		for (Map.Entry<UUID, Choice> entry : chosen.entrySet()) {
 			GitCommit commit = commitsById.get(entry.getKey());
-			if (commit == null) {
+			if (commit == null || alreadyLinked.contains(entry.getKey())) {
 				continue;
 			}
-			for (SourceKey sourceKey : entry.getValue()) {
-				List<Task> matches = tasksBySourceKey.getOrDefault(sourceKey, List.of());
-				if (matches.size() != 1) {
-					// None: unresolved key (no link). Several live tasks with one key in one source:
-					// ambiguous, never guessed.
-					continue;
-				}
-				Task task = matches.get(0);
-				String pair = task.getId() + ":" + commit.getId();
-				if (!existingPairs.add(pair)) {
-					continue;
-				}
-				TaskGitCommitLink link = new TaskGitCommitLink();
-				link.setTask(task);
-				link.setGitCommit(commit);
-				link.setLinkSource(sourceFor(commit.getMessage(), sourceKey.key()));
-				link.setJiraKeySnapshot(sourceKey.key());
-				link.setConfidence("HIGH");
-				created.add(link);
-			}
+			TaskGitCommitLink link = new TaskGitCommitLink();
+			link.setTask(entry.getValue().task());
+			link.setGitCommit(commit);
+			link.setLinkSource(sourceFor(commit.getMessage(), entry.getValue().key()));
+			link.setJiraKeySnapshot(entry.getValue().key());
+			link.setConfidence("HIGH");
+			created.add(link);
+		}
+		if (!stale.isEmpty()) {
+			links.deleteAllInBatch(stale);
+			log.info("commit task auto-link removed extra links projectId={} count={}", projectId, stale.size());
+		}
+		if (!chosen.isEmpty() && manualLinks != null) {
+			// the key in the commit now names its task: a hand-made attachment is no longer needed
+			manualLinks.deleteByGitCommitIds(chosen.keySet());
 		}
 		if (!created.isEmpty()) {
 			links.saveAll(created);
@@ -228,4 +276,7 @@ public class CommitTaskAutoLinkService {
 
 	/** An issue key qualified by the Jira source it was attributed to. */
 	private record SourceKey(UUID sourceId, String key) {}
+
+	/** The task a commit belongs to and the key that named it. */
+	private record Choice(String key, Task task) {}
 }

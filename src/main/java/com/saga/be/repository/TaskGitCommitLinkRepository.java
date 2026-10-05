@@ -15,6 +15,24 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 
 	boolean existsByTask_IdAndGitCommit_Id(UUID taskId, UUID gitCommitId);
 
+	/** Commits linked to more than one task (made before "one commit, one task"). */
+	@Query("select l.gitCommit.id from TaskGitCommitLink l group by l.gitCommit.id having count(l) > 1")
+	List<UUID> findCommitIdsWithSeveralTasks(Pageable pageable);
+
+	/** Merge commits that still carry a task link: known ones by parent count, else Git's / GitHub's merge messages. */
+	@Query(
+			"""
+			select distinct c.id from TaskGitCommitLink l join l.gitCommit c
+			where c.parentCount > 1
+			   or (c.parentCount is null
+			       and (c.message like 'Merge pull request #%'
+			            or c.message like 'Merge branch ''%'
+			            or c.message like 'Merge remote-tracking branch ''%'
+			            or c.message like 'Merge tag ''%'
+			            or c.message like 'Merge commit ''%'))
+			""")
+	List<UUID> findMergeCommitIdsWithLinks(Pageable pageable);
+
 	/** Bounded, most-recent-first linked commits for one task (Task Intelligence evidence). */
 	@Query("select l from TaskGitCommitLink l join fetch l.gitCommit where l.task.id = :taskId order by l.gitCommit.committedAt desc, l.gitCommit.id desc")
 	List<TaskGitCommitLink> findByTask_IdOrderByGitCommit_CommittedAtDesc(@Param("taskId") UUID taskId, Pageable pageable);

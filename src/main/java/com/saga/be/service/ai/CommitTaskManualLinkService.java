@@ -60,9 +60,19 @@ public class CommitTaskManualLinkService {
 		if (taskId == null) throw invalid("Hãy chọn task để gắn.");
 		Task task = tasks.findByIdAndProject_IdAndDeletedAtIsNull(taskId, projectId)
 				.orElseThrow(() -> invalid("Task không thuộc dự án này hoặc đã bị xoá."));
-		boolean alreadyAutomatic = links.findLiveWithTaskByGitCommitIds(List.of(commitId)).stream()
-				.anyMatch(link -> link.getTask().getId().equals(task.getId()));
-		if (!alreadyAutomatic && manualLinks.findByTask_IdAndGitCommit_Id(task.getId(), commitId).isEmpty()) {
+		// One commit, one task (a task may have many commits): a commit that already has its task keeps it.
+		var automatic = links.findLiveWithTaskByGitCommitIds(List.of(commitId));
+		boolean alreadyAutomatic = automatic.stream().anyMatch(link -> link.getTask().getId().equals(task.getId()));
+		boolean sameManual = manualLinks.findByTask_IdAndGitCommit_Id(task.getId(), commitId).isPresent();
+		if (!alreadyAutomatic && !sameManual) {
+			if (!automatic.isEmpty()) {
+				String current = automatic.getFirst().getTask().getExternalKey();
+				throw invalid("Commit này đã gắn với task " + (current == null ? "khác" : current)
+						+ " theo mã task trong commit. Mỗi commit chỉ gắn một task.");
+			}
+			if (manualLinks.existsByGitCommit_Id(commitId)) {
+				throw invalid("Commit này đã được gắn một task. Bỏ gắn task đó trước khi gắn task khác.");
+			}
 			TaskCommitManualLink row = new TaskCommitManualLink();
 			row.setProject(commit.getRepo().getProject());
 			row.setTask(task);
