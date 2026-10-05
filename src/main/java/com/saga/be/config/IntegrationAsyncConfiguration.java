@@ -77,6 +77,23 @@ public class IntegrationAsyncConfiguration {
 	}
 
 	/**
+	 * A person pressing "Đánh giá lại": the GitHub diff read (seconds, up to ~25 s for a large commit)
+	 * runs here so the request answers at once with "Đang đánh giá". Separate from automation so a
+	 * backfill queue never delays someone who is waiting; a full queue falls back to the caller.
+	 */
+	@Bean(name = "aiReviewRequestExecutor")
+	public Executor aiReviewRequestExecutor() {
+		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+		executor.setCorePoolSize(2);
+		executor.setMaxPoolSize(2);
+		executor.setQueueCapacity(50);
+		executor.setThreadNamePrefix("ai-review-request-");
+		executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+		executor.initialize();
+		return executor;
+	}
+
+	/**
 	 * Sprint-overlap checks run off the caller's thread: they are triggered from afterCommit
 	 * callbacks that still hold their JDBC connection, and must not ask the small pool for a second
 	 * one there. The check is idempotent, so a rejected run is simply redone on the next change.

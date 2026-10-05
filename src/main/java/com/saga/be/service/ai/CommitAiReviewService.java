@@ -158,8 +158,9 @@ public class CommitAiReviewService {
 		Map<UUID, Summary> out = new HashMap<>();
 		for (GitCommit commit : page) {
 			AiAnalysisRun run = latest.get(commit.getId());
-			AiStructuredResult result = run == null || run.getStatus() != AiAnalysisStatus.COMPLETED ? null : parse(decisionByRun.get(run.getId()));
-			var outcome = CommitAiReviewRules.evaluate(commit.looksLikeMerge(), run == null ? null : run.getStatus(), result,
+			boolean requested = requestedRecently(commit.getId());
+			AiStructuredResult result = requested || run == null || run.getStatus() != AiAnalysisStatus.COMPLETED ? null : parse(decisionByRun.get(run.getId()));
+			var outcome = CommitAiReviewRules.evaluate(commit.looksLikeMerge(), requested ? AiAnalysisStatus.QUEUED : run == null ? null : run.getStatus(), result,
 					linked.contains(commit.getId()), keyAvailable,
 					new CommitAiReviewRules.MessageContext(commit.getMessage(), commit.getHeadRef(), keysByCommit.getOrDefault(commit.getId(), List.of())));
 			out.put(commit.getId(), new Summary(outcome.status(), outcome.label(), outcome.reasons(), linked.contains(commit.getId())));
@@ -176,12 +177,13 @@ public class CommitAiReviewService {
 		UUID courseId = projects.findCourseIdById(projectId).orElse(null);
 		AiAnalysisRun run = latestRuns(projectId, List.of(commitId)).get(commitId);
 		AiAnalysisProviderDecision decision = run == null ? null : decisions.findByAnalysisRun_Id(run.getId()).orElse(null);
-		AiStructuredResult result = run == null || run.getStatus() != AiAnalysisStatus.COMPLETED ? null : parse(decision);
+		boolean requested = requestedRecently(commitId);
+		AiStructuredResult result = requested || run == null || run.getStatus() != AiAnalysisStatus.COMPLETED ? null : parse(decision);
 		boolean canManageLinks = canManageLinks(userId, projectId, commit);
 		List<LinkedTask> linkedTasks = linkedTasks(projectId, commit, canManageLinks);
 		String keySource = keySource(projectId, courseId);
 		boolean merge = commit.looksLikeMerge();
-		var outcome = CommitAiReviewRules.evaluate(merge, run == null ? null : run.getStatus(), result, !linkedTasks.isEmpty(), !"NONE".equals(keySource),
+		var outcome = CommitAiReviewRules.evaluate(merge, requested ? AiAnalysisStatus.QUEUED : run == null ? null : run.getStatus(), result, !linkedTasks.isEmpty(), !"NONE".equals(keySource),
 				new CommitAiReviewRules.MessageContext(commit.getMessage(), commit.getHeadRef(), linkedTasks.stream().map(LinkedTask::externalKey).toList()));
 		Map<UUID, AiAnalysisEvidence> rows = new LinkedHashMap<>();
 		if (run != null) for (AiAnalysisEvidence row : evidence.findByAnalysisRun_IdOrderByOrdinalIndexAsc(run.getId())) rows.put(row.getId(), row);
@@ -214,8 +216,63 @@ public class CommitAiReviewService {
 	/** (Re)request the review of one commit, then return the panel. Called without a transaction:
 	 * {@link #detail} must therefore never load anything lazily (it reads the course id by query). */
 	public Detail request(UUID userId, UUID projectId, UUID commitId) {
-		submissions.submit(userId, projectId, commitId);
+		if (requestExecutor == null) {
+			submissions.submit(userId, projectId, commitId);
+			return detail(userId, projectId, commitId);
+		}
+		// Answer at once: the quick rules here, the slow GitHub diff read in the background.
+		Detail before = detail(userId, projectId, commitId);
+		if (CommitAiReviewDtos.PENDING.equals(before.status())) return before;
+		if (!before.canRequestReview()) throw blocked(before.reviewBlockedReason());
+		requested.put(commitId, System.currentTimeMillis());
+		try {
+			requestExecutor.execute(() -> {
+				try {
+					submissions.submit(userId, projectId, commitId);
+				} catch (RuntimeException ex) {
+					log.warn("commit review request failed projectId={} gitCommitId={} type={}", projectId, commitId, ex.getClass().getSimpleName());
+				} finally {
+					requested.remove(commitId);
+				}
+			});
+		} catch (java.util.concurrent.RejectedExecutionException ex) {
+			requested.remove(commitId);
+			submissions.submit(userId, projectId, commitId);
+		}
 		return detail(userId, projectId, commitId);
+	}
+
+	/** Commits whose review a person just asked for: shown as "Đang đánh giá" until the run exists. */
+	private final java.util.Map<UUID, Long> requested = new java.util.concurrent.ConcurrentHashMap<>();
+	static final long REQUEST_PENDING_MS = 3 * 60 * 1000L;
+
+	boolean requestedRecently(UUID commitId) {
+		Long at = requested.get(commitId);
+		if (at == null) return false;
+		if (System.currentTimeMillis() - at > REQUEST_PENDING_MS) {
+			requested.remove(commitId);
+			return false;
+		}
+		return true;
+	}
+
+	private static IntegrationException blocked(String reason) {
+		return switch (reason == null ? "" : reason) {
+			case "MERGE" -> new IntegrationException(IntegrationErrorCode.AI_COMMIT_MERGE_NOT_REVIEWED, HttpStatus.CONFLICT,
+					"Merge commit không được AI đánh giá.");
+			case "READ_ONLY", "NOT_ALLOWED" -> new IntegrationException(IntegrationErrorCode.AI_COMMIT_REVIEW_NOT_ALLOWED, HttpStatus.FORBIDDEN,
+					"Chỉ nhóm trưởng, hoặc thành viên phụ trách task của commit này, mới được yêu cầu AI đánh giá lại.");
+			default -> new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE, HttpStatus.CONFLICT,
+					"Nhóm chưa nhập key AI và giảng viên chưa cho dùng key của lớp.");
+		};
+	}
+
+	/** Where a person's review request runs; inline (synchronous) unless Spring sets it. */
+	private java.util.concurrent.Executor requestExecutor;
+
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	public void setRequestExecutor(@org.springframework.beans.factory.annotation.Qualifier("aiReviewRequestExecutor") java.util.concurrent.Executor requestExecutor) {
+		this.requestExecutor = requestExecutor;
 	}
 
 	/**

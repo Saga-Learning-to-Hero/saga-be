@@ -295,6 +295,55 @@ class CommitAiReviewServiceTest {
 	}
 
 	@Test
+	void pressingReviewAnswersAtOnceAsPending_theGitHubReadRunsInTheBackground() {
+		GitCommit commit = commit(1);
+		List<Runnable> queued = new ArrayList<>();
+		service.setRequestExecutor(queued::add);
+
+		CommitAiReviewDtos.Detail answer = service.request(authorId, projectId, commit.getId());
+
+		assertThat(answer.status()).isEqualTo(CommitAiReviewDtos.PENDING);
+		verify(submissions, never()).submit(any(), any(), any());
+		assertThat(service.summaries(projectId, courseId, List.of(commit)).get(commit.getId()).status()).isEqualTo(CommitAiReviewDtos.PENDING);
+
+		queued.getFirst().run();
+		verify(submissions).submit(authorId, projectId, commit.getId());
+		assertThat(service.requestedRecently(commit.getId())).isFalse();
+	}
+
+	@Test
+	void aBackgroundFailureClearsThePendingState_soTheBadgeShowsTheRealStatusAgain() {
+		GitCommit commit = commit(1);
+		List<Runnable> queued = new ArrayList<>();
+		service.setRequestExecutor(queued::add);
+		when(submissions.submit(authorId, projectId, commit.getId())).thenThrow(new RuntimeException("github down"));
+
+		service.request(authorId, projectId, commit.getId());
+		queued.getFirst().run();
+
+		assertThat(service.summaries(projectId, courseId, List.of(commit)).get(commit.getId()).status()).isNotEqualTo(CommitAiReviewDtos.PENDING);
+	}
+
+	@Test
+	void aMergeOrAReadOnlyViewerIsRefusedAtOnce_nothingIsQueued() {
+		List<Runnable> queued = new ArrayList<>();
+		service.setRequestExecutor(queued::add);
+		GitCommit merge = commit(2);
+		assertThatThrownBy(() -> service.request(authorId, projectId, merge.getId()))
+				.isInstanceOf(IntegrationException.class)
+				.satisfies(ex -> assertThat(((IntegrationException) ex).getCode()).isEqualTo(IntegrationErrorCode.AI_COMMIT_MERGE_NOT_REVIEWED));
+
+		GitCommit commit = commit(1);
+		CommitReviewPermission permission = org.mockito.Mockito.mock(CommitReviewPermission.class);
+		when(permission.access(authorId, projectId, commit.getId())).thenReturn(CommitReviewPermission.Access.READ_ONLY);
+		service.setReviewPermission(permission);
+		assertThatThrownBy(() -> service.request(authorId, projectId, commit.getId()))
+				.isInstanceOf(IntegrationException.class)
+				.satisfies(ex -> assertThat(((IntegrationException) ex).getCode()).isEqualTo(IntegrationErrorCode.AI_COMMIT_REVIEW_NOT_ALLOWED));
+		assertThat(queued).isEmpty();
+	}
+
+	@Test
 	void aFailedReviewCarriesTheReadableFailure() {
 		GitCommit commit = commit(1);
 		AiAnalysisRun run = run(commit, AiAnalysisStatus.FAILED);
