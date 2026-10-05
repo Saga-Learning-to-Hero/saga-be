@@ -46,6 +46,11 @@ public final class TaskFileTypes {
 			Map.entry("ppt", "application/vnd.ms-powerpoint"),
 			Map.entry("pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"));
 
+	private static final Set<String> OS_CSV_TYPES = Set.of("application/vnd.ms-excel", "text/x-csv", "text/comma-separated-values");
+	private static final Set<String> OOXML = Set.of("docx", "xlsx", "pptx");
+	private static final Set<String> ZIP_TYPES = Set.of("application/zip", "application/x-zip-compressed");
+	private static final Set<String> LEGACY_OFFICE = Set.of("doc", "xls", "ppt");
+
 	private TaskFileTypes() {}
 
 	public static Accepted accept(String originalFilename, String declaredContentType, byte[] content) {
@@ -137,7 +142,19 @@ public final class TaskFileTypes {
 		if ("csv".equals(extension) && ("text/plain".equals(declared) || "application/csv".equals(declared))) {
 			return;
 		}
-		if ("md".equals(extension) && "text/plain".equals(declared)) {
+		if ("md".equals(extension) && ("text/plain".equals(declared) || "text/x-markdown".equals(declared))) {
+			return;
+		}
+		// Browsers take the type from the operating system: Windows with Excel calls a .csv
+		// application/vnd.ms-excel, without Office a .docx is a zip. The content check above (magic
+		// bytes) still decides, so these names never let another kind of file through.
+		if ("csv".equals(extension) && OS_CSV_TYPES.contains(declared)) {
+			return;
+		}
+		if (OOXML.contains(extension) && ZIP_TYPES.contains(declared)) {
+			return;
+		}
+		if (LEGACY_OFFICE.contains(extension) && "application/vnd.ms-office".equals(declared)) {
 			return;
 		}
 		throw invalid("File content type does not match the filename.");

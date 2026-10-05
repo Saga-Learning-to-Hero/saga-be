@@ -78,4 +78,29 @@ class TaskFileTypesTest {
 				assertThrows(AcademicException.class, () -> TaskFileTypes.accept("a.pdf", "image/png", pdf));
 		assertEquals(AcademicErrorCode.TASK_FILE_INVALID, ex.getCode());
 	}
+
+	@Test
+	void acceptsTheTypesWindowsBrowsersReport_aDocxWithoutOfficeIsAZip_aCsvWithExcelIsAnExcelType() {
+		byte[] docx = new byte[] {'P', 'K', 3, 4, 0, 0};
+		assertEquals(
+				"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+				TaskFileTypes.accept("bao-cao.docx", "application/x-zip-compressed", docx).mimeType());
+		assertEquals("application/vnd.openxmlformats-officedocument.presentationml.presentation",
+				TaskFileTypes.accept("slide.pptx", "application/zip", docx).mimeType());
+		assertEquals("text/csv",
+				TaskFileTypes.accept("data.csv", "application/vnd.ms-excel", "a,b;1,2".getBytes(StandardCharsets.UTF_8)).mimeType());
+		byte[] doc = new byte[] {(byte) 0xD0, (byte) 0xCF, 0x11, (byte) 0xE0, 0, 0};
+		assertEquals("application/msword", TaskFileTypes.accept("old.doc", "application/vnd.ms-office", doc).mimeType());
+		assertEquals("text/markdown",
+				TaskFileTypes.accept("notes.md", "text/x-markdown", "# x".getBytes(StandardCharsets.UTF_8)).mimeType());
+	}
+
+	@Test
+	void aZipTypeNeverLetsANonOfficeFileThrough() {
+		// the content still decides: a "docx" that is not a zip, or a zip type on a PDF name, is refused
+		assertThrows(AcademicException.class,
+				() -> TaskFileTypes.accept("fake.docx", "application/zip", "not-a-zip".getBytes(StandardCharsets.UTF_8)));
+		byte[] pdf = "%PDF-1.4".getBytes(StandardCharsets.US_ASCII);
+		assertThrows(AcademicException.class, () -> TaskFileTypes.accept("a.pdf", "application/zip", pdf));
+	}
 }
