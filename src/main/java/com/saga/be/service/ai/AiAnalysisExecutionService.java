@@ -105,7 +105,10 @@ public class AiAnalysisExecutionService {
 					: "AI_ANALYSIS_PROVIDER_FAILED";
 			// Course credential status was already updated per attempt inside executeCourse.
 			state.fail(runId, code, false);
-			log.warn("ai analysis failed runId={} type={} code={}", runId, ex.getClass().getSimpleName(), code);
+			// the cause's class only (never its message, which may echo evidence): a local failure such as a
+			// payload Jackson cannot read is then told apart from what saga-ai answered
+			log.warn("ai analysis failed runId={} type={} code={} cause={}", runId, ex.getClass().getSimpleName(), code,
+					ex.getCause() == null ? "none" : ex.getCause().getClass().getSimpleName());
 		}
 		finally {
 			if (adjudication != null) adjudication.adjudicate(runId);

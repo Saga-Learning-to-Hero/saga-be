@@ -89,7 +89,12 @@ public class AiTaskIntelligenceSnapshotBuilder {
 				row.put("linkSource", link.getLinkSource() == null ? null : link.getLinkSource().name());
 				commitRows.add(row);
 			}
-			String commitsJson = json(commitRows);
+			// an object, never a bare array: every evidence payload is a JSON object on the wire, and a
+			// bare array made each task with a linked commit fail before reaching the AI
+			Map<String, Object> commits = new TreeMap<>();
+			commits.put("taskId", task.getId());
+			commits.put("linkedCommits", commitRows);
+			String commitsJson = json(commits);
 			draft.add(new AiEvidenceDraft(AiEvidenceType.METADATA, "task-linked-commits:" + task.getId(), commitsJson, null));
 		}
 		return draft;
