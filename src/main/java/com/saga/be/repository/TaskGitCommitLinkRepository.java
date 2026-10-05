@@ -104,6 +104,8 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 	 * pass an unsorted {@link Pageable}. Count is {@code count(distinct c.id)} so duplicate link
 	 * rows cannot inflate total.
 	 */
+	/** Without merges: known ones by parent count, and (while the parent count is unknown, e.g. a push webhook)
+	 * Git's / GitHub's own merge messages. */
 	@Query(
 			value =
 					"""
@@ -115,6 +117,10 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 					  and t.project.id = :projectId
 					  and t.deletedAt is null
 					  and (c.parentCount is null or c.parentCount <= 1)
+					  and (c.parentCount is not null or c.message is null
+					       or (c.message not like 'Merge pull request #%'
+					           and c.message not like 'Merge branch ''%'
+					           and c.message not like 'Merge remote-tracking branch ''%'))
 					order by coalesce(c.committedAt, c.createdAt) desc, c.id desc
 					""",
 			countQuery =
@@ -127,6 +133,10 @@ public interface TaskGitCommitLinkRepository extends JpaRepository<TaskGitCommit
 					  and t.project.id = :projectId
 					  and t.deletedAt is null
 					  and (c.parentCount is null or c.parentCount <= 1)
+					  and (c.parentCount is not null or c.message is null
+					       or (c.message not like 'Merge pull request #%'
+					           and c.message not like 'Merge branch ''%'
+					           and c.message not like 'Merge remote-tracking branch ''%'))
 					""")
 	Page<UUID> findPageIdsByProjectAndTask(
 			@Param("projectId") UUID projectId, @Param("taskId") UUID taskId, Pageable pageable);
