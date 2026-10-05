@@ -106,6 +106,11 @@ public class TaskEvidenceService {
 		if (!open.isEmpty()) {
 			return toResponse(open.getFirst(), now);
 		}
+		// A finished task has no more work to time; a session left open before DONE can still be stopped.
+		if (task.getStatus() == com.saga.be.entity.enums.TaskStatus.DONE) {
+			throw new AcademicException(AcademicErrorCode.TASK_WORK_SESSION_TASK_DONE, HttpStatus.CONFLICT,
+					"Task đã hoàn thành nên không bắt đầu phiên làm việc mới.");
+		}
 		TaskWorkSession session = new TaskWorkSession();
 		session.setTask(task);
 		session.setUser(users.findById(userId).orElseThrow());

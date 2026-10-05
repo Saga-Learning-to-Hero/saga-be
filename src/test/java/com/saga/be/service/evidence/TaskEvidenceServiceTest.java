@@ -150,6 +150,33 @@ class TaskEvidenceServiceTest {
 	}
 
 	@Test
+	void startOnADoneTask_isRejected() {
+		stubMemberLock();
+		task.setStatus(TaskStatus.DONE);
+		when(sessions.findByTask_IdAndUser_IdAndStatusOrderByStartedAtAsc(
+						task.getId(), student.getId(), WorkSessionStatus.OPEN))
+				.thenReturn(List.of());
+
+		AcademicException ex = assertThrows(AcademicException.class, () -> service.start(student.getId(), task.getId()));
+
+		assertEquals(AcademicErrorCode.TASK_WORK_SESSION_TASK_DONE, ex.getCode());
+		verify(sessions, never()).save(any());
+		assertNull(lastEvent.get());
+	}
+
+	@Test
+	void aSessionLeftOpenBeforeDoneIsStillReturned() {
+		stubMemberLock();
+		task.setStatus(TaskStatus.DONE);
+		TaskWorkSession existing = openSession(LocalDateTime.now().minusMinutes(5));
+		when(sessions.findByTask_IdAndUser_IdAndStatusOrderByStartedAtAsc(
+						task.getId(), student.getId(), WorkSessionStatus.OPEN))
+				.thenReturn(List.of(existing));
+
+		assertEquals(existing.getId(), service.start(student.getId(), task.getId()).id());
+	}
+
+	@Test
 	void startSameUserSameTask_returnsExistingOpenSession() {
 		stubMemberLock();
 		TaskWorkSession existing = openSession(LocalDateTime.now().minusMinutes(5));
