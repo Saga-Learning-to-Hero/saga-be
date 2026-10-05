@@ -228,7 +228,12 @@ public class CommitAiReviewService {
 		try {
 			requestExecutor.execute(() -> {
 				try {
-					submissions.submit(userId, projectId, commitId);
+					var submission = submissions.submit(userId, projectId, commitId);
+					var status = submission == null || submission.run() == null ? null : submission.run().getStatus();
+					// tell the person when the AI is done: they may have gone to another page by then
+					if (reviewEvents != null && (status == AiAnalysisStatus.QUEUED || status == AiAnalysisStatus.RUNNING)) {
+						reviewEvents.notifyWhenFinished(submission.run().getId(), userId);
+					}
 				} catch (RuntimeException ex) {
 					log.warn("commit review request failed projectId={} gitCommitId={} type={}", projectId, commitId, ex.getClass().getSimpleName());
 				} finally {
@@ -265,6 +270,13 @@ public class CommitAiReviewService {
 			default -> new IntegrationException(IntegrationErrorCode.AI_CREDENTIAL_UNAVAILABLE, HttpStatus.CONFLICT,
 					"Nhóm chưa nhập key AI và giảng viên chưa cho dùng key của lớp.");
 		};
+	}
+
+	private CommitReviewEvents reviewEvents;
+
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	public void setReviewEvents(CommitReviewEvents reviewEvents) {
+		this.reviewEvents = reviewEvents;
 	}
 
 	/** Where a person's review request runs; inline (synchronous) unless Spring sets it. */
